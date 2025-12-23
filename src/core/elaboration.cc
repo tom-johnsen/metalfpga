@@ -200,6 +200,30 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
   return true;
 }
 
+bool IsDeclaredSignal(const Module& module, const std::string& name) {
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return true;
+    }
+  }
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void WarnUndeclaredClocks(const Module& flat, Diagnostics* diagnostics) {
+  for (const auto& block : flat.always_blocks) {
+    if (!IsDeclaredSignal(flat, block.clock)) {
+      diagnostics->Add(Severity::kWarning,
+                       "clock '" + block.clock +
+                           "' in always block is not declared");
+    }
+  }
+}
+
 bool InlineModule(const Program& program, const Module& module,
                   const std::string& prefix, const std::string& hier_prefix,
                   const std::unordered_map<std::string, PortBinding>& port_map,
@@ -473,6 +497,7 @@ bool Elaborate(const Program& program, const std::string& top_name,
   if (!ValidateSingleDrivers(flat, diagnostics)) {
     return false;
   }
+  WarnUndeclaredClocks(flat, diagnostics);
 
   out_design->top = std::move(flat);
   out_design->flat_to_hier = std::move(flat_to_hier);

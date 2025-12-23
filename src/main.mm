@@ -326,19 +326,37 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     return;
   }
   if (stmt.kind == gpga::StatementKind::kIf) {
-    std::string cond =
-        stmt.condition ? ExprToString(*stmt.condition, module) : "0";
-    os << pad << "if (" << cond << ") {\n";
-    for (const auto& inner : stmt.then_branch) {
-      DumpStatement(inner, module, indent + 2, os);
-    }
-    if (!stmt.else_branch.empty()) {
-      os << pad << "} else {\n";
-      for (const auto& inner : stmt.else_branch) {
+    const gpga::Statement* current = &stmt;
+    bool first = true;
+    while (current) {
+      std::string cond = current->condition
+                             ? ExprToString(*current->condition, module)
+                             : "0";
+      if (first) {
+        os << pad << "if (" << cond << ") {\n";
+        first = false;
+      } else {
+        os << pad << "} else if (" << cond << ") {\n";
+      }
+      for (const auto& inner : current->then_branch) {
         DumpStatement(inner, module, indent + 2, os);
       }
+      if (current->else_branch.empty()) {
+        os << pad << "}\n";
+        break;
+      }
+      if (current->else_branch.size() == 1 &&
+          current->else_branch[0].kind == gpga::StatementKind::kIf) {
+        current = &current->else_branch[0];
+        continue;
+      }
+      os << pad << "} else {\n";
+      for (const auto& inner : current->else_branch) {
+        DumpStatement(inner, module, indent + 2, os);
+      }
+      os << pad << "}\n";
+      break;
     }
-    os << pad << "}\n";
     return;
   }
   if (stmt.kind == gpga::StatementKind::kBlock) {

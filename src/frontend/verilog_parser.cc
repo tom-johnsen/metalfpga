@@ -438,7 +438,17 @@ class Parser {
         ErrorHere("expected identifier in wire declaration");
         return false;
       }
+      std::unique_ptr<Expr> init;
+      if (MatchSymbol("=")) {
+        init = ParseExpr();
+        if (!init) {
+          return false;
+        }
+      }
       module->nets.push_back(Net{NetType::kWire, name, width});
+      if (init) {
+        module->assigns.push_back(Assign{name, std::move(init)});
+      }
       if (MatchSymbol(",")) {
         continue;
       }
