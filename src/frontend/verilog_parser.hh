@@ -1,0 +1,18 @@
+#pragma once
+
+#include <string>
+
+#include "frontend/ast.hh"
+#include "utils/diagnostics.hh"
+
+namespace gpga {
+
+struct ParseOptions {
+  bool allow_empty = false;
+};
+
+bool ParseVerilogFile(const std::string& path, Program* out_program,
+                      Diagnostics* diagnostics,
+                      const ParseOptions& options = {});
+
+}  // namespace gpga
