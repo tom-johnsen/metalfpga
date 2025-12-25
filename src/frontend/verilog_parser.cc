@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -124,6 +125,18 @@ std::vector<Token> Tokenize(const std::string& text) {
       continue;
     }
 
+    if ((c == '+' || c == '-') && i + 1 < text.size() && text[i + 1] == ':') {
+      int token_line = line;
+      int token_column = column;
+      std::string sym;
+      sym.push_back(c);
+      sym.push_back(':');
+      push(TokenKind::kSymbol, sym, token_line, token_column);
+      i += 2;
+      column += 2;
+      continue;
+    }
+
     int token_line = line;
     int token_column = column;
     push(TokenKind::kSymbol, std::string(1, c), token_line, token_column);
@@ -162,6 +175,76 @@ class Parser {
   }
 
  private:
+  struct GeneratedNetDecl {
+    NetType type = NetType::kWire;
+    std::string name;
+    int width = 1;
+    bool is_signed = false;
+    std::shared_ptr<Expr> msb_expr;
+    std::shared_ptr<Expr> lsb_expr;
+    std::vector<ArrayDim> array_dims;
+  };
+
+  struct GenerateAssign {
+    std::string lhs;
+    bool lhs_has_range = false;
+    bool lhs_is_range = false;
+    std::unique_ptr<Expr> lhs_msb_expr;
+    std::unique_ptr<Expr> lhs_lsb_expr;
+    std::unique_ptr<Expr> rhs;
+  };
+
+  struct GenerateLocalparam {
+    std::string name;
+    std::unique_ptr<Expr> expr;
+  };
+
+  struct GenerateBlock;
+
+  struct GenerateFor {
+    std::string var;
+    std::unique_ptr<Expr> init_expr;
+    std::unique_ptr<Expr> cond_expr;
+    std::unique_ptr<Expr> step_expr;
+    std::unique_ptr<GenerateBlock> body;
+    int id = 0;
+  };
+
+  struct GenerateIf {
+    std::unique_ptr<Expr> condition;
+    std::unique_ptr<GenerateBlock> then_block;
+    bool has_else = false;
+    std::unique_ptr<GenerateBlock> else_block;
+  };
+
+  struct GenerateItem {
+    enum class Kind {
+      kNet,
+      kAssign,
+      kInstance,
+      kAlways,
+      kInitial,
+      kLocalparam,
+      kFor,
+      kIf,
+      kBlock,
+    };
+    Kind kind = Kind::kNet;
+    GeneratedNetDecl net;
+    GenerateAssign assign;
+    Instance instance;
+    AlwaysBlock always_block;
+    GenerateLocalparam localparam;
+    GenerateFor gen_for;
+    GenerateIf gen_if;
+    std::unique_ptr<GenerateBlock> block;
+  };
+
+  struct GenerateBlock {
+    std::string label;
+    std::vector<GenerateItem> items;
+  };
+
   const Token& Peek() const { return tokens_[pos_]; }
   const Token& Peek(size_t lookahead) const {
     size_t index = pos_ + lookahead;
@@ -223,6 +306,7 @@ class Parser {
     Module module;
     module.name = module_name;
     current_params_.clear();
+    current_genvars_.clear();
     current_module_ = &module;
 
     if (MatchSymbol("#")) {
@@ -271,6 +355,18 @@ class Parser {
       }
       if (MatchKeyword("wire")) {
         if (!ParseWireDecl(&module)) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("genvar")) {
+        if (!ParseGenvarDecl(&current_genvars_)) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("generate")) {
+        if (!ParseGenerateBlock(&module)) {
           return false;
         }
         continue;
@@ -947,6 +1043,1038 @@ class Parser {
     return true;
   }
 
+  bool ParseGenvarDecl(std::unordered_set<std::string>* genvars) {
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in genvar declaration");
+        return false;
+      }
+      genvars->insert(name);
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after genvar declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  std::unique_ptr<Expr> MakeNumberExpr(uint64_t value) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = ExprKind::kNumber;
+    expr->number = value;
+    expr->value_bits = value;
+    return expr;
+  }
+
+  std::unique_ptr<Expr> CloneExprGenerate(
+      const Expr& expr,
+      const std::unordered_map<std::string, std::string>& renames,
+      const std::unordered_map<std::string, int64_t>& consts) {
+    if (expr.kind == ExprKind::kIdentifier) {
+      auto it = renames.find(expr.ident);
+      if (it != renames.end()) {
+        auto out = std::make_unique<Expr>();
+        out->kind = ExprKind::kIdentifier;
+        out->ident = it->second;
+        return out;
+      }
+      auto cit = consts.find(expr.ident);
+      if (cit != consts.end()) {
+        return MakeNumberExpr(static_cast<uint64_t>(cit->second));
+      }
+    }
+    auto out = std::make_unique<Expr>();
+    out->kind = expr.kind;
+    out->ident = expr.ident;
+    out->number = expr.number;
+    out->value_bits = expr.value_bits;
+    out->x_bits = expr.x_bits;
+    out->z_bits = expr.z_bits;
+    out->number_width = expr.number_width;
+    out->has_width = expr.has_width;
+    out->has_base = expr.has_base;
+    out->base_char = expr.base_char;
+    out->is_signed = expr.is_signed;
+    out->op = expr.op;
+    out->unary_op = expr.unary_op;
+    out->msb = expr.msb;
+    out->lsb = expr.lsb;
+    out->has_range = expr.has_range;
+    out->indexed_range = expr.indexed_range;
+    out->indexed_desc = expr.indexed_desc;
+    out->indexed_width = expr.indexed_width;
+    out->repeat = expr.repeat;
+    if (expr.operand) {
+      out->operand = CloneExprGenerate(*expr.operand, renames, consts);
+    }
+    if (expr.lhs) {
+      out->lhs = CloneExprGenerate(*expr.lhs, renames, consts);
+    }
+    if (expr.rhs) {
+      out->rhs = CloneExprGenerate(*expr.rhs, renames, consts);
+    }
+    if (expr.condition) {
+      out->condition = CloneExprGenerate(*expr.condition, renames, consts);
+    }
+    if (expr.then_expr) {
+      out->then_expr = CloneExprGenerate(*expr.then_expr, renames, consts);
+    }
+    if (expr.else_expr) {
+      out->else_expr = CloneExprGenerate(*expr.else_expr, renames, consts);
+    }
+    if (expr.base) {
+      out->base = CloneExprGenerate(*expr.base, renames, consts);
+    }
+    if (expr.index) {
+      out->index = CloneExprGenerate(*expr.index, renames, consts);
+    }
+    if (expr.msb_expr) {
+      out->msb_expr = CloneExprGenerate(*expr.msb_expr, renames, consts);
+    }
+    if (expr.lsb_expr) {
+      out->lsb_expr = CloneExprGenerate(*expr.lsb_expr, renames, consts);
+    }
+    if (expr.repeat_expr) {
+      out->repeat_expr =
+          CloneExprGenerate(*expr.repeat_expr, renames, consts);
+    }
+    for (const auto& element : expr.elements) {
+      out->elements.push_back(CloneExprGenerate(*element, renames, consts));
+    }
+    for (const auto& arg : expr.call_args) {
+      out->call_args.push_back(CloneExprGenerate(*arg, renames, consts));
+    }
+    if (out->kind == ExprKind::kSelect && out->msb_expr && out->lsb_expr) {
+      int64_t msb = 0;
+      int64_t lsb = 0;
+      if (TryEvalConstExpr(*out->msb_expr, &msb) &&
+          TryEvalConstExpr(*out->lsb_expr, &lsb)) {
+        out->msb = static_cast<int>(msb);
+        out->lsb = static_cast<int>(lsb);
+      }
+    }
+    return out;
+  }
+
+  std::unique_ptr<Expr> CloneExprSimple(const Expr& expr) {
+    const std::unordered_map<std::string, std::string> empty_renames;
+    const std::unordered_map<std::string, int64_t> empty_consts;
+    return CloneExprGenerate(expr, empty_renames, empty_consts);
+  }
+
+  bool ParseGenerateNetDecl(NetType type,
+                            std::vector<GeneratedNetDecl>* out_decls) {
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
+    int width = 1;
+    std::shared_ptr<Expr> range_msb;
+    std::shared_ptr<Expr> range_lsb;
+    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
+      return false;
+    }
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in declaration");
+        return false;
+      }
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+      }
+      if (MatchSymbol("=")) {
+        ErrorHere("initializer not supported in generate declaration");
+        return false;
+      }
+      GeneratedNetDecl decl;
+      decl.type = type;
+      decl.name = name;
+      decl.width = width;
+      decl.is_signed = is_signed;
+      decl.msb_expr = range_msb;
+      decl.lsb_expr = range_lsb;
+      decl.array_dims = array_dims;
+      out_decls->push_back(std::move(decl));
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseGenerateAssign(GenerateAssign* out) {
+    std::string lhs;
+    if (!ConsumeIdentifier(&lhs)) {
+      ErrorHere("expected identifier after 'assign'");
+      return false;
+    }
+    GenerateAssign assign;
+    assign.lhs = lhs;
+    if (MatchSymbol("[")) {
+      std::unique_ptr<Expr> msb_expr = ParseExpr();
+      if (!msb_expr) {
+        return false;
+      }
+      if (MatchSymbol("+:") || MatchSymbol("-:")) {
+        bool indexed_desc = (Previous().text == "-:");
+        std::unique_ptr<Expr> width_expr = ParseExpr();
+        if (!width_expr) {
+          return false;
+        }
+        int64_t width_value = 0;
+        if (!EvalConstExpr(*width_expr, &width_value) || width_value <= 0) {
+          ErrorHere("indexed part select width must be constant");
+          return false;
+        }
+        auto base_clone = CloneExprSimple(*msb_expr);
+        auto width_minus = MakeNumberExpr(
+            static_cast<uint64_t>(width_value - 1));
+        if (indexed_desc) {
+          assign.lhs_has_range = true;
+          assign.lhs_is_range = true;
+          assign.lhs_msb_expr = std::move(msb_expr);
+          assign.lhs_lsb_expr = MakeBinary('-', std::move(base_clone),
+                                           std::move(width_minus));
+        } else {
+          assign.lhs_has_range = true;
+          assign.lhs_is_range = true;
+          assign.lhs_lsb_expr = std::move(msb_expr);
+          assign.lhs_msb_expr = MakeBinary('+', std::move(base_clone),
+                                           std::move(width_minus));
+        }
+      } else if (MatchSymbol(":")) {
+        std::unique_ptr<Expr> lsb_expr = ParseExpr();
+        if (!lsb_expr) {
+          return false;
+        }
+        assign.lhs_has_range = true;
+        assign.lhs_is_range = true;
+        assign.lhs_msb_expr = std::move(msb_expr);
+        assign.lhs_lsb_expr = std::move(lsb_expr);
+      } else {
+        assign.lhs_has_range = true;
+        assign.lhs_is_range = false;
+        assign.lhs_msb_expr = std::move(msb_expr);
+      }
+      if (!MatchSymbol("]")) {
+        ErrorHere("expected ']' after select");
+        return false;
+      }
+    }
+    if (!MatchSymbol("=")) {
+      ErrorHere("expected '=' in assign");
+      return false;
+    }
+    assign.rhs = ParseExpr();
+    if (!assign.rhs) {
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after assign");
+      return false;
+    }
+    *out = std::move(assign);
+    return true;
+  }
+
+  bool ParseGenerateInstance(Instance* out_instance) {
+    std::string module_name;
+    std::string instance_name;
+    if (!ConsumeIdentifier(&module_name)) {
+      ErrorHere("expected module name in instance");
+      return false;
+    }
+    Instance instance;
+    instance.module_name = std::move(module_name);
+    if (MatchSymbol("#")) {
+      if (!ParseParamOverrides(&instance)) {
+        return false;
+      }
+    }
+    if (!ConsumeIdentifier(&instance_name)) {
+      ErrorHere("expected instance name");
+      return false;
+    }
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after instance name");
+      return false;
+    }
+    instance.name = std::move(instance_name);
+    if (!MatchSymbol(")")) {
+      bool named = false;
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == ".") {
+        named = true;
+      }
+      if (named) {
+        while (true) {
+          if (!MatchSymbol(".")) {
+            ErrorHere("expected named port connection ('.port(signal)')");
+            return false;
+          }
+          std::string port_name;
+          if (!ConsumeIdentifier(&port_name)) {
+            ErrorHere("expected port name after '.'");
+            return false;
+          }
+          if (!MatchSymbol("(")) {
+            ErrorHere("expected '(' after port name");
+            return false;
+          }
+          std::unique_ptr<Expr> expr;
+          if (!MatchSymbol(")")) {
+            expr = ParseExpr();
+            if (!expr) {
+              return false;
+            }
+            if (!MatchSymbol(")")) {
+              ErrorHere("expected ')' after port expression");
+              return false;
+            }
+          }
+          instance.connections.push_back(
+              Connection{port_name, std::move(expr)});
+          if (MatchSymbol(",")) {
+            continue;
+          }
+          break;
+        }
+      } else {
+        int position = 0;
+        while (true) {
+          std::unique_ptr<Expr> expr;
+          if (!(Peek().kind == TokenKind::kSymbol &&
+                (Peek().text == "," || Peek().text == ")"))) {
+            expr = ParseExpr();
+            if (!expr) {
+              return false;
+            }
+          }
+          instance.connections.push_back(
+              Connection{std::to_string(position), std::move(expr)});
+          ++position;
+          if (MatchSymbol(",")) {
+            continue;
+          }
+          break;
+        }
+      }
+      if (!MatchSymbol(")")) {
+        ErrorHere("expected ')' after instance connections");
+        return false;
+      }
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after instance");
+      return false;
+    }
+    *out_instance = std::move(instance);
+    return true;
+  }
+
+  struct GenerateContext {
+    std::unordered_map<std::string, std::string> renames;
+    std::unordered_map<std::string, int64_t> consts;
+  };
+
+  std::string RenameIdent(
+      const std::string& name,
+      const std::unordered_map<std::string, std::string>& renames) {
+    auto it = renames.find(name);
+    if (it != renames.end()) {
+      return it->second;
+    }
+    return name;
+  }
+
+  bool EvalConstExprWithContext(const Expr& expr, const GenerateContext& ctx,
+                                int64_t* out_value) {
+    auto cloned = CloneExprGenerate(expr, ctx.renames, ctx.consts);
+    if (!cloned) {
+      return false;
+    }
+    return EvalConstExpr(*cloned, out_value);
+  }
+
+  bool CloneStatementGenerate(const Statement& statement,
+                              const GenerateContext& ctx,
+                              Statement* out_statement) {
+    out_statement->kind = statement.kind;
+    if (statement.kind == StatementKind::kAssign) {
+      out_statement->assign.lhs =
+          RenameIdent(statement.assign.lhs, ctx.renames);
+      if (statement.assign.lhs_index) {
+        out_statement->assign.lhs_index =
+            CloneExprGenerate(*statement.assign.lhs_index, ctx.renames,
+                              ctx.consts);
+      }
+      if (!statement.assign.lhs_indices.empty()) {
+        out_statement->assign.lhs_indices.reserve(
+            statement.assign.lhs_indices.size());
+        for (const auto& index : statement.assign.lhs_indices) {
+          out_statement->assign.lhs_indices.push_back(
+              CloneExprGenerate(*index, ctx.renames, ctx.consts));
+        }
+      }
+      if (statement.assign.rhs) {
+        out_statement->assign.rhs =
+            CloneExprGenerate(*statement.assign.rhs, ctx.renames, ctx.consts);
+      }
+      out_statement->assign.nonblocking = statement.assign.nonblocking;
+      return true;
+    }
+    if (statement.kind == StatementKind::kIf) {
+      if (statement.condition) {
+        out_statement->condition = CloneExprGenerate(
+            *statement.condition, ctx.renames, ctx.consts);
+      }
+      for (const auto& inner : statement.then_branch) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->then_branch.push_back(std::move(cloned));
+      }
+      for (const auto& inner : statement.else_branch) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->else_branch.push_back(std::move(cloned));
+      }
+      return true;
+    }
+    if (statement.kind == StatementKind::kBlock) {
+      for (const auto& inner : statement.block) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->block.push_back(std::move(cloned));
+      }
+      return true;
+    }
+    if (statement.kind == StatementKind::kCase) {
+      out_statement->case_kind = statement.case_kind;
+      if (statement.case_expr) {
+        out_statement->case_expr = CloneExprGenerate(
+            *statement.case_expr, ctx.renames, ctx.consts);
+      }
+      for (const auto& item : statement.case_items) {
+        CaseItem cloned_item;
+        for (const auto& label : item.labels) {
+          cloned_item.labels.push_back(
+              CloneExprGenerate(*label, ctx.renames, ctx.consts));
+        }
+        for (const auto& inner : item.body) {
+          Statement cloned;
+          if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+            return false;
+          }
+          cloned_item.body.push_back(std::move(cloned));
+        }
+        out_statement->case_items.push_back(std::move(cloned_item));
+      }
+      for (const auto& inner : statement.default_branch) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->default_branch.push_back(std::move(cloned));
+      }
+      return true;
+    }
+    if (statement.kind == StatementKind::kFor) {
+      out_statement->for_init_lhs = statement.for_init_lhs;
+      out_statement->for_step_lhs = statement.for_step_lhs;
+      if (statement.for_init_rhs) {
+        out_statement->for_init_rhs = CloneExprGenerate(
+            *statement.for_init_rhs, ctx.renames, ctx.consts);
+      }
+      if (statement.for_condition) {
+        out_statement->for_condition = CloneExprGenerate(
+            *statement.for_condition, ctx.renames, ctx.consts);
+      }
+      if (statement.for_step_rhs) {
+        out_statement->for_step_rhs = CloneExprGenerate(
+            *statement.for_step_rhs, ctx.renames, ctx.consts);
+      }
+      for (const auto& inner : statement.for_body) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->for_body.push_back(std::move(cloned));
+      }
+      return true;
+    }
+    if (statement.kind == StatementKind::kWhile) {
+      if (statement.while_condition) {
+        out_statement->while_condition = CloneExprGenerate(
+            *statement.while_condition, ctx.renames, ctx.consts);
+      }
+      for (const auto& inner : statement.while_body) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->while_body.push_back(std::move(cloned));
+      }
+      return true;
+    }
+    if (statement.kind == StatementKind::kRepeat) {
+      if (statement.repeat_count) {
+        out_statement->repeat_count = CloneExprGenerate(
+            *statement.repeat_count, ctx.renames, ctx.consts);
+      }
+      for (const auto& inner : statement.repeat_body) {
+        Statement cloned;
+        if (!CloneStatementGenerate(inner, ctx, &cloned)) {
+          return false;
+        }
+        out_statement->repeat_body.push_back(std::move(cloned));
+      }
+      return true;
+    }
+    return true;
+  }
+
+  bool CloneAlwaysGenerate(const AlwaysBlock& block,
+                           const GenerateContext& ctx,
+                           AlwaysBlock* out_block) {
+    out_block->edge = block.edge;
+    out_block->clock = RenameIdent(block.clock, ctx.renames);
+    for (const auto& stmt : block.statements) {
+      Statement cloned;
+      if (!CloneStatementGenerate(stmt, ctx, &cloned)) {
+        return false;
+      }
+      out_block->statements.push_back(std::move(cloned));
+    }
+    return true;
+  }
+
+  bool EmitGenerateBlock(const GenerateBlock& block,
+                         const GenerateContext& parent_ctx,
+                         const std::string& prefix,
+                         Module* module) {
+    GenerateContext ctx = parent_ctx;
+    for (const auto& item : block.items) {
+      if (item.kind == GenerateItem::Kind::kNet) {
+        ctx.renames[item.net.name] = prefix + item.net.name;
+      }
+    }
+
+    for (const auto& item : block.items) {
+      switch (item.kind) {
+        case GenerateItem::Kind::kLocalparam: {
+          int64_t value = 0;
+          if (!item.localparam.expr ||
+              !EvalConstExprWithContext(*item.localparam.expr, ctx, &value)) {
+            ErrorHere("invalid localparam expression in generate");
+            return false;
+          }
+          ctx.consts[item.localparam.name] = value;
+          break;
+        }
+        case GenerateItem::Kind::kNet: {
+          const auto& decl = item.net;
+          std::string name = prefix + decl.name;
+          AddOrUpdateNet(module, name, decl.type, decl.width, decl.is_signed,
+                         decl.msb_expr, decl.lsb_expr, decl.array_dims);
+          break;
+        }
+        case GenerateItem::Kind::kAssign: {
+          const auto& gen_assign = item.assign;
+          Assign assign;
+          assign.lhs = RenameIdent(gen_assign.lhs, ctx.renames);
+          if (gen_assign.lhs_has_range) {
+            int64_t msb = 0;
+            int64_t lsb = 0;
+            if (!gen_assign.lhs_msb_expr ||
+                !EvalConstExprWithContext(*gen_assign.lhs_msb_expr, ctx,
+                                          &msb)) {
+              ErrorHere("generate assign select must be constant");
+              return false;
+            }
+            if (gen_assign.lhs_is_range) {
+              if (!gen_assign.lhs_lsb_expr ||
+                  !EvalConstExprWithContext(*gen_assign.lhs_lsb_expr, ctx,
+                                            &lsb)) {
+                ErrorHere("generate assign select must be constant");
+                return false;
+              }
+            } else {
+              lsb = msb;
+            }
+            assign.lhs_has_range = true;
+            assign.lhs_msb = static_cast<int>(msb);
+            assign.lhs_lsb = static_cast<int>(lsb);
+          }
+          if (gen_assign.rhs) {
+            assign.rhs =
+                CloneExprGenerate(*gen_assign.rhs, ctx.renames, ctx.consts);
+          }
+          module->assigns.push_back(std::move(assign));
+          break;
+        }
+        case GenerateItem::Kind::kInstance: {
+          Instance inst;
+          inst.module_name = item.instance.module_name;
+          inst.name = prefix + item.instance.name;
+          for (const auto& override_item : item.instance.param_overrides) {
+            ParamOverride param;
+            param.name = override_item.name;
+            if (override_item.expr) {
+              param.expr = CloneExprGenerate(*override_item.expr, ctx.renames,
+                                             ctx.consts);
+            }
+            inst.param_overrides.push_back(std::move(param));
+          }
+          for (const auto& conn : item.instance.connections) {
+            Connection connection;
+            connection.port = conn.port;
+            if (conn.expr) {
+              connection.expr =
+                  CloneExprGenerate(*conn.expr, ctx.renames, ctx.consts);
+            }
+            inst.connections.push_back(std::move(connection));
+          }
+          module->instances.push_back(std::move(inst));
+          break;
+        }
+        case GenerateItem::Kind::kAlways:
+        case GenerateItem::Kind::kInitial: {
+          AlwaysBlock cloned;
+          if (!CloneAlwaysGenerate(item.always_block, ctx, &cloned)) {
+            return false;
+          }
+          module->always_blocks.push_back(std::move(cloned));
+          break;
+        }
+        case GenerateItem::Kind::kBlock: {
+          if (!item.block) {
+            break;
+          }
+          std::string child_prefix = prefix;
+          if (!item.block->label.empty()) {
+            child_prefix += item.block->label + "__";
+          }
+          if (!EmitGenerateBlock(*item.block, ctx, child_prefix, module)) {
+            return false;
+          }
+          break;
+        }
+        case GenerateItem::Kind::kFor: {
+          const auto& gen_for = item.gen_for;
+          if (!gen_for.body) {
+            break;
+          }
+          int64_t init_value = 0;
+          if (!gen_for.init_expr ||
+              !EvalConstExprWithContext(*gen_for.init_expr, ctx,
+                                        &init_value)) {
+            ErrorHere("generate for init must be constant");
+            return false;
+          }
+          int64_t current = init_value;
+          const int kMaxIterations = 100000;
+          int iterations = 0;
+          std::string base_prefix =
+              prefix + "gen" + std::to_string(gen_for.id) + "__";
+          if (!gen_for.body->label.empty()) {
+            base_prefix += gen_for.body->label + "__";
+          }
+          while (iterations++ < kMaxIterations) {
+            GenerateContext iter_ctx = ctx;
+            iter_ctx.consts[gen_for.var] = current;
+            int64_t cond_value = 0;
+            if (!gen_for.cond_expr ||
+                !EvalConstExprWithContext(*gen_for.cond_expr, iter_ctx,
+                                          &cond_value)) {
+              ErrorHere("generate for condition must be constant");
+              return false;
+            }
+            if (cond_value == 0) {
+              break;
+            }
+            std::string iter_prefix =
+                base_prefix + gen_for.var + std::to_string(current) + "__";
+            if (!EmitGenerateBlock(*gen_for.body, iter_ctx, iter_prefix,
+                                   module)) {
+              return false;
+            }
+            int64_t next_value = 0;
+            if (!gen_for.step_expr ||
+                !EvalConstExprWithContext(*gen_for.step_expr, iter_ctx,
+                                          &next_value)) {
+              ErrorHere("generate for step must be constant");
+              return false;
+            }
+            current = next_value;
+          }
+          if (iterations >= kMaxIterations) {
+            ErrorHere("generate for loop exceeds iteration limit");
+            return false;
+          }
+          break;
+        }
+        case GenerateItem::Kind::kIf: {
+          const auto& gen_if = item.gen_if;
+          if (!gen_if.then_block || !gen_if.condition) {
+            break;
+          }
+          int64_t cond_value = 0;
+          if (!EvalConstExprWithContext(*gen_if.condition, ctx, &cond_value)) {
+            ErrorHere("generate if condition must be constant");
+            return false;
+          }
+          const GenerateBlock* chosen =
+              (cond_value != 0) ? gen_if.then_block.get()
+                                : (gen_if.has_else ? gen_if.else_block.get()
+                                                   : nullptr);
+          if (chosen) {
+            std::string child_prefix = prefix;
+            if (!chosen->label.empty()) {
+              child_prefix += chosen->label + "__";
+            }
+            if (!EmitGenerateBlock(*chosen, ctx, child_prefix, module)) {
+              return false;
+            }
+          }
+          break;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool ParseGenerateLocalparam(std::vector<GenerateItem>* out_items) {
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected localparam name");
+        return false;
+      }
+      if (!MatchSymbol("=")) {
+        ErrorHere("expected '=' in localparam");
+        return false;
+      }
+      std::unique_ptr<Expr> expr = ParseExpr();
+      if (!expr) {
+        return false;
+      }
+      GenerateItem item;
+      item.kind = GenerateItem::Kind::kLocalparam;
+      item.localparam.name = name;
+      item.localparam.expr = std::move(expr);
+      out_items->push_back(std::move(item));
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after localparam");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseGenerateBlockBody(GenerateBlock* out_block,
+                              std::unordered_set<std::string>* genvars) {
+    out_block->label.clear();
+    out_block->items.clear();
+    if (MatchKeyword("begin")) {
+      if (MatchSymbol(":")) {
+        std::string label;
+        if (!ConsumeIdentifier(&label)) {
+          ErrorHere("expected label after ':'");
+          return false;
+        }
+        out_block->label = label;
+      }
+      while (true) {
+        if (MatchKeyword("end")) {
+          break;
+        }
+        if (!ParseGenerateItem(out_block, genvars)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return ParseGenerateItem(out_block, genvars);
+  }
+
+  bool ParseGenerateFor(std::vector<GenerateItem>* out_items,
+                        std::unordered_set<std::string>* genvars) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'for'");
+      return false;
+    }
+    std::string var;
+    if (!ConsumeIdentifier(&var)) {
+      ErrorHere("expected loop variable in generate for");
+      return false;
+    }
+    if (genvars->count(var) == 0) {
+      ErrorHere("generate for loop variable must be a genvar");
+      return false;
+    }
+    if (!MatchSymbol("=")) {
+      ErrorHere("expected '=' in generate for init");
+      return false;
+    }
+    std::unique_ptr<Expr> init_expr = ParseExpr();
+    if (!init_expr) {
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after generate for init");
+      return false;
+    }
+    std::unique_ptr<Expr> cond_expr = ParseExpr();
+    if (!cond_expr) {
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after generate for condition");
+      return false;
+    }
+    std::string step_lhs;
+    if (!ConsumeIdentifier(&step_lhs)) {
+      ErrorHere("expected loop variable in generate for step");
+      return false;
+    }
+    if (step_lhs != var) {
+      ErrorHere("generate for step must update loop variable");
+      return false;
+    }
+    if (!MatchSymbol("=")) {
+      ErrorHere("expected '=' in generate for step");
+      return false;
+    }
+    std::unique_ptr<Expr> step_expr = ParseExpr();
+    if (!step_expr) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after generate for step");
+      return false;
+    }
+    auto body = std::make_unique<GenerateBlock>();
+    if (!ParseGenerateBlockBody(body.get(), genvars)) {
+      return false;
+    }
+
+    GenerateItem item;
+    item.kind = GenerateItem::Kind::kFor;
+    item.gen_for.var = var;
+    item.gen_for.init_expr = std::move(init_expr);
+    item.gen_for.cond_expr = std::move(cond_expr);
+    item.gen_for.step_expr = std::move(step_expr);
+    item.gen_for.body = std::move(body);
+    item.gen_for.id = generate_id_++;
+    out_items->push_back(std::move(item));
+    return true;
+  }
+
+  bool ParseGenerateIf(std::vector<GenerateItem>* out_items,
+                       std::unordered_set<std::string>* genvars) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'if'");
+      return false;
+    }
+    std::unique_ptr<Expr> condition = ParseExpr();
+    if (!condition) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after generate if condition");
+      return false;
+    }
+    auto then_block = std::make_unique<GenerateBlock>();
+    if (!ParseGenerateBlockBody(then_block.get(), genvars)) {
+      return false;
+    }
+    std::unique_ptr<GenerateBlock> else_block;
+    bool has_else = false;
+    if (MatchKeyword("else")) {
+      has_else = true;
+      if (MatchKeyword("if")) {
+        auto nested_block = std::make_unique<GenerateBlock>();
+        if (!ParseGenerateIf(&nested_block->items, genvars)) {
+          return false;
+        }
+        else_block = std::move(nested_block);
+      } else {
+        else_block = std::make_unique<GenerateBlock>();
+        if (!ParseGenerateBlockBody(else_block.get(), genvars)) {
+          return false;
+        }
+      }
+    }
+    GenerateItem item;
+    item.kind = GenerateItem::Kind::kIf;
+    item.gen_if.condition = std::move(condition);
+    item.gen_if.then_block = std::move(then_block);
+    item.gen_if.has_else = has_else;
+    item.gen_if.else_block = std::move(else_block);
+    out_items->push_back(std::move(item));
+    return true;
+  }
+
+  bool ParseGenerateItem(GenerateBlock* out_block,
+                         std::unordered_set<std::string>* genvars) {
+    if (MatchKeyword("genvar")) {
+      return ParseGenvarDecl(genvars);
+    }
+    if (MatchKeyword("localparam")) {
+      return ParseGenerateLocalparam(&out_block->items);
+    }
+    if (MatchKeyword("for")) {
+      return ParseGenerateFor(&out_block->items, genvars);
+    }
+    if (MatchKeyword("if")) {
+      return ParseGenerateIf(&out_block->items, genvars);
+    }
+    if (MatchKeyword("begin")) {
+      auto block = std::make_unique<GenerateBlock>();
+      if (MatchSymbol(":")) {
+        std::string label;
+        if (!ConsumeIdentifier(&label)) {
+          ErrorHere("expected label after ':'");
+          return false;
+        }
+        block->label = label;
+      }
+      while (true) {
+        if (MatchKeyword("end")) {
+          break;
+        }
+        if (!ParseGenerateItem(block.get(), genvars)) {
+          return false;
+        }
+      }
+      GenerateItem item;
+      item.kind = GenerateItem::Kind::kBlock;
+      item.block = std::move(block);
+      out_block->items.push_back(std::move(item));
+      return true;
+    }
+    if (MatchKeyword("wire")) {
+      std::vector<GeneratedNetDecl> decls;
+      if (!ParseGenerateNetDecl(NetType::kWire, &decls)) {
+        return false;
+      }
+      for (auto& decl : decls) {
+        GenerateItem item;
+        item.kind = GenerateItem::Kind::kNet;
+        item.net = std::move(decl);
+        out_block->items.push_back(std::move(item));
+      }
+      return true;
+    }
+    if (MatchKeyword("reg")) {
+      std::vector<GeneratedNetDecl> decls;
+      if (!ParseGenerateNetDecl(NetType::kReg, &decls)) {
+        return false;
+      }
+      for (auto& decl : decls) {
+        GenerateItem item;
+        item.kind = GenerateItem::Kind::kNet;
+        item.net = std::move(decl);
+        out_block->items.push_back(std::move(item));
+      }
+      return true;
+    }
+    if (MatchKeyword("assign")) {
+      GenerateAssign assign;
+      if (!ParseGenerateAssign(&assign)) {
+        return false;
+      }
+      GenerateItem item;
+      item.kind = GenerateItem::Kind::kAssign;
+      item.assign = std::move(assign);
+      out_block->items.push_back(std::move(item));
+      return true;
+    }
+    if (MatchKeyword("always")) {
+      AlwaysBlock block;
+      if (!ParseAlwaysBlock(&block)) {
+        return false;
+      }
+      GenerateItem item;
+      item.kind = GenerateItem::Kind::kAlways;
+      item.always_block = std::move(block);
+      out_block->items.push_back(std::move(item));
+      return true;
+    }
+    if (MatchKeyword("initial")) {
+      AlwaysBlock block;
+      if (!ParseInitialBlock(&block)) {
+        return false;
+      }
+      GenerateItem item;
+      item.kind = GenerateItem::Kind::kInitial;
+      item.always_block = std::move(block);
+      out_block->items.push_back(std::move(item));
+      return true;
+    }
+    if (Peek().kind == TokenKind::kIdentifier) {
+      Instance instance;
+      if (!ParseGenerateInstance(&instance)) {
+        return false;
+      }
+      GenerateItem item;
+      item.kind = GenerateItem::Kind::kInstance;
+      item.instance = std::move(instance);
+      out_block->items.push_back(std::move(item));
+      return true;
+    }
+    ErrorHere("unsupported generate item in v0");
+    return false;
+  }
+
+  bool ParseGenerateBlock(Module* module) {
+    GenerateBlock block;
+    while (true) {
+      if (MatchKeyword("endgenerate")) {
+        break;
+      }
+      if (!ParseGenerateItem(&block, &current_genvars_)) {
+        return false;
+      }
+    }
+    GenerateContext ctx;
+    if (!EmitGenerateBlock(block, ctx, "", module)) {
+      return false;
+    }
+    return true;
+  }
+
   bool ParseAssign(Module* module) {
     std::string lhs;
     if (!ConsumeIdentifier(&lhs)) {
@@ -960,7 +2088,32 @@ class Parser {
       if (!msb_expr) {
         return false;
       }
-      if (MatchSymbol(":")) {
+      if (MatchSymbol("+:") || MatchSymbol("-:")) {
+        bool indexed_desc = (Previous().text == "-:");
+        std::unique_ptr<Expr> width_expr = ParseExpr();
+        if (!width_expr) {
+          return false;
+        }
+        int64_t width_value = 0;
+        if (!EvalConstExpr(*width_expr, &width_value) || width_value <= 0) {
+          ErrorHere("assign indexed part select width must be constant");
+          return false;
+        }
+        int64_t base_value = 0;
+        if (!EvalConstExpr(*msb_expr, &base_value)) {
+          ErrorHere("assign indexed part select base must be constant");
+          return false;
+        }
+        int64_t msb = indexed_desc ? base_value : (base_value + width_value - 1);
+        int64_t lsb = indexed_desc ? (base_value - width_value + 1) : base_value;
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return false;
+        }
+        assign.lhs_has_range = true;
+        assign.lhs_msb = static_cast<int>(msb);
+        assign.lhs_lsb = static_cast<int>(lsb);
+      } else if (MatchSymbol(":")) {
         std::unique_ptr<Expr> lsb_expr = ParseExpr();
         if (!lsb_expr) {
           return false;
@@ -1013,9 +2166,7 @@ class Parser {
 
   bool ParseInitial(Module* module) {
     AlwaysBlock block;
-    block.edge = EdgeKind::kInitial;
-    block.clock = "initial";
-    if (!ParseStatementBody(&block.statements)) {
+    if (!ParseInitialBlock(&block)) {
       return false;
     }
     module->always_blocks.push_back(std::move(block));
@@ -1023,6 +2174,32 @@ class Parser {
   }
 
   bool ParseAlways(Module* module) {
+    AlwaysBlock block;
+    if (!ParseAlwaysBlock(&block)) {
+      return false;
+    }
+    module->always_blocks.push_back(std::move(block));
+    return true;
+  }
+
+  bool ParseInitialBlock(AlwaysBlock* out_block) {
+    if (!out_block) {
+      return false;
+    }
+    AlwaysBlock block;
+    block.edge = EdgeKind::kInitial;
+    block.clock = "initial";
+    if (!ParseStatementBody(&block.statements)) {
+      return false;
+    }
+    *out_block = std::move(block);
+    return true;
+  }
+
+  bool ParseAlwaysBlock(AlwaysBlock* out_block) {
+    if (!out_block) {
+      return false;
+    }
     if (!MatchSymbol("@")) {
       ErrorHere("expected '@' after 'always'");
       return false;
@@ -1064,7 +2241,7 @@ class Parser {
       return false;
     }
 
-    module->always_blocks.push_back(std::move(block));
+    *out_block = std::move(block);
     return true;
   }
 
@@ -1815,6 +2992,8 @@ class Parser {
         op = 'S';
       } else if (MatchKeyword("unsigned")) {
         op = 'U';
+      } else if (MatchKeyword("clog2")) {
+        op = 'C';
       } else {
         ErrorHere("unsupported system function");
         return nullptr;
@@ -1835,6 +3014,16 @@ class Parser {
       expr->kind = ExprKind::kUnary;
       expr->unary_op = op;
       expr->operand = std::move(operand);
+      if (op == 'C') {
+        int64_t value = 0;
+        if (!EvalConstExpr(*expr, &value)) {
+          ErrorHere("$clog2 requires a constant expression in v0");
+          return nullptr;
+        }
+        auto folded = MakeNumberExpr(static_cast<uint64_t>(value));
+        folded->is_signed = true;
+        expr = std::move(folded);
+      }
     } else if (MatchSymbol("{")) {
       expr = ParseConcat();
     } else if (MatchSymbol("'")) {
@@ -1903,23 +3092,74 @@ class Parser {
         return nullptr;
       }
       bool base_is_array = false;
+      bool base_is_array_index = false;
       if (expr->kind == ExprKind::kIdentifier) {
         base_is_array = IsArrayName(expr->ident);
+      } else if (expr->kind == ExprKind::kIndex) {
+        base_is_array_index = IsArrayIndexExpr(*expr);
+      }
+      if (MatchSymbol("+:") || MatchSymbol("-:")) {
+        bool indexed_desc = (Previous().text == "-:");
+        if (base_is_array ||
+            (expr->kind == ExprKind::kIndex && !base_is_array_index)) {
+          ErrorHere("indexed part select requires identifier or array element");
+          return nullptr;
+        }
+        std::unique_ptr<Expr> width_expr = ParseExpr();
+        if (!width_expr) {
+          return nullptr;
+        }
+        int64_t width_value = 0;
+        if (!EvalConstExpr(*width_expr, &width_value) || width_value <= 0) {
+          ErrorHere("indexed part select width must be constant");
+          return nullptr;
+        }
+        auto base_clone = CloneExprSimple(*msb_expr);
+        auto width_minus = MakeNumberExpr(
+            static_cast<uint64_t>(width_value - 1));
+        std::unique_ptr<Expr> lsb_expr;
+        std::unique_ptr<Expr> msb_out;
+        if (indexed_desc) {
+          msb_out = std::move(msb_expr);
+          lsb_expr = MakeBinary('-', std::move(base_clone),
+                                std::move(width_minus));
+        } else {
+          lsb_expr = std::move(msb_expr);
+          msb_out = MakeBinary('+', std::move(base_clone),
+                               std::move(width_minus));
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return nullptr;
+        }
+        auto select = std::make_unique<Expr>();
+        select->kind = ExprKind::kSelect;
+        select->base = std::move(expr);
+        select->has_range = true;
+        select->indexed_range = true;
+        select->indexed_desc = indexed_desc;
+        select->indexed_width = static_cast<int>(width_value);
+        select->msb_expr = std::move(msb_out);
+        select->lsb_expr = std::move(lsb_expr);
+        int64_t msb = 0;
+        int64_t lsb = 0;
+        if (select->msb_expr && select->lsb_expr &&
+            TryEvalConstExpr(*select->msb_expr, &msb) &&
+            TryEvalConstExpr(*select->lsb_expr, &lsb)) {
+          select->msb = static_cast<int>(msb);
+          select->lsb = static_cast<int>(lsb);
+        }
+        expr = std::move(select);
+        continue;
       }
       if (MatchSymbol(":")) {
-        if (base_is_array || expr->kind == ExprKind::kIndex) {
-          ErrorHere("part select requires identifier");
+        if (base_is_array ||
+            (expr->kind == ExprKind::kIndex && !base_is_array_index)) {
+          ErrorHere("part select requires identifier or array element");
           return nullptr;
         }
         std::unique_ptr<Expr> lsb_expr = ParseExpr();
         if (!lsb_expr) {
-          return nullptr;
-        }
-        int64_t msb = 0;
-        int64_t lsb = 0;
-        if (!EvalConstExpr(*msb_expr, &msb) ||
-            !EvalConstExpr(*lsb_expr, &lsb)) {
-          ErrorHere("part select requires constant expressions");
           return nullptr;
         }
         if (!MatchSymbol("]")) {
@@ -1929,11 +3169,17 @@ class Parser {
         auto select = std::make_unique<Expr>();
         select->kind = ExprKind::kSelect;
         select->base = std::move(expr);
-        select->msb = static_cast<int>(msb);
-        select->lsb = static_cast<int>(lsb);
         select->has_range = true;
         select->msb_expr = std::move(msb_expr);
         select->lsb_expr = std::move(lsb_expr);
+        int64_t msb = 0;
+        int64_t lsb = 0;
+        if (select->msb_expr && select->lsb_expr &&
+            TryEvalConstExpr(*select->msb_expr, &msb) &&
+            TryEvalConstExpr(*select->lsb_expr, &lsb)) {
+          select->msb = static_cast<int>(msb);
+          select->lsb = static_cast<int>(lsb);
+        }
         expr = std::move(select);
         continue;
       }
@@ -2320,6 +3566,20 @@ class Parser {
     return false;
   }
 
+  bool IsArrayIndexExpr(const Expr& expr) const {
+    const Expr* current = &expr;
+    while (current->kind == ExprKind::kIndex) {
+      if (!current->base) {
+        return false;
+      }
+      current = current->base.get();
+    }
+    if (current->kind != ExprKind::kIdentifier) {
+      return false;
+    }
+    return IsArrayName(current->ident);
+  }
+
   void ErrorHere(const std::string& message) {
     const Token& token = Peek();
     diagnostics_->Add(Severity::kError, message,
@@ -2331,8 +3591,10 @@ class Parser {
   Diagnostics* diagnostics_ = nullptr;
   size_t pos_ = 0;
   std::unordered_map<std::string, int64_t> current_params_;
+  std::unordered_set<std::string> current_genvars_;
   Module* current_module_ = nullptr;
   ParseOptions options_;
+  int generate_id_ = 0;
 
   bool EvalConstExpr(const Expr& expr, int64_t* out_value) {
     switch (expr.kind) {
@@ -2376,6 +3638,21 @@ class Parser {
           case 'U':
             *out_value = value;
             return true;
+          case 'C': {
+            if (value < 0) {
+              ErrorHere("negative $clog2 argument");
+              return false;
+            }
+            uint64_t input = static_cast<uint64_t>(value);
+            uint64_t power = 1ull;
+            int64_t result = 0;
+            while (power < input) {
+              power <<= 1;
+              ++result;
+            }
+            *out_value = result;
+            return true;
+          }
           case '&': {
             uint64_t bits = static_cast<uint64_t>(value);
             *out_value = (bits == 0xFFFFFFFFFFFFFFFFull) ? 1 : 0;
@@ -2557,6 +3834,20 @@ class Parser {
           case 'U':
             *out_value = value;
             return true;
+          case 'C': {
+            if (value < 0) {
+              return false;
+            }
+            uint64_t input = static_cast<uint64_t>(value);
+            uint64_t power = 1ull;
+            int64_t result = 0;
+            while (power < input) {
+              power <<= 1;
+              ++result;
+            }
+            *out_value = result;
+            return true;
+          }
           case '&': {
             uint64_t bits = static_cast<uint64_t>(value);
             *out_value = (bits == 0xFFFFFFFFFFFFFFFFull) ? 1 : 0;

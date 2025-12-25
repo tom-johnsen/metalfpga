@@ -47,6 +47,9 @@ bool ExprIsSigned(const Expr& expr) {
       if (expr.unary_op == 'U') {
         return false;
       }
+      if (expr.unary_op == 'C') {
+        return false;
+      }
       return expr.operand ? ExprIsSigned(*expr.operand) : false;
     case ExprKind::kBinary: {
       bool lhs = expr.lhs ? ExprIsSigned(*expr.lhs) : false;
@@ -158,6 +161,9 @@ std::unique_ptr<Expr> CloneExpr(const Expr& expr) {
   out->msb = expr.msb;
   out->lsb = expr.lsb;
   out->has_range = expr.has_range;
+  out->indexed_range = expr.indexed_range;
+  out->indexed_desc = expr.indexed_desc;
+  out->indexed_width = expr.indexed_width;
   out->repeat = expr.repeat;
   if (expr.operand) {
     out->operand = CloneExpr(*expr.operand);
@@ -279,6 +285,21 @@ bool EvalConstExpr4State(const Expr& expr,
         case 'U':
           *out_value = NormalizeUnknown(value, width);
           return true;
+        case 'C': {
+          if (normalized.HasXorZ()) {
+            *out_value = AllX(32);
+            return true;
+          }
+          uint64_t input = normalized.value_bits;
+          uint64_t power = 1ull;
+          uint64_t result = 0;
+          while (power < input) {
+            power <<= 1;
+            ++result;
+          }
+          *out_value = MakeKnown(result, 32);
+          return true;
+        }
         case '&':
           {
             uint64_t mask = MaskForWidth(width);
@@ -343,7 +364,31 @@ bool EvalConstExpr4State(const Expr& expr,
           !EvalConstExpr4State(*expr.rhs, params, &rhs, error)) {
         return false;
       }
-      int width = std::max(ValueWidth(lhs), ValueWidth(rhs));
+      int lhs_width = ValueWidth(lhs);
+      int rhs_width = ValueWidth(rhs);
+      int width = std::max(lhs_width, rhs_width);
+      auto clamp_width = [](int value) { return std::min(value, 64); };
+      switch (expr.op) {
+        case '+':
+        case '-':
+          width = clamp_width(std::max(lhs_width, rhs_width) + 1);
+          break;
+        case '*':
+          width = clamp_width(lhs_width + rhs_width);
+          break;
+        case '/':
+        case '%':
+          width = clamp_width(lhs_width);
+          break;
+        case 'l':
+        case 'r':
+        case 'R':
+          width = clamp_width(lhs_width);
+          break;
+        default:
+          width = clamp_width(width);
+          break;
+      }
       FourStateValue left = NormalizeUnknown(lhs, width);
       FourStateValue right = NormalizeUnknown(rhs, width);
       uint64_t mask = MaskForWidth(width);

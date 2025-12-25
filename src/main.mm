@@ -119,6 +119,9 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
           expr.unary_op == '|' || expr.unary_op == '^') {
         return 1;
       }
+      if (expr.unary_op == 'C') {
+        return 32;
+      }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case gpga::ExprKind::kBinary:
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
@@ -135,6 +138,9 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       return std::max(expr.then_expr ? ExprWidth(*expr.then_expr, module) : 32,
                       expr.else_expr ? ExprWidth(*expr.else_expr, module) : 32);
     case gpga::ExprKind::kSelect: {
+      if (expr.indexed_range && expr.indexed_width > 0) {
+        return expr.indexed_width;
+      }
       int lo = std::min(expr.msb, expr.lsb);
       int hi = std::max(expr.msb, expr.lsb);
       return hi - lo + 1;
@@ -172,6 +178,9 @@ bool ExprSigned(const gpga::Expr& expr, const gpga::Module& module) {
         return true;
       }
       if (expr.unary_op == 'U') {
+        return false;
+      }
+      if (expr.unary_op == 'C') {
         return false;
       }
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
@@ -403,6 +412,9 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
       if (expr.unary_op == 'U') {
         return "$unsigned(" + operand + ")";
       }
+      if (expr.unary_op == 'C') {
+        return "$clog2(" + operand + ")";
+      }
       return std::string(1, expr.unary_op) + operand;
     }
     case gpga::ExprKind::kBinary:
@@ -465,6 +477,16 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
     }
     case gpga::ExprKind::kSelect: {
       std::string base = ExprToString(*expr.base, module);
+      if (expr.indexed_range && expr.indexed_width > 0) {
+        const gpga::Expr* start =
+            expr.indexed_desc ? expr.msb_expr.get() : expr.lsb_expr.get();
+        std::string start_expr =
+            start ? ExprToString(*start, module)
+                  : std::to_string(expr.indexed_desc ? expr.msb : expr.lsb);
+        std::string op = expr.indexed_desc ? "-:" : "+:";
+        return base + "[" + start_expr + " " + op + " " +
+               std::to_string(expr.indexed_width) + "]";
+      }
       if (expr.has_range) {
         return base + "[" + std::to_string(expr.msb) + ":" +
                std::to_string(expr.lsb) + "]";

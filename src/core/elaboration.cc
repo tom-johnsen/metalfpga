@@ -40,6 +40,61 @@ const Function* FindFunction(const Module& module, const std::string& name) {
   return nullptr;
 }
 
+void ForceUnsizedWidth(Expr* expr, int width) {
+  if (!expr) {
+    return;
+  }
+  switch (expr->kind) {
+    case ExprKind::kNumber:
+      if (!expr->has_width) {
+        expr->has_width = true;
+        expr->number_width = width;
+        if (width > 0 && width < 64) {
+          uint64_t mask = (1ull << width) - 1ull;
+          expr->number &= mask;
+          expr->value_bits &= mask;
+          expr->x_bits &= mask;
+          expr->z_bits &= mask;
+        }
+      }
+      return;
+    case ExprKind::kUnary:
+      ForceUnsizedWidth(expr->operand.get(), width);
+      return;
+    case ExprKind::kBinary:
+      ForceUnsizedWidth(expr->lhs.get(), width);
+      ForceUnsizedWidth(expr->rhs.get(), width);
+      return;
+    case ExprKind::kTernary:
+      ForceUnsizedWidth(expr->condition.get(), width);
+      ForceUnsizedWidth(expr->then_expr.get(), width);
+      ForceUnsizedWidth(expr->else_expr.get(), width);
+      return;
+    case ExprKind::kSelect:
+      ForceUnsizedWidth(expr->base.get(), width);
+      ForceUnsizedWidth(expr->msb_expr.get(), width);
+      ForceUnsizedWidth(expr->lsb_expr.get(), width);
+      return;
+    case ExprKind::kIndex:
+      ForceUnsizedWidth(expr->base.get(), width);
+      ForceUnsizedWidth(expr->index.get(), width);
+      return;
+    case ExprKind::kCall:
+      for (auto& arg : expr->call_args) {
+        ForceUnsizedWidth(arg.get(), width);
+      }
+      return;
+    case ExprKind::kConcat:
+      ForceUnsizedWidth(expr->repeat_expr.get(), width);
+      for (auto& element : expr->elements) {
+        ForceUnsizedWidth(element.get(), width);
+      }
+      return;
+    case ExprKind::kIdentifier:
+      return;
+  }
+}
+
 bool FindTopModule(const Program& program, std::string* top_name,
                    Diagnostics* diagnostics) {
   std::unordered_set<std::string> instantiated;
@@ -171,6 +226,7 @@ bool TryEvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
   if (!resolved) {
     return false;
   }
+  ForceUnsizedWidth(resolved.get(), 32);
   std::string error;
   if (!gpga::EvalConstExpr(*resolved, {}, out_value, &error)) {
     return false;
@@ -236,8 +292,10 @@ bool CloneStatementList(
 bool EvalConstExprValue(const Expr& expr, const ParamBindings& params,
                         int64_t* out_value, Diagnostics* diagnostics,
                         const std::string& context) {
+  auto widened = gpga::CloneExpr(expr);
+  ForceUnsizedWidth(widened.get(), 32);
   std::string error;
-  if (!gpga::EvalConstExpr(expr, params.values, out_value, &error)) {
+  if (!gpga::EvalConstExpr(*widened, params.values, out_value, &error)) {
     diagnostics->Add(Severity::kError, error + " in " + context);
     return false;
   }
@@ -253,6 +311,7 @@ bool EvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
   if (!resolved) {
     return false;
   }
+  ForceUnsizedWidth(resolved.get(), 32);
   std::string error;
   if (!gpga::EvalConstExpr(*resolved, {}, out_value, &error)) {
     diagnostics->Add(Severity::kError, error + " in " + context);
@@ -678,15 +737,42 @@ std::unique_ptr<Expr> CloneExprWithParams(
     if (!out->base) {
       return nullptr;
     }
-    int msb = 0;
-    int lsb = 0;
-    if (!ResolveSelectIndices(expr, params, &msb, &lsb, diagnostics,
-                              "select")) {
-      return nullptr;
-    }
-    out->msb = msb;
-    out->lsb = lsb;
     out->has_range = expr.has_range;
+    out->indexed_range = expr.indexed_range;
+    out->indexed_desc = expr.indexed_desc;
+    out->indexed_width = expr.indexed_width;
+    if (expr.msb_expr) {
+      out->msb_expr = CloneExprWithParams(*expr.msb_expr, rename, params,
+                                          module, diagnostics, bindings);
+      if (!out->msb_expr) {
+        return nullptr;
+      }
+    }
+    if (expr.lsb_expr) {
+      out->lsb_expr = CloneExprWithParams(*expr.lsb_expr, rename, params,
+                                          module, diagnostics, bindings);
+      if (!out->lsb_expr) {
+        return nullptr;
+      }
+    }
+    if (!expr.indexed_range) {
+      int msb = 0;
+      int lsb = 0;
+      if (!ResolveSelectIndices(expr, params, &msb, &lsb, diagnostics,
+                                "select")) {
+        return nullptr;
+      }
+      out->msb = msb;
+      out->lsb = lsb;
+    } else if (out->msb_expr && out->lsb_expr) {
+      int64_t msb = 0;
+      int64_t lsb = 0;
+      if (TryEvalConstExprWithParams(*out->msb_expr, params, &msb) &&
+          TryEvalConstExprWithParams(*out->lsb_expr, params, &lsb)) {
+        out->msb = static_cast<int>(msb);
+        out->lsb = static_cast<int>(lsb);
+      }
+    }
     return out;
   }
   if (expr.kind == ExprKind::kIndex) {
@@ -1216,6 +1302,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
           expr.unary_op == '|' || expr.unary_op == '^') {
         return 1;
       }
+      if (expr.unary_op == 'C') {
+        return 32;
+      }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case ExprKind::kBinary: {
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
@@ -1236,6 +1325,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
       return std::max(t, e);
     }
     case ExprKind::kSelect: {
+      if (expr.indexed_range && expr.indexed_width > 0) {
+        return expr.indexed_width;
+      }
       int lo = std::min(expr.msb, expr.lsb);
       int hi = std::max(expr.msb, expr.lsb);
       return hi - lo + 1;
@@ -1351,7 +1443,7 @@ std::unique_ptr<Expr> SimplifyExpr(std::unique_ptr<Expr> expr,
     if (!expr->base) {
       return expr;
     }
-    if (expr->has_range) {
+    if (expr->has_range && !expr->indexed_range) {
       int base_width = ExprWidth(*expr->base, module);
       int lo = std::min(expr->msb, expr->lsb);
       int hi = std::max(expr->msb, expr->lsb);
@@ -1547,6 +1639,56 @@ void CollectAssignedSignals(const Statement& statement,
   }
 }
 
+void CollectAssignedSignalsNoIndex(const Statement& statement,
+                                   std::unordered_set<std::string>* out) {
+  switch (statement.kind) {
+    case StatementKind::kAssign:
+      if (!statement.assign.lhs_index &&
+          statement.assign.lhs_indices.empty()) {
+        out->insert(statement.assign.lhs);
+      }
+      break;
+    case StatementKind::kIf:
+      for (const auto& stmt : statement.then_branch) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      for (const auto& stmt : statement.else_branch) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kBlock:
+      for (const auto& stmt : statement.block) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kCase:
+      for (const auto& item : statement.case_items) {
+        for (const auto& stmt : item.body) {
+          CollectAssignedSignalsNoIndex(stmt, out);
+        }
+      }
+      for (const auto& stmt : statement.default_branch) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kFor:
+      for (const auto& stmt : statement.for_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kWhile:
+      for (const auto& stmt : statement.while_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kRepeat:
+      for (const auto& stmt : statement.repeat_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+  }
+}
+
 void CollectIdentifiers(const Expr& expr,
                         std::unordered_set<std::string>* out) {
   switch (expr.kind) {
@@ -1583,6 +1725,12 @@ void CollectIdentifiers(const Expr& expr,
       if (expr.base) {
         CollectIdentifiers(*expr.base, out);
       }
+      if (expr.msb_expr) {
+        CollectIdentifiers(*expr.msb_expr, out);
+      }
+      if (expr.lsb_expr) {
+        CollectIdentifiers(*expr.lsb_expr, out);
+      }
       return;
     case ExprKind::kIndex:
       if (expr.base) {
@@ -1601,6 +1749,121 @@ void CollectIdentifiers(const Expr& expr,
       for (const auto& element : expr.elements) {
         CollectIdentifiers(*element, out);
       }
+      return;
+  }
+}
+
+struct SignalRef {
+  std::string name;
+  bool has_range = false;
+  int lo = 0;
+  int hi = 0;
+};
+
+void CollectSignalRefs(const Expr& expr, const ParamBindings& params,
+                       std::vector<SignalRef>* out) {
+  if (!out) {
+    return;
+  }
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+      out->push_back(SignalRef{expr.ident, false, 0, 0});
+      return;
+    case ExprKind::kSelect: {
+      bool added = false;
+      if (expr.base && expr.base->kind == ExprKind::kIdentifier) {
+        int64_t msb = expr.msb;
+        int64_t lsb = expr.lsb;
+        bool ok = true;
+        if (expr.msb_expr) {
+          ok = TryEvalConstExprWithParams(*expr.msb_expr, params, &msb);
+        }
+        if (expr.has_range) {
+          if (expr.lsb_expr) {
+            ok = ok && TryEvalConstExprWithParams(*expr.lsb_expr, params, &lsb);
+          } else {
+            lsb = msb;
+          }
+        } else {
+          lsb = msb;
+        }
+        if (ok) {
+          int lo = static_cast<int>(std::min(msb, lsb));
+          int hi = static_cast<int>(std::max(msb, lsb));
+          out->push_back(SignalRef{expr.base->ident, true, lo, hi});
+        } else {
+          out->push_back(SignalRef{expr.base->ident, false, 0, 0});
+        }
+        added = true;
+      }
+      if (!added && expr.base) {
+        CollectSignalRefs(*expr.base, params, out);
+      }
+      if (expr.msb_expr) {
+        CollectSignalRefs(*expr.msb_expr, params, out);
+      }
+      if (expr.lsb_expr) {
+        CollectSignalRefs(*expr.lsb_expr, params, out);
+      }
+      return;
+    }
+    case ExprKind::kIndex: {
+      bool added = false;
+      if (expr.base && expr.base->kind == ExprKind::kIdentifier &&
+          expr.index) {
+        int64_t index = 0;
+        if (TryEvalConstExprWithParams(*expr.index, params, &index)) {
+          out->push_back(
+              SignalRef{expr.base->ident, true, static_cast<int>(index),
+                        static_cast<int>(index)});
+        } else {
+          out->push_back(SignalRef{expr.base->ident, false, 0, 0});
+        }
+        added = true;
+      }
+      if (!added && expr.base) {
+        CollectSignalRefs(*expr.base, params, out);
+      }
+      if (expr.index) {
+        CollectSignalRefs(*expr.index, params, out);
+      }
+      return;
+    }
+    case ExprKind::kUnary:
+      if (expr.operand) {
+        CollectSignalRefs(*expr.operand, params, out);
+      }
+      return;
+    case ExprKind::kBinary:
+      if (expr.lhs) {
+        CollectSignalRefs(*expr.lhs, params, out);
+      }
+      if (expr.rhs) {
+        CollectSignalRefs(*expr.rhs, params, out);
+      }
+      return;
+    case ExprKind::kTernary:
+      if (expr.condition) {
+        CollectSignalRefs(*expr.condition, params, out);
+      }
+      if (expr.then_expr) {
+        CollectSignalRefs(*expr.then_expr, params, out);
+      }
+      if (expr.else_expr) {
+        CollectSignalRefs(*expr.else_expr, params, out);
+      }
+      return;
+    case ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        CollectSignalRefs(*arg, params, out);
+      }
+      return;
+    case ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        CollectSignalRefs(*element, params, out);
+      }
+      return;
+    case ExprKind::kNumber:
       return;
   }
 }
@@ -1633,7 +1896,11 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
     for (const auto& range : ranges) {
       if (hi >= range.lo && lo <= range.hi) {
         diagnostics->Add(Severity::kError,
-                         "overlapping drivers for signal '" + assign.lhs + "'");
+                         "overlapping drivers for signal '" + assign.lhs +
+                             "' (" + std::to_string(lo) + ":" +
+                             std::to_string(hi) + " overlaps " +
+                             std::to_string(range.lo) + ":" +
+                             std::to_string(range.hi) + ")");
         return false;
       }
     }
@@ -1643,7 +1910,7 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
   for (const auto& block : flat.always_blocks) {
     std::unordered_set<std::string> block_drives;
     for (const auto& stmt : block.statements) {
-      CollectAssignedSignals(stmt, &block_drives);
+      CollectAssignedSignalsNoIndex(stmt, &block_drives);
     }
     for (const auto& name : block_drives) {
       if (drivers.count(name) > 0 || partial_ranges.count(name) > 0) {
@@ -1663,33 +1930,54 @@ bool ValidateCombinationalAcyclic(const Module& flat,
   if (count == 0) {
     return true;
   }
-  std::unordered_map<std::string, size_t> lhs_to_index;
-  lhs_to_index.reserve(count);
+  struct AssignInfo {
+    size_t index = 0;
+    bool has_range = false;
+    int lo = 0;
+    int hi = 0;
+  };
+  std::unordered_map<std::string, std::vector<AssignInfo>> lhs_map;
+  lhs_map.reserve(count);
   for (size_t i = 0; i < count; ++i) {
-    lhs_to_index[flat.assigns[i].lhs] = i;
+    const auto& assign = flat.assigns[i];
+    AssignInfo info;
+    info.index = i;
+    info.has_range = assign.lhs_has_range;
+    if (assign.lhs_has_range) {
+      info.lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+      info.hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+    }
+    lhs_map[assign.lhs].push_back(info);
   }
 
   std::vector<int> indegree(count, 0);
   std::vector<std::vector<size_t>> edges(count);
+  ParamBindings empty_params;
   for (size_t i = 0; i < count; ++i) {
     const auto& assign = flat.assigns[i];
     if (!assign.rhs) {
       continue;
     }
-    std::unordered_set<std::string> deps;
-    CollectIdentifiers(*assign.rhs, &deps);
-    if (deps.count(assign.lhs) > 0) {
-      diagnostics->Add(Severity::kError,
-                       "combinational self-dependency on '" + assign.lhs + "'");
-      return false;
-    }
+    std::vector<SignalRef> deps;
+    CollectSignalRefs(*assign.rhs, empty_params, &deps);
+    std::unordered_set<size_t> seen;
     for (const auto& dep : deps) {
-      auto it = lhs_to_index.find(dep);
-      if (it == lhs_to_index.end()) {
+      auto it = lhs_map.find(dep.name);
+      if (it == lhs_map.end()) {
         continue;
       }
-      edges[it->second].push_back(i);
-      indegree[i]++;
+      for (const auto& driver : it->second) {
+        if (dep.has_range && driver.has_range) {
+          if (dep.hi < driver.lo || dep.lo > driver.hi) {
+            continue;
+          }
+        }
+        if (!seen.insert(driver.index).second) {
+          continue;
+        }
+        edges[driver.index].push_back(i);
+        indegree[i]++;
+      }
     }
   }
 
@@ -1782,6 +2070,31 @@ void WarnNonblockingArrayWrites(const Module& flat,
     for (const auto& stmt : block.statements) {
       walk(stmt);
     }
+  }
+}
+
+void WarnUndrivenWires(const Module& flat, Diagnostics* diagnostics,
+                       bool enable_4state) {
+  std::unordered_set<std::string> driven;
+  for (const auto& assign : flat.assigns) {
+    driven.insert(assign.lhs);
+  }
+  for (const auto& block : flat.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      CollectAssignedSignals(stmt, &driven);
+    }
+  }
+  for (const auto& net : flat.nets) {
+    if (net.type != NetType::kWire || net.array_size > 0) {
+      continue;
+    }
+    if (driven.count(net.name) > 0) {
+      continue;
+    }
+    diagnostics->Add(Severity::kWarning,
+                     "undriven wire '" + net.name + "' defaults to " +
+                         std::string(enable_4state ? "X" : "0") +
+                         " in v0");
   }
 }
 
@@ -2130,7 +2443,9 @@ bool InlineModule(const Program& program, const Module& module,
       if (connection.expr->kind == ExprKind::kIdentifier) {
         const std::string signal = rename(connection.expr->ident);
         child_port_map[port_name] = PortBinding{signal};
-      } else if (connection.expr->kind == ExprKind::kNumber) {
+        continue;
+      }
+      if (connection.expr->kind == ExprKind::kNumber) {
         if (child_port_dirs[port_name] != PortDir::kInput) {
           diagnostics->Add(Severity::kError,
                            "literal connection only allowed for input port '" +
@@ -2162,11 +2477,83 @@ bool InlineModule(const Program& program, const Module& module,
         literal_assign.lhs = literal_name;
         literal_assign.rhs = std::move(literal_expr);
         out->assigns.push_back(std::move(literal_assign));
-      } else {
-        diagnostics->Add(Severity::kError,
-                         "port connections must be identifiers or literals in v0");
+        continue;
+      }
+
+      auto resolved_expr = CloneExprWithParams(*connection.expr, rename, params,
+                                               &module, diagnostics, nullptr);
+      if (!resolved_expr) {
         return false;
       }
+      if (child_port_dirs[port_name] == PortDir::kInput) {
+        std::string expr_name =
+            prefix + instance.name + "__" + port_name + "__expr";
+        int width = child_port_widths[port_name];
+        if (!AddFlatNet(expr_name, width, child_port_signed[port_name],
+                        NetType::kWire, {},
+                        hier_prefix + "." + instance.name + "." + port_name +
+                            ".__expr",
+                        out, net_names, flat_to_hier, diagnostics)) {
+          return false;
+        }
+        child_port_map[port_name] = PortBinding{expr_name};
+        Assign expr_assign;
+        expr_assign.lhs = expr_name;
+        expr_assign.rhs = std::move(resolved_expr);
+        out->assigns.push_back(std::move(expr_assign));
+        continue;
+      }
+
+      std::string base_name;
+      int msb = 0;
+      int lsb = 0;
+      if (resolved_expr->kind == ExprKind::kSelect &&
+          resolved_expr->base &&
+          resolved_expr->base->kind == ExprKind::kIdentifier) {
+        base_name = resolved_expr->base->ident;
+        if (!ResolveSelectIndices(*resolved_expr, params, &msb, &lsb,
+                                  diagnostics, "port connection")) {
+          return false;
+        }
+      } else if (resolved_expr->kind == ExprKind::kIndex &&
+                 resolved_expr->base &&
+                 resolved_expr->base->kind == ExprKind::kIdentifier &&
+                 resolved_expr->index) {
+        base_name = resolved_expr->base->ident;
+        int64_t index = 0;
+        if (!EvalConstExprWithParams(*resolved_expr->index, params, &index,
+                                     diagnostics, "port connection index")) {
+          return false;
+        }
+        msb = static_cast<int>(index);
+        lsb = static_cast<int>(index);
+      } else {
+        diagnostics->Add(
+            Severity::kError,
+            "output port connections must be identifiers or constant selects in v0");
+        return false;
+      }
+      std::string temp_name =
+          prefix + instance.name + "__" + port_name + "__out";
+      int width = child_port_widths[port_name];
+      if (!AddFlatNet(temp_name, width, child_port_signed[port_name],
+                      NetType::kWire, {},
+                      hier_prefix + "." + instance.name + "." + port_name +
+                          ".__out",
+                      out, net_names, flat_to_hier, diagnostics)) {
+        return false;
+      }
+      child_port_map[port_name] = PortBinding{temp_name};
+      Assign out_assign;
+      out_assign.lhs = base_name;
+      out_assign.lhs_has_range = true;
+      out_assign.lhs_msb = msb;
+      out_assign.lhs_lsb = lsb;
+      auto rhs = std::make_unique<Expr>();
+      rhs->kind = ExprKind::kIdentifier;
+      rhs->ident = temp_name;
+      out_assign.rhs = std::move(rhs);
+      out->assigns.push_back(std::move(out_assign));
     }
 
     std::string child_prefix = prefix + instance.name + "__";
@@ -2274,6 +2661,7 @@ bool Elaborate(const Program& program, const std::string& top_name,
   WarnUndeclaredClocks(flat, diagnostics);
   WarnNonblockingInCombAlways(flat, diagnostics);
   WarnNonblockingArrayWrites(flat, diagnostics);
+  WarnUndrivenWires(flat, diagnostics, enable_4state);
 
   out_design->top = std::move(flat);
   out_design->flat_to_hier = std::move(flat_to_hier);

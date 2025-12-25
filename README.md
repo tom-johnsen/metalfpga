@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Compiles a subset of Verilog HDL into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.2+ - Core pipeline with reduction operators, signed arithmetic, and 4-state logic support. 79 passing test cases in validation suite.
+**Current Status**: v0.3 - Full generate/loop coverage, signed arithmetic, and 4-state logic support. 114 passing test cases in `verilog/pass/`.
 
 ## What is this?
 
@@ -10,7 +10,7 @@ metalfpga is a "GPGA" (GPU-based FPGA) compiler that:
 - Parses synthesizable Verilog RTL
 - Flattens module hierarchy through elaboration
 - Generates Metal compute shaders for GPU execution
-- Provides host-side runtime for simulation
+- Emits host-side stubs (runtime wiring is still TODO)
 
 This allows FPGA designers to prototype and validate hardware designs on GPUs before synthesis to actual hardware, leveraging massive parallelism for fast simulation.
 
@@ -33,7 +33,7 @@ cmake --build build
 # Generate Metal shader code
 ./build/metalfpga_cli path/to/design.v --emit-msl output.metal
 
-# Generate host runtime code
+# Generate host runtime stub
 ./build/metalfpga_cli path/to/design.v --emit-host output.mm
 
 # Specify top module (if multiple exist)
@@ -47,9 +47,9 @@ cmake --build build
 
 ### ✅ Working
 - Module declarations with hierarchy and parameters
-- Port declarations: `input`, `output`, `inout` (requires `--4state`)
+- Port declarations: `input`, `output`, `inout`
 - Port connections (named and positional)
-- Wire/reg declarations with bit-widths
+- Wire/reg declarations with bit-widths (including unpacked arrays)
 - Continuous assignments (`assign`)
 - Always blocks:
   - Combinational (`always @(*)`)
@@ -60,6 +60,10 @@ cmake --build build
   - `case` - Standard case matching
   - `casex` - Case with X don't-care matching (requires `--4state`)
   - `casez` - Case with Z/X don't-care matching (requires `--4state`)
+- Generate blocks with `genvar` and for/if-generate
+- For/while/repeat loops (constant bounds, unrolled during elaboration)
+- Initial blocks
+- Functions (inputs + single return assignment, inlined during elaboration)
 - Operators:
   - Arithmetic: `+`, `-`, `*`, `/`, `%`
   - Bitwise: `&`, `|`, `^`, `~`
@@ -71,11 +75,11 @@ cmake --build build
 - Signed arithmetic with `signed` keyword
 - Arithmetic right shift (`>>>`) with sign extension
 - Type casting: `$signed(...)`, `$unsigned(...)`
-- Bit/part selects: `signal[3]`, `signal[7:0]`
+- Bit/part selects: `signal[3]`, `signal[7:0]`, `signal[i +: 4]`, `signal[i -: 4]`
 - Concatenation: `{a, b, c}`
 - Replication: `{4{1'b0}}`
-- Memory arrays: `reg [7:0] mem [0:255]`
-- Parameters and localparams with expressions
+- Memory arrays: `reg [7:0] mem [0:255]` (multi-dimensional supported)
+- Parameters and localparams with expressions (including port widths)
 - Width mismatches (automatic extension/truncation)
 - 4-state logic (0/1/X/Z) with `--4state` flag:
   - X/Z literals (`8'bz`, `4'b10zx`, etc.)
@@ -85,20 +89,18 @@ cmake --build build
 ### ❌ Not Yet Implemented
 **High Priority**:
 - System tasks (`$display`, `$monitor`, `$finish`, etc.)
+- Tasks (procedural `task` blocks)
 
 **Medium Priority**:
-- Multi-dimensional arrays
-- `for`/`while`/`repeat` loops
-- `function`/`task` declarations
+- General timing controls (`#` delays)
+- Sensitivity lists beyond `@*` and `@(posedge/negedge clk)`
 
 **Low Priority**:
-- `initial` blocks
-- `generate` blocks with `genvar`
 - SystemVerilog constructs
 
 ## Test Suite
 
-**78 passing test cases** in `verilog/pass/`:
+**114 passing test cases** in `verilog/pass/`:
 - Arithmetic and logic operations
 - Reduction operators (all 6 variants: &, |, ^, ~&, ~|, ~^)
   - Comprehensive coverage: nested, slices, wide buses (64/128/256-bit)
@@ -110,6 +112,7 @@ cmake --build build
   - Mixed signed/unsigned operations
   - Unary operators on signed values
 - Module instantiation and hierarchy
+- Generate blocks (nested for/if-generate, genvar arithmetic)
 - Sequential and combinational logic
 - Memory read/write operations
 - Case statements (case, casex, casez)
@@ -118,7 +121,7 @@ cmake --build build
 - Width extension and truncation
 
 **In-development test coverage** in `verilog/`:
-- Features not yet implemented (loops, functions, generate blocks, etc.)
+- Additional tests and edge cases beyond the passing suite
 
 Run all passing tests:
 ```sh
@@ -172,4 +175,25 @@ This is an early-stage research prototype. The architecture is modular and desig
 
 ## License
 
-See repository for license details.
+MetalFPGA is dual-licensed:
+
+### Open Source (AGPL-3.0)
+
+Free for open-source projects, academic research, and personal use under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE) for details.
+
+**Key requirements under AGPL:**
+- You must share your source code if you distribute modified versions
+- If you run MetalFPGA as a network service (SaaS), you must make your modifications available
+- Any derivative works must also be licensed under AGPL-3.0
+
+### Commercial License
+
+For proprietary/closed-source integration, commercial licenses are available. Commercial licensing allows you to:
+- Use MetalFPGA in closed-source products
+- Deploy as SaaS without releasing modifications
+- Integrate into proprietary toolchains
+- Redistribute without copyleft restrictions
+
+**For commercial licensing inquiries:** support@tomsdata.no
+
+See [LICENSE.COMMERCIAL](LICENSE.COMMERCIAL) for terms.

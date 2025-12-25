@@ -22,7 +22,7 @@
 - nonblocking `<=` (blocking `=` allowed in v0 always)
 - numeric literals in instance connections (inputs only)
 - if / else
-- bit/part selects (`a[3]`, `a[7:0]`)
+- bit/part selects (`a[3]`, `a[7:0]`, `a[i +: 4]`, `a[i -: 4]`)
 - unpacked reg/wire arrays (`reg [7:0] mem [0:255]`, multi-dimensional)
 - indexed access (`mem[addr]`, `mem[row][col]`, `a[i]` for variable bit select)
 - parameter (module header and body, constant expressions only)
@@ -42,9 +42,11 @@
 - for loops (constant bounds, unrolled during elaboration)
 - while loops (constant bounds, unrolled during elaboration)
 - repeat loops (constant bounds, unrolled during elaboration)
+- generate blocks (genvar, for/if-generate with wire/reg/assign/instance/always/initial/localparam items; parameterized port widths supported)
 - instance parameter overrides (`#(...)`) applied
 - case / casez / casex (procedural)
 - `$signed(...)` / `$unsigned(...)` casts
+- `$clog2(...)` constant folding
 
 ### Operators implemented
 - `+` `-` `%`
@@ -67,7 +69,6 @@
 - Unsized literals are minimally sized and explicitly zext/trunc'd to the context width
 
 ## Planned
-- generate / genvar
 - tasks
 - remaining Verilog-2001 constructs as encountered
 

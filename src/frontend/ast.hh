@@ -86,6 +86,9 @@ struct Expr {
   int msb = 0;
   int lsb = 0;
   bool has_range = false;
+  bool indexed_range = false;
+  bool indexed_desc = false;
+  int indexed_width = 0;
   std::unique_ptr<Expr> msb_expr;
   std::unique_ptr<Expr> lsb_expr;
   std::vector<std::unique_ptr<Expr>> elements;

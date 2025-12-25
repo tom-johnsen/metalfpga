@@ -1,0 +1,52 @@
+MetalFPGA Commercial License Agreement
+
+Copyright (c) 2025-present Tom Johnsen (MetalFPGA Project)
+
+TERMS AND CONDITIONS FOR COMMERCIAL USE
+
+This Commercial License Agreement ("Agreement") grants you the right to use,
+modify, and integrate MetalFPGA into proprietary or closed-source software
+products, subject to the terms below.
+
+1. GRANT OF LICENSE
+
+   Subject to payment of applicable license fees and compliance with this
+   Agreement, you are granted a non-exclusive, non-transferable license to:
+
+   a) Use MetalFPGA in commercial products
+   b) Integrate MetalFPGA into closed-source applications
+   c) Distribute MetalFPGA as part of your products without source disclosure
+   d) Deploy MetalFPGA in SaaS/cloud services without releasing modifications
+
+2. RESTRICTIONS
+
+   You may not:
+   a) Sublicense, sell, or distribute MetalFPGA as a standalone product
+   b) Remove or modify copyright notices or attributions
+   c) Use the MetalFPGA name or trademarks without written permission
+
+3. LICENSE FEES
+
+   Commercial license fees are negotiated on a per-project or per-company basis.
+
+4. WARRANTY DISCLAIMER
+
+   THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+   FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+5. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY ARISING FROM USE OF THIS SOFTWARE.
+
+6. TERMINATION
+
+   This license terminates automatically upon breach of any term. Upon termination,
+   you must cease all use and destroy all copies of MetalFPGA.
+
+---
+
+For commercial licensing inquiries, please contact: support@tomsdata.no
+
+To use MetalFPGA under the open-source AGPL-3.0 license instead, see LICENSE file.

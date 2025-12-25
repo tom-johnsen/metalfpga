@@ -175,6 +175,87 @@ bool ParseUIntLiteral(const std::string& text, uint64_t* value_out) {
   return true;
 }
 
+std::string TrimWhitespace(const std::string& text) {
+  size_t start = 0;
+  while (start < text.size() &&
+         std::isspace(static_cast<unsigned char>(text[start])) != 0) {
+    ++start;
+  }
+  size_t end = text.size();
+  while (end > start &&
+         std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+    --end;
+  }
+  return text.substr(start, end - start);
+}
+
+bool SplitTopLevelBitwiseAnd(const std::string& expr, std::string* lhs_out,
+                             std::string* rhs_out) {
+  std::string trimmed = StripOuterParens(expr);
+  int depth = 0;
+  for (size_t i = 0; i < trimmed.size(); ++i) {
+    char c = trimmed[i];
+    if (c == '(') {
+      ++depth;
+      continue;
+    }
+    if (c == ')') {
+      --depth;
+      continue;
+    }
+    if (depth != 0 || c != '&') {
+      continue;
+    }
+    if (i + 1 < trimmed.size() && trimmed[i + 1] == '&') {
+      continue;
+    }
+    if (i > 0 && trimmed[i - 1] == '&') {
+      continue;
+    }
+    std::string lhs = TrimWhitespace(trimmed.substr(0, i));
+    std::string rhs = TrimWhitespace(trimmed.substr(i + 1));
+    if (lhs.empty() || rhs.empty()) {
+      continue;
+    }
+    if (lhs_out) {
+      *lhs_out = lhs;
+    }
+    if (rhs_out) {
+      *rhs_out = rhs;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool IsWidthMaskLiteral(const std::string& expr, int width) {
+  if (width >= 64) {
+    return false;
+  }
+  uint64_t mask = MaskForWidth64(width);
+  uint64_t value = 0;
+  return ParseUIntLiteral(StripOuterParens(expr), &value) && value == mask;
+}
+
+bool IsMaskedByWidth(const std::string& expr, int width) {
+  if (width >= 64) {
+    return false;
+  }
+  std::string lhs;
+  std::string rhs;
+  if (!SplitTopLevelBitwiseAnd(expr, &lhs, &rhs)) {
+    return false;
+  }
+  return IsWidthMaskLiteral(lhs, width) || IsWidthMaskLiteral(rhs, width);
+}
+
+std::string WrapIfNeeded(const std::string& expr) {
+  if (HasOuterParens(expr)) {
+    return expr;
+  }
+  return "(" + expr + ")";
+}
+
 bool IsZeroLiteral(const std::string& expr) {
   uint64_t value = 0;
   return ParseUIntLiteral(expr, &value) && value == 0;
@@ -190,8 +271,21 @@ std::string MaskForWidthExpr(const std::string& expr, int width) {
   if (ParseUIntLiteral(stripped, &literal) && (literal & ~mask) == 0) {
     return stripped;
   }
+  if (IsMaskedByWidth(expr, width)) {
+    return WrapIfNeeded(stripped);
+  }
+  std::string lhs;
+  std::string rhs;
+  if (SplitTopLevelBitwiseAnd(expr, &lhs, &rhs)) {
+    if (IsWidthMaskLiteral(lhs, width) && IsMaskedByWidth(rhs, width)) {
+      return WrapIfNeeded(rhs);
+    }
+    if (IsWidthMaskLiteral(rhs, width) && IsMaskedByWidth(lhs, width)) {
+      return WrapIfNeeded(lhs);
+    }
+  }
   if (width == 32) {
-    return "(" + expr + ")";
+    return WrapIfNeeded(expr);
   }
   std::string suffix = (width > 32) ? "ul" : "u";
   return "((" + expr + ") & " + std::to_string(mask) + suffix + ")";
@@ -246,6 +340,9 @@ bool ExprSigned(const Expr& expr, const Module& module) {
         return true;
       }
       if (expr.unary_op == 'U') {
+        return false;
+      }
+      if (expr.unary_op == 'C') {
         return false;
       }
       if (expr.unary_op == '&' || expr.unary_op == '|' ||
@@ -324,6 +421,12 @@ void CollectIdentifiers(const Expr& expr,
     case ExprKind::kSelect:
       if (expr.base) {
         CollectIdentifiers(*expr.base, out);
+      }
+      if (expr.msb_expr) {
+        CollectIdentifiers(*expr.msb_expr, out);
+      }
+      if (expr.lsb_expr) {
+        CollectIdentifiers(*expr.lsb_expr, out);
       }
       return;
     case ExprKind::kIndex:
@@ -439,6 +542,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
           expr.unary_op == '|' || expr.unary_op == '^') {
         return 1;
       }
+      if (expr.unary_op == 'C') {
+        return 32;
+      }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case ExprKind::kBinary: {
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
@@ -459,6 +565,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
       return std::max(t, e);
     }
     case ExprKind::kSelect: {
+      if (expr.indexed_range && expr.indexed_width > 0) {
+        return expr.indexed_width;
+      }
       int lo = std::min(expr.msb, expr.lsb);
       int hi = std::max(expr.msb, expr.lsb);
       return (hi - lo + 1);
@@ -613,6 +722,19 @@ void CollectAssignedSignals(const Statement& stmt,
   }
 }
 
+std::unordered_set<std::string> CollectDrivenSignals(const Module& module) {
+  std::unordered_set<std::string> driven;
+  for (const auto& assign : module.assigns) {
+    driven.insert(assign.lhs);
+  }
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      CollectAssignedSignals(stmt, &driven);
+    }
+  }
+  return driven;
+}
+
 std::string EmitExpr(const Expr& expr, const Module& module,
                      const std::unordered_set<std::string>& locals,
                      const std::unordered_set<std::string>& regs) {
@@ -755,6 +877,18 @@ std::string EmitExpr(const Expr& expr, const Module& module,
     }
     case ExprKind::kSelect: {
       std::string base = EmitExpr(*expr.base, module, locals, regs);
+      if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
+        int width = expr.indexed_width;
+        int base_width = ExprWidth(*expr.base, module);
+        std::string shift =
+            EmitExpr(*expr.lsb_expr, module, locals, regs);
+        std::string shift_val = "uint(" + shift + ")";
+        std::string shifted = "(" + base + " >> " + shift_val + ")";
+        std::string masked = MaskForWidthExpr(shifted, width);
+        std::string zero = ZeroForWidth(width);
+        return "((" + shift_val + ") >= " + std::to_string(base_width) +
+               "u ? " + zero + " : " + masked + ")";
+      }
       int lo = std::min(expr.msb, expr.lsb);
       int hi = std::max(expr.msb, expr.lsb);
       int width = hi - lo + 1;
@@ -1752,6 +1886,27 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         case ExprKind::kSelect: {
           FsExpr base = emit_expr4(*expr.base);
+          if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
+            int width = expr.indexed_width;
+            FsExpr shift = emit_expr4(*expr.lsb_expr);
+            std::string mask = mask_literal(width);
+            std::string idx = "uint(" + shift.val + ")";
+            std::string zero = literal_for_width(0, width);
+            std::string xguard =
+                "(" + shift.xz + " == " + literal_for_width(0, shift.width) +
+                ")";
+            std::string bounds =
+                "(" + idx + " < " + std::to_string(base.width) + "u)";
+            std::string val =
+                "((" + xguard + ") ? ((" + bounds + ") ? ((" + base.val +
+                " >> " + idx + ") & " + mask + ") : " + zero + ") : " + zero +
+                ")";
+            std::string xz =
+                "((" + xguard + ") ? ((" + bounds + ") ? ((" + base.xz +
+                " >> " + idx + ") & " + mask + ") : " + zero + ") : " + mask +
+                ")";
+            return FsExpr{val, xz, width};
+          }
           int lo = std::min(expr.msb, expr.lsb);
           int hi = std::max(expr.msb, expr.lsb);
           int width = hi - lo + 1;
@@ -2037,6 +2192,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         } else if (!IsOutputPort(module, net.name)) {
           locals.insert(net.name);
         }
+      }
+    }
+
+    auto driven = CollectDrivenSignals(module);
+    for (const auto& net : module.nets) {
+      if (net.array_size > 0 || net.type != NetType::kWire) {
+        continue;
+      }
+      if (driven.count(net.name) > 0 || locals.count(net.name) == 0) {
+        continue;
+      }
+      if (declared.insert(net.name).second) {
+        std::string type = TypeForWidth(net.width);
+        std::string zero = literal_for_width(0, net.width);
+        std::string mask = mask_literal(net.width);
+        out << "  " << type << " " << val_name(net.name) << " = " << zero
+            << ";\n";
+        out << "  " << type << " " << xz_name(net.name) << " = " << mask
+            << ";\n";
       }
     }
 
@@ -2879,6 +3053,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       } else if (!IsOutputPort(module, net.name)) {
         locals.insert(net.name);
       }
+    }
+  }
+
+  auto driven = CollectDrivenSignals(module);
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0 || net.type != NetType::kWire) {
+      continue;
+    }
+    if (driven.count(net.name) > 0 || locals.count(net.name) == 0) {
+      continue;
+    }
+    if (declared.insert(net.name).second) {
+      std::string type = TypeForWidth(net.width);
+      out << "  " << type << " " << net.name << " = " << ZeroForWidth(net.width)
+          << ";\n";
     }
   }
 
