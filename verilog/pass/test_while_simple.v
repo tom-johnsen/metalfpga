@@ -1,0 +1,11 @@
+module while_simple;
+  integer i;
+  reg [7:0] arr [0:7];
+  initial begin
+    i = 0;
+    while (i < 8) begin
+      arr[i] = i;
+      i = i + 1;
+    end
+  end
+endmodule

@@ -115,6 +115,100 @@ struct ParamBindings {
 
 std::unique_ptr<Expr> SimplifyExpr(std::unique_ptr<Expr> expr,
                                    const Module& module);
+std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width);
+std::unique_ptr<Expr> CloneExprWithParams(
+    const Expr& expr,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, Diagnostics* diagnostics);
+void CollectIdentifiers(const Expr& expr,
+                        std::unordered_set<std::string>* out);
+void CollectAssignedSignals(const Statement& statement,
+                            std::unordered_set<std::string>* out);
+int SignalWidth(const Module& module, const std::string& name);
+bool CloneStatement(
+    const Statement& statement,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module& flat_module, Statement* out,
+    Diagnostics* diagnostics);
+
+ParamBindings CloneParamBindings(const ParamBindings& params) {
+  ParamBindings out;
+  out.values = params.values;
+  out.exprs.reserve(params.exprs.size());
+  for (const auto& entry : params.exprs) {
+    out.exprs[entry.first] = gpga::CloneExpr(*entry.second);
+  }
+  return out;
+}
+
+bool TryEvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
+                                int64_t* out_value) {
+  Diagnostics scratch;
+  auto resolved = CloneExprWithParams(
+      expr, [](const std::string& ident) { return ident; }, params,
+      &scratch);
+  if (!resolved) {
+    return false;
+  }
+  std::string error;
+  if (!gpga::EvalConstExpr(*resolved, {}, out_value, &error)) {
+    return false;
+  }
+  return true;
+}
+
+void UpdateBindingsFromStatement(const Statement& statement,
+                                 const Module& flat_module,
+                                 ParamBindings* params) {
+  if (statement.kind == StatementKind::kAssign) {
+    const auto& assign = statement.assign;
+    if (assign.nonblocking || assign.lhs_index || !assign.rhs) {
+      params->values.erase(assign.lhs);
+      params->exprs.erase(assign.lhs);
+      return;
+    }
+    int64_t value = 0;
+    if (TryEvalConstExprWithParams(*assign.rhs, *params, &value)) {
+      params->values[assign.lhs] = value;
+      int width = SignalWidth(flat_module, assign.lhs);
+      params->exprs[assign.lhs] = MakeNumberExprSignedWidth(value, width);
+    } else {
+      params->values.erase(assign.lhs);
+      params->exprs.erase(assign.lhs);
+    }
+    return;
+  }
+  if (statement.kind == StatementKind::kBlock) {
+    for (const auto& inner : statement.block) {
+      UpdateBindingsFromStatement(inner, flat_module, params);
+    }
+    return;
+  }
+  std::unordered_set<std::string> assigned;
+  CollectAssignedSignals(statement, &assigned);
+  for (const auto& name : assigned) {
+    params->values.erase(name);
+    params->exprs.erase(name);
+  }
+}
+
+bool CloneStatementList(
+    const std::vector<Statement>& statements,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module& flat_module,
+    std::vector<Statement>* out, Diagnostics* diagnostics) {
+  ParamBindings current = CloneParamBindings(params);
+  for (const auto& stmt : statements) {
+    Statement cloned;
+    if (!CloneStatement(stmt, rename, current, flat_module, &cloned,
+                        diagnostics)) {
+      return false;
+    }
+    out->push_back(std::move(cloned));
+    UpdateBindingsFromStatement(stmt, flat_module, &current);
+  }
+  return true;
+}
 
 bool EvalConstExprValue(const Expr& expr, const ParamBindings& params,
                         int64_t* out_value, Diagnostics* diagnostics,
@@ -123,6 +217,147 @@ bool EvalConstExprValue(const Expr& expr, const ParamBindings& params,
   if (!gpga::EvalConstExpr(expr, params.values, out_value, &error)) {
     diagnostics->Add(Severity::kError, error + " in " + context);
     return false;
+  }
+  return true;
+}
+
+bool EvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
+                             int64_t* out_value, Diagnostics* diagnostics,
+                             const std::string& context) {
+  auto resolved = CloneExprWithParams(
+      expr, [](const std::string& ident) { return ident; }, params,
+      diagnostics);
+  if (!resolved) {
+    return false;
+  }
+  std::string error;
+  if (!gpga::EvalConstExpr(*resolved, {}, out_value, &error)) {
+    diagnostics->Add(Severity::kError, error + " in " + context);
+    return false;
+  }
+  return true;
+}
+
+bool ContainsAssignToVar(const Statement& statement,
+                          const std::string& name) {
+  if (statement.kind == StatementKind::kAssign) {
+    return statement.assign.lhs == name;
+  }
+  if (statement.kind == StatementKind::kIf) {
+    for (const auto& inner : statement.then_branch) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    for (const auto& inner : statement.else_branch) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kBlock) {
+    for (const auto& inner : statement.block) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kCase) {
+    for (const auto& item : statement.case_items) {
+      for (const auto& inner : item.body) {
+        if (ContainsAssignToVar(inner, name)) {
+          return true;
+        }
+      }
+    }
+    for (const auto& inner : statement.default_branch) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kFor) {
+    for (const auto& inner : statement.for_body) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kWhile) {
+    for (const auto& inner : statement.while_body) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kRepeat) {
+    for (const auto& inner : statement.repeat_body) {
+      if (ContainsAssignToVar(inner, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
+bool FindLoopVarUpdate(const std::vector<Statement>& body,
+                       const std::string& loop_var,
+                       const ParamBindings& params, int64_t* next_value,
+                       bool* found, Diagnostics* diagnostics) {
+  for (const auto& stmt : body) {
+    if (stmt.kind == StatementKind::kAssign) {
+      if (stmt.assign.lhs != loop_var) {
+        continue;
+      }
+      if (stmt.assign.lhs_index) {
+        diagnostics->Add(Severity::kError,
+                         "while-loop step cannot use indexed assignment in v0");
+        return false;
+      }
+      if (!stmt.assign.rhs) {
+        diagnostics->Add(Severity::kError,
+                         "while-loop step missing rhs in v0");
+        return false;
+      }
+      int64_t value = 0;
+      if (!EvalConstExprWithParams(*stmt.assign.rhs, params, &value,
+                                   diagnostics, "while-loop step")) {
+        return false;
+      }
+      *next_value = value;
+      *found = true;
+      continue;
+    }
+    if (stmt.kind == StatementKind::kIf || stmt.kind == StatementKind::kCase) {
+      if (ContainsAssignToVar(stmt, loop_var)) {
+        diagnostics->Add(Severity::kError,
+                         "while-loop step must be unconditional in v0");
+        return false;
+      }
+      continue;
+    }
+    if (stmt.kind == StatementKind::kBlock) {
+      if (!FindLoopVarUpdate(stmt.block, loop_var, params, next_value, found,
+                             diagnostics)) {
+        return false;
+      }
+      continue;
+    }
+    if (stmt.kind == StatementKind::kFor || stmt.kind == StatementKind::kWhile ||
+        stmt.kind == StatementKind::kRepeat) {
+      if (ContainsAssignToVar(stmt, loop_var)) {
+        diagnostics->Add(Severity::kError,
+                         "while-loop step cannot be inside a nested loop in v0");
+        return false;
+      }
+      continue;
+    }
   }
   return true;
 }
@@ -376,15 +611,8 @@ bool CloneStatement(
     return true;
   }
   if (statement.kind == StatementKind::kBlock) {
-    for (const auto& stmt : statement.block) {
-      Statement cloned;
-      if (!CloneStatement(stmt, rename, params, flat_module, &cloned,
-                          diagnostics)) {
-        return false;
-      }
-      out->block.push_back(std::move(cloned));
-    }
-    return true;
+    return CloneStatementList(statement.block, rename, params, flat_module,
+                              &out->block, diagnostics);
   }
   if (statement.kind == StatementKind::kCase) {
     out->case_kind = statement.case_kind;
@@ -420,6 +648,183 @@ bool CloneStatement(
         return false;
       }
       out->default_branch.push_back(std::move(cloned_stmt));
+    }
+    return true;
+  }
+  if (statement.kind == StatementKind::kFor) {
+    out->kind = StatementKind::kBlock;
+    if (!statement.for_init_rhs || !statement.for_condition ||
+        !statement.for_step_rhs) {
+      diagnostics->Add(Severity::kError, "malformed for-loop in v0");
+      return false;
+    }
+    if (statement.for_step_lhs != statement.for_init_lhs) {
+      diagnostics->Add(Severity::kError,
+                       "for-loop step must update loop variable in v0");
+      return false;
+    }
+    int64_t init_value = 0;
+    if (!EvalConstExprWithParams(*statement.for_init_rhs, params, &init_value,
+                                 diagnostics, "for-loop init")) {
+      return false;
+    }
+    int64_t current = init_value;
+    int iterations = 0;
+    const int kMaxIterations = 100000;
+    while (iterations++ < kMaxIterations) {
+      ParamBindings iter_params;
+      iter_params.values = params.values;
+      iter_params.exprs.reserve(params.exprs.size());
+      for (const auto& entry : params.exprs) {
+        iter_params.exprs[entry.first] = gpga::CloneExpr(*entry.second);
+      }
+      iter_params.values[statement.for_init_lhs] = current;
+      iter_params.exprs[statement.for_init_lhs] =
+          MakeNumberExprSignedWidth(current, 32);
+      int64_t cond_value = 0;
+      if (!EvalConstExprWithParams(*statement.for_condition, iter_params,
+                                   &cond_value, diagnostics,
+                                   "for-loop condition")) {
+        return false;
+      }
+      if (cond_value == 0) {
+        return true;
+      }
+      for (const auto& body_stmt : statement.for_body) {
+        Statement cloned;
+        if (!CloneStatement(body_stmt, rename, iter_params, flat_module,
+                            &cloned, diagnostics)) {
+          return false;
+        }
+        out->block.push_back(std::move(cloned));
+      }
+      int64_t step_value = 0;
+      if (!EvalConstExprWithParams(*statement.for_step_rhs, iter_params,
+                                   &step_value, diagnostics,
+                                   "for-loop step")) {
+        return false;
+      }
+      current = step_value;
+    }
+    diagnostics->Add(Severity::kError, "for-loop exceeds iteration limit");
+    return false;
+  }
+  if (statement.kind == StatementKind::kWhile) {
+    out->kind = StatementKind::kBlock;
+    if (!statement.while_condition) {
+      diagnostics->Add(Severity::kError, "malformed while-loop in v0");
+      return false;
+    }
+    std::unordered_set<std::string> cond_idents;
+    CollectIdentifiers(*statement.while_condition, &cond_idents);
+    if (cond_idents.empty()) {
+      int64_t cond_value = 0;
+      if (!EvalConstExprWithParams(*statement.while_condition, params,
+                                   &cond_value, diagnostics,
+                                   "while-loop condition")) {
+        return false;
+      }
+      if (cond_value == 0) {
+        return true;
+      }
+      diagnostics->Add(Severity::kError,
+                       "while-loop condition is constant true in v0");
+      return false;
+    }
+    std::unordered_map<std::string, int64_t> current_values;
+    for (const auto& ident : cond_idents) {
+      auto it = params.values.find(ident);
+      if (it == params.values.end()) {
+        diagnostics->Add(Severity::kWarning,
+                         "assuming 0 for while-loop variable '" + ident + "'");
+        current_values[ident] = 0;
+      } else {
+        current_values[ident] = it->second;
+      }
+    }
+    int iterations = 0;
+    const int kMaxIterations = 100000;
+    while (iterations++ < kMaxIterations) {
+      ParamBindings iter_params = CloneParamBindings(params);
+      for (const auto& entry : current_values) {
+        int width = SignalWidth(flat_module, entry.first);
+        iter_params.values[entry.first] = entry.second;
+        iter_params.exprs[entry.first] =
+            MakeNumberExprSignedWidth(entry.second, width);
+      }
+      int64_t cond_value = 0;
+      if (!EvalConstExprWithParams(*statement.while_condition, iter_params,
+                                   &cond_value, diagnostics,
+                                   "while-loop condition")) {
+        return false;
+      }
+      if (cond_value == 0) {
+        return true;
+      }
+      ParamBindings body_params = CloneParamBindings(iter_params);
+      for (const auto& body_stmt : statement.while_body) {
+        Statement cloned;
+        if (!CloneStatement(body_stmt, rename, body_params, flat_module,
+                            &cloned, diagnostics)) {
+          return false;
+        }
+        out->block.push_back(std::move(cloned));
+        UpdateBindingsFromStatement(body_stmt, flat_module, &body_params);
+      }
+      bool any_update = false;
+      std::unordered_map<std::string, int64_t> next_values;
+      for (const auto& entry : current_values) {
+        auto it = body_params.values.find(entry.first);
+        if (it == body_params.values.end()) {
+          diagnostics->Add(Severity::kError,
+                           "while-loop variable '" + entry.first +
+                               "' is not constant in v0");
+          return false;
+        }
+        next_values[entry.first] = it->second;
+        if (it->second != entry.second) {
+          any_update = true;
+        }
+      }
+      if (!any_update) {
+        diagnostics->Add(Severity::kError,
+                         "while-loop does not update condition variables in v0");
+        return false;
+      }
+      current_values = std::move(next_values);
+    }
+    diagnostics->Add(Severity::kError, "while-loop exceeds iteration limit");
+    return false;
+  }
+  if (statement.kind == StatementKind::kRepeat) {
+    out->kind = StatementKind::kBlock;
+    if (!statement.repeat_count) {
+      diagnostics->Add(Severity::kError, "malformed repeat in v0");
+      return false;
+    }
+    int64_t count = 0;
+    if (!EvalConstExprWithParams(*statement.repeat_count, params, &count,
+                                 diagnostics, "repeat count")) {
+      return false;
+    }
+    if (count < 0) {
+      diagnostics->Add(Severity::kError, "repeat count must be >= 0");
+      return false;
+    }
+    const int64_t kMaxIterations = 100000;
+    if (count > kMaxIterations) {
+      diagnostics->Add(Severity::kError, "repeat exceeds iteration limit");
+      return false;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      for (const auto& body_stmt : statement.repeat_body) {
+        Statement cloned;
+        if (!CloneStatement(body_stmt, rename, params, flat_module, &cloned,
+                            diagnostics)) {
+          return false;
+        }
+        out->block.push_back(std::move(cloned));
+      }
     }
     return true;
   }
@@ -468,6 +873,22 @@ std::unique_ptr<Expr> MakeNumberExpr(uint64_t value) {
   expr->kind = ExprKind::kNumber;
   expr->number = value;
   expr->value_bits = value;
+  return expr;
+}
+
+std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kNumber;
+  expr->is_signed = true;
+  expr->has_width = true;
+  expr->number_width = width;
+  uint64_t bits = static_cast<uint64_t>(value);
+  if (width < 64) {
+    uint64_t mask = (width <= 0) ? 0ull : ((1ull << width) - 1ull);
+    bits &= mask;
+  }
+  expr->number = bits;
+  expr->value_bits = bits;
   return expr;
 }
 
@@ -845,6 +1266,21 @@ void CollectAssignedSignals(const Statement& statement,
         CollectAssignedSignals(stmt, out);
       }
       break;
+    case StatementKind::kFor:
+      for (const auto& stmt : statement.for_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kWhile:
+      for (const auto& stmt : statement.while_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kRepeat:
+      for (const auto& stmt : statement.repeat_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
   }
 }
 
@@ -1058,6 +1494,21 @@ void WarnNonblockingArrayWrites(const Module& flat,
         walk(inner);
       }
     }
+    if (stmt.kind == StatementKind::kFor) {
+      for (const auto& inner : stmt.for_body) {
+        walk(inner);
+      }
+    }
+    if (stmt.kind == StatementKind::kWhile) {
+      for (const auto& inner : stmt.while_body) {
+        walk(inner);
+      }
+    }
+    if (stmt.kind == StatementKind::kRepeat) {
+      for (const auto& inner : stmt.repeat_body) {
+        walk(inner);
+      }
+    }
   };
   for (const auto& block : flat.always_blocks) {
     for (const auto& stmt : block.statements) {
@@ -1082,7 +1533,8 @@ bool IsDeclaredSignal(const Module& module, const std::string& name) {
 
 void WarnUndeclaredClocks(const Module& flat, Diagnostics* diagnostics) {
   for (const auto& block : flat.always_blocks) {
-    if (block.edge == EdgeKind::kCombinational) {
+    if (block.edge == EdgeKind::kCombinational ||
+        block.edge == EdgeKind::kInitial) {
       continue;
     }
     if (!IsDeclaredSignal(flat, block.clock)) {
@@ -1126,6 +1578,27 @@ bool HasNonblockingAssign(const Statement& stmt) {
       }
     }
     for (const auto& inner : stmt.default_branch) {
+      if (HasNonblockingAssign(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    for (const auto& inner : stmt.for_body) {
+      if (HasNonblockingAssign(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    for (const auto& inner : stmt.while_body) {
+      if (HasNonblockingAssign(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    for (const auto& inner : stmt.repeat_body) {
       if (HasNonblockingAssign(inner)) {
         return true;
       }
@@ -1312,12 +1785,9 @@ bool InlineModule(const Program& program, const Module& module,
     AlwaysBlock flattened;
     flattened.edge = block.edge;
     flattened.clock = rename(block.clock);
-    for (const auto& stmt : block.statements) {
-      Statement cloned;
-      if (!CloneStatement(stmt, rename, params, *out, &cloned, diagnostics)) {
-        return false;
-      }
-      flattened.statements.push_back(std::move(cloned));
+    if (!CloneStatementList(block.statements, rename, params, *out,
+                            &flattened.statements, diagnostics)) {
+      return false;
     }
     out->always_blocks.push_back(std::move(flattened));
   }

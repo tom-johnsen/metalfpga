@@ -34,6 +34,58 @@ int ValueWidth(const FourStateValue& value) {
   return value.width > 0 ? value.width : 64;
 }
 
+bool ExprIsSigned(const Expr& expr) {
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+      return false;
+    case ExprKind::kNumber:
+      return expr.is_signed;
+    case ExprKind::kUnary:
+      if (expr.unary_op == 'S') {
+        return true;
+      }
+      if (expr.unary_op == 'U') {
+        return false;
+      }
+      return expr.operand ? ExprIsSigned(*expr.operand) : false;
+    case ExprKind::kBinary: {
+      bool lhs = expr.lhs ? ExprIsSigned(*expr.lhs) : false;
+      bool rhs = expr.rhs ? ExprIsSigned(*expr.rhs) : false;
+      return lhs && rhs;
+    }
+    case ExprKind::kTernary: {
+      bool then_signed =
+          expr.then_expr ? ExprIsSigned(*expr.then_expr) : false;
+      bool else_signed =
+          expr.else_expr ? ExprIsSigned(*expr.else_expr) : false;
+      return then_signed && else_signed;
+    }
+    case ExprKind::kSelect:
+    case ExprKind::kIndex:
+      return expr.base ? ExprIsSigned(*expr.base) : false;
+    case ExprKind::kConcat:
+      return false;
+  }
+  return false;
+}
+
+int64_t SignedValue(uint64_t bits, int width) {
+  if (width <= 0) {
+    return 0;
+  }
+  if (width >= 64) {
+    return static_cast<int64_t>(bits);
+  }
+  uint64_t mask = (1ull << width) - 1ull;
+  bits &= mask;
+  uint64_t sign = 1ull << (width - 1);
+  if ((bits & sign) != 0) {
+    uint64_t extended = bits | (~mask);
+    return static_cast<int64_t>(extended);
+  }
+  return static_cast<int64_t>(bits);
+}
+
 FourStateValue ResizeValue(const FourStateValue& value, int width) {
   FourStateValue out = value;
   out.width = width;
@@ -290,6 +342,7 @@ bool EvalConstExpr4State(const Expr& expr,
       FourStateValue left = NormalizeUnknown(lhs, width);
       FourStateValue right = NormalizeUnknown(rhs, width);
       uint64_t mask = MaskForWidth(width);
+      bool signed_cmp = ExprIsSigned(*expr.lhs) && ExprIsSigned(*expr.rhs);
       switch (expr.op) {
         case '+':
           if (left.HasXorZ() || right.HasXorZ()) {
@@ -418,32 +471,44 @@ bool EvalConstExpr4State(const Expr& expr,
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(1);
           } else {
-            *out_value =
-                MakeKnown(left.value_bits < right.value_bits ? 1 : 0, 1);
+            bool result = signed_cmp
+                              ? (SignedValue(left.value_bits, width) <
+                                 SignedValue(right.value_bits, width))
+                              : (left.value_bits < right.value_bits);
+            *out_value = MakeKnown(result ? 1 : 0, 1);
           }
           return true;
         case '>':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(1);
           } else {
-            *out_value =
-                MakeKnown(left.value_bits > right.value_bits ? 1 : 0, 1);
+            bool result = signed_cmp
+                              ? (SignedValue(left.value_bits, width) >
+                                 SignedValue(right.value_bits, width))
+                              : (left.value_bits > right.value_bits);
+            *out_value = MakeKnown(result ? 1 : 0, 1);
           }
           return true;
         case 'L':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(1);
           } else {
-            *out_value =
-                MakeKnown(left.value_bits <= right.value_bits ? 1 : 0, 1);
+            bool result = signed_cmp
+                              ? (SignedValue(left.value_bits, width) <=
+                                 SignedValue(right.value_bits, width))
+                              : (left.value_bits <= right.value_bits);
+            *out_value = MakeKnown(result ? 1 : 0, 1);
           }
           return true;
         case 'G':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(1);
           } else {
-            *out_value =
-                MakeKnown(left.value_bits >= right.value_bits ? 1 : 0, 1);
+            bool result = signed_cmp
+                              ? (SignedValue(left.value_bits, width) >=
+                                 SignedValue(right.value_bits, width))
+                              : (left.value_bits >= right.value_bits);
+            *out_value = MakeKnown(result ? 1 : 0, 1);
           }
           return true;
         case 'l':

@@ -650,6 +650,8 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
   for (const auto& block : top.always_blocks) {
     if (block.edge == gpga::EdgeKind::kCombinational) {
       os << "  - always @*\n";
+    } else if (block.edge == gpga::EdgeKind::kInitial) {
+      os << "  - initial\n";
     } else {
       os << "  - always @("
          << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")

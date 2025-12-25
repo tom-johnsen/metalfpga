@@ -1808,7 +1808,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     std::unordered_set<std::string> sequential_regs;
     for (const auto& block : module.always_blocks) {
-      if (block.edge == EdgeKind::kCombinational) {
+      if (block.edge == EdgeKind::kCombinational ||
+          block.edge == EdgeKind::kInitial) {
         continue;
       }
       for (const auto& stmt : block.statements) {
@@ -2123,7 +2124,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     bool has_sequential = false;
     for (const auto& block : module.always_blocks) {
-      if (block.edge != EdgeKind::kCombinational) {
+      if (block.edge == EdgeKind::kPosedge ||
+          block.edge == EdgeKind::kNegedge) {
         has_sequential = true;
         break;
       }
@@ -2394,7 +2396,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       };
 
       for (const auto& block : module.always_blocks) {
-        if (block.edge == EdgeKind::kCombinational) {
+        if (block.edge == EdgeKind::kCombinational ||
+            block.edge == EdgeKind::kInitial) {
           continue;
         }
         out << "  // always @(";
@@ -2438,7 +2441,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
   std::unordered_set<std::string> sequential_regs;
   for (const auto& block : module.always_blocks) {
-    if (block.edge == EdgeKind::kCombinational) {
+    if (block.edge == EdgeKind::kCombinational ||
+        block.edge == EdgeKind::kInitial) {
       continue;
     }
     for (const auto& stmt : block.statements) {
@@ -2748,7 +2752,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
   bool has_sequential = false;
   for (const auto& block : module.always_blocks) {
-    if (block.edge != EdgeKind::kCombinational) {
+    if (block.edge == EdgeKind::kPosedge ||
+        block.edge == EdgeKind::kNegedge) {
       has_sequential = true;
       break;
     }
@@ -3037,7 +3042,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     for (const auto& block : module.always_blocks) {
-      if (block.edge == EdgeKind::kCombinational) {
+      if (block.edge == EdgeKind::kCombinational ||
+          block.edge == EdgeKind::kInitial) {
         continue;
       }
       out << "  // always @(";

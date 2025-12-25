@@ -117,6 +117,9 @@ enum class StatementKind {
   kIf,
   kBlock,
   kCase,
+  kFor,
+  kWhile,
+  kRepeat,
 };
 
 enum class CaseKind {
@@ -136,6 +139,16 @@ struct Statement {
   StatementKind kind = StatementKind::kAssign;
   CaseKind case_kind = CaseKind::kCase;
   SequentialAssign assign;
+  std::string for_init_lhs;
+  std::unique_ptr<Expr> for_init_rhs;
+  std::unique_ptr<Expr> for_condition;
+  std::string for_step_lhs;
+  std::unique_ptr<Expr> for_step_rhs;
+  std::vector<Statement> for_body;
+  std::unique_ptr<Expr> while_condition;
+  std::vector<Statement> while_body;
+  std::unique_ptr<Expr> repeat_count;
+  std::vector<Statement> repeat_body;
   std::unique_ptr<Expr> condition;
   std::vector<Statement> then_branch;
   std::vector<Statement> else_branch;
@@ -149,6 +162,7 @@ enum class EdgeKind {
   kPosedge,
   kNegedge,
   kCombinational,
+  kInitial,
 };
 
 struct AlwaysBlock {

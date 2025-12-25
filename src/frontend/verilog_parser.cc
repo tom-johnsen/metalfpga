@@ -273,6 +273,12 @@ class Parser {
         }
         continue;
       }
+      if (MatchKeyword("integer")) {
+        if (!ParseIntegerDecl(&module)) {
+          return false;
+        }
+        continue;
+      }
       if (MatchKeyword("reg")) {
         if (!ParseRegDecl(&module)) {
           return false;
@@ -299,6 +305,12 @@ class Parser {
       }
       if (MatchKeyword("always")) {
         if (!ParseAlways(&module)) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("initial")) {
+        if (!ParseInitial(&module)) {
           return false;
         }
         continue;
@@ -687,6 +699,30 @@ class Parser {
     return true;
   }
 
+  bool ParseIntegerDecl(Module* module) {
+    const int width = 32;
+    const bool is_signed = true;
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in integer declaration");
+        return false;
+      }
+      AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), 0,
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>());
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after integer declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
   bool ParseAssign(Module* module) {
     std::string lhs;
     if (!ConsumeIdentifier(&lhs)) {
@@ -748,6 +784,17 @@ class Parser {
     }
     assign.rhs = std::move(rhs);
     module->assigns.push_back(std::move(assign));
+    return true;
+  }
+
+  bool ParseInitial(Module* module) {
+    AlwaysBlock block;
+    block.edge = EdgeKind::kInitial;
+    block.clock = "initial";
+    if (!ParseStatementBody(&block.statements)) {
+      return false;
+    }
+    module->always_blocks.push_back(std::move(block));
     return true;
   }
 
@@ -823,6 +870,15 @@ class Parser {
     if (MatchKeyword("if")) {
       return ParseIfStatement(out_statement);
     }
+    if (MatchKeyword("for")) {
+      return ParseForStatement(out_statement);
+    }
+    if (MatchKeyword("while")) {
+      return ParseWhileStatement(out_statement);
+    }
+    if (MatchKeyword("repeat")) {
+      return ParseRepeatStatement(out_statement);
+    }
     if (MatchKeyword("casez")) {
       return ParseCaseStatement(out_statement, CaseKind::kCaseZ);
     }
@@ -836,6 +892,114 @@ class Parser {
       return ParseBlockStatement(out_statement);
     }
     return ParseSequentialAssign(out_statement);
+  }
+
+  bool ParseForStatement(Statement* out_statement) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'for'");
+      return false;
+    }
+    std::string init_lhs;
+    if (!ConsumeIdentifier(&init_lhs)) {
+      ErrorHere("expected loop variable in for init");
+      return false;
+    }
+    if (!MatchSymbol("=")) {
+      ErrorHere("expected '=' in for init");
+      return false;
+    }
+    std::unique_ptr<Expr> init_rhs = ParseExpr();
+    if (!init_rhs) {
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after for init");
+      return false;
+    }
+    std::unique_ptr<Expr> condition = ParseExpr();
+    if (!condition) {
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after for condition");
+      return false;
+    }
+    std::string step_lhs;
+    if (!ConsumeIdentifier(&step_lhs)) {
+      ErrorHere("expected loop variable in for step");
+      return false;
+    }
+    if (!MatchSymbol("=")) {
+      ErrorHere("expected '=' in for step");
+      return false;
+    }
+    std::unique_ptr<Expr> step_rhs = ParseExpr();
+    if (!step_rhs) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after for step");
+      return false;
+    }
+
+    Statement stmt;
+    stmt.kind = StatementKind::kFor;
+    stmt.for_init_lhs = std::move(init_lhs);
+    stmt.for_init_rhs = std::move(init_rhs);
+    stmt.for_condition = std::move(condition);
+    stmt.for_step_lhs = std::move(step_lhs);
+    stmt.for_step_rhs = std::move(step_rhs);
+    if (!ParseStatementBody(&stmt.for_body)) {
+      return false;
+    }
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
+  bool ParseWhileStatement(Statement* out_statement) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'while'");
+      return false;
+    }
+    std::unique_ptr<Expr> condition = ParseExpr();
+    if (!condition) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after while condition");
+      return false;
+    }
+    Statement stmt;
+    stmt.kind = StatementKind::kWhile;
+    stmt.while_condition = std::move(condition);
+    if (!ParseStatementBody(&stmt.while_body)) {
+      return false;
+    }
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
+  bool ParseRepeatStatement(Statement* out_statement) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'repeat'");
+      return false;
+    }
+    std::unique_ptr<Expr> count = ParseExpr();
+    if (!count) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after repeat count");
+      return false;
+    }
+    Statement stmt;
+    stmt.kind = StatementKind::kRepeat;
+    stmt.repeat_count = std::move(count);
+    if (!ParseStatementBody(&stmt.repeat_body)) {
+      return false;
+    }
+    *out_statement = std::move(stmt);
+    return true;
   }
 
   bool ParseBlockStatement(Statement* out_statement) {

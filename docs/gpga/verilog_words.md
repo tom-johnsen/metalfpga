@@ -10,9 +10,11 @@
 - assign
 - module instantiation (named + positional port connections)
 - reg
+- integer (32-bit signed reg)
 - signed (ports/nets)
 - always
 - always @*
+- initial
 - begin / end
 - posedge
 - negedge
@@ -35,6 +37,9 @@
 - shifts (`<<`, `>>`)
 - arithmetic shift (`>>>`)
 - nested begin/end blocks inside always/if
+- for loops (constant bounds, unrolled during elaboration)
+- while loops (constant bounds, unrolled during elaboration)
+- repeat loops (constant bounds, unrolled during elaboration)
 - instance parameter overrides (`#(...)`) applied
 - case / casez / casex (procedural)
 - `$signed(...)` / `$unsigned(...)` casts
@@ -61,7 +66,6 @@
 
 ## Planned
 - generate / genvar
-- for / while / repeat
 - functions / tasks
 - remaining Verilog-2001 constructs as encountered
 
