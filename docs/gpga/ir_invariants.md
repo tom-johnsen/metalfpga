@@ -1,4 +1,4 @@
-# Flattened Netlist Invariants (v0)
+# Flattened Netlist Invariants
 
 This document describes what the elaboration step guarantees about the
 flattened netlist it produces.
@@ -20,9 +20,11 @@ flattened netlist it produces.
 - Named and positional port connections are resolved to flat signals.
 - Literal connections are allowed only for input ports; they synthesize an
   internal wire plus a constant assign.
-- Unconnected inputs are defaulted to 0 with a warning and a synthesized assign.
+- Unconnected inputs are defaulted to 0 (2-state) or X (4-state) with a
+  warning and a synthesized assign.
 - Unconnected outputs are allowed with a warning.
 - Multiple drivers for the same signal are rejected as an error.
+- Combinational cycles in continuous assigns are rejected as an error.
 
 ## Expressions
 - All selects are constant indices (bit or part select) after elaboration.

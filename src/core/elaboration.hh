@@ -14,8 +14,9 @@ struct ElaboratedDesign {
 };
 
 bool Elaborate(const Program& program, ElaboratedDesign* out_design,
-               Diagnostics* diagnostics);
+               Diagnostics* diagnostics, bool enable_4state = false);
 bool Elaborate(const Program& program, const std::string& top_name,
-               ElaboratedDesign* out_design, Diagnostics* diagnostics);
+               ElaboratedDesign* out_design, Diagnostics* diagnostics,
+               bool enable_4state = false);
 
 }  // namespace gpga

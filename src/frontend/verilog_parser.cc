@@ -137,10 +137,12 @@ std::vector<Token> Tokenize(const std::string& text) {
 
 class Parser {
  public:
-  Parser(std::string path, std::vector<Token> tokens, Diagnostics* diagnostics)
+  Parser(std::string path, std::vector<Token> tokens, Diagnostics* diagnostics,
+         const ParseOptions& options)
       : path_(std::move(path)),
         tokens_(std::move(tokens)),
-        diagnostics_(diagnostics) {}
+        diagnostics_(diagnostics),
+        options_(options) {}
 
   bool ParseProgram(Program* out_program) {
     while (!IsAtEnd()) {
@@ -284,13 +286,13 @@ class Parser {
         continue;
       }
       if (MatchKeyword("parameter")) {
-        if (!ParseParameterDecl(&module)) {
+        if (!ParseParameterDecl(&module, false)) {
           return false;
         }
         continue;
       }
       if (MatchKeyword("localparam")) {
-        if (!ParseParameterDecl(&module)) {
+        if (!ParseParameterDecl(&module, true)) {
           return false;
         }
         continue;
@@ -323,10 +325,14 @@ class Parser {
     PortDir current_dir = PortDir::kInout;
     int current_width = 1;
     bool current_is_reg = false;
+    std::shared_ptr<Expr> current_msb;
+    std::shared_ptr<Expr> current_lsb;
     while (true) {
       PortDir dir = current_dir;
       int width = current_width;
       bool is_reg = current_is_reg;
+      std::shared_ptr<Expr> range_msb = current_msb;
+      std::shared_ptr<Expr> range_lsb = current_lsb;
       if (MatchKeyword("input")) {
         dir = PortDir::kInput;
         width = 1;
@@ -334,12 +340,15 @@ class Parser {
         if (MatchKeyword("wire")) {
           is_reg = false;
         }
-        if (!ParseRange(&width)) {
+        bool had_range = false;
+        if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
         current_dir = dir;
         current_width = width;
         current_is_reg = is_reg;
+        current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
+        current_lsb = had_range ? range_lsb : std::shared_ptr<Expr>();
       } else if (MatchKeyword("output")) {
         dir = PortDir::kOutput;
         width = 1;
@@ -349,12 +358,15 @@ class Parser {
         } else if (MatchKeyword("wire")) {
           is_reg = false;
         }
-        if (!ParseRange(&width)) {
+        bool had_range = false;
+        if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
         current_dir = dir;
         current_width = width;
         current_is_reg = is_reg;
+        current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
+        current_lsb = had_range ? range_lsb : std::shared_ptr<Expr>();
       } else if (MatchKeyword("inout")) {
         dir = PortDir::kInout;
         width = 1;
@@ -362,23 +374,35 @@ class Parser {
         if (MatchKeyword("wire")) {
           is_reg = false;
         }
-        if (!ParseRange(&width)) {
+        bool had_range = false;
+        if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
         current_dir = dir;
         current_width = width;
         current_is_reg = is_reg;
+        current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
+        current_lsb = had_range ? range_lsb : std::shared_ptr<Expr>();
       } else {
-        ParseRange(&width);
+        bool had_range = false;
+        if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
+          return false;
+        }
+        if (!had_range) {
+          range_msb = current_msb;
+          range_lsb = current_lsb;
+        }
       }
       std::string name;
       if (!ConsumeIdentifier(&name)) {
         ErrorHere("expected port name");
         return false;
       }
-      AddOrUpdatePort(module, name, dir, width);
+      AddOrUpdatePort(module, name, dir, width, range_msb, range_lsb);
       if (dir == PortDir::kOutput && is_reg) {
-        AddOrUpdateNet(module, name, NetType::kReg, width);
+        AddOrUpdateNet(module, name, NetType::kReg, width, range_msb,
+                       range_lsb, 0, std::shared_ptr<Expr>(),
+                       std::shared_ptr<Expr>());
       }
       if (MatchSymbol(",")) {
         continue;
@@ -402,7 +426,9 @@ class Parser {
       }
     }
     int width = 1;
-    if (!ParseRange(&width)) {
+    std::shared_ptr<Expr> range_msb;
+    std::shared_ptr<Expr> range_lsb;
+    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
       return false;
     }
     while (true) {
@@ -411,9 +437,11 @@ class Parser {
         ErrorHere("expected identifier in declaration");
         return false;
       }
-      AddOrUpdatePort(module, name, dir, width);
+      AddOrUpdatePort(module, name, dir, width, range_msb, range_lsb);
       if (dir == PortDir::kOutput && is_reg) {
-        AddOrUpdateNet(module, name, NetType::kReg, width);
+        AddOrUpdateNet(module, name, NetType::kReg, width, range_msb,
+                       range_lsb, 0, std::shared_ptr<Expr>(),
+                       std::shared_ptr<Expr>());
       }
       if (MatchSymbol(",")) {
         continue;
@@ -429,7 +457,9 @@ class Parser {
 
   bool ParseWireDecl(Module* module) {
     int width = 1;
-    if (!ParseRange(&width)) {
+    std::shared_ptr<Expr> range_msb;
+    std::shared_ptr<Expr> range_lsb;
+    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
       return false;
     }
     while (true) {
@@ -439,13 +469,26 @@ class Parser {
         return false;
       }
       std::unique_ptr<Expr> init;
+      int array_size = 0;
+      std::shared_ptr<Expr> array_msb;
+      std::shared_ptr<Expr> array_lsb;
+      bool had_array = false;
+      if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+        return false;
+      }
+      if (!had_array) {
+        array_size = 0;
+        array_msb.reset();
+        array_lsb.reset();
+      }
       if (MatchSymbol("=")) {
         init = ParseExpr();
         if (!init) {
           return false;
         }
       }
-      module->nets.push_back(Net{NetType::kWire, name, width});
+      AddOrUpdateNet(module, name, NetType::kWire, width, range_msb, range_lsb,
+                     array_size, array_msb, array_lsb);
       if (init) {
         module->assigns.push_back(Assign{name, std::move(init)});
       }
@@ -463,7 +506,9 @@ class Parser {
 
   bool ParseRegDecl(Module* module) {
     int width = 1;
-    if (!ParseRange(&width)) {
+    std::shared_ptr<Expr> range_msb;
+    std::shared_ptr<Expr> range_lsb;
+    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
       return false;
     }
     while (true) {
@@ -472,7 +517,20 @@ class Parser {
         ErrorHere("expected identifier in reg declaration");
         return false;
       }
-      AddOrUpdateNet(module, name, NetType::kReg, width);
+      int array_size = 0;
+      std::shared_ptr<Expr> array_msb;
+      std::shared_ptr<Expr> array_lsb;
+      bool had_array = false;
+      if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+        return false;
+      }
+      if (!had_array) {
+        array_size = 0;
+        array_msb.reset();
+        array_lsb.reset();
+      }
+      AddOrUpdateNet(module, name, NetType::kReg, width, range_msb, range_lsb,
+                     array_size, array_msb, array_lsb);
       if (MatchSymbol(",")) {
         continue;
       }
@@ -501,7 +559,7 @@ class Parser {
         ErrorHere("expected 'parameter' in parameter list");
         return false;
       }
-      if (!ParseParameterItem(module)) {
+      if (!ParseParameterItem(module, false)) {
         return false;
       }
       if (MatchSymbol(",")) {
@@ -520,17 +578,17 @@ class Parser {
     return true;
   }
 
-  bool ParseParameterDecl(Module* module) {
-    if (!ParseParameterItem(module)) {
+  bool ParseParameterDecl(Module* module, bool is_local) {
+    if (!ParseParameterItem(module, is_local)) {
       return false;
     }
     while (MatchSymbol(",")) {
       if (MatchKeyword("parameter")) {
-        if (!ParseParameterItem(module)) {
+        if (!ParseParameterItem(module, is_local)) {
           return false;
         }
       } else {
-        if (!ParseParameterItem(module)) {
+        if (!ParseParameterItem(module, is_local)) {
           return false;
         }
       }
@@ -542,7 +600,7 @@ class Parser {
     return true;
   }
 
-  bool ParseParameterItem(Module* module) {
+  bool ParseParameterItem(Module* module, bool is_local) {
     if (Peek().kind == TokenKind::kIdentifier &&
         Peek(1).kind == TokenKind::kIdentifier &&
         Peek(2).kind == TokenKind::kSymbol && Peek(2).text == "=") {
@@ -562,7 +620,11 @@ class Parser {
     if (!ParseConstExpr(&expr, &value, "parameter value")) {
       return false;
     }
-    module->parameters.push_back(Parameter{name, std::move(expr)});
+    Parameter param;
+    param.name = name;
+    param.value = std::move(expr);
+    param.is_local = is_local;
+    module->parameters.push_back(std::move(param));
     current_params_[name] = value;
     return true;
   }
@@ -599,18 +661,24 @@ class Parser {
       return false;
     }
     EdgeKind edge = EdgeKind::kPosedge;
-    if (MatchKeyword("posedge")) {
+    std::string clock;
+    if (MatchSymbol("*")) {
+      edge = EdgeKind::kCombinational;
+    } else if (MatchKeyword("posedge")) {
       edge = EdgeKind::kPosedge;
     } else if (MatchKeyword("negedge")) {
       edge = EdgeKind::kNegedge;
     } else {
-      ErrorHere("expected 'posedge' or 'negedge' in sensitivity list");
+      ErrorHere("expected 'posedge', 'negedge', or '*' in sensitivity list");
       return false;
     }
-    std::string clock;
-    if (!ConsumeIdentifier(&clock)) {
-      ErrorHere("expected clock identifier after edge");
-      return false;
+    if (edge != EdgeKind::kCombinational) {
+      if (!ConsumeIdentifier(&clock)) {
+        ErrorHere("expected clock identifier after edge");
+        return false;
+      }
+    } else {
+      clock = "*";
     }
     if (!MatchSymbol(")")) {
       ErrorHere("expected ')' after sensitivity list");
@@ -654,6 +722,15 @@ class Parser {
   bool ParseStatement(Statement* out_statement) {
     if (MatchKeyword("if")) {
       return ParseIfStatement(out_statement);
+    }
+    if (MatchKeyword("casez")) {
+      return ParseCaseStatement(out_statement, CaseKind::kCaseZ);
+    }
+    if (MatchKeyword("casex")) {
+      return ParseCaseStatement(out_statement, CaseKind::kCaseX);
+    }
+    if (MatchKeyword("case")) {
+      return ParseCaseStatement(out_statement, CaseKind::kCase);
     }
     if (MatchKeyword("begin")) {
       return ParseBlockStatement(out_statement);
@@ -707,11 +784,88 @@ class Parser {
     return true;
   }
 
+  bool ParseCaseStatement(Statement* out_statement, CaseKind case_kind) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'case'");
+      return false;
+    }
+    std::unique_ptr<Expr> case_expr = ParseExpr();
+    if (!case_expr) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after case expression");
+      return false;
+    }
+
+    Statement stmt;
+    stmt.kind = StatementKind::kCase;
+    stmt.case_kind = case_kind;
+    stmt.case_expr = std::move(case_expr);
+    bool saw_default = false;
+
+    while (true) {
+      if (MatchKeyword("endcase")) {
+        break;
+      }
+      if (MatchKeyword("default")) {
+        if (saw_default) {
+          ErrorHere("duplicate default in case statement");
+          return false;
+        }
+        saw_default = true;
+        MatchSymbol(":");
+        if (!ParseStatementBody(&stmt.default_branch)) {
+          return false;
+        }
+        continue;
+      }
+
+      CaseItem item;
+      while (true) {
+        std::unique_ptr<Expr> label = ParseExpr();
+        if (!label) {
+          return false;
+        }
+        item.labels.push_back(std::move(label));
+        if (MatchSymbol(",")) {
+          continue;
+        }
+        break;
+      }
+      if (!MatchSymbol(":")) {
+        ErrorHere("expected ':' after case item");
+        return false;
+      }
+      if (!ParseStatementBody(&item.body)) {
+        return false;
+      }
+      stmt.case_items.push_back(std::move(item));
+    }
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
   bool ParseSequentialAssign(Statement* out_statement) {
     std::string lhs;
     if (!ConsumeIdentifier(&lhs)) {
       ErrorHere("expected identifier in sequential assignment");
       return false;
+    }
+    std::unique_ptr<Expr> lhs_index;
+    if (MatchSymbol("[")) {
+      lhs_index = ParseExpr();
+      if (!lhs_index) {
+        return false;
+      }
+      if (MatchSymbol(":")) {
+        ErrorHere("part-select assignment target not supported in v0");
+        return false;
+      }
+      if (!MatchSymbol("]")) {
+        ErrorHere("expected ']' after assignment target");
+        return false;
+      }
     }
     bool nonblocking = false;
     if (MatchSymbol("<")) {
@@ -736,7 +890,8 @@ class Parser {
     }
     Statement stmt;
     stmt.kind = StatementKind::kAssign;
-    stmt.assign = SequentialAssign{lhs, std::move(rhs), nonblocking};
+    stmt.assign = SequentialAssign{lhs, std::move(lhs_index), std::move(rhs),
+                                   nonblocking};
     *out_statement = std::move(stmt);
     return true;
   }
@@ -784,13 +939,16 @@ class Parser {
             ErrorHere("expected '(' after port name");
             return false;
           }
-          std::unique_ptr<Expr> expr = ParseExpr();
-          if (!expr) {
-            return false;
-          }
+          std::unique_ptr<Expr> expr;
           if (!MatchSymbol(")")) {
-            ErrorHere("expected ')' after port expression");
-            return false;
+            expr = ParseExpr();
+            if (!expr) {
+              return false;
+            }
+            if (!MatchSymbol(")")) {
+              ErrorHere("expected ')' after port expression");
+              return false;
+            }
           }
           instance.connections.push_back(Connection{port_name, std::move(expr)});
           if (MatchSymbol(",")) {
@@ -801,9 +959,13 @@ class Parser {
       } else {
         int position = 0;
         while (true) {
-          std::unique_ptr<Expr> expr = ParseExpr();
-          if (!expr) {
-            return false;
+          std::unique_ptr<Expr> expr;
+          if (!(Peek().kind == TokenKind::kSymbol &&
+                (Peek().text == "," || Peek().text == ")"))) {
+            expr = ParseExpr();
+            if (!expr) {
+              return false;
+            }
           }
           instance.connections.push_back(
               Connection{std::to_string(position), std::move(expr)});
@@ -828,8 +990,19 @@ class Parser {
   }
 
   bool ParseRange(int* width_out) {
+    return ParseRange(width_out, nullptr, nullptr, nullptr);
+  }
+
+  bool ParseRange(int* width_out, std::shared_ptr<Expr>* msb_out,
+                  std::shared_ptr<Expr>* lsb_out, bool* had_range) {
     if (!MatchSymbol("[")) {
+      if (had_range) {
+        *had_range = false;
+      }
       return true;
+    }
+    if (had_range) {
+      *had_range = true;
     }
     std::unique_ptr<Expr> msb_expr;
     std::unique_ptr<Expr> lsb_expr;
@@ -855,6 +1028,12 @@ class Parser {
       return false;
     }
     *width_out = static_cast<int>(width64);
+    if (msb_out) {
+      *msb_out = std::shared_ptr<Expr>(std::move(msb_expr));
+    }
+    if (lsb_out) {
+      *lsb_out = std::shared_ptr<Expr>(std::move(lsb_expr));
+    }
     return true;
   }
 
@@ -1052,6 +1231,7 @@ class Parser {
         expr = std::make_unique<Expr>();
         expr->kind = ExprKind::kNumber;
         expr->number = size;
+        expr->value_bits = size;
       }
     } else if (Peek().kind == TokenKind::kIdentifier) {
       std::string name = Peek().text;
@@ -1069,33 +1249,58 @@ class Parser {
         ErrorHere("bit/part select requires identifier");
         return nullptr;
       }
-      std::unique_ptr<Expr> msb_expr;
-      std::unique_ptr<Expr> lsb_expr;
-      int64_t msb = 0;
-      int64_t lsb = 0;
-      if (!ParseConstExpr(&msb_expr, &msb, "bit select")) {
+      std::unique_ptr<Expr> msb_expr = ParseExpr();
+      if (!msb_expr) {
         return nullptr;
       }
-      bool has_range = false;
       if (MatchSymbol(":")) {
-        if (!ParseConstExpr(&lsb_expr, &lsb, "part select")) {
+        std::unique_ptr<Expr> lsb_expr = ParseExpr();
+        if (!lsb_expr) {
           return nullptr;
         }
-        has_range = true;
-      } else {
-        lsb = msb;
+        int64_t msb = 0;
+        int64_t lsb = 0;
+        if (!EvalConstExpr(*msb_expr, &msb) ||
+            !EvalConstExpr(*lsb_expr, &lsb)) {
+          ErrorHere("part select requires constant expressions");
+          return nullptr;
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return nullptr;
+        }
+        auto select = std::make_unique<Expr>();
+        select->kind = ExprKind::kSelect;
+        select->base = std::move(expr);
+        select->msb = static_cast<int>(msb);
+        select->lsb = static_cast<int>(lsb);
+        select->has_range = true;
+        select->msb_expr = std::move(msb_expr);
+        select->lsb_expr = std::move(lsb_expr);
+        expr = std::move(select);
+        continue;
       }
       if (!MatchSymbol("]")) {
         ErrorHere("expected ']' after bit select");
         return nullptr;
       }
-      auto select = std::make_unique<Expr>();
-      select->kind = ExprKind::kSelect;
-      select->base = std::move(expr);
-      select->msb = static_cast<int>(msb);
-      select->lsb = static_cast<int>(lsb);
-      select->has_range = has_range;
-      expr = std::move(select);
+      int64_t index_value = 0;
+      if (TryEvalConstExpr(*msb_expr, &index_value)) {
+        auto select = std::make_unique<Expr>();
+        select->kind = ExprKind::kSelect;
+        select->base = std::move(expr);
+        select->msb = static_cast<int>(index_value);
+        select->lsb = static_cast<int>(index_value);
+        select->has_range = false;
+        select->msb_expr = std::move(msb_expr);
+        expr = std::move(select);
+      } else {
+        auto index = std::make_unique<Expr>();
+        index->kind = ExprKind::kIndex;
+        index->base = std::move(expr);
+        index->index = std::move(msb_expr);
+        expr = std::move(index);
+      }
     }
     return expr;
   }
@@ -1115,6 +1320,7 @@ class Parser {
         ErrorHere("invalid replication count");
         return nullptr;
       }
+      std::unique_ptr<Expr> repeat_expr = std::move(first);
       std::vector<std::unique_ptr<Expr>> elements;
       if (MatchSymbol("}")) {
         ErrorHere("empty replication body");
@@ -1142,6 +1348,7 @@ class Parser {
       auto concat = std::make_unique<Expr>();
       concat->kind = ExprKind::kConcat;
       concat->repeat = static_cast<int>(repeat);
+      concat->repeat_expr = std::move(repeat_expr);
       concat->elements = std::move(elements);
       return concat;
     }
@@ -1172,18 +1379,57 @@ class Parser {
       ErrorHere("expected base digits after '''");
       return nullptr;
     }
-    std::string token = Peek().text;
+    const Token base_token = Peek();
+    std::string token = base_token.text;
     Advance();
     if (token.empty()) {
       ErrorHere("invalid base literal");
       return nullptr;
     }
+    int last_line = base_token.line;
+    int last_end_column =
+        base_token.column + static_cast<int>(base_token.text.size());
     char base_char = static_cast<char>(std::tolower(
         static_cast<unsigned char>(token[0])));
     std::string digits = token.substr(1);
-    if (digits.empty() && Peek().kind == TokenKind::kNumber) {
-      digits = Peek().text;
+    auto append_token = [&](const Token& next, const std::string& text) {
+      digits += text;
+      last_line = next.line;
+      last_end_column = next.column + static_cast<int>(next.text.size());
+    };
+    if (digits.empty() &&
+        (Peek().kind == TokenKind::kNumber ||
+         Peek().kind == TokenKind::kIdentifier)) {
+      const Token next = Peek();
+      append_token(next, next.text);
       Advance();
+    }
+    if (digits.empty() && Peek().kind == TokenKind::kSymbol &&
+        Peek().text == "?") {
+      const Token next = Peek();
+      append_token(next, "?");
+      Advance();
+    }
+    auto is_adjacent = [&](const Token& next) -> bool {
+      return next.line == last_line && next.column == last_end_column;
+    };
+    while (true) {
+      const Token next = Peek();
+      if (!is_adjacent(next)) {
+        break;
+      }
+      if (next.kind == TokenKind::kSymbol && next.text == "?") {
+        append_token(next, "?");
+        Advance();
+        continue;
+      }
+      if (next.kind == TokenKind::kNumber ||
+          next.kind == TokenKind::kIdentifier) {
+        append_token(next, next.text);
+        Advance();
+        continue;
+      }
+      break;
     }
     std::string cleaned;
     for (char c : digits) {
@@ -1191,52 +1437,136 @@ class Parser {
         cleaned.push_back(c);
       }
     }
+    if (cleaned.empty()) {
+      ErrorHere("invalid base literal");
+      return nullptr;
+    }
     int base = 10;
+    int bits_per_digit = 0;
     switch (base_char) {
       case 'b':
         base = 2;
+        bits_per_digit = 1;
         break;
       case 'o':
         base = 8;
+        bits_per_digit = 3;
         break;
       case 'd':
         base = 10;
         break;
       case 'h':
         base = 16;
+        bits_per_digit = 4;
         break;
       default:
         ErrorHere("unsupported base in literal");
         return nullptr;
     }
-    uint64_t value = 0;
+    bool has_xz = false;
     for (char c : cleaned) {
-      int digit = 0;
-      if (c >= '0' && c <= '9') {
-        digit = c - '0';
-      } else if (c >= 'a' && c <= 'f') {
-        digit = 10 + (c - 'a');
-      } else if (c >= 'A' && c <= 'F') {
-        digit = 10 + (c - 'A');
-      } else {
-        ErrorHere("invalid digit in literal");
+      if (c == 'x' || c == 'X' || c == 'z' || c == 'Z' || c == '?') {
+        has_xz = true;
+        break;
+      }
+    }
+    if (has_xz && !options_.enable_4state) {
+      ErrorHere("x/z literals require --4state");
+      return nullptr;
+    }
+    if (has_xz && base_char == 'd') {
+      ErrorHere("x/z digits not allowed in decimal literal");
+      return nullptr;
+    }
+
+    uint64_t value_bits = 0;
+    uint64_t x_bits = 0;
+    uint64_t z_bits = 0;
+    if (base_char == 'd') {
+      uint64_t value = 0;
+      for (char c : cleaned) {
+        int digit = 0;
+        if (c >= '0' && c <= '9') {
+          digit = c - '0';
+        } else {
+          ErrorHere("invalid digit in literal");
+          return nullptr;
+        }
+        if (digit >= base) {
+          ErrorHere("digit out of range for base literal");
+          return nullptr;
+        }
+        value = value * static_cast<uint64_t>(base) +
+                static_cast<uint64_t>(digit);
+      }
+      value_bits = value;
+    } else {
+      const size_t digit_count = cleaned.size();
+      const int total_bits = static_cast<int>(digit_count) * bits_per_digit;
+      for (size_t i = 0; i < digit_count; ++i) {
+        char c = cleaned[i];
+        const int shift =
+            static_cast<int>((digit_count - 1 - i) * bits_per_digit);
+        if (shift >= 64) {
+          continue;
+        }
+        uint64_t mask = 0;
+        if (bits_per_digit >= 64) {
+          mask = 0xFFFFFFFFFFFFFFFFull;
+        } else {
+          mask = ((1ull << bits_per_digit) - 1ull) << shift;
+        }
+        if (c == 'x' || c == 'X') {
+          x_bits |= mask;
+          continue;
+        }
+        if (c == 'z' || c == 'Z' || c == '?') {
+          z_bits |= mask;
+          continue;
+        }
+        int digit = 0;
+        if (c >= '0' && c <= '9') {
+          digit = c - '0';
+        } else if (c >= 'a' && c <= 'f') {
+          digit = 10 + (c - 'a');
+        } else if (c >= 'A' && c <= 'F') {
+          digit = 10 + (c - 'A');
+        } else {
+          ErrorHere("invalid digit in literal");
+          return nullptr;
+        }
+        if (digit >= base) {
+          ErrorHere("digit out of range for base literal");
+          return nullptr;
+        }
+        value_bits |= (static_cast<uint64_t>(digit) << shift);
+      }
+      if (!has_xz && total_bits == 0) {
+        ErrorHere("invalid base literal");
         return nullptr;
       }
-      if (digit >= base) {
-        ErrorHere("digit out of range for base literal");
-        return nullptr;
+      if (size == 0 && has_xz) {
+        size = static_cast<uint64_t>(total_bits);
       }
-      value = value * static_cast<uint64_t>(base) +
-              static_cast<uint64_t>(digit);
     }
     auto expr = std::make_unique<Expr>();
     expr->kind = ExprKind::kNumber;
-    expr->number = value;
+    expr->number = value_bits;
+    expr->value_bits = value_bits;
+    expr->x_bits = x_bits;
+    expr->z_bits = z_bits;
     expr->has_base = true;
     expr->base_char = base_char;
     if (size > 0) {
       expr->has_width = true;
       expr->number_width = static_cast<int>(size);
+      if (size < 64) {
+        uint64_t mask = (1ull << size) - 1ull;
+        expr->number &= mask;
+        expr->value_bits &= mask;
+        expr->x_bits &= mask;
+        expr->z_bits &= mask;
+      }
     }
     return expr;
   }
@@ -1252,27 +1582,47 @@ class Parser {
   }
 
   void AddOrUpdatePort(Module* module, const std::string& name, PortDir dir,
-                       int width) {
+                       int width, const std::shared_ptr<Expr>& msb_expr,
+                       const std::shared_ptr<Expr>& lsb_expr) {
     for (auto& port : module->ports) {
       if (port.name == name) {
         port.dir = dir;
         port.width = width;
+        port.msb_expr = msb_expr;
+        port.lsb_expr = lsb_expr;
         return;
       }
     }
-    module->ports.push_back(Port{dir, name, width});
+    module->ports.push_back(Port{dir, name, width, msb_expr, lsb_expr});
   }
 
   void AddOrUpdateNet(Module* module, const std::string& name, NetType type,
-                      int width) {
+                      int width, const std::shared_ptr<Expr>& msb_expr,
+                      const std::shared_ptr<Expr>& lsb_expr, int array_size,
+                      const std::shared_ptr<Expr>& array_msb_expr,
+                      const std::shared_ptr<Expr>& array_lsb_expr) {
     for (auto& net : module->nets) {
       if (net.name == name) {
         net.type = type;
         net.width = width;
+        net.msb_expr = msb_expr;
+        net.lsb_expr = lsb_expr;
+        net.array_size = array_size;
+        net.array_msb_expr = array_msb_expr;
+        net.array_lsb_expr = array_lsb_expr;
         return;
       }
     }
-    module->nets.push_back(Net{type, name, width});
+    Net net;
+    net.type = type;
+    net.name = name;
+    net.width = width;
+    net.msb_expr = msb_expr;
+    net.lsb_expr = lsb_expr;
+    net.array_size = array_size;
+    net.array_msb_expr = array_msb_expr;
+    net.array_lsb_expr = array_lsb_expr;
+    module->nets.push_back(std::move(net));
   }
 
   void ErrorHere(const std::string& message) {
@@ -1286,10 +1636,15 @@ class Parser {
   Diagnostics* diagnostics_ = nullptr;
   size_t pos_ = 0;
   std::unordered_map<std::string, int64_t> current_params_;
+  ParseOptions options_;
 
   bool EvalConstExpr(const Expr& expr, int64_t* out_value) {
     switch (expr.kind) {
       case ExprKind::kNumber:
+        if (expr.x_bits != 0 || expr.z_bits != 0) {
+          ErrorHere("x/z not allowed in constant expression");
+          return false;
+        }
         *out_value = static_cast<int64_t>(expr.number);
         return true;
       case ExprKind::kIdentifier: {
@@ -1404,8 +1759,130 @@ class Parser {
       case ExprKind::kSelect:
         ErrorHere("bit/part select not allowed in constant expression");
         return false;
+      case ExprKind::kIndex:
+        ErrorHere("indexing not allowed in constant expression");
+        return false;
       case ExprKind::kConcat:
         ErrorHere("concatenation not allowed in constant expression");
+        return false;
+    }
+    return false;
+  }
+
+  bool TryEvalConstExpr(const Expr& expr, int64_t* out_value) const {
+    switch (expr.kind) {
+      case ExprKind::kNumber:
+        if (expr.x_bits != 0 || expr.z_bits != 0) {
+          return false;
+        }
+        *out_value = static_cast<int64_t>(expr.number);
+        return true;
+      case ExprKind::kIdentifier: {
+        auto it = current_params_.find(expr.ident);
+        if (it == current_params_.end()) {
+          return false;
+        }
+        *out_value = it->second;
+        return true;
+      }
+      case ExprKind::kUnary: {
+        int64_t value = 0;
+        if (!TryEvalConstExpr(*expr.operand, &value)) {
+          return false;
+        }
+        switch (expr.unary_op) {
+          case '+':
+            *out_value = value;
+            return true;
+          case '-':
+            *out_value = -value;
+            return true;
+          case '~':
+            *out_value = ~value;
+            return true;
+          default:
+            return false;
+        }
+      }
+      case ExprKind::kBinary: {
+        int64_t lhs = 0;
+        int64_t rhs = 0;
+        if (!TryEvalConstExpr(*expr.lhs, &lhs) ||
+            !TryEvalConstExpr(*expr.rhs, &rhs)) {
+          return false;
+        }
+        switch (expr.op) {
+          case '+':
+            *out_value = lhs + rhs;
+            return true;
+          case '-':
+            *out_value = lhs - rhs;
+            return true;
+          case '*':
+            *out_value = lhs * rhs;
+            return true;
+          case '/':
+            if (rhs == 0) {
+              return false;
+            }
+            *out_value = lhs / rhs;
+            return true;
+          case '&':
+            *out_value = lhs & rhs;
+            return true;
+          case '|':
+            *out_value = lhs | rhs;
+            return true;
+          case '^':
+            *out_value = lhs ^ rhs;
+            return true;
+          case 'E':
+            *out_value = (lhs == rhs) ? 1 : 0;
+            return true;
+          case 'N':
+            *out_value = (lhs != rhs) ? 1 : 0;
+            return true;
+          case '<':
+            *out_value = (lhs < rhs) ? 1 : 0;
+            return true;
+          case '>':
+            *out_value = (lhs > rhs) ? 1 : 0;
+            return true;
+          case 'L':
+            *out_value = (lhs <= rhs) ? 1 : 0;
+            return true;
+          case 'G':
+            *out_value = (lhs >= rhs) ? 1 : 0;
+            return true;
+          case 'l':
+            if (rhs < 0) {
+              return false;
+            }
+            *out_value = lhs << rhs;
+            return true;
+          case 'r':
+            if (rhs < 0) {
+              return false;
+            }
+            *out_value = lhs >> rhs;
+            return true;
+          default:
+            return false;
+        }
+      }
+      case ExprKind::kTernary: {
+        int64_t cond = 0;
+        if (!TryEvalConstExpr(*expr.condition, &cond)) {
+          return false;
+        }
+        if (cond != 0) {
+          return TryEvalConstExpr(*expr.then_expr, out_value);
+        }
+        return TryEvalConstExpr(*expr.else_expr, out_value);
+      }
+      case ExprKind::kSelect:
+      case ExprKind::kIndex:
+      case ExprKind::kConcat:
         return false;
     }
     return false;
@@ -1545,7 +2022,7 @@ bool ParseVerilogFile(const std::string& path, Program* out_program,
     return false;
   }
 
-  Parser parser(path, Tokenize(text), diagnostics);
+  Parser parser(path, Tokenize(text), diagnostics, options);
   if (!parser.ParseProgram(out_program)) {
     return false;
   }

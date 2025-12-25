@@ -17,7 +17,7 @@ namespace {
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
             << " <input.v> [--emit-msl <path>] [--emit-host <path>]"
-            << " [--dump-flat] [--top <module>]\n";
+            << " [--dump-flat] [--top <module>] [--4state]\n";
 }
 
 bool WriteFile(const std::string& path, const std::string& content,
@@ -65,6 +65,19 @@ int SignalWidth(const gpga::Module& module, const std::string& name) {
   return 32;
 }
 
+bool IsArrayNet(const gpga::Module& module, const std::string& name,
+                int* element_width) {
+  for (const auto& net : module.nets) {
+    if (net.name == name && net.array_size > 0) {
+      if (element_width) {
+        *element_width = net.width;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 int MinimalWidth(uint64_t value) {
   if (value == 0) {
     return 1;
@@ -106,6 +119,15 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       int hi = std::max(expr.msb, expr.lsb);
       return hi - lo + 1;
     }
+    case gpga::ExprKind::kIndex: {
+      if (expr.base && expr.base->kind == gpga::ExprKind::kIdentifier) {
+        int element_width = 0;
+        if (IsArrayNet(module, expr.base->ident, &element_width)) {
+          return element_width;
+        }
+      }
+      return 1;
+    }
     case gpga::ExprKind::kConcat: {
       int total = 0;
       for (const auto& element : expr.elements) {
@@ -121,6 +143,9 @@ bool IsAllOnesExpr(const gpga::Expr& expr, const gpga::Module& module,
                    int* width_out) {
   switch (expr.kind) {
     case gpga::ExprKind::kNumber: {
+      if (expr.x_bits != 0 || expr.z_bits != 0) {
+        return false;
+      }
       int width = expr.has_width && expr.number_width > 0
                       ? expr.number_width
                       : MinimalWidth(expr.number);
@@ -197,11 +222,62 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
   switch (expr.kind) {
     case gpga::ExprKind::kIdentifier:
       return expr.ident;
-    case gpga::ExprKind::kNumber:
-    if (expr.has_base) {
-      uint64_t value = expr.number;
-      int base = 10;
+    case gpga::ExprKind::kNumber: {
       const char* digits = "0123456789ABCDEF";
+      if (expr.has_base) {
+        if (expr.x_bits != 0 || expr.z_bits != 0) {
+          int width = expr.has_width && expr.number_width > 0
+                          ? expr.number_width
+                          : MinimalWidth(expr.number);
+          int bits_per_digit = 1;
+          switch (expr.base_char) {
+            case 'b':
+              bits_per_digit = 1;
+              break;
+            case 'o':
+              bits_per_digit = 3;
+              break;
+            case 'h':
+              bits_per_digit = 4;
+              break;
+            default:
+              bits_per_digit = 1;
+              break;
+          }
+          int digit_count =
+              std::max(1, (width + bits_per_digit - 1) / bits_per_digit);
+          std::string repr;
+          repr.reserve(static_cast<size_t>(digit_count));
+          for (int i = 0; i < digit_count; ++i) {
+            int shift = (digit_count - 1 - i) * bits_per_digit;
+            uint64_t mask_bits =
+                (bits_per_digit >= 64) ? 0xFFFFFFFFFFFFFFFFull
+                                       : ((1ull << bits_per_digit) - 1ull);
+            uint64_t x =
+                (shift >= 64) ? 0 : (expr.x_bits >> shift) & mask_bits;
+            uint64_t z =
+                (shift >= 64) ? 0 : (expr.z_bits >> shift) & mask_bits;
+            if (x != 0) {
+              repr.push_back('x');
+              continue;
+            }
+            if (z != 0) {
+              repr.push_back('z');
+              continue;
+            }
+            uint64_t val = (shift >= 64)
+                               ? 0
+                               : (expr.value_bits >> shift) & mask_bits;
+            repr.push_back(digits[static_cast<int>(val)]);
+          }
+          std::string prefix;
+          if (expr.has_width && expr.number_width > 0) {
+            prefix = std::to_string(expr.number_width);
+          }
+          return prefix + "'" + std::string(1, expr.base_char) + repr;
+        }
+        uint64_t value = expr.number;
+        int base = 10;
         switch (expr.base_char) {
           case 'b':
             base = 2;
@@ -240,6 +316,7 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
                std::to_string(expr.number);
       }
       return std::to_string(expr.number);
+    }
     case gpga::ExprKind::kUnary: {
       std::string operand =
           expr.operand ? ExprToString(*expr.operand, module) : "0";
@@ -297,6 +374,11 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
       }
       return base + "[" + std::to_string(expr.msb) + "]";
     }
+    case gpga::ExprKind::kIndex: {
+      std::string base = ExprToString(*expr.base, module);
+      std::string index = expr.index ? ExprToString(*expr.index, module) : "0";
+      return base + "[" + index + "]";
+    }
     case gpga::ExprKind::kConcat: {
       std::string inner;
       for (size_t i = 0; i < expr.elements.size(); ++i) {
@@ -319,7 +401,11 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
   std::string pad(static_cast<size_t>(indent), ' ');
   if (stmt.kind == gpga::StatementKind::kAssign) {
     if (stmt.assign.rhs) {
-      os << pad << stmt.assign.lhs
+      std::string lhs = stmt.assign.lhs;
+      if (stmt.assign.lhs_index) {
+        lhs += "[" + ExprToString(*stmt.assign.lhs_index, module) + "]";
+      }
+      os << pad << lhs
          << (stmt.assign.nonblocking ? " <= " : " = ")
          << ExprToString(*stmt.assign.rhs, module) << ";\n";
     }
@@ -359,6 +445,38 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     }
     return;
   }
+  if (stmt.kind == gpga::StatementKind::kCase) {
+    std::string expr = stmt.case_expr ? ExprToString(*stmt.case_expr, module)
+                                      : "0";
+    const char* case_name = "case";
+    if (stmt.case_kind == gpga::CaseKind::kCaseZ) {
+      case_name = "casez";
+    } else if (stmt.case_kind == gpga::CaseKind::kCaseX) {
+      case_name = "casex";
+    }
+    os << pad << case_name << " (" << expr << ")\n";
+    for (const auto& item : stmt.case_items) {
+      std::string labels;
+      for (size_t i = 0; i < item.labels.size(); ++i) {
+        if (i > 0) {
+          labels += ", ";
+        }
+        labels += ExprToString(*item.labels[i], module);
+      }
+      os << pad << "  " << labels << ":\n";
+      for (const auto& inner : item.body) {
+        DumpStatement(inner, module, indent + 4, os);
+      }
+    }
+    if (!stmt.default_branch.empty()) {
+      os << pad << "  default:\n";
+      for (const auto& inner : stmt.default_branch) {
+        DumpStatement(inner, module, indent + 4, os);
+      }
+    }
+    os << pad << "endcase\n";
+    return;
+  }
   if (stmt.kind == gpga::StatementKind::kBlock) {
     os << pad << "begin\n";
     for (const auto& inner : stmt.block) {
@@ -390,7 +508,11 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
   os << "Nets:\n";
   for (const auto& net : top.nets) {
     const char* type = (net.type == gpga::NetType::kReg) ? "reg" : "wire";
-    os << "  - " << type << " " << net.name << " [" << net.width << "]\n";
+    os << "  - " << type << " " << net.name << " [" << net.width << "]";
+    if (net.array_size > 0) {
+      os << " [" << net.array_size << "]";
+    }
+    os << "\n";
   }
   os << "Assigns:\n";
   for (const auto& assign : top.assigns) {
@@ -413,9 +535,13 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
   }
   os << "Always blocks:\n";
   for (const auto& block : top.always_blocks) {
-    os << "  - always @("
-       << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")
-       << block.clock << ")\n";
+    if (block.edge == gpga::EdgeKind::kCombinational) {
+      os << "  - always @*\n";
+    } else {
+      os << "  - always @("
+         << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")
+         << block.clock << ")\n";
+    }
     for (const auto& stmt : block.statements) {
       DumpStatement(stmt, top, 4, os);
     }
@@ -439,6 +565,7 @@ int main(int argc, char** argv) {
   std::string host_out;
   std::string top_name;
   bool dump_flat = false;
+  bool enable_4state = false;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -462,6 +589,8 @@ int main(int argc, char** argv) {
         return 2;
       }
       host_out = argv[++i];
+    } else if (arg == "--4state") {
+      enable_4state = true;
     } else if (!arg.empty() && arg[0] == '-') {
       PrintUsage(argv[0]);
       return 2;
@@ -480,7 +609,10 @@ int main(int argc, char** argv) {
 
   gpga::Diagnostics diagnostics;
   gpga::Program program;
-  if (!gpga::ParseVerilogFile(input_path, &program, &diagnostics) ||
+  gpga::ParseOptions parse_options;
+  parse_options.enable_4state = enable_4state;
+  if (!gpga::ParseVerilogFile(input_path, &program, &diagnostics,
+                              parse_options) ||
       diagnostics.HasErrors()) {
     diagnostics.RenderTo(std::cerr);
     return 1;
@@ -489,17 +621,21 @@ int main(int argc, char** argv) {
   gpga::ElaboratedDesign design;
   bool elaborated = false;
   if (!top_name.empty()) {
-    elaborated = gpga::Elaborate(program, top_name, &design, &diagnostics);
+    elaborated =
+        gpga::Elaborate(program, top_name, &design, &diagnostics, enable_4state);
   } else {
-    elaborated = gpga::Elaborate(program, &design, &diagnostics);
+    elaborated = gpga::Elaborate(program, &design, &diagnostics, enable_4state);
   }
   if (!elaborated || diagnostics.HasErrors()) {
     diagnostics.RenderTo(std::cerr);
     return 1;
   }
+  if (!diagnostics.Items().empty()) {
+    diagnostics.RenderTo(std::cerr);
+  }
 
   if (!msl_out.empty()) {
-    std::string msl = gpga::EmitMSLStub(design.top);
+    std::string msl = gpga::EmitMSLStub(design.top, enable_4state);
     if (!WriteFile(msl_out, msl, &diagnostics)) {
       diagnostics.RenderTo(std::cerr);
       return 1;

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace gpga {
@@ -13,10 +14,14 @@ enum class PortDir {
   kInout,
 };
 
+struct Expr;
+
 struct Port {
   PortDir dir = PortDir::kInput;
   std::string name;
   int width = 1;
+  std::shared_ptr<Expr> msb_expr;
+  std::shared_ptr<Expr> lsb_expr;
 };
 
 struct Expr;
@@ -30,6 +35,11 @@ struct Net {
   NetType type = NetType::kWire;
   std::string name;
   int width = 1;
+  std::shared_ptr<Expr> msb_expr;
+  std::shared_ptr<Expr> lsb_expr;
+  int array_size = 0;
+  std::shared_ptr<Expr> array_msb_expr;
+  std::shared_ptr<Expr> array_lsb_expr;
 };
 
 enum class ExprKind {
@@ -39,6 +49,7 @@ enum class ExprKind {
   kBinary,
   kTernary,
   kSelect,
+  kIndex,
   kConcat,
 };
 
@@ -46,6 +57,9 @@ struct Expr {
   ExprKind kind = ExprKind::kIdentifier;
   std::string ident;
   uint64_t number = 0;
+  uint64_t value_bits = 0;
+  uint64_t x_bits = 0;
+  uint64_t z_bits = 0;
   int number_width = 0;
   bool has_width = false;
   bool has_base = false;
@@ -59,16 +73,25 @@ struct Expr {
   std::unique_ptr<Expr> then_expr;
   std::unique_ptr<Expr> else_expr;
   std::unique_ptr<Expr> base;
+  std::unique_ptr<Expr> index;
   int msb = 0;
   int lsb = 0;
   bool has_range = false;
+  std::unique_ptr<Expr> msb_expr;
+  std::unique_ptr<Expr> lsb_expr;
   std::vector<std::unique_ptr<Expr>> elements;
   int repeat = 1;
+  std::unique_ptr<Expr> repeat_expr;
+
+  bool HasX() const { return x_bits != 0; }
+  bool HasZ() const { return z_bits != 0; }
+  bool IsFullyDetermined() const { return x_bits == 0 && z_bits == 0; }
 };
 
 struct Parameter {
   std::string name;
   std::unique_ptr<Expr> value;
+  bool is_local = false;
 };
 
 struct Assign {
@@ -78,6 +101,7 @@ struct Assign {
 
 struct SequentialAssign {
   std::string lhs;
+  std::unique_ptr<Expr> lhs_index;
   std::unique_ptr<Expr> rhs;
   bool nonblocking = true;
 };
@@ -86,20 +110,39 @@ enum class StatementKind {
   kAssign,
   kIf,
   kBlock,
+  kCase,
+};
+
+enum class CaseKind {
+  kCase,
+  kCaseZ,
+  kCaseX,
+};
+
+struct Statement;
+
+struct CaseItem {
+  std::vector<std::unique_ptr<Expr>> labels;
+  std::vector<Statement> body;
 };
 
 struct Statement {
   StatementKind kind = StatementKind::kAssign;
+  CaseKind case_kind = CaseKind::kCase;
   SequentialAssign assign;
   std::unique_ptr<Expr> condition;
   std::vector<Statement> then_branch;
   std::vector<Statement> else_branch;
   std::vector<Statement> block;
+  std::unique_ptr<Expr> case_expr;
+  std::vector<CaseItem> case_items;
+  std::vector<Statement> default_branch;
 };
 
 enum class EdgeKind {
   kPosedge,
   kNegedge,
+  kCombinational,
 };
 
 struct AlwaysBlock {
@@ -138,5 +181,22 @@ struct Module {
 struct Program {
   std::vector<Module> modules;
 };
+
+struct FourStateValue {
+  uint64_t value_bits = 0;
+  uint64_t x_bits = 0;
+  uint64_t z_bits = 0;
+  int width = 0;
+
+  bool HasXorZ() const { return x_bits != 0 || z_bits != 0; }
+};
+
+std::unique_ptr<Expr> CloneExpr(const Expr& expr);
+bool EvalConstExpr(const Expr& expr,
+                   const std::unordered_map<std::string, int64_t>& params,
+                   int64_t* out_value, std::string* error);
+bool EvalConstExpr4State(const Expr& expr,
+                         const std::unordered_map<std::string, int64_t>& params,
+                         FourStateValue* out_value, std::string* error);
 
 }  // namespace gpga

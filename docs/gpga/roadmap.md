@@ -2,8 +2,7 @@
 
 ## Milestones
 1. Scope definition (versioned)
-   - v0: Verilog-2001 subset (combinational + single-clock sequential)
-   - v1: Add later Verilog features as needed
+   - v1: Verilog-2001
    - v2: SystemVerilog extensions (far later)
    - Define supported types (bit/vec widths, simple arrays)
    - Choose parser frontend (minimal first, later Yosys/Verilator if needed)

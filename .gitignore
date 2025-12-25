@@ -2,3 +2,8 @@ build/
 docs/apple/
 docs/markdown/
 docs/pdfs/
+
+.DS_STORE
+.claude/
+
+persistent/

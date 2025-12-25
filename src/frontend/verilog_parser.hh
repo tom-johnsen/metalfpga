@@ -9,6 +9,7 @@ namespace gpga {
 
 struct ParseOptions {
   bool allow_empty = false;
+  bool enable_4state = false;
 };
 
 bool ParseVerilogFile(const std::string& path, Program* out_program,

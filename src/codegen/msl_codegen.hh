@@ -6,6 +6,6 @@
 
 namespace gpga {
 
-std::string EmitMSLStub(const Module& module);
+std::string EmitMSLStub(const Module& module, bool four_state = false);
 
 }  // namespace gpga

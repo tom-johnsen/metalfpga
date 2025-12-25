@@ -11,6 +11,7 @@
 - module instantiation (named + positional port connections)
 - reg
 - always
+- always @*
 - begin / end
 - posedge
 - negedge
@@ -18,6 +19,8 @@
 - numeric literals in instance connections (inputs only)
 - if / else
 - bit/part selects (`a[3]`, `a[7:0]`)
+- unpacked reg/wire arrays (`reg [7:0] mem [0:255]`)
+- indexed access (`mem[addr]` for arrays, `a[i]` for variable bit select)
 - parameter (module header and body, constant expressions only)
 - localparam (module body, constant expressions only)
 - ternary `?:`
@@ -27,7 +30,8 @@
 - equality / relational (`==`, `!=`, `<`, `>`, `<=`, `>=`)
 - shifts (`<<`, `>>`)
 - nested begin/end blocks inside always/if
-- instance parameter overrides (`#(...)`) parsed
+- instance parameter overrides (`#(...)`) applied
+- case / casez / casex (procedural)
 
 ### Operators implemented
 - `+` `-`
@@ -38,7 +42,7 @@
 - decimal literals
 
 ### Elaboration rules
-- Unconnected inputs default to 0 with a warning
+- Unconnected inputs default to 0 (2-state) or X (4-state) with a warning
 - Unconnected outputs are ignored with a warning
 - Multiple drivers on a net is an error
 
@@ -48,7 +52,6 @@
 
 ## Planned
 - generate / genvar
-- case / casex / casez
 - for / while / repeat
 - functions / tasks
 - remaining Verilog-2001 constructs as encountered
