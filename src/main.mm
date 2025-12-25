@@ -1,8 +1,11 @@
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -16,8 +19,8 @@ namespace {
 
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
-            << " <input.v> [--emit-msl <path>] [--emit-host <path>]"
-            << " [--dump-flat] [--top <module>] [--4state]\n";
+            << " <input.v> [<more.v> ...] [--emit-msl <path>] [--emit-host <path>]"
+            << " [--dump-flat] [--top <module>] [--4state] [--auto]\n";
 }
 
 bool WriteFile(const std::string& path, const std::string& content,
@@ -712,12 +715,13 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  std::string input_path;
+  std::vector<std::string> input_paths;
   std::string msl_out;
   std::string host_out;
   std::string top_name;
   bool dump_flat = false;
   bool enable_4state = false;
+  bool auto_discover = false;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -743,31 +747,109 @@ int main(int argc, char** argv) {
       host_out = argv[++i];
     } else if (arg == "--4state") {
       enable_4state = true;
+    } else if (arg == "--auto") {
+      auto_discover = true;
     } else if (!arg.empty() && arg[0] == '-') {
       PrintUsage(argv[0]);
       return 2;
-    } else if (input_path.empty()) {
-      input_path = arg;
     } else {
-      PrintUsage(argv[0]);
-      return 2;
+      input_paths.push_back(arg);
     }
   }
 
-  if (input_path.empty()) {
+  if (input_paths.empty()) {
     PrintUsage(argv[0]);
     return 2;
   }
 
   gpga::Diagnostics diagnostics;
   gpga::Program program;
+  program.modules.clear();
   gpga::ParseOptions parse_options;
   parse_options.enable_4state = enable_4state;
-  if (!gpga::ParseVerilogFile(input_path, &program, &diagnostics,
-                              parse_options) ||
-      diagnostics.HasErrors()) {
-    diagnostics.RenderTo(std::cerr);
-    return 1;
+
+  struct ParseItem {
+    std::string path;
+    bool explicit_input = false;
+  };
+
+  std::vector<ParseItem> parse_queue;
+  parse_queue.reserve(input_paths.size());
+  std::unordered_map<std::string, size_t> seen_paths;
+  auto add_path = [&](const std::string& path, bool explicit_input) {
+    std::error_code ec;
+    std::filesystem::path fs_path(path);
+    std::filesystem::path normalized =
+        std::filesystem::weakly_canonical(fs_path, ec);
+    std::string key = ec ? fs_path.lexically_normal().string()
+                         : normalized.string();
+    auto it = seen_paths.find(key);
+    if (it == seen_paths.end()) {
+      seen_paths[key] = parse_queue.size();
+      parse_queue.push_back(ParseItem{path, explicit_input});
+      return;
+    }
+    if (explicit_input) {
+      parse_queue[it->second].explicit_input = true;
+    }
+  };
+  for (const auto& path : input_paths) {
+    add_path(path, true);
+  }
+  if (auto_discover) {
+    for (const auto& path : input_paths) {
+      std::error_code ec;
+      std::filesystem::path root = std::filesystem::path(path).parent_path();
+      if (root.empty()) {
+        root = ".";
+      }
+      std::vector<std::string> discovered;
+      for (auto it =
+               std::filesystem::recursive_directory_iterator(root, ec);
+           it != std::filesystem::recursive_directory_iterator();
+           it.increment(ec)) {
+        if (ec) {
+          break;
+        }
+        if (!it->is_regular_file()) {
+          continue;
+        }
+        if (it->path().extension() == ".v") {
+          discovered.push_back(it->path().string());
+        }
+      }
+      std::sort(discovered.begin(), discovered.end());
+      for (const auto& candidate : discovered) {
+        add_path(candidate, false);
+      }
+    }
+  }
+
+  for (const auto& item : parse_queue) {
+    if (item.explicit_input) {
+      if (!gpga::ParseVerilogFile(item.path, &program, &diagnostics,
+                                  parse_options)) {
+        diagnostics.RenderTo(std::cerr);
+        return 1;
+      }
+      if (diagnostics.HasErrors()) {
+        diagnostics.RenderTo(std::cerr);
+        return 1;
+      }
+      continue;
+    }
+    gpga::Program temp_program;
+    gpga::Diagnostics temp_diag;
+    if (!gpga::ParseVerilogFile(item.path, &temp_program, &temp_diag,
+                                parse_options)) {
+      continue;
+    }
+    if (temp_diag.HasErrors()) {
+      continue;
+    }
+    for (auto& module : temp_program.modules) {
+      program.modules.push_back(std::move(module));
+    }
   }
 
   gpga::ElaboratedDesign design;

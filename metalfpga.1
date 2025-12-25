@@ -1,0 +1,296 @@
+.TH METALFPGA 1 "December 2025" "v0.3" "User Commands"
+.SH NAME
+metalfpga \- Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation
+.SH SYNOPSIS
+.B metalfpga
+.I input.v
+[\fImore.v\fR ...]
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B metalfpga
+is a "GPGA" (GPU-based FPGA) compiler that parses synthesizable Verilog RTL,
+flattens module hierarchy through elaboration, and generates Metal compute shaders
+for GPU execution. This enables FPGA designers to prototype and validate hardware
+designs on Apple GPUs before synthesis to actual hardware, leveraging massive
+parallelism for fast simulation.
+.PP
+The compiler performs the following operations:
+.IP \[bu] 2
+Parses synthesizable Verilog RTL
+.IP \[bu]
+Flattens module hierarchy through elaboration
+.IP \[bu]
+Generates Metal compute shaders for GPU execution
+.IP \[bu]
+Emits host-side stubs for runtime integration
+.SH OPTIONS
+.TP
+.BR \-\-emit\-msl " \fIPATH\fR"
+Generate Metal Shading Language compute kernel and write to \fIPATH\fR.
+The output file will contain GPU-executable shader code for the elaborated design.
+.TP
+.BR \-\-emit\-host " \fIPATH\fR"
+Generate host runtime stub and write to \fIPATH\fR.
+The output file will contain Objective-C++ code for interfacing with the Metal runtime.
+.TP
+.BR \-\-dump\-flat
+Dump the flattened netlist to standard output.
+Shows the elaborated design including ports, nets, assigns, and always blocks
+with hierarchical-to-flat name mappings.
+.TP
+.BR \-\-top " \fIMODULE\fR"
+Specify top-level module name.
+Required when the input contains multiple module definitions.
+.TP
+.BR \-\-4state
+Enable 4-state logic (0/1/X/Z) support.
+When enabled, the compiler handles X (unknown) and Z (high-impedance) values
+and their propagation through operations. Required for
+.BR casex " and " casez
+statements.
+.TP
+.BR \-\-auto
+Auto-discover Verilog modules under the input file's directory tree.
+Recursively searches for .v files in the same directory and subdirectories
+as the input file, automatically including them in compilation.
+.SH SUPPORTED VERILOG FEATURES
+.SS Module System
+.IP \[bu] 2
+Module declarations with hierarchy and parameters
+.IP \[bu]
+Port declarations: input, output, inout
+.IP \[bu]
+Port connections (named and positional)
+.IP \[bu]
+Multi-file input
+.IP \[bu]
+Parameters and localparams with expressions
+.SS Data Types
+.IP \[bu] 2
+Wire and reg declarations with bit-widths
+.IP \[bu]
+Unpacked arrays
+.IP \[bu]
+Memory arrays (multi-dimensional supported)
+.IP \[bu]
+Signed arithmetic with
+.B signed
+keyword
+.SS Assignments
+.IP \[bu] 2
+Continuous assignments (assign)
+.IP \[bu]
+Blocking assignments (=)
+.IP \[bu]
+Non-blocking assignments (<=)
+.SS Always Blocks
+.IP \[bu] 2
+Combinational (always @*)
+.IP \[bu]
+Sequential (always @(posedge clk), always @(negedge clk))
+.IP \[bu]
+Initial blocks
+.SS Control Flow
+.IP \[bu] 2
+If/else statements
+.IP \[bu]
+Case statements (case, casex, casez)
+.IP \[bu]
+For/while/repeat loops (constant bounds, unrolled during elaboration)
+.SS Generate Constructs
+.IP \[bu] 2
+Generate blocks with genvar
+.IP \[bu]
+For-generate
+.IP \[bu]
+If-generate
+.SS Functions
+.IP \[bu] 2
+Functions with inputs and single return assignment
+.IP \[bu]
+Inlined during elaboration
+.SS Operators
+.IP \[bu] 2
+Arithmetic: +, -, *, /, %
+.IP \[bu]
+Bitwise: &, |, ^, ~
+.IP \[bu]
+Reduction: &, |, ^, ~&, ~|, ~^
+.IP \[bu]
+Logical: &&, ||, !
+.IP \[bu]
+Shifts: <<, >>, <<<, >>>
+.IP \[bu]
+Comparison: ==, !=, <, >, <=, >=
+.IP \[bu]
+Ternary: ? :
+.SS Bit Operations
+.IP \[bu] 2
+Bit selects: signal[3]
+.IP \[bu]
+Part selects: signal[7:0]
+.IP \[bu]
+Indexed part selects: signal[i +: 4], signal[i -: 4]
+.IP \[bu]
+Concatenation: {a, b, c}
+.IP \[bu]
+Replication: {4{1'b0}}
+.SS Type Casting
+.IP \[bu] 2
+$signed(...) - convert to signed
+.IP \[bu]
+$unsigned(...) - convert to unsigned
+.IP \[bu]
+$clog2(...) - ceiling logarithm base 2
+.SS 4-State Logic
+With
+.BR \-\-4state :
+.IP \[bu] 2
+X/Z literals (8'bz, 4'b10zx, etc.)
+.IP \[bu]
+X/Z propagation in operations
+.IP \[bu]
+casex and casez statements
+.SH ERROR DETECTION
+The compiler detects and reports:
+.IP \[bu] 2
+Combinational loops
+.IP \[bu]
+Multiple drivers on signals
+.IP \[bu]
+Recursive module instantiation
+.IP \[bu]
+Undeclared signals
+.IP \[bu]
+Width mismatches (with warnings)
+.SH EXAMPLES
+.TP
+Check syntax and elaborate design:
+.B metalfpga
+.I design.v
+.TP
+Dump flattened netlist:
+.B metalfpga
+.I design.v
+.B \-\-dump\-flat
+.TP
+Generate Metal shader code:
+.B metalfpga
+.I design.v
+.B \-\-emit\-msl
+.I output.metal
+.TP
+Generate host runtime stub:
+.B metalfpga
+.I design.v
+.B \-\-emit\-host
+.I output.mm
+.TP
+Specify top module:
+.B metalfpga
+.I design.v
+.B \-\-top
+.I module_name
+.TP
+Enable 4-state logic:
+.B metalfpga
+.I design.v
+.B \-\-4state
+.TP
+Multiple files with top specification:
+.B metalfpga
+.I file_a.v file_b.v
+.B \-\-top
+.I top
+.TP
+Auto-discover modules:
+.B metalfpga
+.I top.v
+.B \-\-auto \-\-top
+.I top
+.TP
+Full workflow example:
+.B metalfpga
+.I design.v
+.B \-\-emit\-msl
+.I design.metal
+.B \-\-emit\-host
+.I design.mm
+.B \-\-4state
+.SH EXIT STATUS
+.TP
+.B 0
+Successful elaboration
+.TP
+.B 1
+Parsing or elaboration error
+.TP
+.B 2
+Invalid command-line arguments
+.SH FILES
+.TP
+.I verilog/pass/*.v
+Passing test suite (114 test cases)
+.TP
+.I docs/gpga/README.md
+Project architecture and goals
+.TP
+.I docs/gpga/verilog_words.md
+Verilog keyword implementation status
+.TP
+.I docs/gpga/ir_invariants.md
+Flattened netlist invariants
+.TP
+.I 4STATE.md
+4-state logic design document
+.SH NOTES
+.SS Limitations
+The following Verilog features are not yet implemented:
+.IP \[bu] 2
+System tasks ($display, $monitor, $finish, etc.)
+.IP \[bu]
+Tasks (procedural task blocks)
+.IP \[bu]
+General timing controls (# delays)
+.IP \[bu]
+Complex sensitivity lists beyond @* and @(posedge/negedge clk)
+.IP \[bu]
+SystemVerilog constructs
+.SS Project Structure
+.nf
+src/
+  frontend/       Verilog parser and AST
+  core/           Elaboration and flattening
+  codegen/        MSL and host code generation
+  runtime/        Metal runtime wrapper
+  utils/          Diagnostics and utilities
+verilog/
+  pass/           Passing test cases
+  test_*.v        Additional test coverage
+docs/gpga/        Documentation
+.fi
+.SH BUGS
+Report bugs at:
+.UR https://github.com/anthropics/metalfpga/issues
+.UE
+.SH LICENSE
+MetalFPGA is dual-licensed:
+.TP
+.B Open Source (AGPL-3.0)
+Free for open-source projects, academic research, and personal use under the
+GNU Affero General Public License v3.0. You must share your source code if you
+distribute modified versions. If you run MetalFPGA as a network service (SaaS),
+you must make your modifications available.
+.TP
+.B Commercial License
+For proprietary/closed-source integration, commercial licenses are available.
+Contact: support@tomsdata.no
+.SH AUTHOR
+Written by the MetalFPGA project contributors.
+.SH SEE ALSO
+.BR metal (1),
+.BR cmake (1)
+.PP
+Online documentation:
+.UR https://github.com/anthropics/metalfpga
+.UE

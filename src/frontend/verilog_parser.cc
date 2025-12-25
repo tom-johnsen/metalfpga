@@ -4104,7 +4104,6 @@ bool ParseVerilogFile(const std::string& path, Program* out_program,
   if (!out_program || !diagnostics) {
     return false;
   }
-  out_program->modules.clear();
 
   std::ifstream file(path);
   if (!file) {

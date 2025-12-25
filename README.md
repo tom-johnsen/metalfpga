@@ -41,6 +41,12 @@ cmake --build build
 
 # Enable 4-state logic (X/Z support)
 ./build/metalfpga_cli path/to/design.v --4state
+
+# Multiple files (module references across files)
+./build/metalfpga_cli path/to/file_a.v path/to/file_b.v --top top
+
+# Auto-discover modules under the input file's directory tree
+./build/metalfpga_cli path/to/top.v --auto --top top
 ```
 
 ## Supported Verilog Features
@@ -49,6 +55,8 @@ cmake --build build
 - Module declarations with hierarchy and parameters
 - Port declarations: `input`, `output`, `inout`
 - Port connections (named and positional)
+- Multi-file input (pass multiple `.v` files on the CLI)
+- Auto-discover module files under the input directory tree (`--auto`)
 - Wire/reg declarations with bit-widths (including unpacked arrays)
 - Continuous assignments (`assign`)
 - Always blocks:
@@ -112,6 +120,7 @@ cmake --build build
   - Mixed signed/unsigned operations
   - Unary operators on signed values
 - Module instantiation and hierarchy
+- Multi-file module references
 - Generate blocks (nested for/if-generate, genvar arithmetic)
 - Sequential and combinational logic
 - Memory read/write operations
