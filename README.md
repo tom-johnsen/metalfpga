@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Compiles a subset of Verilog HDL into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.1+ - Core pipeline working with 35+ passing test cases
+**Current Status**: v0.2+ - Core pipeline with reduction operators, signed arithmetic, and 4-state logic support. 79 passing test cases in validation suite.
 
 ## What is this?
 
@@ -38,12 +38,16 @@ cmake --build build
 
 # Specify top module (if multiple exist)
 ./build/metalfpga_cli path/to/design.v --top module_name
+
+# Enable 4-state logic (X/Z support)
+./build/metalfpga_cli path/to/design.v --4state
 ```
 
 ## Supported Verilog Features
 
 ### ✅ Working
 - Module declarations with hierarchy and parameters
+- Port declarations: `input`, `output`, `inout` (requires `--4state`)
 - Port connections (named and positional)
 - Wire/reg declarations with bit-widths
 - Continuous assignments (`assign`)
@@ -52,31 +56,37 @@ cmake --build build
   - Sequential (`always @(posedge clk)`, `always @(negedge clk)`)
 - Blocking (`=`) and non-blocking (`<=`) assignments
 - If/else statements
+- Case statements:
+  - `case` - Standard case matching
+  - `casex` - Case with X don't-care matching (requires `--4state`)
+  - `casez` - Case with Z/X don't-care matching (requires `--4state`)
 - Operators:
   - Arithmetic: `+`, `-`, `*`, `/`, `%`
   - Bitwise: `&`, `|`, `^`, `~`
+  - Reduction: `&`, `|`, `^`, `~&`, `~|`, `~^`
   - Logical: `&&`, `||`, `!`
   - Shifts: `<<`, `>>`, `<<<`, `>>>`
   - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
   - Ternary: `? :`
+- Signed arithmetic with `signed` keyword
+- Arithmetic right shift (`>>>`) with sign extension
+- Type casting: `$signed(...)`, `$unsigned(...)`
 - Bit/part selects: `signal[3]`, `signal[7:0]`
 - Concatenation: `{a, b, c}`
 - Replication: `{4{1'b0}}`
 - Memory arrays: `reg [7:0] mem [0:255]`
 - Parameters and localparams with expressions
 - Width mismatches (automatic extension/truncation)
-
-### 🚧 In Development
-- `case`/`casex`/`casez` statements (in progress)
-- 4-state logic (0/1/X/Z) support (planned - see 4STATE.md)
+- 4-state logic (0/1/X/Z) with `--4state` flag:
+  - X/Z literals (`8'bz`, `4'b10zx`, etc.)
+  - X/Z propagation in operations
+  - See [4STATE.md](4STATE.md) for details
 
 ### ❌ Not Yet Implemented
 **High Priority**:
-- Reduction operators (`&data`, `|data`, `^data`)
-- Signed arithmetic (`signed` keyword)
+- System tasks (`$display`, `$monitor`, `$finish`, etc.)
 
 **Medium Priority**:
-- `inout` ports and high-Z literals (`8'bz`)
 - Multi-dimensional arrays
 - `for`/`while`/`repeat` loops
 - `function`/`task` declarations
@@ -88,16 +98,38 @@ cmake --build build
 
 ## Test Suite
 
-**35+ passing test cases** in `verilog/pass/`:
+**78 passing test cases** in `verilog/pass/`:
 - Arithmetic and logic operations
+- Reduction operators (all 6 variants: &, |, ^, ~&, ~|, ~^)
+  - Comprehensive coverage: nested, slices, wide buses (64/128/256-bit)
+  - In combinational and sequential contexts
+  - With ternary and case statements
+- Signed arithmetic and comparisons
+  - Edge cases: overflow, underflow, division by zero
+  - Arithmetic right shift with sign extension
+  - Mixed signed/unsigned operations
+  - Unary operators on signed values
 - Module instantiation and hierarchy
 - Sequential and combinational logic
-- Memory operations
-- Edge case handling
+- Memory read/write operations
+- Case statements (case, casex, casez)
+- 4-state logic with X/Z values
+- Parentheses and expression grouping
+- Width extension and truncation
 
-Run all tests:
+**In-development test coverage** in `verilog/`:
+- Features not yet implemented (loops, functions, generate blocks, etc.)
+
+Run all passing tests:
 ```sh
 for f in verilog/pass/*.v; do
+  ./build/metalfpga_cli "$f"
+done
+```
+
+Run all tests (including in-development):
+```sh
+for f in verilog/test_*.v; do
   ./build/metalfpga_cli "$f"
 done
 ```

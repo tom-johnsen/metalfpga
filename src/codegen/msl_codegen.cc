@@ -37,6 +37,20 @@ int SignalWidth(const Module& module, const std::string& name) {
   return 32;
 }
 
+bool SignalSigned(const Module& module, const std::string& name) {
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return port.is_signed;
+    }
+  }
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return net.is_signed;
+    }
+  }
+  return false;
+}
+
 bool IsArrayNet(const Module& module, const std::string& name,
                 int* element_width, int* array_size) {
   for (const auto& net : module.nets) {
@@ -67,12 +81,20 @@ std::string TypeForWidth(int width) {
   return (width > 32) ? "ulong" : "uint";
 }
 
+std::string SignedTypeForWidth(int width) {
+  return (width > 32) ? "long" : "int";
+}
+
 std::string ZeroForWidth(int width) {
   return (width > 32) ? "0ul" : "0u";
 }
 
 std::string CastForWidth(int width) {
   return (width > 32) ? "(ulong)" : "";
+}
+
+std::string SignedCastForWidth(int width) {
+  return (width > 32) ? "(long)" : "(int)";
 }
 
 std::string MaskForWidthExpr(const std::string& expr, int width) {
@@ -82,6 +104,15 @@ std::string MaskForWidthExpr(const std::string& expr, int width) {
   uint64_t mask = MaskForWidth64(width);
   std::string suffix = (width > 32) ? "ul" : "u";
   return "((" + expr + ") & " + std::to_string(mask) + suffix + ")";
+}
+
+std::string MaskLiteralForWidth(int width) {
+  if (width >= 64) {
+    return "0xFFFFFFFFFFFFFFFFul";
+  }
+  uint64_t mask = MaskForWidth64(width);
+  std::string suffix = (width > 32) ? "ul" : "u";
+  return std::to_string(mask) + suffix;
 }
 
 std::string ExtendExpr(const std::string& expr, int expr_width,
@@ -94,6 +125,73 @@ std::string ExtendExpr(const std::string& expr, int expr_width,
     return "(uint)" + masked;
   }
   return masked;
+}
+
+std::string SignExtendExpr(const std::string& expr, int expr_width,
+                           int target_width) {
+  if (expr_width <= 0) {
+    return SignedCastForWidth(target_width) + ZeroForWidth(target_width);
+  }
+  int width = std::max(expr_width, target_width);
+  int shift = width - expr_width;
+  std::string masked = MaskForWidthExpr(expr, expr_width);
+  std::string cast = SignedCastForWidth(width);
+  if (shift == 0) {
+    return cast + masked;
+  }
+  std::string widened = cast + masked;
+  return "(" + cast + "(" + widened + " << " + std::to_string(shift) + "u) >> " +
+         std::to_string(shift) + "u))";
+}
+
+bool ExprSigned(const Expr& expr, const Module& module) {
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+      return SignalSigned(module, expr.ident);
+    case ExprKind::kNumber:
+      return expr.is_signed || !expr.has_base;
+    case ExprKind::kUnary:
+      if (expr.unary_op == 'S') {
+        return true;
+      }
+      if (expr.unary_op == 'U') {
+        return false;
+      }
+      if (expr.unary_op == '&' || expr.unary_op == '|' ||
+          expr.unary_op == '^' || expr.unary_op == '!') {
+        return false;
+      }
+      if (expr.unary_op == '-' && expr.operand &&
+          expr.operand->kind == ExprKind::kNumber) {
+        return true;
+      }
+      return expr.operand ? ExprSigned(*expr.operand, module) : false;
+    case ExprKind::kBinary: {
+      if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
+          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
+          expr.op == 'A' || expr.op == 'O') {
+        return false;
+      }
+      if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
+        return expr.lhs ? ExprSigned(*expr.lhs, module) : false;
+      }
+      bool lhs_signed = expr.lhs ? ExprSigned(*expr.lhs, module) : false;
+      bool rhs_signed = expr.rhs ? ExprSigned(*expr.rhs, module) : false;
+      return lhs_signed && rhs_signed;
+    }
+    case ExprKind::kTernary: {
+      bool t_signed =
+          expr.then_expr ? ExprSigned(*expr.then_expr, module) : false;
+      bool e_signed =
+          expr.else_expr ? ExprSigned(*expr.else_expr, module) : false;
+      return t_signed && e_signed;
+    }
+    case ExprKind::kSelect:
+    case ExprKind::kIndex:
+    case ExprKind::kConcat:
+      return false;
+  }
+  return false;
 }
 
 void CollectIdentifiers(const Expr& expr,
@@ -237,13 +335,18 @@ int ExprWidth(const Expr& expr, const Module& module) {
       }
       return MinimalWidth(expr.number);
     case ExprKind::kUnary:
+      if (expr.unary_op == '!' || expr.unary_op == '&' ||
+          expr.unary_op == '|' || expr.unary_op == '^') {
+        return 1;
+      }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case ExprKind::kBinary: {
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
-          expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
+          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
+          expr.op == 'A' || expr.op == 'O') {
         return 1;
       }
-      if (expr.op == 'l' || expr.op == 'r') {
+      if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
         return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
       }
       int lhs = expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
@@ -315,6 +418,10 @@ std::string EmitExprSized(const Expr& expr, int target_width,
     return raw;
   }
   if (expr_width < target_width) {
+    if (ExprSigned(expr, module)) {
+      return MaskForWidthExpr(
+          SignExtendExpr(raw, expr_width, target_width), target_width);
+    }
     return ExtendExpr(raw, expr_width, target_width);
   }
   return MaskForWidthExpr(raw, target_width);
@@ -434,6 +541,29 @@ std::string EmitExpr(const Expr& expr, const Module& module,
           expr.operand ? EmitExpr(*expr.operand, module, locals, regs)
                        : ZeroForWidth(width);
       operand = MaskForWidthExpr(operand, width);
+      if (expr.unary_op == 'S' || expr.unary_op == 'U') {
+        return operand;
+      }
+      if (expr.unary_op == '&' || expr.unary_op == '|' ||
+          expr.unary_op == '^') {
+        std::string mask = MaskLiteralForWidth(width);
+        if (expr.unary_op == '&') {
+          return "((" + operand + " == " + mask + ") ? 1u : 0u)";
+        }
+        if (expr.unary_op == '|') {
+          return "((" + operand + " != 0u) ? 1u : 0u)";
+        }
+        if (width > 32) {
+          std::string lo = "uint(" + operand + ")";
+          std::string hi = "uint((" + operand + ") >> 32u)";
+          return "((popcount(" + lo + ") + popcount(" + hi + ")) & 1u)";
+        }
+        return "(popcount(uint(" + operand + ")) & 1u)";
+      }
+      if (expr.unary_op == '!') {
+        std::string zero = ZeroForWidth(width);
+        return "((" + operand + " == " + zero + ") ? 1u : 0u)";
+      }
       if (expr.unary_op == '+') {
         return operand;
       }
@@ -446,24 +576,58 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       int lhs_width = expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
       int rhs_width = expr.rhs ? ExprWidth(*expr.rhs, module) : 32;
       int target_width = std::max(lhs_width, rhs_width);
-      if (expr.op == 'l' || expr.op == 'r') {
+      bool lhs_signed = expr.lhs ? ExprSigned(*expr.lhs, module) : false;
+      bool rhs_signed = expr.rhs ? ExprSigned(*expr.rhs, module) : false;
+      bool signed_op = lhs_signed && rhs_signed;
+      if (expr.op == 'A' || expr.op == 'O') {
+        std::string lhs_masked = MaskForWidthExpr(lhs, lhs_width);
+        std::string rhs_masked = MaskForWidthExpr(rhs, rhs_width);
+        std::string lhs_zero = ZeroForWidth(lhs_width);
+        std::string rhs_zero = ZeroForWidth(rhs_width);
+        std::string lhs_bool = "(" + lhs_masked + " != " + lhs_zero + ")";
+        std::string rhs_bool = "(" + rhs_masked + " != " + rhs_zero + ")";
+        std::string op = (expr.op == 'A') ? "&&" : "||";
+        return "((" + lhs_bool + " " + op + " " + rhs_bool + ") ? 1u : 0u)";
+      }
+      if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
         int width = lhs_width;
         std::string zero = ZeroForWidth(width);
-        std::string cast = CastForWidth(width);
         std::string lhs_masked = MaskForWidthExpr(lhs, width);
+        std::string cast = CastForWidth(width);
         std::string op = (expr.op == 'l') ? "<<" : ">>";
+        if (expr.op == 'R' && lhs_signed) {
+          std::string one = (width > 32) ? "1ul" : "1u";
+          std::string sign_bit =
+              "((" + lhs_masked + " >> " + std::to_string(width - 1) +
+              "u) & " + one + ")";
+          std::string fill = "(" + sign_bit + " ? " +
+                             MaskLiteralForWidth(width) + " : " + zero + ")";
+          std::string signed_lhs = SignExtendExpr(lhs, width, width);
+          std::string shifted =
+              "(" + signed_lhs + " " + op + " " + rhs + ")";
+          return "((" + rhs + ") >= " + std::to_string(width) + "u ? " + fill +
+                 " : " + MaskForWidthExpr(shifted, width) + ")";
+        }
         return "((" + rhs + ") >= " + std::to_string(width) + "u ? " + zero +
                " : (" + cast + lhs_masked + " " + op + " " + rhs + "))";
       }
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
           expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
-        std::string lhs_ext = ExtendExpr(lhs, lhs_width, target_width);
-        std::string rhs_ext = ExtendExpr(rhs, rhs_width, target_width);
+        std::string lhs_ext = signed_op
+                                  ? SignExtendExpr(lhs, lhs_width, target_width)
+                                  : ExtendExpr(lhs, lhs_width, target_width);
+        std::string rhs_ext = signed_op
+                                  ? SignExtendExpr(rhs, rhs_width, target_width)
+                                  : ExtendExpr(rhs, rhs_width, target_width);
         return "((" + lhs_ext + " " + BinaryOpString(expr.op) + " " + rhs_ext +
                ") ? 1u : 0u)";
       }
-      std::string lhs_ext = ExtendExpr(lhs, lhs_width, target_width);
-      std::string rhs_ext = ExtendExpr(rhs, rhs_width, target_width);
+      std::string lhs_ext = signed_op
+                                ? SignExtendExpr(lhs, lhs_width, target_width)
+                                : ExtendExpr(lhs, lhs_width, target_width);
+      std::string rhs_ext = signed_op
+                                ? SignExtendExpr(rhs, rhs_width, target_width)
+                                : ExtendExpr(rhs, rhs_width, target_width);
       std::string raw =
           "(" + lhs_ext + " " + BinaryOpString(expr.op) + " " + rhs_ext + ")";
       return MaskForWidthExpr(raw, target_width);
@@ -614,6 +778,36 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "inline FourState64 fs_resize64(FourState64 a, uint width) {\n";
     out << "  return fs_make64(a.val, a.xz, width);\n";
     out << "}\n";
+    out << "inline FourState32 fs_sext32(FourState32 a, uint src_width, uint target_width) {\n";
+    out << "  if (target_width == 0u || src_width == 0u) return fs_make32(0u, 0u, target_width);\n";
+    out << "  if (target_width <= src_width) return fs_make32(a.val, a.xz, target_width);\n";
+    out << "  uint src_mask = fs_mask32(src_width);\n";
+    out << "  uint tgt_mask = fs_mask32(target_width);\n";
+    out << "  uint val = a.val & src_mask;\n";
+    out << "  uint xz = a.xz & src_mask;\n";
+    out << "  uint sign_mask = 1u << (src_width - 1u);\n";
+    out << "  uint sign_xz = xz & sign_mask;\n";
+    out << "  uint sign_val = val & sign_mask;\n";
+    out << "  uint ext_mask = tgt_mask & ~src_mask;\n";
+    out << "  uint ext_val = sign_val ? ext_mask : 0u;\n";
+    out << "  uint ext_xz = sign_xz ? ext_mask : 0u;\n";
+    out << "  return fs_make32(val | ext_val, xz | ext_xz, target_width);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_sext64(FourState64 a, uint src_width, uint target_width) {\n";
+    out << "  if (target_width == 0u || src_width == 0u) return fs_make64(0ul, 0ul, target_width);\n";
+    out << "  if (target_width <= src_width) return fs_make64(a.val, a.xz, target_width);\n";
+    out << "  ulong src_mask = fs_mask64(src_width);\n";
+    out << "  ulong tgt_mask = fs_mask64(target_width);\n";
+    out << "  ulong val = a.val & src_mask;\n";
+    out << "  ulong xz = a.xz & src_mask;\n";
+    out << "  ulong sign_mask = 1ul << (src_width - 1u);\n";
+    out << "  ulong sign_xz = xz & sign_mask;\n";
+    out << "  ulong sign_val = val & sign_mask;\n";
+    out << "  ulong ext_mask = tgt_mask & ~src_mask;\n";
+    out << "  ulong ext_val = sign_val ? ext_mask : 0ul;\n";
+    out << "  ulong ext_xz = sign_xz ? ext_mask : 0ul;\n";
+    out << "  return fs_make64(val | ext_val, xz | ext_xz, target_width);\n";
+    out << "}\n";
     out << "inline FourState32 fs_merge32(FourState32 a, FourState32 b, uint width) {\n";
     out << "  uint mask = fs_mask32(width);\n";
     out << "  uint ax = a.xz & mask;\n";
@@ -744,6 +938,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if ((a.xz | b.xz) != 0ul || b.val == 0ul) return fs_allx64(width);\n";
     out << "  return fs_make64(a.val / b.val, 0ul, width);\n";
     out << "}\n";
+    out << "inline FourState32 fs_mod32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  if ((a.xz | b.xz) != 0u || b.val == 0u) return fs_allx32(width);\n";
+    out << "  return fs_make32(a.val % b.val, 0u, width);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_mod64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  if ((a.xz | b.xz) != 0ul || b.val == 0ul) return fs_allx64(width);\n";
+    out << "  return fs_make64(a.val % b.val, 0ul, width);\n";
+    out << "}\n";
     out << "inline FourState32 fs_cmp32(uint value, bool pred) {\n";
     out << "  FourState32 out = {pred ? 1u : 0u, 0u};\n";
     out << "  return out;\n";
@@ -840,6 +1042,259 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if (cond.xz != 0ul) return fs_merge64(t, f, width);\n";
     out << "  return (cond.val != 0ul) ? fs_resize64(t, width) : fs_resize64(f, width);\n";
     out << "}\n\n";
+    out << "inline FourState32 fs_red_and32(FourState32 a, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  uint ax = a.xz & mask;\n";
+    out << "  uint a0 = (~a.val) & ~ax & mask;\n";
+    out << "  uint a1 = a.val & ~ax & mask;\n";
+    out << "  if (a0 != 0u) return fs_make32(0u, 0u, 1u);\n";
+    out << "  if (a1 == mask) return fs_make32(1u, 0u, 1u);\n";
+    out << "  return fs_allx32(1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_red_and64(FourState64 a, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  ulong ax = a.xz & mask;\n";
+    out << "  ulong a0 = (~a.val) & ~ax & mask;\n";
+    out << "  ulong a1 = a.val & ~ax & mask;\n";
+    out << "  if (a0 != 0ul) return fs_make64(0ul, 0ul, 1u);\n";
+    out << "  if (a1 == mask) return fs_make64(1ul, 0ul, 1u);\n";
+    out << "  return fs_allx64(1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_red_or32(FourState32 a, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  uint ax = a.xz & mask;\n";
+    out << "  uint a0 = (~a.val) & ~ax & mask;\n";
+    out << "  uint a1 = a.val & ~ax & mask;\n";
+    out << "  if (a1 != 0u) return fs_make32(1u, 0u, 1u);\n";
+    out << "  if (a0 == mask) return fs_make32(0u, 0u, 1u);\n";
+    out << "  return fs_allx32(1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_red_or64(FourState64 a, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  ulong ax = a.xz & mask;\n";
+    out << "  ulong a0 = (~a.val) & ~ax & mask;\n";
+    out << "  ulong a1 = a.val & ~ax & mask;\n";
+    out << "  if (a1 != 0ul) return fs_make64(1ul, 0ul, 1u);\n";
+    out << "  if (a0 == mask) return fs_make64(0ul, 0ul, 1u);\n";
+    out << "  return fs_allx64(1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_red_xor32(FourState32 a, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz & mask) != 0u) return fs_allx32(1u);\n";
+    out << "  uint parity = popcount(a.val & mask) & 1u;\n";
+    out << "  return fs_make32(parity, 0u, 1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_red_xor64(FourState64 a, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz & mask) != 0ul) return fs_allx64(1u);\n";
+    out << "  ulong val = a.val & mask;\n";
+    out << "  uint lo = uint(val);\n";
+    out << "  uint hi = uint(val >> 32u);\n";
+    out << "  uint parity = (popcount(lo) + popcount(hi)) & 1u;\n";
+    out << "  return fs_make64(ulong(parity), 0ul, 1u);\n";
+    out << "}\n\n";
+    out << "inline int fs_sign32(uint val, uint width) {\n";
+    out << "  if (width >= 32u) return int(val);\n";
+    out << "  uint shift = 32u - width;\n";
+    out << "  return int(val << shift) >> shift;\n";
+    out << "}\n";
+    out << "inline long fs_sign64(ulong val, uint width) {\n";
+    out << "  if (width >= 64u) return long(val);\n";
+    out << "  uint shift = 64u - width;\n";
+    out << "  return long(val << shift) >> shift;\n";
+    out << "}\n";
+    out << "inline FourState32 fs_slt32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
+    out << "  int sa = fs_sign32(a.val & mask, width);\n";
+    out << "  int sb = fs_sign32(b.val & mask, width);\n";
+    out << "  return fs_make32((sa < sb) ? 1u : 0u, 0u, 1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_slt64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
+    out << "  long sa = fs_sign64(a.val & mask, width);\n";
+    out << "  long sb = fs_sign64(b.val & mask, width);\n";
+    out << "  return fs_make64((sa < sb) ? 1ul : 0ul, 0ul, 1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_sle32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
+    out << "  int sa = fs_sign32(a.val & mask, width);\n";
+    out << "  int sb = fs_sign32(b.val & mask, width);\n";
+    out << "  return fs_make32((sa <= sb) ? 1u : 0u, 0u, 1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_sle64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
+    out << "  long sa = fs_sign64(a.val & mask, width);\n";
+    out << "  long sb = fs_sign64(b.val & mask, width);\n";
+    out << "  return fs_make64((sa <= sb) ? 1ul : 0ul, 0ul, 1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_sgt32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
+    out << "  int sa = fs_sign32(a.val & mask, width);\n";
+    out << "  int sb = fs_sign32(b.val & mask, width);\n";
+    out << "  return fs_make32((sa > sb) ? 1u : 0u, 0u, 1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_sgt64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
+    out << "  long sa = fs_sign64(a.val & mask, width);\n";
+    out << "  long sb = fs_sign64(b.val & mask, width);\n";
+    out << "  return fs_make64((sa > sb) ? 1ul : 0ul, 0ul, 1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_sge32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
+    out << "  int sa = fs_sign32(a.val & mask, width);\n";
+    out << "  int sb = fs_sign32(b.val & mask, width);\n";
+    out << "  return fs_make32((sa >= sb) ? 1u : 0u, 0u, 1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_sge64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
+    out << "  long sa = fs_sign64(a.val & mask, width);\n";
+    out << "  long sb = fs_sign64(b.val & mask, width);\n";
+    out << "  return fs_make64((sa >= sb) ? 1ul : 0ul, 0ul, 1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_sdiv32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
+    out << "  int sa = fs_sign32(a.val & mask, width);\n";
+    out << "  int sb = fs_sign32(b.val & mask, width);\n";
+    out << "  if (sb == 0) return fs_allx32(width);\n";
+    out << "  int res = sa / sb;\n";
+    out << "  return fs_make32(uint(res), 0u, width);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_sdiv64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
+    out << "  long sa = fs_sign64(a.val & mask, width);\n";
+    out << "  long sb = fs_sign64(b.val & mask, width);\n";
+    out << "  if (sb == 0) return fs_allx64(width);\n";
+    out << "  long res = sa / sb;\n";
+    out << "  return fs_make64(ulong(res), 0ul, width);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_smod32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
+    out << "  int sa = fs_sign32(a.val & mask, width);\n";
+    out << "  int sb = fs_sign32(b.val & mask, width);\n";
+    out << "  if (sb == 0) return fs_allx32(width);\n";
+    out << "  int res = sa % sb;\n";
+    out << "  return fs_make32(uint(res), 0u, width);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_smod64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
+    out << "  long sa = fs_sign64(a.val & mask, width);\n";
+    out << "  long sb = fs_sign64(b.val & mask, width);\n";
+    out << "  if (sb == 0) return fs_allx64(width);\n";
+    out << "  long res = sa % sb;\n";
+    out << "  return fs_make64(ulong(res), 0ul, width);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_sar32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  if (b.xz != 0u) return fs_allx32(width);\n";
+    out << "  uint shift = b.val;\n";
+    out << "  if (width == 0u) return fs_make32(0u, 0u, 0u);\n";
+    out << "  uint sign_mask = 1u << (width - 1u);\n";
+    out << "  if ((a.xz & sign_mask) != 0u) return fs_allx32(width);\n";
+    out << "  uint sign = (a.val & sign_mask) ? mask : 0u;\n";
+    out << "  if (shift >= width) return fs_make32(sign, 0u, width);\n";
+    out << "  uint fill_mask = (shift == 0u) ? 0u : (~0u << (width - shift));\n";
+    out << "  uint shifted_val = (a.val >> shift) | (sign & fill_mask);\n";
+    out << "  uint shifted_xz = (a.xz >> shift) & mask;\n";
+    out << "  return fs_make32(shifted_val, shifted_xz, width);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_sar64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  if (b.xz != 0ul) return fs_allx64(width);\n";
+    out << "  ulong shift = b.val;\n";
+    out << "  if (width == 0u) return fs_make64(0ul, 0ul, 0u);\n";
+    out << "  ulong sign_mask = 1ul << (width - 1u);\n";
+    out << "  if ((a.xz & sign_mask) != 0ul) return fs_allx64(width);\n";
+    out << "  ulong sign = (a.val & sign_mask) ? mask : 0ul;\n";
+    out << "  if (shift >= width) return fs_make64(sign, 0ul, width);\n";
+    out << "  ulong fill_mask = (shift == 0u) ? 0ul : (~0ul << (width - shift));\n";
+    out << "  ulong shifted_val = (a.val >> shift) | (sign & fill_mask);\n";
+    out << "  ulong shifted_xz = (a.xz >> shift) & mask;\n";
+    out << "  return fs_make64(shifted_val, shifted_xz, width);\n";
+    out << "}\n\n";
+    out << "inline FourState32 fs_log_not32(FourState32 a, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  uint ax = a.xz & mask;\n";
+    out << "  uint known1 = a.val & ~ax & mask;\n";
+    out << "  if (known1 != 0u) return fs_make32(0u, 0u, 1u);\n";
+    out << "  if (ax == 0u && (a.val & mask) == 0u) return fs_make32(1u, 0u, 1u);\n";
+    out << "  return fs_allx32(1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_log_not64(FourState64 a, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  ulong ax = a.xz & mask;\n";
+    out << "  ulong known1 = a.val & ~ax & mask;\n";
+    out << "  if (known1 != 0ul) return fs_make64(0ul, 0ul, 1u);\n";
+    out << "  if (ax == 0ul && (a.val & mask) == 0ul) return fs_make64(1ul, 0ul, 1u);\n";
+    out << "  return fs_allx64(1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_log_and32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  uint ax = a.xz & mask;\n";
+    out << "  uint bx = b.xz & mask;\n";
+    out << "  uint a_known1 = a.val & ~ax & mask;\n";
+    out << "  uint b_known1 = b.val & ~bx & mask;\n";
+    out << "  bool a_true = a_known1 != 0u;\n";
+    out << "  bool b_true = b_known1 != 0u;\n";
+    out << "  bool a_false = (ax == 0u && (a.val & mask) == 0u);\n";
+    out << "  bool b_false = (bx == 0u && (b.val & mask) == 0u);\n";
+    out << "  if (a_false || b_false) return fs_make32(0u, 0u, 1u);\n";
+    out << "  if (a_true && b_true) return fs_make32(1u, 0u, 1u);\n";
+    out << "  return fs_allx32(1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_log_and64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  ulong ax = a.xz & mask;\n";
+    out << "  ulong bx = b.xz & mask;\n";
+    out << "  ulong a_known1 = a.val & ~ax & mask;\n";
+    out << "  ulong b_known1 = b.val & ~bx & mask;\n";
+    out << "  bool a_true = a_known1 != 0ul;\n";
+    out << "  bool b_true = b_known1 != 0ul;\n";
+    out << "  bool a_false = (ax == 0ul && (a.val & mask) == 0ul);\n";
+    out << "  bool b_false = (bx == 0ul && (b.val & mask) == 0ul);\n";
+    out << "  if (a_false || b_false) return fs_make64(0ul, 0ul, 1u);\n";
+    out << "  if (a_true && b_true) return fs_make64(1ul, 0ul, 1u);\n";
+    out << "  return fs_allx64(1u);\n";
+    out << "}\n";
+    out << "inline FourState32 fs_log_or32(FourState32 a, FourState32 b, uint width) {\n";
+    out << "  uint mask = fs_mask32(width);\n";
+    out << "  uint ax = a.xz & mask;\n";
+    out << "  uint bx = b.xz & mask;\n";
+    out << "  uint a_known1 = a.val & ~ax & mask;\n";
+    out << "  uint b_known1 = b.val & ~bx & mask;\n";
+    out << "  bool a_true = a_known1 != 0u;\n";
+    out << "  bool b_true = b_known1 != 0u;\n";
+    out << "  bool a_false = (ax == 0u && (a.val & mask) == 0u);\n";
+    out << "  bool b_false = (bx == 0u && (b.val & mask) == 0u);\n";
+    out << "  if (a_true || b_true) return fs_make32(1u, 0u, 1u);\n";
+    out << "  if (a_false && b_false) return fs_make32(0u, 0u, 1u);\n";
+    out << "  return fs_allx32(1u);\n";
+    out << "}\n";
+    out << "inline FourState64 fs_log_or64(FourState64 a, FourState64 b, uint width) {\n";
+    out << "  ulong mask = fs_mask64(width);\n";
+    out << "  ulong ax = a.xz & mask;\n";
+    out << "  ulong bx = b.xz & mask;\n";
+    out << "  ulong a_known1 = a.val & ~ax & mask;\n";
+    out << "  ulong b_known1 = b.val & ~bx & mask;\n";
+    out << "  bool a_true = a_known1 != 0ul;\n";
+    out << "  bool b_true = b_known1 != 0ul;\n";
+    out << "  bool a_false = (ax == 0ul && (a.val & mask) == 0ul);\n";
+    out << "  bool b_false = (bx == 0ul && (b.val & mask) == 0ul);\n";
+    out << "  if (a_true || b_true) return fs_make64(1ul, 0ul, 1u);\n";
+    out << "  if (a_false && b_false) return fs_make64(0ul, 0ul, 1u);\n";
+    out << "  return fs_allx64(1u);\n";
+    out << "}\n\n";
     out << "inline bool fs_case_eq32(FourState32 a, FourState32 b, uint width) {\n";
     out << "  uint mask = fs_mask32(width);\n";
     out << "  uint ax = a.xz & mask;\n";
@@ -920,6 +1375,22 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return FsExpr{base + ".val", base + ".xz", width};
     };
 
+    auto fs_sext_expr = [&](const FsExpr& expr, int width) -> FsExpr {
+      if (expr.width >= width) {
+        return fs_resize_expr(expr, width);
+      }
+      std::string func = (width > 32) ? "fs_sext64" : "fs_sext32";
+      std::string base =
+          func + "(" + fs_make_expr(expr, expr.width) + ", " +
+          std::to_string(expr.width) + "u, " + std::to_string(width) + "u)";
+      return FsExpr{base + ".val", base + ".xz", width};
+    };
+
+    auto fs_extend_expr = [&](const FsExpr& expr, int width,
+                              bool signed_op) -> FsExpr {
+      return signed_op ? fs_sext_expr(expr, width) : fs_resize_expr(expr, width);
+    };
+
     auto fs_allx_expr = [&](int width) -> FsExpr {
       std::string func = (width > 32) ? "fs_allx64" : "fs_allx32";
       std::string base = func + "(" + std::to_string(width) + "u)";
@@ -935,14 +1406,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return FsExpr{base + ".val", base + ".xz", width};
     };
 
-    auto fs_binary = [&](const char* op, FsExpr lhs, FsExpr rhs,
-                         int width) -> FsExpr {
-      if (lhs.width != width) {
-        lhs = fs_resize_expr(lhs, width);
-      }
-      if (rhs.width != width) {
-        rhs = fs_resize_expr(rhs, width);
-      }
+    auto fs_binary = [&](const char* op, FsExpr lhs, FsExpr rhs, int width,
+                         bool signed_op) -> FsExpr {
+      lhs = fs_extend_expr(lhs, width, signed_op);
+      rhs = fs_extend_expr(rhs, width, signed_op);
       std::string func =
           std::string("fs_") + op + (width > 32 ? "64" : "32");
       std::string base =
@@ -1024,49 +1491,99 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         case ExprKind::kUnary: {
           FsExpr operand = emit_expr4(*expr.operand);
           int width = operand.width;
+          if (expr.unary_op == 'S' || expr.unary_op == 'U') {
+            return operand;
+          }
           if (expr.unary_op == '+') {
             return operand;
           }
           if (expr.unary_op == '-') {
             FsExpr zero{literal_for_width(0, width), literal_for_width(0, width),
                         width};
-            return fs_binary("sub", zero, operand, width);
+            bool signed_op =
+                expr.operand ? ExprSigned(*expr.operand, module) : false;
+            return fs_binary("sub", zero, operand, width, signed_op);
           }
           if (expr.unary_op == '~') {
             return fs_unary("not", operand, width);
           }
+          if (expr.unary_op == '!') {
+            std::string func = (width > 32) ? "fs_log_not64" : "fs_log_not32";
+            std::string base =
+                func + "(" + fs_make_expr(operand, width) + ", " +
+                std::to_string(width) + "u)";
+            return FsExpr{base + ".val", base + ".xz", 1};
+          }
+          if (expr.unary_op == '&' || expr.unary_op == '|' ||
+              expr.unary_op == '^') {
+            std::string func = "fs_red_and";
+            if (expr.unary_op == '|') {
+              func = "fs_red_or";
+            } else if (expr.unary_op == '^') {
+              func = "fs_red_xor";
+            }
+            func += (width > 32) ? "64" : "32";
+            std::string base = func + "(" + fs_make_expr(operand, width) + ", " +
+                               std::to_string(width) + "u)";
+            return FsExpr{base + ".val", base + ".xz", 1};
+          }
           return fs_allx_expr(width);
         }
         case ExprKind::kBinary: {
-          if (expr.op == 'l' || expr.op == 'r') {
+          if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
             FsExpr lhs = emit_expr4(*expr.lhs);
             FsExpr rhs = emit_expr4(*expr.rhs);
             int width = lhs.width;
-            return fs_shift(expr.op == 'l' ? "shl" : "shr", lhs, rhs, width);
+            bool signed_lhs =
+                expr.op == 'R' ? ExprSigned(*expr.lhs, module) : false;
+            const char* op = (expr.op == 'l')
+                                 ? "shl"
+                                 : (signed_lhs ? "sar" : "shr");
+            return fs_shift(op, lhs, rhs, width);
+          }
+          if (expr.op == 'A' || expr.op == 'O') {
+            FsExpr lhs = emit_expr4(*expr.lhs);
+            FsExpr rhs = emit_expr4(*expr.rhs);
+            int width = std::max(lhs.width, rhs.width);
+            lhs = fs_resize_expr(lhs, width);
+            rhs = fs_resize_expr(rhs, width);
+            std::string func = (width > 32)
+                                   ? (expr.op == 'A' ? "fs_log_and64"
+                                                    : "fs_log_or64")
+                                   : (expr.op == 'A' ? "fs_log_and32"
+                                                    : "fs_log_or32");
+            std::string base =
+                func + "(" + fs_make_expr(lhs, width) + ", " +
+                fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
+            return FsExpr{base + ".val", base + ".xz", 1};
           }
           if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
               expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
             FsExpr lhs = emit_expr4(*expr.lhs);
             FsExpr rhs = emit_expr4(*expr.rhs);
             int width = std::max(lhs.width, rhs.width);
+            bool signed_op =
+                ExprSigned(*expr.lhs, module) && ExprSigned(*expr.rhs, module);
             const char* op = "eq";
             if (expr.op == 'N') {
               op = "ne";
             } else if (expr.op == '<') {
-              op = "lt";
+              op = signed_op ? "slt" : "lt";
             } else if (expr.op == '>') {
-              op = "gt";
+              op = signed_op ? "sgt" : "gt";
             } else if (expr.op == 'L') {
-              op = "le";
+              op = signed_op ? "sle" : "le";
             } else if (expr.op == 'G') {
-              op = "ge";
+              op = signed_op ? "sge" : "ge";
             }
-            FsExpr cmp = fs_binary(op, lhs, rhs, width);
+            FsExpr cmp = fs_binary(op, lhs, rhs, width, signed_op);
             return fs_resize_expr(cmp, 1);
           }
           FsExpr lhs = emit_expr4(*expr.lhs);
           FsExpr rhs = emit_expr4(*expr.rhs);
           int width = std::max(lhs.width, rhs.width);
+          bool signed_op =
+              ExprSigned(*expr.lhs, module) && ExprSigned(*expr.rhs, module);
           const char* op = nullptr;
           switch (expr.op) {
             case '+':
@@ -1079,7 +1596,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               op = "mul";
               break;
             case '/':
-              op = "div";
+              op = signed_op ? "sdiv" : "div";
+              break;
+            case '%':
+              op = signed_op ? "smod" : "mod";
               break;
             case '&':
               op = "and";
@@ -1094,7 +1614,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               op = "add";
               break;
           }
-          return fs_binary(op, lhs, rhs, width);
+          return fs_binary(op, lhs, rhs, width, signed_op);
         }
         case ExprKind::kTernary: {
           FsExpr cond = emit_expr4(*expr.condition);
@@ -1208,7 +1728,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     auto emit_expr4_sized = [&](const Expr& expr, int target_width) -> FsExpr {
       FsExpr out_expr = emit_expr4(expr);
-      return fs_resize_expr(out_expr, target_width);
+      bool signed_expr = ExprSigned(expr, module);
+      return fs_extend_expr(out_expr, target_width, signed_expr);
     };
 
     struct Lvalue4 {
@@ -1375,9 +1896,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
 
     std::vector<size_t> ordered_assigns = OrderAssigns(module);
+    std::unordered_map<std::string, std::vector<const Assign*>> partial_assigns;
+    for (const auto& assign : module.assigns) {
+      if (assign.lhs_has_range) {
+        partial_assigns[assign.lhs].push_back(&assign);
+      }
+    }
     for (size_t index : ordered_assigns) {
       const auto& assign = module.assigns[index];
       if (!assign.rhs) {
+        continue;
+      }
+      if (assign.lhs_has_range) {
         continue;
       }
       Lvalue4 lhs = build_lvalue4_assign(assign, locals, regs);
@@ -1397,6 +1927,68 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         } else {
           out << "  " << lhs.val << " = " << rhs.val << ";\n";
           out << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+        }
+      }
+    }
+    for (const auto& entry : partial_assigns) {
+      const std::string& name = entry.first;
+      int lhs_width = SignalWidth(module, name);
+      std::string type = TypeForWidth(lhs_width);
+      bool target_is_local =
+          locals.count(name) > 0 && !IsOutputPort(module, name) &&
+          regs.count(name) == 0;
+      std::string temp_val =
+          target_is_local ? val_name(name) : ("__gpga_partial_" + name + "_val");
+      std::string temp_xz =
+          target_is_local ? xz_name(name) : ("__gpga_partial_" + name + "_xz");
+      std::string zero = literal_for_width(0, lhs_width);
+      if (target_is_local) {
+        if (declared.count(name) == 0) {
+          out << "  " << type << " " << temp_val << " = " << zero << ";\n";
+          out << "  " << type << " " << temp_xz << " = " << zero << ";\n";
+          declared.insert(name);
+        } else {
+          out << "  " << temp_val << " = " << zero << ";\n";
+          out << "  " << temp_xz << " = " << zero << ";\n";
+        }
+      } else {
+        out << "  " << type << " " << temp_val << " = " << zero << ";\n";
+        out << "  " << type << " " << temp_xz << " = " << zero << ";\n";
+      }
+      for (const auto* assign : entry.second) {
+        int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
+        int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
+        int slice_width = hi - lo + 1;
+        FsExpr rhs = emit_expr4_sized(*assign->rhs, slice_width);
+        std::string mask = mask_literal(slice_width);
+        std::string shifted_mask =
+            "(" + mask + " << " + std::to_string(lo) + "u)";
+        std::string cast = (lhs_width > 32) ? "(ulong)" : "(uint)";
+        out << "  " << temp_val << " = (" << temp_val << " & ~"
+            << shifted_mask << ") | ((" << cast << rhs.val << " & " << mask
+            << ") << " << std::to_string(lo) << "u);\n";
+        out << "  " << temp_xz << " = (" << temp_xz << " & ~"
+            << shifted_mask << ") | ((" << cast << rhs.xz << " & " << mask
+            << ") << " << std::to_string(lo) << "u);\n";
+      }
+      if (!target_is_local) {
+        if (IsOutputPort(module, name) || regs.count(name) > 0) {
+          out << "  " << val_name(name) << "[gid] = " << temp_val << ";\n";
+          out << "  " << xz_name(name) << "[gid] = " << temp_xz << ";\n";
+        } else if (locals.count(name) > 0) {
+          if (declared.count(name) == 0) {
+            out << "  " << type << " " << val_name(name) << " = " << temp_val
+                << ";\n";
+            out << "  " << type << " " << xz_name(name) << " = " << temp_xz
+                << ";\n";
+            declared.insert(name);
+          } else {
+            out << "  " << val_name(name) << " = " << temp_val << ";\n";
+            out << "  " << xz_name(name) << " = " << temp_xz << ";\n";
+          }
+        } else {
+          out << "  // Unmapped assign: " << name << " = " << temp_val
+              << ";\n";
         }
       }
     }
@@ -1932,9 +2524,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
 
   std::vector<size_t> ordered_assigns = OrderAssigns(module);
+  std::unordered_map<std::string, std::vector<const Assign*>> partial_assigns;
+  for (const auto& assign : module.assigns) {
+    if (assign.lhs_has_range) {
+      partial_assigns[assign.lhs].push_back(&assign);
+    }
+  }
   for (size_t index : ordered_assigns) {
     const auto& assign = module.assigns[index];
     if (!assign.rhs) {
+      continue;
+    }
+    if (assign.lhs_has_range) {
       continue;
     }
     std::string expr = EmitExpr(*assign.rhs, module, locals, regs);
@@ -1954,6 +2555,56 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     } else {
       out << "  // Unmapped assign: " << assign.lhs << " = " << expr << ";\n";
+    }
+  }
+  for (const auto& entry : partial_assigns) {
+    const std::string& name = entry.first;
+    int lhs_width = SignalWidth(module, name);
+    std::string type = TypeForWidth(lhs_width);
+    bool target_is_local =
+        locals.count(name) > 0 && !IsOutputPort(module, name) &&
+        regs.count(name) == 0;
+    std::string temp = target_is_local ? name : ("__gpga_partial_" + name);
+    std::string zero = ZeroForWidth(lhs_width);
+    if (target_is_local) {
+      if (declared.count(name) == 0) {
+        out << "  " << type << " " << temp << " = " << zero << ";\n";
+        declared.insert(name);
+      } else {
+        out << "  " << temp << " = " << zero << ";\n";
+      }
+    } else {
+      out << "  " << type << " " << temp << " = " << zero << ";\n";
+    }
+    for (const auto* assign : entry.second) {
+      int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
+      int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
+      int slice_width = hi - lo + 1;
+      std::string rhs = EmitExprSized(*assign->rhs, slice_width, module, locals,
+                                      regs);
+      uint64_t mask = MaskForWidth64(slice_width);
+      std::string suffix = (lhs_width > 32) ? "ul" : "u";
+      std::string mask_literal = std::to_string(mask) + suffix;
+      std::string shifted_mask =
+          "(" + mask_literal + " << " + std::to_string(lo) + "u)";
+      std::string cast = (lhs_width > 32) ? "(ulong)" : "(uint)";
+      out << "  " << temp << " = (" << temp << " & ~" << shifted_mask << ") | (("
+          << cast << rhs << " & " << mask_literal << ") << "
+          << std::to_string(lo) << "u);\n";
+    }
+    if (!target_is_local) {
+      if (IsOutputPort(module, name) || regs.count(name) > 0) {
+        out << "  " << name << "[gid] = " << temp << ";\n";
+      } else if (locals.count(name) > 0) {
+        if (declared.count(name) == 0) {
+          out << "  " << type << " " << name << " = " << temp << ";\n";
+          declared.insert(name);
+        } else {
+          out << "  " << name << " = " << temp << ";\n";
+        }
+      } else {
+        out << "  // Unmapped assign: " << name << " = " << temp << ";\n";
+      }
     }
   }
 

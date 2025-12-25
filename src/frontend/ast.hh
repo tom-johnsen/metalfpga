@@ -20,6 +20,7 @@ struct Port {
   PortDir dir = PortDir::kInput;
   std::string name;
   int width = 1;
+  bool is_signed = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
 };
@@ -35,6 +36,7 @@ struct Net {
   NetType type = NetType::kWire;
   std::string name;
   int width = 1;
+  bool is_signed = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
   int array_size = 0;
@@ -64,6 +66,7 @@ struct Expr {
   bool has_width = false;
   bool has_base = false;
   char base_char = 'd';
+  bool is_signed = false;
   char op = 0;
   char unary_op = 0;
   std::unique_ptr<Expr> operand;
@@ -96,6 +99,9 @@ struct Parameter {
 
 struct Assign {
   std::string lhs;
+  int lhs_msb = 0;
+  int lhs_lsb = 0;
+  bool lhs_has_range = false;
   std::unique_ptr<Expr> rhs;
 };
 

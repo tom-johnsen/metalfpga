@@ -10,6 +10,7 @@
 - assign
 - module instantiation (named + positional port connections)
 - reg
+- signed (ports/nets)
 - always
 - always @*
 - begin / end
@@ -25,17 +26,25 @@
 - localparam (module body, constant expressions only)
 - ternary `?:`
 - unary operators (`~`, `-`, `+`)
+- logical operators (`!`, `&&`, `||`)
+- reduction operators (`&`, `|`, `^`, `~&`, `~|`, `~^`)
 - concatenation / replication (`{}`, `{N{}}`)
 - based literals (`'b`, `'h`, `'d`, `'o`)
+- signed based literals (`'sb`, `'sh`, `'sd`, `'so`)
 - equality / relational (`==`, `!=`, `<`, `>`, `<=`, `>=`)
 - shifts (`<<`, `>>`)
+- arithmetic shift (`>>>`)
 - nested begin/end blocks inside always/if
 - instance parameter overrides (`#(...)`) applied
 - case / casez / casex (procedural)
+- `$signed(...)` / `$unsigned(...)` casts
 
 ### Operators implemented
-- `+` `-`
+- `+` `-` `%`
 - `&` `|` `^`
+- reduction `&` `|` `^`
+- logical `!` `&&` `||`
+- shifts `<<` `>>` `>>>`
 - parentheses for grouping
 - `=` in continuous assignments
 - `[msb:lsb]` ranges in declarations

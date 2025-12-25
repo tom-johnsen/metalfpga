@@ -98,6 +98,7 @@ std::unique_ptr<Expr> CloneExpr(const Expr& expr) {
   out->has_width = expr.has_width;
   out->has_base = expr.has_base;
   out->base_char = expr.base_char;
+  out->is_signed = expr.is_signed;
   out->op = expr.op;
   out->unary_op = expr.unary_op;
   out->msb = expr.msb;
@@ -183,16 +184,20 @@ bool EvalConstExpr4State(const Expr& expr,
       }
       int width = ValueWidth(value);
       FourStateValue normalized = NormalizeUnknown(value, width);
-      if (normalized.HasXorZ()) {
-        *out_value = AllX(width);
-        return true;
-      }
       switch (expr.unary_op) {
         case '+':
-          *out_value = NormalizeUnknown(value, width);
+          if (normalized.HasXorZ()) {
+            *out_value = AllX(width);
+          } else {
+            *out_value = NormalizeUnknown(value, width);
+          }
           return true;
         case '-':
-          *out_value = MakeKnown(~normalized.value_bits + 1ull, width);
+          if (normalized.HasXorZ()) {
+            *out_value = AllX(width);
+          } else {
+            *out_value = MakeKnown(~normalized.value_bits + 1ull, width);
+          }
           return true;
         case '~':
           {
@@ -202,6 +207,69 @@ bool EvalConstExpr4State(const Expr& expr,
             out.x_bits = normalized.x_bits;
             out.z_bits = 0;
             *out_value = ResizeValue(out, width);
+          }
+          return true;
+        case '!':
+          if (normalized.HasXorZ()) {
+            *out_value = AllX(1);
+          } else {
+            *out_value = MakeKnown(normalized.value_bits == 0 ? 1u : 0u, 1);
+          }
+          return true;
+        case 'S':
+          *out_value = NormalizeUnknown(value, width);
+          return true;
+        case 'U':
+          *out_value = NormalizeUnknown(value, width);
+          return true;
+        case '&':
+          {
+            uint64_t mask = MaskForWidth(width);
+            uint64_t unknown = normalized.x_bits & mask;
+            uint64_t known0 = (~normalized.value_bits) & ~unknown & mask;
+            uint64_t known1 = normalized.value_bits & ~unknown & mask;
+            if (known0 != 0) {
+              *out_value = MakeKnown(0, 1);
+              return true;
+            }
+            if (known1 == mask) {
+              *out_value = MakeKnown(1, 1);
+              return true;
+            }
+            *out_value = AllX(1);
+          }
+          return true;
+        case '|':
+          {
+            uint64_t mask = MaskForWidth(width);
+            uint64_t unknown = normalized.x_bits & mask;
+            uint64_t known0 = (~normalized.value_bits) & ~unknown & mask;
+            uint64_t known1 = normalized.value_bits & ~unknown & mask;
+            if (known1 != 0) {
+              *out_value = MakeKnown(1, 1);
+              return true;
+            }
+            if (known0 == mask) {
+              *out_value = MakeKnown(0, 1);
+              return true;
+            }
+            *out_value = AllX(1);
+          }
+          return true;
+        case '^':
+          {
+            uint64_t mask = MaskForWidth(width);
+            if ((normalized.x_bits & mask) != 0) {
+              *out_value = AllX(1);
+              return true;
+            }
+            uint64_t bits = normalized.value_bits & mask;
+            int parity = 0;
+            while (bits != 0) {
+              parity ^= static_cast<int>(bits & 1ull);
+              bits >>= 1;
+            }
+            *out_value = MakeKnown(static_cast<uint64_t>(parity), 1);
           }
           return true;
         default:
@@ -252,6 +320,14 @@ bool EvalConstExpr4State(const Expr& expr,
             *out_value = MakeKnown(left.value_bits / right.value_bits, width);
           }
           return true;
+        case '%':
+          if (left.HasXorZ() || right.HasXorZ() ||
+              right.value_bits == 0) {
+            *out_value = AllX(width);
+          } else {
+            *out_value = MakeKnown(left.value_bits % right.value_bits, width);
+          }
+          return true;
         case '&':
           {
             uint64_t a_unknown = left.x_bits;
@@ -300,6 +376,26 @@ bool EvalConstExpr4State(const Expr& expr,
             out.x_bits = unknown;
             out.z_bits = 0;
             *out_value = out;
+          }
+          return true;
+        case 'A':
+          if (left.HasXorZ() || right.HasXorZ()) {
+            *out_value = AllX(1);
+          } else {
+            *out_value =
+                MakeKnown((left.value_bits != 0 && right.value_bits != 0) ? 1
+                                                                          : 0,
+                          1);
+          }
+          return true;
+        case 'O':
+          if (left.HasXorZ() || right.HasXorZ()) {
+            *out_value = AllX(1);
+          } else {
+            *out_value =
+                MakeKnown((left.value_bits != 0 || right.value_bits != 0) ? 1
+                                                                          : 0,
+                          1);
           }
           return true;
         case 'E':
@@ -370,6 +466,25 @@ bool EvalConstExpr4State(const Expr& expr,
           }
           return true;
         case 'r':
+          if (right.HasXorZ()) {
+            *out_value = AllX(width);
+            return true;
+          }
+          {
+            uint64_t shift = right.value_bits;
+            if (shift >= static_cast<uint64_t>(width)) {
+              *out_value = MakeKnown(0, width);
+              return true;
+            }
+            FourStateValue out;
+            out.width = width;
+            out.value_bits = (left.value_bits >> shift) & mask;
+            out.x_bits = (left.x_bits >> shift) & mask;
+            out.z_bits = 0;
+            *out_value = out;
+          }
+          return true;
+        case 'R':
           if (right.HasXorZ()) {
             *out_value = AllX(width);
             return true;

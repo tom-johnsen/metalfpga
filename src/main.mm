@@ -65,6 +65,20 @@ int SignalWidth(const gpga::Module& module, const std::string& name) {
   return 32;
 }
 
+bool SignalSigned(const gpga::Module& module, const std::string& name) {
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return port.is_signed;
+    }
+  }
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return net.is_signed;
+    }
+  }
+  return false;
+}
+
 bool IsArrayNet(const gpga::Module& module, const std::string& name,
                 int* element_width) {
   for (const auto& net : module.nets) {
@@ -100,13 +114,18 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       }
       return MinimalWidth(expr.number);
     case gpga::ExprKind::kUnary:
+      if (expr.unary_op == '!' || expr.unary_op == '&' ||
+          expr.unary_op == '|' || expr.unary_op == '^') {
+        return 1;
+      }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case gpga::ExprKind::kBinary:
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
-          expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
+          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
+          expr.op == 'A' || expr.op == 'O') {
         return 1;
       }
-      if (expr.op == 'l' || expr.op == 'r') {
+      if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
         return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
       }
       return std::max(expr.lhs ? ExprWidth(*expr.lhs, module) : 32,
@@ -137,6 +156,56 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
     }
   }
   return 32;
+}
+
+bool ExprSigned(const gpga::Expr& expr, const gpga::Module& module) {
+  switch (expr.kind) {
+    case gpga::ExprKind::kIdentifier:
+      return SignalSigned(module, expr.ident);
+    case gpga::ExprKind::kNumber:
+      return expr.is_signed || !expr.has_base;
+    case gpga::ExprKind::kUnary:
+      if (expr.unary_op == 'S') {
+        return true;
+      }
+      if (expr.unary_op == 'U') {
+        return false;
+      }
+      if (expr.unary_op == '!' || expr.unary_op == '&' ||
+          expr.unary_op == '|' || expr.unary_op == '^') {
+        return false;
+      }
+      if (expr.unary_op == '-' && expr.operand &&
+          expr.operand->kind == gpga::ExprKind::kNumber) {
+        return true;
+      }
+      return expr.operand ? ExprSigned(*expr.operand, module) : false;
+    case gpga::ExprKind::kBinary: {
+      if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
+          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
+          expr.op == 'A' || expr.op == 'O') {
+        return false;
+      }
+      if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
+        return expr.lhs ? ExprSigned(*expr.lhs, module) : false;
+      }
+      bool lhs_signed = expr.lhs ? ExprSigned(*expr.lhs, module) : false;
+      bool rhs_signed = expr.rhs ? ExprSigned(*expr.rhs, module) : false;
+      return lhs_signed && rhs_signed;
+    }
+    case gpga::ExprKind::kTernary: {
+      bool t_signed =
+          expr.then_expr ? ExprSigned(*expr.then_expr, module) : false;
+      bool e_signed =
+          expr.else_expr ? ExprSigned(*expr.else_expr, module) : false;
+      return t_signed && e_signed;
+    }
+    case gpga::ExprKind::kSelect:
+    case gpga::ExprKind::kIndex:
+    case gpga::ExprKind::kConcat:
+      return false;
+  }
+  return false;
 }
 
 bool IsAllOnesExpr(const gpga::Expr& expr, const gpga::Module& module,
@@ -216,7 +285,9 @@ bool IsCompareOp(char op) {
          op == 'G';
 }
 
-bool IsShiftOp(char op) { return op == 'l' || op == 'r'; }
+bool IsShiftOp(char op) { return op == 'l' || op == 'r' || op == 'R'; }
+
+bool IsLogicalOp(char op) { return op == 'A' || op == 'O'; }
 
 std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
   switch (expr.kind) {
@@ -274,7 +345,8 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
           if (expr.has_width && expr.number_width > 0) {
             prefix = std::to_string(expr.number_width);
           }
-          return prefix + "'" + std::string(1, expr.base_char) + repr;
+          std::string sign = expr.is_signed ? "s" : "";
+          return prefix + "'" + sign + std::string(1, expr.base_char) + repr;
         }
         uint64_t value = expr.number;
         int base = 10;
@@ -309,7 +381,8 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
         if (expr.has_width && expr.number_width > 0) {
           prefix = std::to_string(expr.number_width);
         }
-        return prefix + "'" + std::string(1, expr.base_char) + repr;
+        std::string sign = expr.is_signed ? "s" : "";
+        return prefix + "'" + sign + std::string(1, expr.base_char) + repr;
       }
       if (expr.has_width && expr.number_width > 0) {
         return std::to_string(expr.number_width) + "'d" +
@@ -320,6 +393,12 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
     case gpga::ExprKind::kUnary: {
       std::string operand =
           expr.operand ? ExprToString(*expr.operand, module) : "0";
+      if (expr.unary_op == 'S') {
+        return "$signed(" + operand + ")";
+      }
+      if (expr.unary_op == 'U') {
+        return "$unsigned(" + operand + ")";
+      }
       return std::string(1, expr.unary_op) + operand;
     }
     case gpga::ExprKind::kBinary:
@@ -327,14 +406,19 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
         int lhs_width = expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
         int rhs_width = expr.rhs ? ExprWidth(*expr.rhs, module) : 32;
         int target = std::max(lhs_width, rhs_width);
+        bool signed_op = expr.lhs && expr.rhs &&
+                         ExprSigned(*expr.lhs, module) &&
+                         ExprSigned(*expr.rhs, module);
         std::string lhs = expr.lhs ? ExprToString(*expr.lhs, module) : "0";
         std::string rhs = expr.rhs ? ExprToString(*expr.rhs, module) : "0";
-        if (!IsShiftOp(expr.op)) {
+        if (!IsShiftOp(expr.op) && !IsLogicalOp(expr.op)) {
           if (lhs_width < target) {
-            lhs = "zext(" + lhs + ", " + std::to_string(target) + ")";
+            lhs = (signed_op ? "sext(" : "zext(") + lhs + ", " +
+                  std::to_string(target) + ")";
           }
           if (rhs_width < target) {
-            rhs = "zext(" + rhs + ", " + std::to_string(target) + ")";
+            rhs = (signed_op ? "sext(" : "zext(") + rhs + ", " +
+                  std::to_string(target) + ")";
           }
         }
         if (expr.op == 'E') {
@@ -354,6 +438,15 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
         }
         if (expr.op == 'r') {
           return "(" + lhs + " >> " + rhs + ")";
+        }
+        if (expr.op == 'R') {
+          return "(" + lhs + " >>> " + rhs + ")";
+        }
+        if (expr.op == 'A') {
+          return "(" + lhs + " && " + rhs + ")";
+        }
+        if (expr.op == 'O') {
+          return "(" + lhs + " || " + rhs + ")";
         }
         return "(" + lhs + " " + expr.op + " " + rhs + ")";
       }
@@ -502,13 +595,20 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
   }
   os << "Ports:\n";
   for (const auto& port : top.ports) {
-    os << "  - " << DirLabel(port.dir) << " " << port.name
-       << " [" << port.width << "]\n";
+    os << "  - " << DirLabel(port.dir);
+    if (port.is_signed) {
+      os << " signed";
+    }
+    os << " " << port.name << " [" << port.width << "]\n";
   }
   os << "Nets:\n";
   for (const auto& net : top.nets) {
     const char* type = (net.type == gpga::NetType::kReg) ? "reg" : "wire";
-    os << "  - " << type << " " << net.name << " [" << net.width << "]";
+    os << "  - " << type;
+    if (net.is_signed) {
+      os << " signed";
+    }
+    os << " " << net.name << " [" << net.width << "]";
     if (net.array_size > 0) {
       os << " [" << net.array_size << "]";
     }
@@ -518,6 +618,18 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
   for (const auto& assign : top.assigns) {
     if (assign.rhs) {
       int lhs_width = SignalWidth(top, assign.lhs);
+      std::string lhs = assign.lhs;
+      if (assign.lhs_has_range) {
+        int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+        int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+        lhs_width = hi - lo + 1;
+        if (assign.lhs_msb == assign.lhs_lsb) {
+          lhs += "[" + std::to_string(assign.lhs_msb) + "]";
+        } else {
+          lhs += "[" + std::to_string(assign.lhs_msb) + ":" +
+                 std::to_string(assign.lhs_lsb) + "]";
+        }
+      }
       const gpga::Expr* rhs_expr = assign.rhs.get();
       if (const gpga::Expr* simplified =
               SimplifyAssignMask(*assign.rhs, top, lhs_width)) {
@@ -526,11 +638,12 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
       int rhs_width = ExprWidth(*rhs_expr, top);
       std::string rhs = ExprToString(*rhs_expr, top);
       if (rhs_width < lhs_width) {
-        rhs = "zext(" + rhs + ", " + std::to_string(lhs_width) + ")";
+        rhs = (ExprSigned(*rhs_expr, top) ? "sext(" : "zext(") + rhs + ", " +
+              std::to_string(lhs_width) + ")";
       } else if (rhs_width > lhs_width) {
         rhs = "trunc(" + rhs + ", " + std::to_string(lhs_width) + ")";
       }
-      os << "  - " << assign.lhs << " = " << rhs << "\n";
+      os << "  - " << lhs << " = " << rhs << "\n";
     }
   }
   os << "Always blocks:\n";

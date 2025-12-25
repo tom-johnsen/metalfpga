@@ -239,6 +239,7 @@ std::unique_ptr<Expr> CloneExprWithParams(
   out->has_width = expr.has_width;
   out->has_base = expr.has_base;
   out->base_char = expr.base_char;
+  out->is_signed = expr.is_signed;
   out->op = expr.op;
   out->unary_op = expr.unary_op;
 
@@ -425,8 +426,9 @@ bool CloneStatement(
   return true;
 }
 
-bool AddFlatNet(const std::string& name, int width, NetType type,
-                int array_size, const std::string& hier_path, Module* out,
+bool AddFlatNet(const std::string& name, int width, bool is_signed,
+                NetType type, int array_size, const std::string& hier_path,
+                Module* out,
                 std::unordered_set<std::string>* net_names,
                 std::unordered_map<std::string, std::string>* flat_to_hier,
                 Diagnostics* diagnostics) {
@@ -443,6 +445,7 @@ bool AddFlatNet(const std::string& name, int width, NetType type,
   net.type = type;
   net.name = name;
   net.width = width;
+  net.is_signed = is_signed;
   net.array_size = array_size;
   out->nets.push_back(std::move(net));
   net_names->insert(name);
@@ -529,13 +532,18 @@ int ExprWidth(const Expr& expr, const Module& module) {
       }
       return MinimalWidth(expr.number);
     case ExprKind::kUnary:
+      if (expr.unary_op == '!' || expr.unary_op == '&' ||
+          expr.unary_op == '|' || expr.unary_op == '^') {
+        return 1;
+      }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case ExprKind::kBinary: {
       if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
-          expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
+          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
+          expr.op == 'A' || expr.op == 'O') {
         return 1;
       }
-      if (expr.op == 'l' || expr.op == 'r') {
+      if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
         return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
       }
       int lhs = expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
@@ -894,14 +902,38 @@ void CollectIdentifiers(const Expr& expr,
 }
 
 bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
+  struct Range {
+    int lo = 0;
+    int hi = 0;
+  };
   std::unordered_map<std::string, std::string> drivers;
+  std::unordered_map<std::string, std::vector<Range>> partial_ranges;
   for (const auto& assign : flat.assigns) {
+    if (!assign.lhs_has_range) {
+      if (drivers.count(assign.lhs) > 0 || partial_ranges.count(assign.lhs) > 0) {
+        diagnostics->Add(Severity::kError,
+                         "multiple drivers for signal '" + assign.lhs + "'");
+        return false;
+      }
+      drivers[assign.lhs] = "assign";
+      continue;
+    }
     if (drivers.count(assign.lhs) > 0) {
       diagnostics->Add(Severity::kError,
                        "multiple drivers for signal '" + assign.lhs + "'");
       return false;
     }
-    drivers[assign.lhs] = "assign";
+    int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+    int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+    auto& ranges = partial_ranges[assign.lhs];
+    for (const auto& range : ranges) {
+      if (hi >= range.lo && lo <= range.hi) {
+        diagnostics->Add(Severity::kError,
+                         "overlapping drivers for signal '" + assign.lhs + "'");
+        return false;
+      }
+    }
+    ranges.push_back(Range{lo, hi});
   }
 
   for (const auto& block : flat.always_blocks) {
@@ -910,7 +942,7 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
       CollectAssignedSignals(stmt, &block_drives);
     }
     for (const auto& name : block_drives) {
-      if (drivers.count(name) > 0) {
+      if (drivers.count(name) > 0 || partial_ranges.count(name) > 0) {
         diagnostics->Add(Severity::kError,
                          "multiple drivers for signal '" + name + "'");
         return false;
@@ -1197,6 +1229,7 @@ bool InlineModule(const Program& program, const Module& module,
       flat_port.dir = port.dir;
       flat_port.name = port.name;
       flat_port.width = width;
+      flat_port.is_signed = port.is_signed;
       out->ports.push_back(std::move(flat_port));
       (*flat_to_hier)[port.name] = hier_prefix + "." + port.name;
     }
@@ -1212,7 +1245,7 @@ bool InlineModule(const Program& program, const Module& module,
                             "net '" + net.name + "' array range")) {
         return false;
       }
-      if (!AddFlatNet(net.name, width, net.type, array_size,
+      if (!AddFlatNet(net.name, width, net.is_signed, net.type, array_size,
                       hier_prefix + "." + net.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -1230,7 +1263,7 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       NetType type = lookup_type(port.name);
-      if (!AddFlatNet(prefix + port.name, width, type, 0,
+      if (!AddFlatNet(prefix + port.name, width, port.is_signed, type, 0,
                       hier_prefix + "." + port.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -1248,7 +1281,8 @@ bool InlineModule(const Program& program, const Module& module,
                             "net '" + net.name + "' array range")) {
         return false;
       }
-      if (!AddFlatNet(prefix + net.name, width, net.type, array_size,
+      if (!AddFlatNet(prefix + net.name, width, net.is_signed, net.type,
+                      array_size,
                       hier_prefix + "." + net.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -1259,6 +1293,9 @@ bool InlineModule(const Program& program, const Module& module,
   for (const auto& assign : module.assigns) {
     Assign flattened;
     flattened.lhs = rename(assign.lhs);
+    flattened.lhs_has_range = assign.lhs_has_range;
+    flattened.lhs_msb = assign.lhs_msb;
+    flattened.lhs_lsb = assign.lhs_lsb;
     if (assign.rhs) {
       flattened.rhs =
           CloneExprWithParams(*assign.rhs, rename, params, diagnostics);
@@ -1303,6 +1340,7 @@ bool InlineModule(const Program& program, const Module& module,
     std::unordered_set<std::string> child_ports;
     std::unordered_map<std::string, PortDir> child_port_dirs;
     std::unordered_map<std::string, int> child_port_widths;
+    std::unordered_map<std::string, bool> child_port_signed;
     for (const auto& port : child->ports) {
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr,
@@ -1313,6 +1351,7 @@ bool InlineModule(const Program& program, const Module& module,
       child_ports.insert(port.name);
       child_port_dirs[port.name] = port.dir;
       child_port_widths[port.name] = width;
+      child_port_signed[port.name] = port.is_signed;
     }
     const bool positional = !instance.connections.empty() &&
                             !instance.connections.front().port.empty() &&
@@ -1363,7 +1402,8 @@ bool InlineModule(const Program& program, const Module& module,
         std::string literal_name =
             prefix + instance.name + "__" + port_name + "__lit";
         int width = child_port_widths[port_name];
-        if (!AddFlatNet(literal_name, width, NetType::kWire, 0,
+        if (!AddFlatNet(literal_name, width, child_port_signed[port_name],
+                        NetType::kWire, 0,
                         hier_prefix + "." + instance.name + "." + port_name +
                             ".__lit",
                         out, net_names, flat_to_hier, diagnostics)) {
@@ -1378,7 +1418,10 @@ bool InlineModule(const Program& program, const Module& module,
         if (!literal_expr) {
           return false;
         }
-        out->assigns.push_back(Assign{literal_name, std::move(literal_expr)});
+        Assign literal_assign;
+        literal_assign.lhs = literal_name;
+        literal_assign.rhs = std::move(literal_expr);
+        out->assigns.push_back(std::move(literal_assign));
       } else {
         diagnostics->Add(Severity::kError,
                          "port connections must be identifiers or literals in v0");
@@ -1399,15 +1442,18 @@ bool InlineModule(const Program& program, const Module& module,
                                std::string(enable_4state ? "X" : "0") + ")");
           std::string default_name = child_prefix + port.name;
           if (!AddFlatNet(default_name, child_port_widths[port.name],
-                          NetType::kWire, 0, child_hier + "." + port.name, out,
-                          net_names, flat_to_hier, diagnostics)) {
+                          child_port_signed[port.name], NetType::kWire, 0,
+                          child_hier + "." + port.name, out, net_names,
+                          flat_to_hier, diagnostics)) {
             return false;
           }
           child_port_map[port.name] = PortBinding{default_name};
-          out->assigns.push_back(Assign{
-              default_name,
-              enable_4state ? MakeAllXExpr(child_port_widths[port.name])
-                            : MakeNumberExpr(0)});
+          Assign default_assign;
+          default_assign.lhs = default_name;
+          default_assign.rhs = enable_4state
+                                   ? MakeAllXExpr(child_port_widths[port.name])
+                                   : MakeNumberExpr(0);
+          out->assigns.push_back(std::move(default_assign));
         } else {
           diagnostics->Add(Severity::kWarning,
                            "unconnected output '" + port.name +

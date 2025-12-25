@@ -325,62 +325,100 @@ class Parser {
     PortDir current_dir = PortDir::kInout;
     int current_width = 1;
     bool current_is_reg = false;
+    bool current_is_signed = false;
     std::shared_ptr<Expr> current_msb;
     std::shared_ptr<Expr> current_lsb;
     while (true) {
       PortDir dir = current_dir;
       int width = current_width;
       bool is_reg = current_is_reg;
+      bool is_signed = current_is_signed;
       std::shared_ptr<Expr> range_msb = current_msb;
       std::shared_ptr<Expr> range_lsb = current_lsb;
       if (MatchKeyword("input")) {
         dir = PortDir::kInput;
         width = 1;
         is_reg = false;
+        is_signed = false;
+        if (MatchKeyword("signed")) {
+          is_signed = true;
+        }
         if (MatchKeyword("wire")) {
           is_reg = false;
+        }
+        if (MatchKeyword("signed")) {
+          is_signed = true;
         }
         bool had_range = false;
         if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
+        if (!had_range) {
+          range_msb.reset();
+          range_lsb.reset();
+        }
         current_dir = dir;
         current_width = width;
         current_is_reg = is_reg;
+        current_is_signed = is_signed;
         current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
         current_lsb = had_range ? range_lsb : std::shared_ptr<Expr>();
       } else if (MatchKeyword("output")) {
         dir = PortDir::kOutput;
         width = 1;
         is_reg = false;
+        is_signed = false;
+        if (MatchKeyword("signed")) {
+          is_signed = true;
+        }
         if (MatchKeyword("reg")) {
           is_reg = true;
         } else if (MatchKeyword("wire")) {
           is_reg = false;
         }
+        if (MatchKeyword("signed")) {
+          is_signed = true;
+        }
         bool had_range = false;
         if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
+        if (!had_range) {
+          range_msb.reset();
+          range_lsb.reset();
+        }
         current_dir = dir;
         current_width = width;
         current_is_reg = is_reg;
+        current_is_signed = is_signed;
         current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
         current_lsb = had_range ? range_lsb : std::shared_ptr<Expr>();
       } else if (MatchKeyword("inout")) {
         dir = PortDir::kInout;
         width = 1;
         is_reg = false;
+        is_signed = false;
+        if (MatchKeyword("signed")) {
+          is_signed = true;
+        }
         if (MatchKeyword("wire")) {
           is_reg = false;
+        }
+        if (MatchKeyword("signed")) {
+          is_signed = true;
         }
         bool had_range = false;
         if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
+        if (!had_range) {
+          range_msb.reset();
+          range_lsb.reset();
+        }
         current_dir = dir;
         current_width = width;
         current_is_reg = is_reg;
+        current_is_signed = is_signed;
         current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
         current_lsb = had_range ? range_lsb : std::shared_ptr<Expr>();
       } else {
@@ -398,10 +436,11 @@ class Parser {
         ErrorHere("expected port name");
         return false;
       }
-      AddOrUpdatePort(module, name, dir, width, range_msb, range_lsb);
+      AddOrUpdatePort(module, name, dir, width, is_signed, range_msb,
+                      range_lsb);
       if (dir == PortDir::kOutput && is_reg) {
-        AddOrUpdateNet(module, name, NetType::kReg, width, range_msb,
-                       range_lsb, 0, std::shared_ptr<Expr>(),
+        AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
+                       range_msb, range_lsb, 0, std::shared_ptr<Expr>(),
                        std::shared_ptr<Expr>());
       }
       if (MatchSymbol(",")) {
@@ -414,6 +453,10 @@ class Parser {
 
   bool ParseDecl(Module* module, PortDir dir) {
     bool is_reg = false;
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
     if (dir == PortDir::kOutput) {
       if (MatchKeyword("reg")) {
         is_reg = true;
@@ -424,6 +467,9 @@ class Parser {
       if (MatchKeyword("wire")) {
         is_reg = false;
       }
+    }
+    if (MatchKeyword("signed")) {
+      is_signed = true;
     }
     int width = 1;
     std::shared_ptr<Expr> range_msb;
@@ -437,10 +483,11 @@ class Parser {
         ErrorHere("expected identifier in declaration");
         return false;
       }
-      AddOrUpdatePort(module, name, dir, width, range_msb, range_lsb);
+      AddOrUpdatePort(module, name, dir, width, is_signed, range_msb,
+                      range_lsb);
       if (dir == PortDir::kOutput && is_reg) {
-        AddOrUpdateNet(module, name, NetType::kReg, width, range_msb,
-                       range_lsb, 0, std::shared_ptr<Expr>(),
+        AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
+                       range_msb, range_lsb, 0, std::shared_ptr<Expr>(),
                        std::shared_ptr<Expr>());
       }
       if (MatchSymbol(",")) {
@@ -456,6 +503,10 @@ class Parser {
   }
 
   bool ParseWireDecl(Module* module) {
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
     int width = 1;
     std::shared_ptr<Expr> range_msb;
     std::shared_ptr<Expr> range_lsb;
@@ -487,10 +538,13 @@ class Parser {
           return false;
         }
       }
-      AddOrUpdateNet(module, name, NetType::kWire, width, range_msb, range_lsb,
-                     array_size, array_msb, array_lsb);
+      AddOrUpdateNet(module, name, NetType::kWire, width, is_signed, range_msb,
+                     range_lsb, array_size, array_msb, array_lsb);
       if (init) {
-        module->assigns.push_back(Assign{name, std::move(init)});
+        Assign assign;
+        assign.lhs = name;
+        assign.rhs = std::move(init);
+        module->assigns.push_back(std::move(assign));
       }
       if (MatchSymbol(",")) {
         continue;
@@ -505,6 +559,10 @@ class Parser {
   }
 
   bool ParseRegDecl(Module* module) {
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
     int width = 1;
     std::shared_ptr<Expr> range_msb;
     std::shared_ptr<Expr> range_lsb;
@@ -529,8 +587,8 @@ class Parser {
         array_msb.reset();
         array_lsb.reset();
       }
-      AddOrUpdateNet(module, name, NetType::kReg, width, range_msb, range_lsb,
-                     array_size, array_msb, array_lsb);
+      AddOrUpdateNet(module, name, NetType::kReg, width, is_signed, range_msb,
+                     range_lsb, array_size, array_msb, array_lsb);
       if (MatchSymbol(",")) {
         continue;
       }
@@ -635,6 +693,47 @@ class Parser {
       ErrorHere("expected identifier after 'assign'");
       return false;
     }
+    Assign assign;
+    assign.lhs = lhs;
+    if (MatchSymbol("[")) {
+      std::unique_ptr<Expr> msb_expr = ParseExpr();
+      if (!msb_expr) {
+        return false;
+      }
+      if (MatchSymbol(":")) {
+        std::unique_ptr<Expr> lsb_expr = ParseExpr();
+        if (!lsb_expr) {
+          return false;
+        }
+        int64_t msb = 0;
+        int64_t lsb = 0;
+        if (!EvalConstExpr(*msb_expr, &msb) ||
+            !EvalConstExpr(*lsb_expr, &lsb)) {
+          ErrorHere("assign part select requires constant expressions");
+          return false;
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return false;
+        }
+        assign.lhs_has_range = true;
+        assign.lhs_msb = static_cast<int>(msb);
+        assign.lhs_lsb = static_cast<int>(lsb);
+      } else {
+        int64_t index = 0;
+        if (!EvalConstExpr(*msb_expr, &index)) {
+          ErrorHere("assign bit select requires constant expression");
+          return false;
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after bit select");
+          return false;
+        }
+        assign.lhs_has_range = true;
+        assign.lhs_msb = static_cast<int>(index);
+        assign.lhs_lsb = static_cast<int>(index);
+      }
+    }
     if (!MatchSymbol("=")) {
       ErrorHere("expected '=' in assign");
       return false;
@@ -647,7 +746,8 @@ class Parser {
       ErrorHere("expected ';' after assign");
       return false;
     }
-    module->assigns.push_back(Assign{lhs, std::move(rhs)});
+    assign.rhs = std::move(rhs);
+    module->assigns.push_back(std::move(assign));
     return true;
   }
 
@@ -1040,7 +1140,7 @@ class Parser {
   std::unique_ptr<Expr> ParseExpr() { return ParseConditional(); }
 
   std::unique_ptr<Expr> ParseConditional() {
-    auto condition = ParseEquality();
+    auto condition = ParseLogicalOr();
     if (MatchSymbol("?")) {
       auto then_expr = ParseExpr();
       if (!MatchSymbol(":")) {
@@ -1056,6 +1156,24 @@ class Parser {
       return expr;
     }
     return condition;
+  }
+
+  std::unique_ptr<Expr> ParseLogicalOr() {
+    auto left = ParseLogicalAnd();
+    while (MatchSymbol2("||")) {
+      auto right = ParseLogicalAnd();
+      left = MakeBinary('O', std::move(left), std::move(right));
+    }
+    return left;
+  }
+
+  std::unique_ptr<Expr> ParseLogicalAnd() {
+    auto left = ParseEquality();
+    while (MatchSymbol2("&&")) {
+      auto right = ParseEquality();
+      left = MakeBinary('A', std::move(left), std::move(right));
+    }
+    return left;
   }
 
   std::unique_ptr<Expr> ParseEquality() {
@@ -1106,7 +1224,14 @@ class Parser {
 
   std::unique_ptr<Expr> ParseBitwiseOr() {
     auto left = ParseBitwiseXor();
-    while (MatchSymbol("|")) {
+    while (true) {
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == "|" &&
+          Peek(1).kind == TokenKind::kSymbol && Peek(1).text == "|") {
+        break;
+      }
+      if (!MatchSymbol("|")) {
+        break;
+      }
       auto right = ParseBitwiseXor();
       left = MakeBinary('|', std::move(left), std::move(right));
     }
@@ -1124,7 +1249,14 @@ class Parser {
 
   std::unique_ptr<Expr> ParseBitwiseAnd() {
     auto left = ParseShift();
-    while (MatchSymbol("&")) {
+    while (true) {
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == "&" &&
+          Peek(1).kind == TokenKind::kSymbol && Peek(1).text == "&") {
+        break;
+      }
+      if (!MatchSymbol("&")) {
+        break;
+      }
       auto right = ParseShift();
       left = MakeBinary('&', std::move(left), std::move(right));
     }
@@ -1134,6 +1266,11 @@ class Parser {
   std::unique_ptr<Expr> ParseShift() {
     auto left = ParseAddSub();
     while (true) {
+      if (MatchSymbol3(">>>")) {
+        auto right = ParseAddSub();
+        left = MakeBinary('R', std::move(left), std::move(right));
+        continue;
+      }
       if (MatchSymbol2("<<")) {
         auto right = ParseAddSub();
         left = MakeBinary('l', std::move(left), std::move(right));
@@ -1180,16 +1317,49 @@ class Parser {
         left = MakeBinary('/', std::move(left), std::move(right));
         continue;
       }
+      if (MatchSymbol("%")) {
+        auto right = ParseUnary();
+        left = MakeBinary('%', std::move(left), std::move(right));
+        continue;
+      }
       break;
     }
     return left;
   }
 
   std::unique_ptr<Expr> ParseUnary() {
+    if (MatchSymbol("!")) {
+      auto expr = std::make_unique<Expr>();
+      expr->kind = ExprKind::kUnary;
+      expr->unary_op = '!';
+      expr->operand = ParseUnary();
+      return expr;
+    }
     if (MatchSymbol("~")) {
       auto expr = std::make_unique<Expr>();
       expr->kind = ExprKind::kUnary;
       expr->unary_op = '~';
+      expr->operand = ParseUnary();
+      return expr;
+    }
+    if (MatchSymbol("&")) {
+      auto expr = std::make_unique<Expr>();
+      expr->kind = ExprKind::kUnary;
+      expr->unary_op = '&';
+      expr->operand = ParseUnary();
+      return expr;
+    }
+    if (MatchSymbol("|")) {
+      auto expr = std::make_unique<Expr>();
+      expr->kind = ExprKind::kUnary;
+      expr->unary_op = '|';
+      expr->operand = ParseUnary();
+      return expr;
+    }
+    if (MatchSymbol("^")) {
+      auto expr = std::make_unique<Expr>();
+      expr->kind = ExprKind::kUnary;
+      expr->unary_op = '^';
       expr->operand = ParseUnary();
       return expr;
     }
@@ -1212,7 +1382,33 @@ class Parser {
 
   std::unique_ptr<Expr> ParsePrimary() {
     std::unique_ptr<Expr> expr;
-    if (MatchSymbol("{")) {
+    if (MatchSymbol("$")) {
+      char op = 0;
+      if (MatchKeyword("signed")) {
+        op = 'S';
+      } else if (MatchKeyword("unsigned")) {
+        op = 'U';
+      } else {
+        ErrorHere("unsupported system function");
+        return nullptr;
+      }
+      if (!MatchSymbol("(")) {
+        ErrorHere("expected '(' after system function");
+        return nullptr;
+      }
+      auto operand = ParseExpr();
+      if (!operand) {
+        return nullptr;
+      }
+      if (!MatchSymbol(")")) {
+        ErrorHere("expected ')' after system function");
+        return nullptr;
+      }
+      expr = std::make_unique<Expr>();
+      expr->kind = ExprKind::kUnary;
+      expr->unary_op = op;
+      expr->operand = std::move(operand);
+    } else if (MatchSymbol("{")) {
       expr = ParseConcat();
     } else if (MatchSymbol("'")) {
       expr = ParseBasedLiteral(0);
@@ -1232,6 +1428,7 @@ class Parser {
         expr->kind = ExprKind::kNumber;
         expr->number = size;
         expr->value_bits = size;
+        expr->is_signed = true;
       }
     } else if (Peek().kind == TokenKind::kIdentifier) {
       std::string name = Peek().text;
@@ -1389,9 +1586,19 @@ class Parser {
     int last_line = base_token.line;
     int last_end_column =
         base_token.column + static_cast<int>(base_token.text.size());
+    bool is_signed = false;
+    size_t base_index = 0;
+    if (token[0] == 's' || token[0] == 'S') {
+      is_signed = true;
+      base_index = 1;
+      if (token.size() <= base_index) {
+        ErrorHere("invalid base literal");
+        return nullptr;
+      }
+    }
     char base_char = static_cast<char>(std::tolower(
-        static_cast<unsigned char>(token[0])));
-    std::string digits = token.substr(1);
+        static_cast<unsigned char>(token[base_index])));
+    std::string digits = token.substr(base_index + 1);
     auto append_token = [&](const Token& next, const std::string& text) {
       digits += text;
       last_line = next.line;
@@ -1557,6 +1764,7 @@ class Parser {
     expr->z_bits = z_bits;
     expr->has_base = true;
     expr->base_char = base_char;
+    expr->is_signed = is_signed;
     if (size > 0) {
       expr->has_width = true;
       expr->number_width = static_cast<int>(size);
@@ -1582,22 +1790,26 @@ class Parser {
   }
 
   void AddOrUpdatePort(Module* module, const std::string& name, PortDir dir,
-                       int width, const std::shared_ptr<Expr>& msb_expr,
+                       int width, bool is_signed,
+                       const std::shared_ptr<Expr>& msb_expr,
                        const std::shared_ptr<Expr>& lsb_expr) {
     for (auto& port : module->ports) {
       if (port.name == name) {
         port.dir = dir;
         port.width = width;
+        port.is_signed = is_signed;
         port.msb_expr = msb_expr;
         port.lsb_expr = lsb_expr;
         return;
       }
     }
-    module->ports.push_back(Port{dir, name, width, msb_expr, lsb_expr});
+    module->ports.push_back(
+        Port{dir, name, width, is_signed, msb_expr, lsb_expr});
   }
 
   void AddOrUpdateNet(Module* module, const std::string& name, NetType type,
-                      int width, const std::shared_ptr<Expr>& msb_expr,
+                      int width, bool is_signed,
+                      const std::shared_ptr<Expr>& msb_expr,
                       const std::shared_ptr<Expr>& lsb_expr, int array_size,
                       const std::shared_ptr<Expr>& array_msb_expr,
                       const std::shared_ptr<Expr>& array_lsb_expr) {
@@ -1605,6 +1817,7 @@ class Parser {
       if (net.name == name) {
         net.type = type;
         net.width = width;
+        net.is_signed = is_signed;
         net.msb_expr = msb_expr;
         net.lsb_expr = lsb_expr;
         net.array_size = array_size;
@@ -1617,6 +1830,7 @@ class Parser {
     net.type = type;
     net.name = name;
     net.width = width;
+    net.is_signed = is_signed;
     net.msb_expr = msb_expr;
     net.lsb_expr = lsb_expr;
     net.array_size = array_size;
@@ -1671,6 +1885,35 @@ class Parser {
           case '~':
             *out_value = ~value;
             return true;
+          case '!':
+            *out_value = (value == 0) ? 1 : 0;
+            return true;
+          case 'S':
+            *out_value = value;
+            return true;
+          case 'U':
+            *out_value = value;
+            return true;
+          case '&': {
+            uint64_t bits = static_cast<uint64_t>(value);
+            *out_value = (bits == 0xFFFFFFFFFFFFFFFFull) ? 1 : 0;
+            return true;
+          }
+          case '|': {
+            uint64_t bits = static_cast<uint64_t>(value);
+            *out_value = (bits != 0) ? 1 : 0;
+            return true;
+          }
+          case '^': {
+            uint64_t bits = static_cast<uint64_t>(value);
+            int parity = 0;
+            while (bits != 0) {
+              parity ^= static_cast<int>(bits & 1ull);
+              bits >>= 1;
+            }
+            *out_value = parity;
+            return true;
+          }
           default:
             ErrorHere("unsupported unary operator in constant expression");
             return false;
@@ -1700,6 +1943,13 @@ class Parser {
             }
             *out_value = lhs / rhs;
             return true;
+          case '%':
+            if (rhs == 0) {
+              ErrorHere("division by zero in constant expression");
+              return false;
+            }
+            *out_value = lhs % rhs;
+            return true;
           case '&':
             *out_value = lhs & rhs;
             return true;
@@ -1708,6 +1958,12 @@ class Parser {
             return true;
           case '^':
             *out_value = lhs ^ rhs;
+            return true;
+          case 'A':
+            *out_value = ((lhs != 0) && (rhs != 0)) ? 1 : 0;
+            return true;
+          case 'O':
+            *out_value = ((lhs != 0) || (rhs != 0)) ? 1 : 0;
             return true;
           case 'E':
             *out_value = (lhs == rhs) ? 1 : 0;
@@ -1735,6 +1991,13 @@ class Parser {
             *out_value = lhs << rhs;
             return true;
           case 'r':
+            if (rhs < 0) {
+              ErrorHere("negative shift in constant expression");
+              return false;
+            }
+            *out_value = lhs >> rhs;
+            return true;
+          case 'R':
             if (rhs < 0) {
               ErrorHere("negative shift in constant expression");
               return false;
@@ -1800,6 +2063,35 @@ class Parser {
           case '~':
             *out_value = ~value;
             return true;
+          case '!':
+            *out_value = (value == 0) ? 1 : 0;
+            return true;
+          case 'S':
+            *out_value = value;
+            return true;
+          case 'U':
+            *out_value = value;
+            return true;
+          case '&': {
+            uint64_t bits = static_cast<uint64_t>(value);
+            *out_value = (bits == 0xFFFFFFFFFFFFFFFFull) ? 1 : 0;
+            return true;
+          }
+          case '|': {
+            uint64_t bits = static_cast<uint64_t>(value);
+            *out_value = (bits != 0) ? 1 : 0;
+            return true;
+          }
+          case '^': {
+            uint64_t bits = static_cast<uint64_t>(value);
+            int parity = 0;
+            while (bits != 0) {
+              parity ^= static_cast<int>(bits & 1ull);
+              bits >>= 1;
+            }
+            *out_value = parity;
+            return true;
+          }
           default:
             return false;
         }
@@ -1827,6 +2119,12 @@ class Parser {
             }
             *out_value = lhs / rhs;
             return true;
+          case '%':
+            if (rhs == 0) {
+              return false;
+            }
+            *out_value = lhs % rhs;
+            return true;
           case '&':
             *out_value = lhs & rhs;
             return true;
@@ -1835,6 +2133,12 @@ class Parser {
             return true;
           case '^':
             *out_value = lhs ^ rhs;
+            return true;
+          case 'A':
+            *out_value = ((lhs != 0) && (rhs != 0)) ? 1 : 0;
+            return true;
+          case 'O':
+            *out_value = ((lhs != 0) || (rhs != 0)) ? 1 : 0;
             return true;
           case 'E':
             *out_value = (lhs == rhs) ? 1 : 0;
@@ -1861,6 +2165,12 @@ class Parser {
             *out_value = lhs << rhs;
             return true;
           case 'r':
+            if (rhs < 0) {
+              return false;
+            }
+            *out_value = lhs >> rhs;
+            return true;
+          case 'R':
             if (rhs < 0) {
               return false;
             }
@@ -1986,6 +2296,21 @@ class Parser {
         Peek(1).kind == TokenKind::kSymbol &&
         Peek().text == std::string(1, symbol[0]) &&
         Peek(1).text == std::string(1, symbol[1])) {
+      Advance();
+      Advance();
+      return true;
+    }
+    return false;
+  }
+
+  bool MatchSymbol3(const char* symbol) {
+    if (Peek().kind == TokenKind::kSymbol &&
+        Peek(1).kind == TokenKind::kSymbol &&
+        Peek(2).kind == TokenKind::kSymbol &&
+        Peek().text == std::string(1, symbol[0]) &&
+        Peek(1).text == std::string(1, symbol[1]) &&
+        Peek(2).text == std::string(1, symbol[2])) {
+      Advance();
       Advance();
       Advance();
       return true;
