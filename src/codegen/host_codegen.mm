@@ -8,6 +8,17 @@ std::string EmitHostStub(const Module& module) {
   std::ostringstream out;
   out << "// Placeholder host stub emitted by GPGA.\n";
   out << "// Module: " << module.name << "\n";
+  bool has_initial = false;
+  for (const auto& block : module.always_blocks) {
+    if (block.edge == EdgeKind::kInitial) {
+      has_initial = true;
+      break;
+    }
+  }
+  if (has_initial) {
+    out << "//   init kernel: gpga_" << module.name << "_init (run once)\n";
+    out << "//   dispatch order: init -> comb -> tick (if present)\n";
+  }
   for (const auto& port : module.ports) {
     out << "//   port " << port.name << " (width " << port.width << ")\n";
   }

@@ -1,8 +1,10 @@
 #include "codegen/msl_codegen.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <queue>
 #include <sstream>
 #include <string>
@@ -97,11 +99,90 @@ std::string SignedCastForWidth(int width) {
   return (width > 32) ? "(long)" : "(int)";
 }
 
+bool HasOuterParens(const std::string& expr) {
+  if (expr.size() < 2 || expr.front() != '(' || expr.back() != ')') {
+    return false;
+  }
+  int depth = 0;
+  for (size_t i = 0; i < expr.size(); ++i) {
+    char c = expr[i];
+    if (c == '(') {
+      ++depth;
+    } else if (c == ')') {
+      --depth;
+      if (depth == 0 && i + 1 != expr.size()) {
+        return false;
+      }
+    }
+    if (depth < 0) {
+      return false;
+    }
+  }
+  return depth == 0;
+}
+
+std::string StripOuterParens(std::string expr) {
+  while (HasOuterParens(expr)) {
+    expr = expr.substr(1, expr.size() - 2);
+  }
+  return expr;
+}
+
+bool ParseUIntLiteral(const std::string& text, uint64_t* value_out) {
+  if (!value_out) {
+    return false;
+  }
+  std::string trimmed = StripOuterParens(text);
+  if (trimmed.empty()) {
+    return false;
+  }
+  size_t i = 0;
+  uint64_t value = 0;
+  for (; i < trimmed.size(); ++i) {
+    char c = trimmed[i];
+    if (c < '0' || c > '9') {
+      break;
+    }
+    uint64_t digit = static_cast<uint64_t>(c - '0');
+    if (value > (std::numeric_limits<uint64_t>::max() - digit) / 10ull) {
+      return false;
+    }
+    value = value * 10ull + digit;
+  }
+  if (i == 0) {
+    return false;
+  }
+  if (i < trimmed.size()) {
+    std::string suffix = trimmed.substr(i);
+    for (char& c : suffix) {
+      c = static_cast<char>(std::tolower(c));
+    }
+    if (!(suffix == "u" || suffix == "ul")) {
+      return false;
+    }
+  }
+  *value_out = value;
+  return true;
+}
+
+bool IsZeroLiteral(const std::string& expr) {
+  uint64_t value = 0;
+  return ParseUIntLiteral(expr, &value) && value == 0;
+}
+
 std::string MaskForWidthExpr(const std::string& expr, int width) {
   if (width >= 64) {
     return expr;
   }
   uint64_t mask = MaskForWidth64(width);
+  uint64_t literal = 0;
+  std::string stripped = StripOuterParens(expr);
+  if (ParseUIntLiteral(stripped, &literal) && (literal & ~mask) == 0) {
+    return stripped;
+  }
+  if (width == 32) {
+    return "(" + expr + ")";
+  }
   std::string suffix = (width > 32) ? "ul" : "u";
   return "((" + expr + ") & " + std::to_string(mask) + suffix + ")";
 }
@@ -141,7 +222,7 @@ std::string SignExtendExpr(const std::string& expr, int expr_width,
   }
   std::string widened = cast + masked;
   return "(" + cast + "(" + widened + " << " + std::to_string(shift) + "u) >> " +
-         std::to_string(shift) + "u))";
+         std::to_string(shift) + "u)";
 }
 
 bool ExprSigned(const Expr& expr, const Module& module) {
@@ -453,11 +534,18 @@ std::string EmitConcatExpr(const Expr& expr, const Module& module,
         shift = 0;
       }
       std::string part = EmitExpr(*element, module, locals, regs);
+      if (IsZeroLiteral(part)) {
+        continue;
+      }
       uint64_t mask = MaskForWidth64(width);
       std::string mask_suffix = wide ? "ul" : "u";
       std::string cast = wide ? "(ulong)" : "";
-      acc = "(" + acc + " | ((" + cast + part + " & " +
-            std::to_string(mask) + mask_suffix + ") << " +
+      std::string part_expr = cast + part;
+      if (width != 32 && width < 64) {
+        part_expr = "(" + part_expr + " & " + std::to_string(mask) +
+                    mask_suffix + ")";
+      }
+      acc = "(" + acc + " | (" + part_expr + " << " +
             std::to_string(shift) + "u))";
     }
   }
@@ -648,6 +736,14 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       int hi = std::max(expr.msb, expr.lsb);
       int width = hi - lo + 1;
       int base_width = ExprWidth(*expr.base, module);
+      if (width == 32) {
+        std::string shifted =
+            "(" + base + " >> " + std::to_string(lo) + "u)";
+        if (base_width > 32) {
+          return "uint" + shifted;
+        }
+        return shifted;
+      }
       bool wide = base_width > 32 || width > 32;
       uint64_t mask = MaskForWidth64(width);
       std::string mask_suffix = wide ? "ul" : "u";
@@ -1807,6 +1903,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     std::unordered_set<std::string> sequential_regs;
+    std::unordered_set<std::string> initial_regs;
+    bool has_initial = false;
     for (const auto& block : module.always_blocks) {
       if (block.edge == EdgeKind::kCombinational ||
           block.edge == EdgeKind::kInitial) {
@@ -1814,6 +1912,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       for (const auto& stmt : block.statements) {
         CollectAssignedSignals(stmt, &sequential_regs);
+      }
+    }
+    for (const auto& block : module.always_blocks) {
+      if (block.edge != EdgeKind::kInitial) {
+        continue;
+      }
+      has_initial = true;
+      for (const auto& stmt : block.statements) {
+        CollectAssignedSignals(stmt, &initial_regs);
       }
     }
 
@@ -1825,6 +1932,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
           sequential_regs.count(net.name) > 0) {
         reg_names.push_back(net.name);
+      }
+    }
+    std::vector<std::string> init_reg_names;
+    for (const auto& net : module.nets) {
+      if (net.array_size > 0) {
+        continue;
+      }
+      if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
+          initial_regs.count(net.name) > 0) {
+        init_reg_names.push_back(net.name);
       }
     }
 
@@ -2121,6 +2238,196 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     }
     out << "}\n";
+
+    if (has_initial) {
+      out << "\n";
+      out << "kernel void gpga_" << module.name << "_init(";
+      buffer_index = 0;
+      first = true;
+      for (const auto& port : module.ports) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string qualifier =
+            (port.dir == PortDir::kInput) ? "constant" : "device";
+        std::string type = TypeForWidth(port.width);
+        out << "  " << qualifier << " " << type << "* "
+            << val_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
+        out << ",\n";
+        out << "  " << qualifier << " " << type << "* "
+            << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
+      }
+      for (const auto& reg : init_reg_names) {
+        out << ",\n";
+        std::string type = TypeForWidth(SignalWidth(module, reg));
+        out << "  device " << type << "* " << val_name(reg) << " [[buffer("
+            << buffer_index++ << ")]]";
+        out << ",\n";
+        out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
+            << buffer_index++ << ")]]";
+      }
+      for (const auto* net : array_nets) {
+        out << ",\n";
+        std::string type = TypeForWidth(net->width);
+        out << "  device " << type << "* " << val_name(net->name)
+            << " [[buffer(" << buffer_index++ << ")]]";
+        out << ",\n";
+        out << "  device " << type << "* " << xz_name(net->name)
+            << " [[buffer(" << buffer_index++ << ")]]";
+      }
+      out << ",\n";
+      out << "  constant GpgaParams& params [[buffer(" << buffer_index++
+          << ")]],\n";
+      out << "  uint gid [[thread_position_in_grid]]) {\n";
+      out << "  if (gid >= params.count) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+
+      std::unordered_set<std::string> init_locals;
+      std::unordered_set<std::string> init_regs;
+      std::unordered_set<std::string> init_declared;
+      for (const auto& net : module.nets) {
+        if (net.array_size > 0) {
+          continue;
+        }
+        if (net.type == NetType::kWire) {
+          init_locals.insert(net.name);
+        } else if (net.type == NetType::kReg) {
+          if (initial_regs.count(net.name) > 0) {
+            init_regs.insert(net.name);
+          } else if (!IsOutputPort(module, net.name)) {
+            init_locals.insert(net.name);
+          }
+        }
+      }
+
+      std::unordered_set<std::string> init_targets;
+      for (const auto& block : module.always_blocks) {
+        if (block.edge != EdgeKind::kInitial) {
+          continue;
+        }
+        for (const auto& stmt : block.statements) {
+          CollectAssignedSignals(stmt, &init_targets);
+        }
+      }
+      for (const auto& target : init_targets) {
+        if (init_locals.count(target) == 0 || init_declared.count(target) > 0) {
+          continue;
+        }
+        std::string type = TypeForWidth(SignalWidth(module, target));
+        out << "  " << type << " " << val_name(target) << ";\n";
+        out << "  " << type << " " << xz_name(target) << ";\n";
+        init_declared.insert(target);
+      }
+
+      std::function<void(const Statement&, int)> emit_init_stmt;
+      emit_init_stmt = [&](const Statement& stmt, int indent) {
+        std::string pad(indent, ' ');
+        if (stmt.kind == StatementKind::kAssign) {
+          if (!stmt.assign.rhs) {
+            return;
+          }
+          Lvalue4 lhs = build_lvalue4(stmt.assign, init_locals, init_regs,
+                                      false);
+          if (!lhs.ok) {
+            return;
+          }
+          FsExpr rhs = emit_expr4_sized(*stmt.assign.rhs, lhs.width);
+          if (!lhs.guard.empty()) {
+            out << pad << "if " << lhs.guard << " {\n";
+            out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+            out << pad << "}\n";
+          } else {
+            out << pad << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << lhs.xz << " = " << rhs.xz << ";\n";
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          FsExpr cond = stmt.condition ? emit_expr4(*stmt.condition)
+                                       : fs_allx_expr(1);
+          out << pad << "if (" << cond_bool(cond) << ") {\n";
+          for (const auto& inner : stmt.then_branch) {
+            emit_init_stmt(inner, indent + 2);
+          }
+          if (!stmt.else_branch.empty()) {
+            out << pad << "} else {\n";
+            for (const auto& inner : stmt.else_branch) {
+              emit_init_stmt(inner, indent + 2);
+            }
+            out << pad << "}\n";
+          } else {
+            out << pad << "}\n";
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          if (!stmt.case_expr) {
+            return;
+          }
+          FsExpr case_expr = emit_expr4(*stmt.case_expr);
+          if (stmt.case_items.empty()) {
+            for (const auto& inner : stmt.default_branch) {
+              emit_init_stmt(inner, indent);
+            }
+            return;
+          }
+          bool first_case = true;
+          for (const auto& item : stmt.case_items) {
+            std::string cond;
+            for (const auto& label : item.labels) {
+              std::string piece = emit_case_cond4(
+                  stmt.case_kind, case_expr, *label, stmt.case_expr.get());
+              if (!cond.empty()) {
+                cond += " || ";
+              }
+              cond += piece;
+            }
+            if (cond.empty()) {
+              continue;
+            }
+            if (first_case) {
+              out << pad << "if (" << cond << ") {\n";
+              first_case = false;
+            } else {
+              out << pad << "} else if (" << cond << ") {\n";
+            }
+            for (const auto& inner : item.body) {
+              emit_init_stmt(inner, indent + 2);
+            }
+          }
+          if (!stmt.default_branch.empty()) {
+            out << pad << "} else {\n";
+            for (const auto& inner : stmt.default_branch) {
+              emit_init_stmt(inner, indent + 2);
+            }
+            out << pad << "}\n";
+          } else if (!first_case) {
+            out << pad << "}\n";
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          out << pad << "{\n";
+          for (const auto& inner : stmt.block) {
+            emit_init_stmt(inner, indent + 2);
+          }
+          out << pad << "}\n";
+        }
+      };
+
+      for (const auto& block : module.always_blocks) {
+        if (block.edge != EdgeKind::kInitial) {
+          continue;
+        }
+        for (const auto& stmt : block.statements) {
+          emit_init_stmt(stmt, 2);
+        }
+      }
+      out << "}\n";
+    }
 
     bool has_sequential = false;
     for (const auto& block : module.always_blocks) {
@@ -2440,6 +2747,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
 
   std::unordered_set<std::string> sequential_regs;
+  std::unordered_set<std::string> initial_regs;
+  bool has_initial = false;
   for (const auto& block : module.always_blocks) {
     if (block.edge == EdgeKind::kCombinational ||
         block.edge == EdgeKind::kInitial) {
@@ -2447,6 +2756,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     for (const auto& stmt : block.statements) {
       CollectAssignedSignals(stmt, &sequential_regs);
+    }
+  }
+  for (const auto& block : module.always_blocks) {
+    if (block.edge != EdgeKind::kInitial) {
+      continue;
+    }
+    has_initial = true;
+    for (const auto& stmt : block.statements) {
+      CollectAssignedSignals(stmt, &initial_regs);
     }
   }
 
@@ -2458,6 +2776,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
         sequential_regs.count(net.name) > 0) {
       reg_names.push_back(net.name);
+    }
+  }
+  std::vector<std::string> init_reg_names;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      continue;
+    }
+    if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
+        initial_regs.count(net.name) > 0) {
+      init_reg_names.push_back(net.name);
     }
   }
   std::vector<const Net*> array_nets;
@@ -2749,6 +3077,212 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
   }
   out << "}\n";
+
+  if (has_initial) {
+    out << "\n";
+    out << "kernel void gpga_" << module.name << "_init(";
+    buffer_index = 0;
+    first = true;
+    for (const auto& port : module.ports) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string qualifier =
+          (port.dir == PortDir::kInput) ? "constant" : "device";
+      std::string type = TypeForWidth(port.width);
+      out << "  " << qualifier << " " << type << "* " << port.name
+          << " [[buffer(" << buffer_index++ << ")]]";
+    }
+    for (const auto& reg : init_reg_names) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(SignalWidth(module, reg));
+      out << "  device " << type << "* " << reg << " [[buffer("
+          << buffer_index++ << ")]]";
+    }
+    for (const auto* net : array_nets) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(net->width);
+      out << "  device " << type << "* " << net->name << " [[buffer("
+          << buffer_index++ << ")]]";
+    }
+    if (!first) {
+      out << ",\n";
+    }
+    out << "  constant GpgaParams& params [[buffer(" << buffer_index++
+        << ")]],\n";
+    out << "  uint gid [[thread_position_in_grid]]) {\n";
+    out << "  if (gid >= params.count) {\n";
+    out << "    return;\n";
+    out << "  }\n";
+
+    std::unordered_set<std::string> init_locals;
+    std::unordered_set<std::string> init_regs;
+    std::unordered_set<std::string> init_declared;
+    for (const auto& net : module.nets) {
+      if (net.array_size > 0) {
+        continue;
+      }
+      if (net.type == NetType::kWire) {
+        init_locals.insert(net.name);
+      } else if (net.type == NetType::kReg) {
+        if (initial_regs.count(net.name) > 0) {
+          init_regs.insert(net.name);
+        } else if (!IsOutputPort(module, net.name)) {
+          init_locals.insert(net.name);
+        }
+      }
+    }
+
+    std::unordered_set<std::string> init_targets;
+    for (const auto& block : module.always_blocks) {
+      if (block.edge != EdgeKind::kInitial) {
+        continue;
+      }
+      for (const auto& stmt : block.statements) {
+        CollectAssignedSignals(stmt, &init_targets);
+      }
+    }
+    for (const auto& target : init_targets) {
+      if (init_locals.count(target) == 0 || init_declared.count(target) > 0) {
+        continue;
+      }
+      std::string type = TypeForWidth(SignalWidth(module, target));
+      out << "  " << type << " " << target << ";\n";
+      init_declared.insert(target);
+    }
+
+    std::function<void(const Statement&, int)> emit_init_stmt;
+    auto emit_case_cond_init = [&](const std::string& case_value,
+                                   int case_width,
+                                   const Expr& label) -> std::string {
+      int label_width = ExprWidth(label, module);
+      int target = std::max(case_width, label_width);
+      std::string lhs = ExtendExpr(case_value, case_width, target);
+      std::string rhs = EmitExpr(label, module, init_locals, init_regs);
+      std::string rhs_ext = ExtendExpr(rhs, label_width, target);
+      return "(" + lhs + " == " + rhs_ext + ")";
+    };
+    emit_init_stmt = [&](const Statement& stmt, int indent) {
+      std::string pad(indent, ' ');
+      if (stmt.kind == StatementKind::kAssign) {
+        if (!stmt.assign.rhs) {
+          return;
+        }
+        std::string expr =
+            EmitExpr(*stmt.assign.rhs, module, init_locals, init_regs);
+        LvalueInfo lvalue =
+            BuildLvalue(stmt.assign, module, init_locals, init_regs, false);
+        if (!lvalue.ok) {
+          out << pad << "// Unmapped init assign: " << stmt.assign.lhs
+              << " = " << expr << ";\n";
+          return;
+        }
+        std::string sized =
+            EmitExprSized(*stmt.assign.rhs, lvalue.width, module, init_locals,
+                          init_regs);
+        if (!lvalue.guard.empty()) {
+          out << pad << "if " << lvalue.guard << " {\n";
+          out << pad << "  " << lvalue.expr << " = " << sized << ";\n";
+          out << pad << "}\n";
+        } else {
+          out << pad << lvalue.expr << " = " << sized << ";\n";
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kIf) {
+        std::string cond = stmt.condition
+                               ? EmitExpr(*stmt.condition, module, init_locals,
+                                          init_regs)
+                               : "0u";
+        out << pad << "if (" << cond << ") {\n";
+        for (const auto& inner : stmt.then_branch) {
+          emit_init_stmt(inner, indent + 2);
+        }
+        if (!stmt.else_branch.empty()) {
+          out << pad << "} else {\n";
+          for (const auto& inner : stmt.else_branch) {
+            emit_init_stmt(inner, indent + 2);
+          }
+          out << pad << "}\n";
+        } else {
+          out << pad << "}\n";
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kCase) {
+        if (!stmt.case_expr) {
+          return;
+        }
+        std::string case_value =
+            EmitExpr(*stmt.case_expr, module, init_locals, init_regs);
+        int case_width = ExprWidth(*stmt.case_expr, module);
+        if (stmt.case_items.empty()) {
+          for (const auto& inner : stmt.default_branch) {
+            emit_init_stmt(inner, indent);
+          }
+          return;
+        }
+        bool first = true;
+        for (const auto& item : stmt.case_items) {
+          std::string cond;
+          for (const auto& label : item.labels) {
+            std::string piece =
+                emit_case_cond_init(case_value, case_width, *label);
+            if (!cond.empty()) {
+              cond += " || ";
+            }
+            cond += piece;
+          }
+          if (cond.empty()) {
+            continue;
+          }
+          if (first) {
+            out << pad << "if (" << cond << ") {\n";
+            first = false;
+          } else {
+            out << pad << "} else if (" << cond << ") {\n";
+          }
+          for (const auto& inner : item.body) {
+            emit_init_stmt(inner, indent + 2);
+          }
+        }
+        if (!stmt.default_branch.empty()) {
+          out << pad << "} else {\n";
+          for (const auto& inner : stmt.default_branch) {
+            emit_init_stmt(inner, indent + 2);
+          }
+          out << pad << "}\n";
+        } else if (!first) {
+          out << pad << "}\n";
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kBlock) {
+        out << pad << "{\n";
+        for (const auto& inner : stmt.block) {
+          emit_init_stmt(inner, indent + 2);
+        }
+        out << pad << "}\n";
+      }
+    };
+
+    for (const auto& block : module.always_blocks) {
+      if (block.edge != EdgeKind::kInitial) {
+        continue;
+      }
+      for (const auto& stmt : block.statements) {
+        emit_init_stmt(stmt, 2);
+      }
+    }
+    out << "}\n";
+  }
 
   bool has_sequential = false;
   for (const auto& block : module.always_blocks) {

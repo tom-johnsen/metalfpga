@@ -7,3 +7,6 @@ docs/pdfs/
 .claude/
 
 persistent/
+msl/
+host/
+test_results/
