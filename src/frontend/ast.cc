@@ -63,6 +63,8 @@ bool ExprIsSigned(const Expr& expr) {
     case ExprKind::kSelect:
     case ExprKind::kIndex:
       return expr.base ? ExprIsSigned(*expr.base) : false;
+    case ExprKind::kCall:
+      return false;
     case ExprKind::kConcat:
       return false;
   }
@@ -192,6 +194,9 @@ std::unique_ptr<Expr> CloneExpr(const Expr& expr) {
   }
   for (const auto& element : expr.elements) {
     out->elements.push_back(CloneExpr(*element));
+  }
+  for (const auto& arg : expr.call_args) {
+    out->call_args.push_back(CloneExpr(*arg));
   }
   return out;
 }
@@ -610,6 +615,11 @@ bool EvalConstExpr4State(const Expr& expr,
     case ExprKind::kConcat:
       if (error) {
         *error = "concatenation not allowed in constant expression";
+      }
+      return false;
+    case ExprKind::kCall:
+      if (error) {
+        *error = "function call not allowed in constant expression";
       }
       return false;
   }

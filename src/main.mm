@@ -82,7 +82,8 @@ bool SignalSigned(const gpga::Module& module, const std::string& name) {
 bool IsArrayNet(const gpga::Module& module, const std::string& name,
                 int* element_width) {
   for (const auto& net : module.nets) {
-    if (net.name == name && net.array_size > 0) {
+    if (net.name == name &&
+        (net.array_size > 0 || !net.array_dims.empty())) {
       if (element_width) {
         *element_width = net.width;
       }
@@ -147,6 +148,8 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       }
       return 1;
     }
+    case gpga::ExprKind::kCall:
+      return 32;
     case gpga::ExprKind::kConcat: {
       int total = 0;
       for (const auto& element : expr.elements) {
@@ -202,6 +205,7 @@ bool ExprSigned(const gpga::Expr& expr, const gpga::Module& module) {
     }
     case gpga::ExprKind::kSelect:
     case gpga::ExprKind::kIndex:
+    case gpga::ExprKind::kCall:
     case gpga::ExprKind::kConcat:
       return false;
   }
@@ -471,6 +475,17 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
       std::string base = ExprToString(*expr.base, module);
       std::string index = expr.index ? ExprToString(*expr.index, module) : "0";
       return base + "[" + index + "]";
+    }
+    case gpga::ExprKind::kCall: {
+      std::string out = expr.ident + "(";
+      for (size_t i = 0; i < expr.call_args.size(); ++i) {
+        if (i > 0) {
+          out += ", ";
+        }
+        out += ExprToString(*expr.call_args[i], module);
+      }
+      out += ")";
+      return out;
     }
     case gpga::ExprKind::kConcat: {
       std::string inner;

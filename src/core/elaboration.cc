@@ -22,6 +22,24 @@ const Module* FindModule(const Program& program, const std::string& name) {
   return nullptr;
 }
 
+const Net* FindNet(const Module& module, const std::string& name) {
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return &net;
+    }
+  }
+  return nullptr;
+}
+
+const Function* FindFunction(const Module& module, const std::string& name) {
+  for (const auto& func : module.functions) {
+    if (func.name == name) {
+      return &func;
+    }
+  }
+  return nullptr;
+}
+
 bool FindTopModule(const Program& program, std::string* top_name,
                    Diagnostics* diagnostics) {
   std::unordered_set<std::string> instantiated;
@@ -115,11 +133,14 @@ struct ParamBindings {
 
 std::unique_ptr<Expr> SimplifyExpr(std::unique_ptr<Expr> expr,
                                    const Module& module);
+std::unique_ptr<Expr> MakeNumberExpr(uint64_t value);
 std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width);
+using BindingMap = std::unordered_map<std::string, const Expr*>;
 std::unique_ptr<Expr> CloneExprWithParams(
     const Expr& expr,
     const std::function<std::string(const std::string&)>& rename,
-    const ParamBindings& params, Diagnostics* diagnostics);
+    const ParamBindings& params, const Module* module,
+    Diagnostics* diagnostics, const BindingMap* bindings);
 void CollectIdentifiers(const Expr& expr,
                         std::unordered_set<std::string>* out);
 void CollectAssignedSignals(const Statement& statement,
@@ -128,8 +149,8 @@ int SignalWidth(const Module& module, const std::string& name);
 bool CloneStatement(
     const Statement& statement,
     const std::function<std::string(const std::string&)>& rename,
-    const ParamBindings& params, const Module& flat_module, Statement* out,
-    Diagnostics* diagnostics);
+    const ParamBindings& params, const Module& source_module,
+    const Module& flat_module, Statement* out, Diagnostics* diagnostics);
 
 ParamBindings CloneParamBindings(const ParamBindings& params) {
   ParamBindings out;
@@ -145,8 +166,8 @@ bool TryEvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
                                 int64_t* out_value) {
   Diagnostics scratch;
   auto resolved = CloneExprWithParams(
-      expr, [](const std::string& ident) { return ident; }, params,
-      &scratch);
+      expr, [](const std::string& ident) { return ident; }, params, nullptr,
+      &scratch, nullptr);
   if (!resolved) {
     return false;
   }
@@ -162,7 +183,8 @@ void UpdateBindingsFromStatement(const Statement& statement,
                                  ParamBindings* params) {
   if (statement.kind == StatementKind::kAssign) {
     const auto& assign = statement.assign;
-    if (assign.nonblocking || assign.lhs_index || !assign.rhs) {
+    if (assign.nonblocking || assign.lhs_index ||
+        !assign.lhs_indices.empty() || !assign.rhs) {
       params->values.erase(assign.lhs);
       params->exprs.erase(assign.lhs);
       return;
@@ -195,13 +217,14 @@ void UpdateBindingsFromStatement(const Statement& statement,
 bool CloneStatementList(
     const std::vector<Statement>& statements,
     const std::function<std::string(const std::string&)>& rename,
-    const ParamBindings& params, const Module& flat_module,
+    const ParamBindings& params, const Module& source_module,
+    const Module& flat_module,
     std::vector<Statement>* out, Diagnostics* diagnostics) {
   ParamBindings current = CloneParamBindings(params);
   for (const auto& stmt : statements) {
     Statement cloned;
-    if (!CloneStatement(stmt, rename, current, flat_module, &cloned,
-                        diagnostics)) {
+    if (!CloneStatement(stmt, rename, current, source_module, flat_module,
+                        &cloned, diagnostics)) {
       return false;
     }
     out->push_back(std::move(cloned));
@@ -225,8 +248,8 @@ bool EvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
                              int64_t* out_value, Diagnostics* diagnostics,
                              const std::string& context) {
   auto resolved = CloneExprWithParams(
-      expr, [](const std::string& ident) { return ident; }, params,
-      diagnostics);
+      expr, [](const std::string& ident) { return ident; }, params, nullptr,
+      diagnostics, nullptr);
   if (!resolved) {
     return false;
   }
@@ -315,7 +338,7 @@ bool FindLoopVarUpdate(const std::vector<Statement>& body,
       if (stmt.assign.lhs != loop_var) {
         continue;
       }
-      if (stmt.assign.lhs_index) {
+      if (stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty()) {
         diagnostics->Add(Severity::kError,
                          "while-loop step cannot use indexed assignment in v0");
         return false;
@@ -391,16 +414,104 @@ bool ResolveRangeWidth(int default_width,
   return true;
 }
 
+bool ResolveArrayDims(const Net& net, const ParamBindings& params,
+                      std::vector<int>* dims_out, Diagnostics* diagnostics,
+                      const std::string& context) {
+  dims_out->clear();
+  if (net.array_dims.empty()) {
+    return true;
+  }
+  dims_out->reserve(net.array_dims.size());
+  for (size_t i = 0; i < net.array_dims.size(); ++i) {
+    const auto& dim = net.array_dims[i];
+    int size = dim.size;
+    if (!ResolveRangeWidth(dim.size, dim.msb_expr, dim.lsb_expr, params, &size,
+                           diagnostics,
+                           context + " dim[" + std::to_string(i) + "]")) {
+      return false;
+    }
+    if (size <= 0) {
+      diagnostics->Add(Severity::kError,
+                       "invalid array dimension in " + context);
+      return false;
+    }
+    dims_out->push_back(size);
+  }
+  return true;
+}
+
 bool ResolveArraySize(const Net& net, const ParamBindings& params,
                       int* size_out, Diagnostics* diagnostics,
                       const std::string& context) {
-  if (!net.array_msb_expr || !net.array_lsb_expr) {
+  if (net.array_dims.empty()) {
     *size_out = net.array_size;
     return true;
   }
-  return ResolveRangeWidth(net.array_size, net.array_msb_expr,
-                           net.array_lsb_expr, params, size_out, diagnostics,
-                           context);
+  std::vector<int> dims;
+  if (!ResolveArrayDims(net, params, &dims, diagnostics, context)) {
+    return false;
+  }
+  int64_t total = 1;
+  for (int dim : dims) {
+    if (dim <= 0 || total > (0x7FFFFFFF / dim)) {
+      diagnostics->Add(Severity::kError,
+                       "array size overflow in " + context);
+      return false;
+    }
+    total *= dim;
+  }
+  if (total <= 0 || total > 0x7FFFFFFF) {
+    diagnostics->Add(Severity::kError,
+                     "array size overflow in " + context);
+    return false;
+  }
+  *size_out = static_cast<int>(total);
+  return true;
+}
+
+std::unique_ptr<Expr> MakeBinaryExpr(char op, std::unique_ptr<Expr> lhs,
+                                     std::unique_ptr<Expr> rhs) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kBinary;
+  expr->op = op;
+  expr->lhs = std::move(lhs);
+  expr->rhs = std::move(rhs);
+  return expr;
+}
+
+bool CollectIndexChain(const Expr& expr, std::string* base_name,
+                       std::vector<const Expr*>* indices) {
+  if (expr.kind == ExprKind::kIndex) {
+    if (!expr.base || !expr.index) {
+      return false;
+    }
+    if (!CollectIndexChain(*expr.base, base_name, indices)) {
+      return false;
+    }
+    indices->push_back(expr.index.get());
+    return true;
+  }
+  if (expr.kind == ExprKind::kIdentifier) {
+    *base_name = expr.ident;
+    return true;
+  }
+  return false;
+}
+
+std::unique_ptr<Expr> BuildFlatIndexExpr(
+    const std::vector<int>& dims,
+    std::vector<std::unique_ptr<Expr>> indices) {
+  if (indices.empty()) {
+    return MakeNumberExpr(0);
+  }
+  std::unique_ptr<Expr> acc = std::move(indices[0]);
+  for (size_t i = 1; i < indices.size(); ++i) {
+    auto dim_expr = MakeNumberExpr(static_cast<uint64_t>(dims[i]));
+    acc = MakeBinaryExpr(
+        '+', MakeBinaryExpr('*', std::move(acc), std::move(dim_expr)),
+        std::move(indices[i]));
+  }
+  return acc;
 }
 
 bool ResolveSelectIndices(const Expr& expr, const ParamBindings& params,
@@ -451,8 +562,15 @@ bool ResolveRepeatCount(const Expr& expr, const ParamBindings& params,
 std::unique_ptr<Expr> CloneExprWithParams(
     const Expr& expr,
     const std::function<std::string(const std::string&)>& rename,
-    const ParamBindings& params, Diagnostics* diagnostics) {
+    const ParamBindings& params, const Module* module,
+    Diagnostics* diagnostics, const BindingMap* bindings) {
   if (expr.kind == ExprKind::kIdentifier) {
+    if (bindings) {
+      auto it = bindings->find(expr.ident);
+      if (it != bindings->end()) {
+        return gpga::CloneExpr(*it->second);
+      }
+    }
     auto it = params.exprs.find(expr.ident);
     if (it != params.exprs.end()) {
       return gpga::CloneExpr(*it->second);
@@ -461,6 +579,46 @@ std::unique_ptr<Expr> CloneExprWithParams(
     out->kind = ExprKind::kIdentifier;
     out->ident = rename(expr.ident);
     return out;
+  }
+  if (expr.kind == ExprKind::kCall) {
+    if (!module) {
+      diagnostics->Add(Severity::kError,
+                       "function call requires module context");
+      return nullptr;
+    }
+    const Function* func = FindFunction(*module, expr.ident);
+    if (!func) {
+      diagnostics->Add(Severity::kError,
+                       "unknown function '" + expr.ident + "'");
+      return nullptr;
+    }
+    if (expr.call_args.size() != func->args.size()) {
+      diagnostics->Add(Severity::kError,
+                       "function '" + expr.ident + "' expects " +
+                           std::to_string(func->args.size()) +
+                           " argument(s)");
+      return nullptr;
+    }
+    std::vector<std::unique_ptr<Expr>> arg_clones;
+    BindingMap arg_bindings;
+    arg_clones.reserve(expr.call_args.size());
+    for (size_t i = 0; i < expr.call_args.size(); ++i) {
+      auto cloned = CloneExprWithParams(*expr.call_args[i], rename, params,
+                                        module, diagnostics, bindings);
+      if (!cloned) {
+        return nullptr;
+      }
+      const std::string& arg_name = func->args[i].name;
+      arg_bindings[arg_name] = cloned.get();
+      arg_clones.push_back(std::move(cloned));
+    }
+    if (!func->body_expr) {
+      diagnostics->Add(Severity::kError,
+                       "function '" + expr.ident + "' has no body");
+      return nullptr;
+    }
+    return CloneExprWithParams(*func->body_expr, rename, params, module,
+                               diagnostics, &arg_bindings);
   }
 
   auto out = std::make_unique<Expr>();
@@ -482,15 +640,18 @@ std::unique_ptr<Expr> CloneExprWithParams(
     return out;
   }
   if (expr.kind == ExprKind::kUnary) {
-    out->operand = CloneExprWithParams(*expr.operand, rename, params, diagnostics);
+    out->operand = CloneExprWithParams(*expr.operand, rename, params, module,
+                                       diagnostics, bindings);
     if (!out->operand) {
       return nullptr;
     }
     return out;
   }
   if (expr.kind == ExprKind::kBinary) {
-    out->lhs = CloneExprWithParams(*expr.lhs, rename, params, diagnostics);
-    out->rhs = CloneExprWithParams(*expr.rhs, rename, params, diagnostics);
+    out->lhs = CloneExprWithParams(*expr.lhs, rename, params, module,
+                                   diagnostics, bindings);
+    out->rhs = CloneExprWithParams(*expr.rhs, rename, params, module,
+                                   diagnostics, bindings);
     if (!out->lhs || !out->rhs) {
       return nullptr;
     }
@@ -498,18 +659,22 @@ std::unique_ptr<Expr> CloneExprWithParams(
   }
   if (expr.kind == ExprKind::kTernary) {
     out->condition =
-        CloneExprWithParams(*expr.condition, rename, params, diagnostics);
+        CloneExprWithParams(*expr.condition, rename, params, module,
+                            diagnostics, bindings);
     out->then_expr =
-        CloneExprWithParams(*expr.then_expr, rename, params, diagnostics);
+        CloneExprWithParams(*expr.then_expr, rename, params, module,
+                            diagnostics, bindings);
     out->else_expr =
-        CloneExprWithParams(*expr.else_expr, rename, params, diagnostics);
+        CloneExprWithParams(*expr.else_expr, rename, params, module,
+                            diagnostics, bindings);
     if (!out->condition || !out->then_expr || !out->else_expr) {
       return nullptr;
     }
     return out;
   }
   if (expr.kind == ExprKind::kSelect) {
-    out->base = CloneExprWithParams(*expr.base, rename, params, diagnostics);
+    out->base = CloneExprWithParams(*expr.base, rename, params, module,
+                                    diagnostics, bindings);
     if (!out->base) {
       return nullptr;
     }
@@ -525,8 +690,50 @@ std::unique_ptr<Expr> CloneExprWithParams(
     return out;
   }
   if (expr.kind == ExprKind::kIndex) {
-    out->base = CloneExprWithParams(*expr.base, rename, params, diagnostics);
-    out->index = CloneExprWithParams(*expr.index, rename, params, diagnostics);
+    if (module) {
+      std::string base_name;
+      std::vector<const Expr*> indices;
+      if (CollectIndexChain(expr, &base_name, &indices)) {
+        const Net* net = FindNet(*module, base_name);
+        if (net && !net->array_dims.empty()) {
+          std::vector<int> dims;
+          if (!ResolveArrayDims(*net, params, &dims, diagnostics,
+                                "array '" + base_name + "'")) {
+            return nullptr;
+          }
+          if (dims.size() != indices.size()) {
+            diagnostics->Add(
+                Severity::kError,
+                "array '" + base_name +
+                    "' requires " + std::to_string(dims.size()) +
+                    " index(es) in v0");
+            return nullptr;
+          }
+          std::vector<std::unique_ptr<Expr>> cloned_indices;
+          cloned_indices.reserve(indices.size());
+          for (const auto* index_expr : indices) {
+            auto cloned =
+                CloneExprWithParams(*index_expr, rename, params, module,
+                                    diagnostics, bindings);
+            if (!cloned) {
+              return nullptr;
+            }
+            cloned_indices.push_back(std::move(cloned));
+          }
+          auto flat_index = BuildFlatIndexExpr(dims, std::move(cloned_indices));
+          auto base_ident = std::make_unique<Expr>();
+          base_ident->kind = ExprKind::kIdentifier;
+          base_ident->ident = rename(base_name);
+          out->base = std::move(base_ident);
+          out->index = std::move(flat_index);
+          return out;
+        }
+      }
+    }
+    out->base = CloneExprWithParams(*expr.base, rename, params, module,
+                                    diagnostics, bindings);
+    out->index = CloneExprWithParams(*expr.index, rename, params, module,
+                                     diagnostics, bindings);
     if (!out->base || !out->index) {
       return nullptr;
     }
@@ -540,7 +747,8 @@ std::unique_ptr<Expr> CloneExprWithParams(
     out->repeat = repeat;
     for (const auto& element : expr.elements) {
       auto cloned =
-          CloneExprWithParams(*element, rename, params, diagnostics);
+          CloneExprWithParams(*element, rename, params, module, diagnostics,
+                              bindings);
       if (!cloned) {
         return nullptr;
       }
@@ -554,15 +762,47 @@ std::unique_ptr<Expr> CloneExprWithParams(
 bool CloneStatement(
     const Statement& statement,
     const std::function<std::string(const std::string&)>& rename,
-    const ParamBindings& params, const Module& flat_module, Statement* out,
-    Diagnostics* diagnostics) {
+    const ParamBindings& params, const Module& source_module,
+    const Module& flat_module, Statement* out, Diagnostics* diagnostics) {
   out->kind = statement.kind;
   if (statement.kind == StatementKind::kAssign) {
     out->assign.lhs = rename(statement.assign.lhs);
-    if (statement.assign.lhs_index) {
+    if (!statement.assign.lhs_indices.empty()) {
+      const Net* net = FindNet(source_module, statement.assign.lhs);
+      if (!net || net->array_dims.empty()) {
+        diagnostics->Add(Severity::kError,
+                         "indexed assignment target is not an array");
+        return false;
+      }
+      std::vector<int> dims;
+      if (!ResolveArrayDims(*net, params, &dims, diagnostics,
+                            "array '" + statement.assign.lhs + "'")) {
+        return false;
+      }
+      if (dims.size() != statement.assign.lhs_indices.size()) {
+        diagnostics->Add(Severity::kError,
+                         "array '" + statement.assign.lhs + "' requires " +
+                             std::to_string(dims.size()) +
+                             " index(es) in v0");
+        return false;
+      }
+      std::vector<std::unique_ptr<Expr>> cloned_indices;
+      cloned_indices.reserve(statement.assign.lhs_indices.size());
+      for (const auto& index_expr : statement.assign.lhs_indices) {
+        auto cloned = CloneExprWithParams(*index_expr, rename, params,
+                                          &source_module, diagnostics, nullptr);
+        if (!cloned) {
+          return false;
+        }
+        cloned_indices.push_back(std::move(cloned));
+      }
+      out->assign.lhs_index =
+          SimplifyExpr(BuildFlatIndexExpr(dims, std::move(cloned_indices)),
+                       flat_module);
+    } else if (statement.assign.lhs_index) {
       out->assign.lhs_index =
           CloneExprWithParams(*statement.assign.lhs_index, rename, params,
-                              diagnostics);
+                              &source_module, diagnostics, nullptr);
       if (!out->assign.lhs_index) {
         return false;
       }
@@ -572,7 +812,7 @@ bool CloneStatement(
     if (statement.assign.rhs) {
       out->assign.rhs =
           CloneExprWithParams(*statement.assign.rhs, rename, params,
-                              diagnostics);
+                              &source_module, diagnostics, nullptr);
       if (!out->assign.rhs) {
         return false;
       }
@@ -587,23 +827,23 @@ bool CloneStatement(
     if (statement.condition) {
       out->condition =
           CloneExprWithParams(*statement.condition, rename, params,
-                              diagnostics);
+                              &source_module, diagnostics, nullptr);
       if (!out->condition) {
         return false;
       }
     }
     for (const auto& stmt : statement.then_branch) {
       Statement cloned;
-      if (!CloneStatement(stmt, rename, params, flat_module, &cloned,
-                          diagnostics)) {
+      if (!CloneStatement(stmt, rename, params, source_module, flat_module,
+                          &cloned, diagnostics)) {
         return false;
       }
       out->then_branch.push_back(std::move(cloned));
     }
     for (const auto& stmt : statement.else_branch) {
       Statement cloned;
-      if (!CloneStatement(stmt, rename, params, flat_module, &cloned,
-                          diagnostics)) {
+      if (!CloneStatement(stmt, rename, params, source_module, flat_module,
+                          &cloned, diagnostics)) {
         return false;
       }
       out->else_branch.push_back(std::move(cloned));
@@ -611,13 +851,14 @@ bool CloneStatement(
     return true;
   }
   if (statement.kind == StatementKind::kBlock) {
-    return CloneStatementList(statement.block, rename, params, flat_module,
-                              &out->block, diagnostics);
+    return CloneStatementList(statement.block, rename, params, source_module,
+                              flat_module, &out->block, diagnostics);
   }
   if (statement.kind == StatementKind::kCase) {
     out->case_kind = statement.case_kind;
     out->case_expr =
-        CloneExprWithParams(*statement.case_expr, rename, params, diagnostics);
+        CloneExprWithParams(*statement.case_expr, rename, params,
+                            &source_module, diagnostics, nullptr);
     if (!out->case_expr) {
       return false;
     }
@@ -625,7 +866,8 @@ bool CloneStatement(
       CaseItem cloned_item;
       for (const auto& label : item.labels) {
         auto cloned_label =
-            CloneExprWithParams(*label, rename, params, diagnostics);
+            CloneExprWithParams(*label, rename, params, &source_module,
+                                diagnostics, nullptr);
         if (!cloned_label) {
           return false;
         }
@@ -633,8 +875,8 @@ bool CloneStatement(
       }
       for (const auto& stmt : item.body) {
         Statement cloned_stmt;
-        if (!CloneStatement(stmt, rename, params, flat_module, &cloned_stmt,
-                            diagnostics)) {
+        if (!CloneStatement(stmt, rename, params, source_module, flat_module,
+                            &cloned_stmt, diagnostics)) {
           return false;
         }
         cloned_item.body.push_back(std::move(cloned_stmt));
@@ -643,8 +885,8 @@ bool CloneStatement(
     }
     for (const auto& stmt : statement.default_branch) {
       Statement cloned_stmt;
-      if (!CloneStatement(stmt, rename, params, flat_module, &cloned_stmt,
-                          diagnostics)) {
+      if (!CloneStatement(stmt, rename, params, source_module, flat_module,
+                          &cloned_stmt, diagnostics)) {
         return false;
       }
       out->default_branch.push_back(std::move(cloned_stmt));
@@ -692,8 +934,8 @@ bool CloneStatement(
       }
       for (const auto& body_stmt : statement.for_body) {
         Statement cloned;
-        if (!CloneStatement(body_stmt, rename, iter_params, flat_module,
-                            &cloned, diagnostics)) {
+        if (!CloneStatement(body_stmt, rename, iter_params, source_module,
+                            flat_module, &cloned, diagnostics)) {
           return false;
         }
         out->block.push_back(std::move(cloned));
@@ -764,8 +1006,8 @@ bool CloneStatement(
       ParamBindings body_params = CloneParamBindings(iter_params);
       for (const auto& body_stmt : statement.while_body) {
         Statement cloned;
-        if (!CloneStatement(body_stmt, rename, body_params, flat_module,
-                            &cloned, diagnostics)) {
+        if (!CloneStatement(body_stmt, rename, body_params, source_module,
+                            flat_module, &cloned, diagnostics)) {
           return false;
         }
         out->block.push_back(std::move(cloned));
@@ -819,8 +1061,8 @@ bool CloneStatement(
     for (int64_t i = 0; i < count; ++i) {
       for (const auto& body_stmt : statement.repeat_body) {
         Statement cloned;
-        if (!CloneStatement(body_stmt, rename, params, flat_module, &cloned,
-                            diagnostics)) {
+        if (!CloneStatement(body_stmt, rename, params, source_module,
+                            flat_module, &cloned, diagnostics)) {
           return false;
         }
         out->block.push_back(std::move(cloned));
@@ -832,8 +1074,8 @@ bool CloneStatement(
 }
 
 bool AddFlatNet(const std::string& name, int width, bool is_signed,
-                NetType type, int array_size, const std::string& hier_path,
-                Module* out,
+                NetType type, const std::vector<int>& array_dims,
+                const std::string& hier_path, Module* out,
                 std::unordered_set<std::string>* net_names,
                 std::unordered_map<std::string, std::string>* flat_to_hier,
                 Diagnostics* diagnostics) {
@@ -851,7 +1093,23 @@ bool AddFlatNet(const std::string& name, int width, bool is_signed,
   net.name = name;
   net.width = width;
   net.is_signed = is_signed;
-  net.array_size = array_size;
+  int total = 0;
+  if (!array_dims.empty()) {
+    int64_t product = 1;
+    for (int dim : array_dims) {
+      if (dim <= 0 || product > (0x7FFFFFFF / dim)) {
+        diagnostics->Add(Severity::kError,
+                         "array size overflow in '" + name + "'");
+        return false;
+      }
+      product *= dim;
+    }
+    total = static_cast<int>(product);
+    for (int dim : array_dims) {
+      net.array_dims.push_back(ArrayDim{dim, nullptr, nullptr});
+    }
+  }
+  net.array_size = total;
   out->nets.push_back(std::move(net));
   net_names->insert(name);
   (*flat_to_hier)[name] = hier_path;
@@ -907,7 +1165,8 @@ std::unique_ptr<Expr> MakeAllXExpr(int width) {
 bool IsArrayNet(const Module& module, const std::string& name,
                 int* element_width) {
   for (const auto& net : module.nets) {
-    if (net.name == name && net.array_size > 0) {
+    if (net.name == name &&
+        (net.array_size > 0 || !net.array_dims.empty())) {
       if (element_width) {
         *element_width = net.width;
       }
@@ -989,6 +1248,10 @@ int ExprWidth(const Expr& expr, const Module& module) {
         }
       }
       return 1;
+    }
+    case ExprKind::kCall: {
+      const Function* func = FindFunction(module, expr.ident);
+      return func ? func->width : 32;
     }
     case ExprKind::kConcat: {
       int total = 0;
@@ -1219,7 +1482,7 @@ bool BuildParamBindings(const Module& module, const Instance* instance,
         eval_params == &bindings ? &bindings : eval_params;
     auto resolved = CloneExprWithParams(
         *expr, [](const std::string& ident) { return ident; }, *expr_params,
-        diagnostics);
+        &module, diagnostics, nullptr);
     if (!resolved) {
       return false;
     }
@@ -1327,6 +1590,11 @@ void CollectIdentifiers(const Expr& expr,
       }
       if (expr.index) {
         CollectIdentifiers(*expr.index, out);
+      }
+      return;
+    case ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        CollectIdentifiers(*arg, out);
       }
       return;
     case ExprKind::kConcat:
@@ -1683,7 +1951,7 @@ bool InlineModule(const Program& program, const Module& module,
       } else if (param.value) {
         flat_param.value = CloneExprWithParams(
             *param.value, [](const std::string& ident) { return ident; },
-            params, diagnostics);
+            params, &module, diagnostics, nullptr);
         if (!flat_param.value) {
           return false;
         }
@@ -1713,12 +1981,12 @@ bool InlineModule(const Program& program, const Module& module,
                              "net '" + net.name + "'")) {
         return false;
       }
-      int array_size = 0;
-      if (!ResolveArraySize(net, params, &array_size, diagnostics,
+      std::vector<int> array_dims;
+      if (!ResolveArrayDims(net, params, &array_dims, diagnostics,
                             "net '" + net.name + "' array range")) {
         return false;
       }
-      if (!AddFlatNet(net.name, width, net.is_signed, net.type, array_size,
+      if (!AddFlatNet(net.name, width, net.is_signed, net.type, array_dims,
                       hier_prefix + "." + net.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -1736,7 +2004,7 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       NetType type = lookup_type(port.name);
-      if (!AddFlatNet(prefix + port.name, width, port.is_signed, type, 0,
+      if (!AddFlatNet(prefix + port.name, width, port.is_signed, type, {},
                       hier_prefix + "." + port.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -1749,13 +2017,13 @@ bool InlineModule(const Program& program, const Module& module,
                              "net '" + net.name + "'")) {
         return false;
       }
-      int array_size = 0;
-      if (!ResolveArraySize(net, params, &array_size, diagnostics,
+      std::vector<int> array_dims;
+      if (!ResolveArrayDims(net, params, &array_dims, diagnostics,
                             "net '" + net.name + "' array range")) {
         return false;
       }
       if (!AddFlatNet(prefix + net.name, width, net.is_signed, net.type,
-                      array_size,
+                      array_dims,
                       hier_prefix + "." + net.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -1771,7 +2039,8 @@ bool InlineModule(const Program& program, const Module& module,
     flattened.lhs_lsb = assign.lhs_lsb;
     if (assign.rhs) {
       flattened.rhs =
-          CloneExprWithParams(*assign.rhs, rename, params, diagnostics);
+          CloneExprWithParams(*assign.rhs, rename, params, &module,
+                              diagnostics, nullptr);
       if (!flattened.rhs) {
         return false;
       }
@@ -1785,7 +2054,7 @@ bool InlineModule(const Program& program, const Module& module,
     AlwaysBlock flattened;
     flattened.edge = block.edge;
     flattened.clock = rename(block.clock);
-    if (!CloneStatementList(block.statements, rename, params, *out,
+    if (!CloneStatementList(block.statements, rename, params, module, *out,
                             &flattened.statements, diagnostics)) {
       return false;
     }
@@ -1873,7 +2142,7 @@ bool InlineModule(const Program& program, const Module& module,
             prefix + instance.name + "__" + port_name + "__lit";
         int width = child_port_widths[port_name];
         if (!AddFlatNet(literal_name, width, child_port_signed[port_name],
-                        NetType::kWire, 0,
+                        NetType::kWire, {},
                         hier_prefix + "." + instance.name + "." + port_name +
                             ".__lit",
                         out, net_names, flat_to_hier, diagnostics)) {
@@ -1884,7 +2153,8 @@ bool InlineModule(const Program& program, const Module& module,
                                                  [](const std::string& ident) {
                                                    return ident;
                                                  },
-                                                 params, diagnostics);
+                                                 params, &module, diagnostics,
+                                                 nullptr);
         if (!literal_expr) {
           return false;
         }
@@ -1912,7 +2182,7 @@ bool InlineModule(const Program& program, const Module& module,
                                std::string(enable_4state ? "X" : "0") + ")");
           std::string default_name = child_prefix + port.name;
           if (!AddFlatNet(default_name, child_port_widths[port.name],
-                          child_port_signed[port.name], NetType::kWire, 0,
+                          child_port_signed[port.name], NetType::kWire, {},
                           child_hier + "." + port.name, out, net_names,
                           flat_to_hier, diagnostics)) {
             return false;

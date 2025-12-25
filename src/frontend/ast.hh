@@ -32,6 +32,12 @@ enum class NetType {
   kReg,
 };
 
+struct ArrayDim {
+  int size = 0;
+  std::shared_ptr<Expr> msb_expr;
+  std::shared_ptr<Expr> lsb_expr;
+};
+
 struct Net {
   NetType type = NetType::kWire;
   std::string name;
@@ -40,8 +46,7 @@ struct Net {
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
   int array_size = 0;
-  std::shared_ptr<Expr> array_msb_expr;
-  std::shared_ptr<Expr> array_lsb_expr;
+  std::vector<ArrayDim> array_dims;
 };
 
 enum class ExprKind {
@@ -52,6 +57,7 @@ enum class ExprKind {
   kTernary,
   kSelect,
   kIndex,
+  kCall,
   kConcat,
 };
 
@@ -85,6 +91,7 @@ struct Expr {
   std::vector<std::unique_ptr<Expr>> elements;
   int repeat = 1;
   std::unique_ptr<Expr> repeat_expr;
+  std::vector<std::unique_ptr<Expr>> call_args;
 
   bool HasX() const { return x_bits != 0; }
   bool HasZ() const { return z_bits != 0; }
@@ -95,6 +102,24 @@ struct Parameter {
   std::string name;
   std::unique_ptr<Expr> value;
   bool is_local = false;
+};
+
+struct FunctionArg {
+  std::string name;
+  int width = 1;
+  bool is_signed = false;
+  std::shared_ptr<Expr> msb_expr;
+  std::shared_ptr<Expr> lsb_expr;
+};
+
+struct Function {
+  std::string name;
+  int width = 1;
+  bool is_signed = false;
+  std::shared_ptr<Expr> msb_expr;
+  std::shared_ptr<Expr> lsb_expr;
+  std::vector<FunctionArg> args;
+  std::unique_ptr<Expr> body_expr;
 };
 
 struct Assign {
@@ -108,6 +133,7 @@ struct Assign {
 struct SequentialAssign {
   std::string lhs;
   std::unique_ptr<Expr> lhs_index;
+  std::vector<std::unique_ptr<Expr>> lhs_indices;
   std::unique_ptr<Expr> rhs;
   bool nonblocking = true;
 };
@@ -196,6 +222,7 @@ struct Module {
   std::vector<Instance> instances;
   std::vector<AlwaysBlock> always_blocks;
   std::vector<Parameter> parameters;
+  std::vector<Function> functions;
 };
 
 struct Program {

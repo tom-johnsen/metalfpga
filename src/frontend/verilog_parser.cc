@@ -223,6 +223,7 @@ class Parser {
     Module module;
     module.name = module_name;
     current_params_.clear();
+    current_module_ = &module;
 
     if (MatchSymbol("#")) {
       if (!ParseParameterList(&module)) {
@@ -246,6 +247,7 @@ class Parser {
 
     while (!IsAtEnd()) {
       if (MatchKeyword("endmodule")) {
+        current_module_ = nullptr;
         program->modules.push_back(std::move(module));
         return true;
       }
@@ -309,6 +311,12 @@ class Parser {
         }
         continue;
       }
+      if (MatchKeyword("function")) {
+        if (!ParseFunction(&module)) {
+          return false;
+        }
+        continue;
+      }
       if (MatchKeyword("initial")) {
         if (!ParseInitial(&module)) {
           return false;
@@ -326,7 +334,144 @@ class Parser {
     }
 
     ErrorHere("unexpected end of file (missing 'endmodule')");
+    current_module_ = nullptr;
     return false;
+  }
+
+  bool ParseFunction(Module* module) {
+    Function func;
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
+    int width = 1;
+    std::shared_ptr<Expr> msb_expr;
+    std::shared_ptr<Expr> lsb_expr;
+    bool had_range = false;
+    if (!ParseRange(&width, &msb_expr, &lsb_expr, &had_range)) {
+      return false;
+    }
+    if (!had_range) {
+      msb_expr.reset();
+      lsb_expr.reset();
+    }
+    std::string name;
+    if (!ConsumeIdentifier(&name)) {
+      ErrorHere("expected function name after 'function'");
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after function header");
+      return false;
+    }
+
+    func.name = name;
+    func.width = width;
+    func.is_signed = is_signed;
+    func.msb_expr = msb_expr;
+    func.lsb_expr = lsb_expr;
+
+    bool saw_body = false;
+    bool in_block = false;
+    while (!IsAtEnd()) {
+      if (MatchKeyword("endfunction")) {
+        break;
+      }
+      if (MatchKeyword("input")) {
+        if (!ParseFunctionInput(&func)) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("begin")) {
+        in_block = true;
+        continue;
+      }
+      if (MatchKeyword("end")) {
+        if (!in_block) {
+          ErrorHere("unexpected 'end' in function");
+          return false;
+        }
+        in_block = false;
+        continue;
+      }
+      if (Peek().kind == TokenKind::kIdentifier && Peek().text == func.name) {
+        Advance();
+        if (!MatchSymbol("=")) {
+          ErrorHere("expected '=' after function name");
+          return false;
+        }
+        auto rhs = ParseExpr();
+        if (!rhs) {
+          return false;
+        }
+        if (!MatchSymbol(";")) {
+          ErrorHere("expected ';' after function assignment");
+          return false;
+        }
+        if (saw_body) {
+          ErrorHere("multiple assignments to function name in v0");
+          return false;
+        }
+        func.body_expr = std::move(rhs);
+        saw_body = true;
+        continue;
+      }
+      ErrorHere("unsupported function item '" + Peek().text + "'");
+      return false;
+    }
+
+    if (!func.body_expr) {
+      ErrorHere("function missing return assignment");
+      return false;
+    }
+    if (in_block) {
+      ErrorHere("missing 'end' before endfunction");
+      return false;
+    }
+    module->functions.push_back(std::move(func));
+    return true;
+  }
+
+  bool ParseFunctionInput(Function* func) {
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
+    int width = 1;
+    std::shared_ptr<Expr> msb_expr;
+    std::shared_ptr<Expr> lsb_expr;
+    bool had_range = false;
+    if (!ParseRange(&width, &msb_expr, &lsb_expr, &had_range)) {
+      return false;
+    }
+    if (!had_range) {
+      msb_expr.reset();
+      lsb_expr.reset();
+    }
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected function input name");
+        return false;
+      }
+      FunctionArg arg;
+      arg.name = name;
+      arg.width = width;
+      arg.is_signed = is_signed;
+      arg.msb_expr = msb_expr;
+      arg.lsb_expr = lsb_expr;
+      func->args.push_back(std::move(arg));
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      break;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after function input");
+      return false;
+    }
+    return true;
   }
 
   bool ParsePortList(Module* module) {
@@ -452,8 +597,7 @@ class Parser {
                       range_lsb);
       if (dir == PortDir::kOutput && is_reg) {
         AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                       range_msb, range_lsb, 0, std::shared_ptr<Expr>(),
-                       std::shared_ptr<Expr>());
+                       range_msb, range_lsb, {});
       }
       if (MatchSymbol(",")) {
         continue;
@@ -499,8 +643,7 @@ class Parser {
                       range_lsb);
       if (dir == PortDir::kOutput && is_reg) {
         AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                       range_msb, range_lsb, 0, std::shared_ptr<Expr>(),
-                       std::shared_ptr<Expr>());
+                       range_msb, range_lsb, {});
       }
       if (MatchSymbol(",")) {
         continue;
@@ -532,17 +675,19 @@ class Parser {
         return false;
       }
       std::unique_ptr<Expr> init;
-      int array_size = 0;
-      std::shared_ptr<Expr> array_msb;
-      std::shared_ptr<Expr> array_lsb;
-      bool had_array = false;
-      if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
-        return false;
-      }
-      if (!had_array) {
-        array_size = 0;
-        array_msb.reset();
-        array_lsb.reset();
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
       }
       if (MatchSymbol("=")) {
         init = ParseExpr();
@@ -551,7 +696,7 @@ class Parser {
         }
       }
       AddOrUpdateNet(module, name, NetType::kWire, width, is_signed, range_msb,
-                     range_lsb, array_size, array_msb, array_lsb);
+                     range_lsb, array_dims);
       if (init) {
         Assign assign;
         assign.lhs = name;
@@ -587,20 +732,22 @@ class Parser {
         ErrorHere("expected identifier in reg declaration");
         return false;
       }
-      int array_size = 0;
-      std::shared_ptr<Expr> array_msb;
-      std::shared_ptr<Expr> array_lsb;
-      bool had_array = false;
-      if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
-        return false;
-      }
-      if (!had_array) {
-        array_size = 0;
-        array_msb.reset();
-        array_lsb.reset();
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
       }
       AddOrUpdateNet(module, name, NetType::kReg, width, is_signed, range_msb,
-                     range_lsb, array_size, array_msb, array_lsb);
+                     range_lsb, array_dims);
       if (MatchSymbol(",")) {
         continue;
       }
@@ -709,13 +856,90 @@ class Parser {
         return false;
       }
       AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), 0,
-                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>());
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
       if (MatchSymbol(",")) {
         continue;
       }
       if (!MatchSymbol(";")) {
         ErrorHere("expected ';' after integer declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseLocalIntegerDecl() {
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in integer declaration");
+        return false;
+      }
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after integer declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseLocalRegDecl(Module* module) {
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
+    int width = 1;
+    std::shared_ptr<Expr> range_msb;
+    std::shared_ptr<Expr> range_lsb;
+    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
+      return false;
+    }
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in reg declaration");
+        return false;
+      }
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+      }
+      if (current_module_) {
+        for (const auto& port : current_module_->ports) {
+          if (port.name == name) {
+            ErrorHere("local reg redeclares port '" + name + "'");
+            return false;
+          }
+        }
+        for (const auto& net : current_module_->nets) {
+          if (net.name == name) {
+            ErrorHere("local reg redeclares net '" + name + "'");
+            return false;
+          }
+        }
+      }
+      AddOrUpdateNet(current_module_, name, NetType::kWire, width, is_signed,
+                     range_msb, range_lsb, array_dims);
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after reg declaration");
         return false;
       }
       break;
@@ -850,6 +1074,18 @@ class Parser {
         if (MatchKeyword("end")) {
           break;
         }
+        if (MatchKeyword("integer")) {
+          if (!ParseLocalIntegerDecl()) {
+            return false;
+          }
+          continue;
+        }
+        if (MatchKeyword("reg")) {
+          if (!ParseLocalRegDecl(current_module_)) {
+            return false;
+          }
+          continue;
+        }
         Statement stmt;
         if (!ParseStatement(&stmt)) {
           return false;
@@ -857,6 +1093,12 @@ class Parser {
         out_statements->push_back(std::move(stmt));
       }
       return true;
+    }
+    if (MatchKeyword("integer")) {
+      return ParseLocalIntegerDecl();
+    }
+    if (MatchKeyword("reg")) {
+      return ParseLocalRegDecl(current_module_);
     }
     Statement stmt;
     if (!ParseStatement(&stmt)) {
@@ -1009,6 +1251,18 @@ class Parser {
       if (MatchKeyword("end")) {
         break;
       }
+      if (MatchKeyword("integer")) {
+        if (!ParseLocalIntegerDecl()) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("reg")) {
+        if (!ParseLocalRegDecl(current_module_)) {
+          return false;
+        }
+        continue;
+      }
       Statement inner;
       if (!ParseStatement(&inner)) {
         return false;
@@ -1117,9 +1371,10 @@ class Parser {
       return false;
     }
     std::unique_ptr<Expr> lhs_index;
-    if (MatchSymbol("[")) {
-      lhs_index = ParseExpr();
-      if (!lhs_index) {
+    std::vector<std::unique_ptr<Expr>> lhs_indices;
+    while (MatchSymbol("[")) {
+      auto index = ParseExpr();
+      if (!index) {
         return false;
       }
       if (MatchSymbol(":")) {
@@ -1130,6 +1385,11 @@ class Parser {
         ErrorHere("expected ']' after assignment target");
         return false;
       }
+      lhs_indices.push_back(std::move(index));
+    }
+    if (lhs_indices.size() == 1) {
+      lhs_index = std::move(lhs_indices.front());
+      lhs_indices.clear();
     }
     bool nonblocking = false;
     if (MatchSymbol("<")) {
@@ -1154,8 +1414,11 @@ class Parser {
     }
     Statement stmt;
     stmt.kind = StatementKind::kAssign;
-    stmt.assign = SequentialAssign{lhs, std::move(lhs_index), std::move(rhs),
-                                   nonblocking};
+    stmt.assign.lhs = lhs;
+    stmt.assign.lhs_index = std::move(lhs_index);
+    stmt.assign.lhs_indices = std::move(lhs_indices);
+    stmt.assign.rhs = std::move(rhs);
+    stmt.assign.nonblocking = nonblocking;
     *out_statement = std::move(stmt);
     return true;
   }
@@ -1597,24 +1860,57 @@ class Parser {
     } else if (Peek().kind == TokenKind::kIdentifier) {
       std::string name = Peek().text;
       Advance();
-      expr = std::make_unique<Expr>();
-      expr->kind = ExprKind::kIdentifier;
-      expr->ident = std::move(name);
+      if (MatchSymbol("(")) {
+        auto call = std::make_unique<Expr>();
+        call->kind = ExprKind::kCall;
+        call->ident = name;
+        if (!MatchSymbol(")")) {
+          while (true) {
+            auto arg = ParseExpr();
+            if (!arg) {
+              return nullptr;
+            }
+            call->call_args.push_back(std::move(arg));
+            if (MatchSymbol(",")) {
+              continue;
+            }
+            break;
+          }
+          if (!MatchSymbol(")")) {
+            ErrorHere("expected ')' after function call");
+            return nullptr;
+          }
+        }
+        expr = std::move(call);
+      } else {
+        expr = std::make_unique<Expr>();
+        expr->kind = ExprKind::kIdentifier;
+        expr->ident = std::move(name);
+      }
     }
     if (!expr) {
       ErrorHere("expected expression");
       return nullptr;
     }
     while (MatchSymbol("[")) {
-      if (expr->kind != ExprKind::kIdentifier) {
-        ErrorHere("bit/part select requires identifier");
+      if (expr->kind != ExprKind::kIdentifier &&
+          expr->kind != ExprKind::kIndex) {
+        ErrorHere("bit/part select requires identifier or array index");
         return nullptr;
       }
       std::unique_ptr<Expr> msb_expr = ParseExpr();
       if (!msb_expr) {
         return nullptr;
       }
+      bool base_is_array = false;
+      if (expr->kind == ExprKind::kIdentifier) {
+        base_is_array = IsArrayName(expr->ident);
+      }
       if (MatchSymbol(":")) {
+        if (base_is_array || expr->kind == ExprKind::kIndex) {
+          ErrorHere("part select requires identifier");
+          return nullptr;
+        }
         std::unique_ptr<Expr> lsb_expr = ParseExpr();
         if (!lsb_expr) {
           return nullptr;
@@ -1644,6 +1940,14 @@ class Parser {
       if (!MatchSymbol("]")) {
         ErrorHere("expected ']' after bit select");
         return nullptr;
+      }
+      if (base_is_array || expr->kind == ExprKind::kIndex) {
+        auto index = std::make_unique<Expr>();
+        index->kind = ExprKind::kIndex;
+        index->base = std::move(expr);
+        index->index = std::move(msb_expr);
+        expr = std::move(index);
+        continue;
       }
       int64_t index_value = 0;
       if (TryEvalConstExpr(*msb_expr, &index_value)) {
@@ -1974,9 +2278,12 @@ class Parser {
   void AddOrUpdateNet(Module* module, const std::string& name, NetType type,
                       int width, bool is_signed,
                       const std::shared_ptr<Expr>& msb_expr,
-                      const std::shared_ptr<Expr>& lsb_expr, int array_size,
-                      const std::shared_ptr<Expr>& array_msb_expr,
-                      const std::shared_ptr<Expr>& array_lsb_expr) {
+                      const std::shared_ptr<Expr>& lsb_expr,
+                      const std::vector<ArrayDim>& array_dims) {
+    int array_size = 0;
+    if (array_dims.size() == 1) {
+      array_size = array_dims.front().size;
+    }
     for (auto& net : module->nets) {
       if (net.name == name) {
         net.type = type;
@@ -1985,8 +2292,7 @@ class Parser {
         net.msb_expr = msb_expr;
         net.lsb_expr = lsb_expr;
         net.array_size = array_size;
-        net.array_msb_expr = array_msb_expr;
-        net.array_lsb_expr = array_lsb_expr;
+        net.array_dims = array_dims;
         return;
       }
     }
@@ -1998,9 +2304,20 @@ class Parser {
     net.msb_expr = msb_expr;
     net.lsb_expr = lsb_expr;
     net.array_size = array_size;
-    net.array_msb_expr = array_msb_expr;
-    net.array_lsb_expr = array_lsb_expr;
+    net.array_dims = array_dims;
     module->nets.push_back(std::move(net));
+  }
+
+  bool IsArrayName(const std::string& name) const {
+    if (!current_module_) {
+      return false;
+    }
+    for (const auto& net : current_module_->nets) {
+      if (net.name == name && !net.array_dims.empty()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void ErrorHere(const std::string& message) {
@@ -2014,6 +2331,7 @@ class Parser {
   Diagnostics* diagnostics_ = nullptr;
   size_t pos_ = 0;
   std::unordered_map<std::string, int64_t> current_params_;
+  Module* current_module_ = nullptr;
   ParseOptions options_;
 
   bool EvalConstExpr(const Expr& expr, int64_t* out_value) {
@@ -2189,6 +2507,9 @@ class Parser {
       case ExprKind::kIndex:
         ErrorHere("indexing not allowed in constant expression");
         return false;
+      case ExprKind::kCall:
+        ErrorHere("function call not allowed in constant expression");
+        return false;
       case ExprKind::kConcat:
         ErrorHere("concatenation not allowed in constant expression");
         return false;
@@ -2356,6 +2677,7 @@ class Parser {
       }
       case ExprKind::kSelect:
       case ExprKind::kIndex:
+      case ExprKind::kCall:
       case ExprKind::kConcat:
         return false;
     }

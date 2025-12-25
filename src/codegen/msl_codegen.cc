@@ -25,6 +25,15 @@ const Port* FindPort(const Module& module, const std::string& name) {
   return nullptr;
 }
 
+const Function* FindFunction(const Module& module, const std::string& name) {
+  for (const auto& func : module.functions) {
+    if (func.name == name) {
+      return &func;
+    }
+  }
+  return nullptr;
+}
+
 int SignalWidth(const Module& module, const std::string& name) {
   for (const auto& port : module.ports) {
     if (port.name == name) {
@@ -56,7 +65,8 @@ bool SignalSigned(const Module& module, const std::string& name) {
 bool IsArrayNet(const Module& module, const std::string& name,
                 int* element_width, int* array_size) {
   for (const auto& net : module.nets) {
-    if (net.name == name && net.array_size > 0) {
+    if (net.name == name &&
+        (net.array_size > 0 || !net.array_dims.empty())) {
       if (element_width) {
         *element_width = net.width;
       }
@@ -267,6 +277,10 @@ bool ExprSigned(const Expr& expr, const Module& module) {
           expr.else_expr ? ExprSigned(*expr.else_expr, module) : false;
       return t_signed && e_signed;
     }
+    case ExprKind::kCall: {
+      const Function* func = FindFunction(module, expr.ident);
+      return func ? func->is_signed : false;
+    }
     case ExprKind::kSelect:
     case ExprKind::kIndex:
     case ExprKind::kConcat:
@@ -318,6 +332,11 @@ void CollectIdentifiers(const Expr& expr,
       }
       if (expr.index) {
         CollectIdentifiers(*expr.index, out);
+      }
+      return;
+    case ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        CollectIdentifiers(*arg, out);
       }
       return;
     case ExprKind::kConcat:
@@ -452,6 +471,10 @@ int ExprWidth(const Expr& expr, const Module& module) {
         }
       }
       return 1;
+    }
+    case ExprKind::kCall: {
+      const Function* func = FindFunction(module, expr.ident);
+      return func ? func->width : 32;
     }
     case ExprKind::kConcat: {
       int total = 0;
@@ -778,6 +801,8 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       std::string masked = MaskForWidthExpr(base, base_width);
       return "((" + cast + masked + " >> " + index + ") & " + one + ")";
     }
+    case ExprKind::kCall:
+      return "/*function_call*/0u";
     case ExprKind::kConcat:
       return EmitConcatExpr(expr, module, locals, regs);
   }
@@ -1781,6 +1806,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                            ")) : 1u)";
           return FsExpr{val, xz, width};
         }
+        case ExprKind::kCall:
+          return fs_allx_expr(1);
         case ExprKind::kConcat:
           return emit_concat4(expr);
       }

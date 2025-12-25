@@ -12,6 +12,7 @@
 - reg
 - integer (32-bit signed reg)
 - signed (ports/nets)
+- local reg declarations inside procedural blocks (treated as locals)
 - always
 - always @*
 - initial
@@ -22,10 +23,11 @@
 - numeric literals in instance connections (inputs only)
 - if / else
 - bit/part selects (`a[3]`, `a[7:0]`)
-- unpacked reg/wire arrays (`reg [7:0] mem [0:255]`)
-- indexed access (`mem[addr]` for arrays, `a[i]` for variable bit select)
+- unpacked reg/wire arrays (`reg [7:0] mem [0:255]`, multi-dimensional)
+- indexed access (`mem[addr]`, `mem[row][col]`, `a[i]` for variable bit select)
 - parameter (module header and body, constant expressions only)
 - localparam (module body, constant expressions only)
+- function (inputs + single return assignment, inlined during elaboration)
 - ternary `?:`
 - unary operators (`~`, `-`, `+`)
 - logical operators (`!`, `&&`, `||`)
@@ -66,7 +68,7 @@
 
 ## Planned
 - generate / genvar
-- functions / tasks
+- tasks
 - remaining Verilog-2001 constructs as encountered
 
 ## SystemVerilog (far later, after MSL is working)
