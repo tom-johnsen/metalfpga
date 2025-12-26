@@ -640,6 +640,21 @@ std::unique_ptr<Expr> CloneExprWithParams(
     return out;
   }
   if (expr.kind == ExprKind::kCall) {
+    if (expr.ident == "$time") {
+      auto out = std::make_unique<Expr>();
+      out->kind = ExprKind::kCall;
+      out->ident = expr.ident;
+      out->call_args.reserve(expr.call_args.size());
+      for (const auto& arg : expr.call_args) {
+        auto cloned = CloneExprWithParams(*arg, rename, params, module,
+                                          diagnostics, bindings);
+        if (!cloned) {
+          return nullptr;
+        }
+        out->call_args.push_back(std::move(cloned));
+      }
+      return out;
+    }
     if (!module) {
       diagnostics->Add(Severity::kError,
                        "function call requires module context");
@@ -851,6 +866,7 @@ bool CloneStatement(
     const ParamBindings& params, const Module& source_module,
     const Module& flat_module, Statement* out, Diagnostics* diagnostics) {
   out->kind = statement.kind;
+  out->block_label = statement.block_label;
   if (statement.kind == StatementKind::kAssign) {
     out->assign.lhs = rename(statement.assign.lhs);
     if (!statement.assign.lhs_indices.empty()) {
@@ -905,6 +921,18 @@ bool CloneStatement(
       out->assign.rhs = SimplifyExpr(std::move(out->assign.rhs), flat_module);
     } else {
       out->assign.rhs = nullptr;
+    }
+    if (statement.assign.delay) {
+      out->assign.delay =
+          CloneExprWithParams(*statement.assign.delay, rename, params,
+                              &source_module, diagnostics, nullptr);
+      if (!out->assign.delay) {
+        return false;
+      }
+      out->assign.delay =
+          SimplifyExpr(std::move(out->assign.delay), flat_module);
+    } else {
+      out->assign.delay = nullptr;
     }
     out->assign.nonblocking = statement.assign.nonblocking;
     return true;
@@ -1156,6 +1184,119 @@ bool CloneStatement(
     }
     return true;
   }
+  if (statement.kind == StatementKind::kDelay) {
+    out->kind = StatementKind::kDelay;
+    if (statement.delay) {
+      out->delay =
+          CloneExprWithParams(*statement.delay, rename, params, &source_module,
+                              diagnostics, nullptr);
+      if (!out->delay) {
+        return false;
+      }
+      out->delay = SimplifyExpr(std::move(out->delay), flat_module);
+    }
+    for (const auto& body_stmt : statement.delay_body) {
+      Statement cloned;
+      if (!CloneStatement(body_stmt, rename, params, source_module,
+                          flat_module, &cloned, diagnostics)) {
+        return false;
+      }
+      out->delay_body.push_back(std::move(cloned));
+    }
+    return true;
+  }
+  if (statement.kind == StatementKind::kEventControl) {
+    out->kind = StatementKind::kEventControl;
+    if (statement.event_expr) {
+      out->event_expr =
+          CloneExprWithParams(*statement.event_expr, rename, params,
+                              &source_module, diagnostics, nullptr);
+      if (!out->event_expr) {
+        return false;
+      }
+      out->event_expr =
+          SimplifyExpr(std::move(out->event_expr), flat_module);
+    }
+    for (const auto& body_stmt : statement.event_body) {
+      Statement cloned;
+      if (!CloneStatement(body_stmt, rename, params, source_module,
+                          flat_module, &cloned, diagnostics)) {
+        return false;
+      }
+      out->event_body.push_back(std::move(cloned));
+    }
+    return true;
+  }
+  if (statement.kind == StatementKind::kEventTrigger) {
+    out->kind = StatementKind::kEventTrigger;
+    out->trigger_target = rename(statement.trigger_target);
+    return true;
+  }
+  if (statement.kind == StatementKind::kWait) {
+    out->kind = StatementKind::kWait;
+    if (statement.wait_condition) {
+      out->wait_condition =
+          CloneExprWithParams(*statement.wait_condition, rename, params,
+                              &source_module, diagnostics, nullptr);
+      if (!out->wait_condition) {
+        return false;
+      }
+      out->wait_condition =
+          SimplifyExpr(std::move(out->wait_condition), flat_module);
+    }
+    for (const auto& body_stmt : statement.wait_body) {
+      Statement cloned;
+      if (!CloneStatement(body_stmt, rename, params, source_module,
+                          flat_module, &cloned, diagnostics)) {
+        return false;
+      }
+      out->wait_body.push_back(std::move(cloned));
+    }
+    return true;
+  }
+  if (statement.kind == StatementKind::kForever) {
+    out->kind = StatementKind::kForever;
+    for (const auto& body_stmt : statement.forever_body) {
+      Statement cloned;
+      if (!CloneStatement(body_stmt, rename, params, source_module,
+                          flat_module, &cloned, diagnostics)) {
+        return false;
+      }
+      out->forever_body.push_back(std::move(cloned));
+    }
+    return true;
+  }
+  if (statement.kind == StatementKind::kFork) {
+    out->kind = StatementKind::kFork;
+    for (const auto& body_stmt : statement.fork_branches) {
+      Statement cloned;
+      if (!CloneStatement(body_stmt, rename, params, source_module,
+                          flat_module, &cloned, diagnostics)) {
+        return false;
+      }
+      out->fork_branches.push_back(std::move(cloned));
+    }
+    return true;
+  }
+  if (statement.kind == StatementKind::kDisable) {
+    out->kind = StatementKind::kDisable;
+    out->disable_target = rename(statement.disable_target);
+    return true;
+  }
+  if (statement.kind == StatementKind::kTaskCall) {
+    out->kind = StatementKind::kTaskCall;
+    out->task_name = statement.task_name;
+    for (const auto& arg : statement.task_args) {
+      auto cloned_arg =
+          CloneExprWithParams(*arg, rename, params, &source_module,
+                              diagnostics, nullptr);
+      if (!cloned_arg) {
+        return false;
+      }
+      out->task_args.push_back(std::move(cloned_arg));
+    }
+    return true;
+  }
   return true;
 }
 
@@ -1342,6 +1483,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
       return 1;
     }
     case ExprKind::kCall: {
+      if (expr.ident == "$time") {
+        return 64;
+      }
       const Function* func = FindFunction(module, expr.ident);
       return func ? func->width : 32;
     }
@@ -1636,6 +1780,35 @@ void CollectAssignedSignals(const Statement& statement,
         CollectAssignedSignals(stmt, out);
       }
       break;
+    case StatementKind::kDelay:
+      for (const auto& stmt : statement.delay_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kEventControl:
+      for (const auto& stmt : statement.event_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kWait:
+      for (const auto& stmt : statement.wait_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kForever:
+      for (const auto& stmt : statement.forever_body) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kFork:
+      for (const auto& stmt : statement.fork_branches) {
+        CollectAssignedSignals(stmt, out);
+      }
+      break;
+    case StatementKind::kDisable:
+    case StatementKind::kTaskCall:
+    case StatementKind::kEventTrigger:
+      break;
   }
 }
 
@@ -1685,6 +1858,35 @@ void CollectAssignedSignalsNoIndex(const Statement& statement,
       for (const auto& stmt : statement.repeat_body) {
         CollectAssignedSignalsNoIndex(stmt, out);
       }
+      break;
+    case StatementKind::kDelay:
+      for (const auto& stmt : statement.delay_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kEventControl:
+      for (const auto& stmt : statement.event_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kWait:
+      for (const auto& stmt : statement.wait_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kForever:
+      for (const auto& stmt : statement.forever_body) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kFork:
+      for (const auto& stmt : statement.fork_branches) {
+        CollectAssignedSignalsNoIndex(stmt, out);
+      }
+      break;
+    case StatementKind::kDisable:
+    case StatementKind::kTaskCall:
+    case StatementKind::kEventTrigger:
       break;
   }
 }
@@ -1868,40 +2070,57 @@ void CollectSignalRefs(const Expr& expr, const ParamBindings& params,
   }
 }
 
-bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
+bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics,
+                           bool allow_multi_driver) {
   struct Range {
     int lo = 0;
     int hi = 0;
+  };
+  auto is_wire = [&](const std::string& name) -> bool {
+    const Net* net = FindNet(flat, name);
+    if (!net) {
+      return true;
+    }
+    return net->type != NetType::kReg;
   };
   std::unordered_map<std::string, std::string> drivers;
   std::unordered_map<std::string, std::vector<Range>> partial_ranges;
   for (const auto& assign : flat.assigns) {
     if (!assign.lhs_has_range) {
+      bool can_multi = allow_multi_driver && is_wire(assign.lhs);
       if (drivers.count(assign.lhs) > 0 || partial_ranges.count(assign.lhs) > 0) {
-        diagnostics->Add(Severity::kError,
-                         "multiple drivers for signal '" + assign.lhs + "'");
-        return false;
+        if (!can_multi || drivers[assign.lhs] == "always" ||
+            partial_ranges.count(assign.lhs) > 0) {
+          diagnostics->Add(Severity::kError,
+                           "multiple drivers for signal '" + assign.lhs + "'");
+          return false;
+        }
       }
       drivers[assign.lhs] = "assign";
       continue;
     }
+    bool can_multi = allow_multi_driver && is_wire(assign.lhs);
     if (drivers.count(assign.lhs) > 0) {
-      diagnostics->Add(Severity::kError,
-                       "multiple drivers for signal '" + assign.lhs + "'");
-      return false;
+      if (!can_multi || drivers[assign.lhs] == "always") {
+        diagnostics->Add(Severity::kError,
+                         "multiple drivers for signal '" + assign.lhs + "'");
+        return false;
+      }
     }
     int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
     int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
     auto& ranges = partial_ranges[assign.lhs];
-    for (const auto& range : ranges) {
-      if (hi >= range.lo && lo <= range.hi) {
-        diagnostics->Add(Severity::kError,
-                         "overlapping drivers for signal '" + assign.lhs +
-                             "' (" + std::to_string(lo) + ":" +
-                             std::to_string(hi) + " overlaps " +
-                             std::to_string(range.lo) + ":" +
-                             std::to_string(range.hi) + ")");
-        return false;
+    if (!can_multi) {
+      for (const auto& range : ranges) {
+        if (hi >= range.lo && lo <= range.hi) {
+          diagnostics->Add(Severity::kError,
+                           "overlapping drivers for signal '" + assign.lhs +
+                               "' (" + std::to_string(lo) + ":" +
+                               std::to_string(hi) + " overlaps " +
+                               std::to_string(range.lo) + ":" +
+                               std::to_string(range.hi) + ")");
+          return false;
+        }
       }
     }
     ranges.push_back(Range{lo, hi});
@@ -1919,6 +2138,30 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics) {
         return false;
       }
       drivers[name] = "always";
+    }
+  }
+  return true;
+}
+
+bool ValidateSwitches(const Module& flat, Diagnostics* diagnostics) {
+  for (const auto& sw : flat.switches) {
+    int a_width = SignalWidth(flat, sw.a);
+    if (a_width <= 0) {
+      diagnostics->Add(Severity::kError,
+                       "unknown switch terminal '" + sw.a + "'");
+      return false;
+    }
+    int b_width = SignalWidth(flat, sw.b);
+    if (b_width <= 0) {
+      diagnostics->Add(Severity::kError,
+                       "unknown switch terminal '" + sw.b + "'");
+      return false;
+    }
+    if (a_width != b_width) {
+      diagnostics->Add(Severity::kError,
+                       "switch terminals '" + sw.a + "' and '" + sw.b +
+                           "' must have matching widths");
+      return false;
     }
   }
   return true;
@@ -2085,7 +2328,11 @@ void WarnUndrivenWires(const Module& flat, Diagnostics* diagnostics,
     }
   }
   for (const auto& net : flat.nets) {
-    if (net.type != NetType::kWire || net.array_size > 0) {
+    if (net.type == NetType::kReg || net.array_size > 0) {
+      continue;
+    }
+    if (net.type == NetType::kTri0 || net.type == NetType::kTri1 ||
+        net.type == NetType::kSupply0 || net.type == NetType::kSupply1) {
       continue;
     }
     if (driven.count(net.name) > 0) {
@@ -2223,11 +2470,15 @@ bool InlineModule(const Program& program, const Module& module,
 
   std::unordered_set<std::string> port_names;
   std::unordered_set<std::string> local_net_names;
+  std::unordered_set<std::string> local_event_names;
   for (const auto& port : module.ports) {
     port_names.insert(port.name);
   }
   for (const auto& net : module.nets) {
     local_net_names.insert(net.name);
+  }
+  for (const auto& event_decl : module.events) {
+    local_event_names.insert(event_decl.name);
   }
 
   auto rename = [&](const std::string& ident) -> std::string {
@@ -2236,7 +2487,8 @@ bool InlineModule(const Program& program, const Module& module,
       return it->second.signal;
     }
     if (!prefix.empty() &&
-        (port_names.count(ident) > 0 || local_net_names.count(ident) > 0)) {
+        (port_names.count(ident) > 0 || local_net_names.count(ident) > 0 ||
+         local_event_names.count(ident) > 0)) {
       return prefix + ident;
     }
     return ident;
@@ -2249,6 +2501,18 @@ bool InlineModule(const Program& program, const Module& module,
       }
     }
     return NetType::kWire;
+  };
+
+  auto register_event = [&](const std::string& name,
+                            const std::string& hier_path) -> bool {
+    auto it = flat_to_hier->find(name);
+    if (it != flat_to_hier->end() && it->second != hier_path) {
+      diagnostics->Add(Severity::kError,
+                       "flattened event name collision for '" + name + "'");
+      return false;
+    }
+    (*flat_to_hier)[name] = hier_path;
+    return true;
   };
 
   if (prefix.empty()) {
@@ -2305,6 +2569,14 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
     }
+    out->events.clear();
+    for (const auto& event_decl : module.events) {
+      out->events.push_back(event_decl);
+      if (!register_event(event_decl.name,
+                          hier_prefix + "." + event_decl.name)) {
+        return false;
+      }
+    }
   } else {
     for (const auto& port : module.ports) {
       if (port_map.find(port.name) != port_map.end()) {
@@ -2342,6 +2614,15 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
     }
+    for (const auto& event_decl : module.events) {
+      EventDecl flat_event;
+      flat_event.name = prefix + event_decl.name;
+      out->events.push_back(std::move(flat_event));
+      if (!register_event(prefix + event_decl.name,
+                          hier_prefix + "." + event_decl.name)) {
+        return false;
+      }
+    }
   }
 
   for (const auto& assign : module.assigns) {
@@ -2350,6 +2631,9 @@ bool InlineModule(const Program& program, const Module& module,
     flattened.lhs_has_range = assign.lhs_has_range;
     flattened.lhs_msb = assign.lhs_msb;
     flattened.lhs_lsb = assign.lhs_lsb;
+    flattened.strength0 = assign.strength0;
+    flattened.strength1 = assign.strength1;
+    flattened.has_strength = assign.has_strength;
     if (assign.rhs) {
       flattened.rhs =
           CloneExprWithParams(*assign.rhs, rename, params, &module,
@@ -2363,10 +2647,37 @@ bool InlineModule(const Program& program, const Module& module,
     }
     out->assigns.push_back(std::move(flattened));
   }
+  for (const auto& sw : module.switches) {
+    Switch flattened;
+    flattened.kind = sw.kind;
+    flattened.a = rename(sw.a);
+    flattened.b = rename(sw.b);
+    flattened.strength0 = sw.strength0;
+    flattened.strength1 = sw.strength1;
+    flattened.has_strength = sw.has_strength;
+    if (sw.control) {
+      flattened.control = CloneExprWithParams(*sw.control, rename, params,
+                                              &module, diagnostics, nullptr);
+      if (!flattened.control) {
+        return false;
+      }
+      flattened.control = SimplifyExpr(std::move(flattened.control), *out);
+    }
+    if (sw.control_n) {
+      flattened.control_n = CloneExprWithParams(*sw.control_n, rename, params,
+                                                &module, diagnostics, nullptr);
+      if (!flattened.control_n) {
+        return false;
+      }
+      flattened.control_n = SimplifyExpr(std::move(flattened.control_n), *out);
+    }
+    out->switches.push_back(std::move(flattened));
+  }
   for (const auto& block : module.always_blocks) {
     AlwaysBlock flattened;
     flattened.edge = block.edge;
     flattened.clock = rename(block.clock);
+    flattened.sensitivity = block.sensitivity;
     if (!CloneStatementList(block.statements, rename, params, module, *out,
                             &flattened.statements, diagnostics)) {
       return false;
@@ -2652,7 +2963,10 @@ bool Elaborate(const Program& program, const std::string& top_name,
     return false;
   }
 
-  if (!ValidateSingleDrivers(flat, diagnostics)) {
+  if (!ValidateSwitches(flat, diagnostics)) {
+    return false;
+  }
+  if (!ValidateSingleDrivers(flat, diagnostics, enable_4state)) {
     return false;
   }
   if (!ValidateCombinationalAcyclic(flat, diagnostics)) {

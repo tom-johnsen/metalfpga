@@ -48,6 +48,27 @@ int SignalWidth(const Module& module, const std::string& name) {
   return 32;
 }
 
+NetType SignalNetType(const Module& module, const std::string& name) {
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return net.type;
+    }
+  }
+  return NetType::kWire;
+}
+
+bool IsWireLikeNet(NetType type) { return type != NetType::kReg; }
+
+bool IsTriregNet(NetType type) { return type == NetType::kTrireg; }
+
+bool IsWiredAndNet(NetType type) {
+  return type == NetType::kWand || type == NetType::kTriand;
+}
+
+bool IsWiredOrNet(NetType type) {
+  return type == NetType::kWor || type == NetType::kTrior;
+}
+
 bool SignalSigned(const Module& module, const std::string& name) {
   for (const auto& port : module.ports) {
     if (port.name == name) {
@@ -300,6 +321,26 @@ std::string MaskLiteralForWidth(int width) {
   return std::to_string(mask) + suffix;
 }
 
+int StrengthRank(Strength strength) {
+  switch (strength) {
+    case Strength::kHighZ:
+      return 0;
+    case Strength::kWeak:
+      return 1;
+    case Strength::kPull:
+      return 2;
+    case Strength::kStrong:
+      return 3;
+    case Strength::kSupply:
+      return 4;
+  }
+  return 0;
+}
+
+std::string StrengthLiteral(Strength strength) {
+  return std::to_string(StrengthRank(strength)) + "u";
+}
+
 std::string ExtendExpr(const std::string& expr, int expr_width,
                        int target_width) {
   std::string masked = MaskForWidthExpr(expr, expr_width);
@@ -375,6 +416,9 @@ bool ExprSigned(const Expr& expr, const Module& module) {
       return t_signed && e_signed;
     }
     case ExprKind::kCall: {
+      if (expr.ident == "$time") {
+        return false;
+      }
       const Function* func = FindFunction(module, expr.ident);
       return func ? func->is_signed : false;
     }
@@ -452,10 +496,10 @@ void CollectIdentifiers(const Expr& expr,
 
 std::vector<size_t> OrderAssigns(const Module& module) {
   const size_t count = module.assigns.size();
-  std::unordered_map<std::string, size_t> lhs_to_index;
-  lhs_to_index.reserve(count);
+  std::unordered_map<std::string, std::vector<size_t>> lhs_to_indices;
+  lhs_to_indices.reserve(count);
   for (size_t i = 0; i < count; ++i) {
-    lhs_to_index[module.assigns[i].lhs] = i;
+    lhs_to_indices[module.assigns[i].lhs].push_back(i);
   }
 
   std::vector<int> indegree(count, 0);
@@ -471,12 +515,17 @@ std::vector<size_t> OrderAssigns(const Module& module) {
       if (dep == assign.lhs) {
         continue;
       }
-      auto it = lhs_to_index.find(dep);
-      if (it == lhs_to_index.end()) {
+      auto it = lhs_to_indices.find(dep);
+      if (it == lhs_to_indices.end()) {
         continue;
       }
-      edges[it->second].push_back(i);
-      indegree[i]++;
+      for (size_t producer : it->second) {
+        if (producer == i) {
+          continue;
+        }
+        edges[producer].push_back(i);
+        indegree[i]++;
+      }
     }
   }
 
@@ -582,6 +631,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
       return 1;
     }
     case ExprKind::kCall: {
+      if (expr.ident == "$time") {
+        return 64;
+      }
       const Function* func = FindFunction(module, expr.ident);
       return func ? func->width : 32;
     }
@@ -706,6 +758,36 @@ void CollectAssignedSignals(const Statement& stmt,
   }
   if (stmt.kind == StatementKind::kBlock) {
     for (const auto& inner : stmt.block) {
+      CollectAssignedSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    for (const auto& inner : stmt.delay_body) {
+      CollectAssignedSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    for (const auto& inner : stmt.event_body) {
+      CollectAssignedSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    for (const auto& inner : stmt.wait_body) {
+      CollectAssignedSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectAssignedSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
       CollectAssignedSignals(inner, out);
     }
     return;
@@ -936,6 +1018,9 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       return "((" + cast + masked + " >> " + index + ") & " + one + ")";
     }
     case ExprKind::kCall:
+      if (expr.ident == "$time") {
+        return "0ul";
+      }
       return "/*function_call*/0u";
     case ExprKind::kConcat:
       return EmitConcatExpr(expr, module, locals, regs);
@@ -1602,12 +1687,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       uint64_t mask = MaskForWidth64(width);
       return std::to_string(mask) + suffix_for_width(width);
     };
+    auto drive_full = [&](int width) -> std::string {
+      return mask_literal(width);
+    };
+    auto drive_zero = [&](int width) -> std::string {
+      return literal_for_width(0, width);
+    };
     auto val_name = [](const std::string& name) { return name + "_val"; };
     auto xz_name = [](const std::string& name) { return name + "_xz"; };
 
     struct FsExpr {
       std::string val;
       std::string xz;
+      std::string drive;
       int width = 0;
     };
 
@@ -1620,6 +1712,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
              std::to_string(width) + "u)";
     };
 
+    auto fs_resize_drive = [&](const FsExpr& expr, int width,
+                               bool sign_extend) -> std::string {
+      if (expr.width == width) {
+        return expr.drive;
+      }
+      if (width < expr.width) {
+        return MaskForWidthExpr(expr.drive, width);
+      }
+      std::string widened = ExtendExpr(expr.drive, expr.width, width);
+      uint64_t upper_mask_value =
+          MaskForWidth64(width) & ~MaskForWidth64(expr.width);
+      std::string upper_mask = literal_for_width(upper_mask_value, width);
+      if (!sign_extend || expr.width <= 0) {
+        return "(" + widened + " | " + upper_mask + ")";
+      }
+      std::string sign_bit = "((" + widened + " >> " +
+                             std::to_string(expr.width - 1) + "u) & 1u)";
+      std::string upper_drive =
+          "(" + sign_bit + " ? " + upper_mask + " : " + drive_zero(width) +
+          ")";
+      return "(" + widened + " | " + upper_drive + ")";
+    };
+
     auto fs_resize_expr = [&](const FsExpr& expr, int width) -> FsExpr {
       if (expr.width == width) {
         return expr;
@@ -1627,7 +1742,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string func = (width > 32) ? "fs_resize64" : "fs_resize32";
       std::string base = func + "(" + fs_make_expr(expr, expr.width) + ", " +
                          std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", width};
+      std::string drive = fs_resize_drive(expr, width, false);
+      return FsExpr{base + ".val", base + ".xz", drive, width};
     };
 
     auto fs_sext_expr = [&](const FsExpr& expr, int width) -> FsExpr {
@@ -1638,7 +1754,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(expr, expr.width) + ", " +
           std::to_string(expr.width) + "u, " + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", width};
+      std::string drive = fs_resize_drive(expr, width, true);
+      return FsExpr{base + ".val", base + ".xz", drive, width};
     };
 
     auto fs_extend_expr = [&](const FsExpr& expr, int width,
@@ -1649,7 +1766,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     auto fs_allx_expr = [&](int width) -> FsExpr {
       std::string func = (width > 32) ? "fs_allx64" : "fs_allx32";
       std::string base = func + "(" + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", width};
+      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
     };
 
     auto fs_unary = [&](const char* op, const FsExpr& arg, int width) -> FsExpr {
@@ -1658,7 +1775,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(arg, width) + ", " +
           std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", width};
+      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
     };
 
     auto fs_binary = [&](const char* op, FsExpr lhs, FsExpr rhs, int width,
@@ -1670,7 +1787,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(lhs, width) + ", " +
           fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", width};
+      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
     };
 
     auto fs_shift = [&](const char* op, FsExpr lhs, FsExpr rhs,
@@ -1692,7 +1809,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(lhs, width) + ", " +
           fs_make_expr(rhs, rhs_width) + ", " + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", width};
+      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
     };
 
     std::function<FsExpr(const Expr&)> emit_expr4;
@@ -1702,6 +1819,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       int total_width = ExprWidth(expr, module);
       std::string acc_val = (total_width > 32) ? "0ul" : "0u";
       std::string acc_xz = (total_width > 32) ? "0ul" : "0u";
+      std::string acc_drive = (total_width > 32) ? "0ul" : "0u";
       int repeats = std::max(1, expr.repeat);
       int shift = total_width;
       for (int rep = 0; rep < repeats; ++rep) {
@@ -1711,14 +1829,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           shift -= width;
           std::string masked_val = MaskForWidthExpr(part.val, width);
           std::string masked_xz = MaskForWidthExpr(part.xz, width);
+          std::string masked_drive = MaskForWidthExpr(part.drive, width);
           std::string cast = (total_width > 32) ? "(ulong)" : "(uint)";
           acc_val = "(" + acc_val + " | (" + cast + masked_val + " << " +
                     std::to_string(shift) + "u))";
           acc_xz = "(" + acc_xz + " | (" + cast + masked_xz + " << " +
                    std::to_string(shift) + "u))";
+          acc_drive = "(" + acc_drive + " | (" + cast + masked_drive + " << " +
+                      std::to_string(shift) + "u))";
         }
       }
-      return FsExpr{acc_val, acc_xz, total_width};
+      return FsExpr{acc_val, acc_xz, acc_drive, total_width};
     };
 
     emit_expr4 = [&](const Expr& expr) -> FsExpr {
@@ -1727,9 +1848,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           const Port* port = FindPort(module, expr.ident);
           if (port) {
             return FsExpr{val_name(port->name) + "[gid]",
-                          xz_name(port->name) + "[gid]", port->width};
+                          xz_name(port->name) + "[gid]",
+                          drive_full(port->width), port->width};
           }
           return FsExpr{val_name(expr.ident), xz_name(expr.ident),
+                        drive_full(SignalWidth(module, expr.ident)),
                         SignalWidth(module, expr.ident)};
         }
         case ExprKind::kNumber: {
@@ -1737,10 +1860,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                           ? expr.number_width
                           : ExprWidth(expr, module);
           uint64_t xz_bits = expr.x_bits | expr.z_bits;
+          uint64_t drive_bits = MaskForWidth64(width) & ~expr.z_bits;
           FsExpr out;
           out.width = width;
           out.val = literal_for_width(expr.value_bits, width);
           out.xz = literal_for_width(xz_bits, width);
+          out.drive = literal_for_width(drive_bits, width);
           return out;
         }
         case ExprKind::kUnary: {
@@ -1754,7 +1879,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           if (expr.unary_op == '-') {
             FsExpr zero{literal_for_width(0, width), literal_for_width(0, width),
-                        width};
+                        drive_full(width), width};
             bool signed_op =
                 expr.operand ? ExprSigned(*expr.operand, module) : false;
             return fs_binary("sub", zero, operand, width, signed_op);
@@ -1767,7 +1892,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             std::string base =
                 func + "(" + fs_make_expr(operand, width) + ", " +
                 std::to_string(width) + "u)";
-            return FsExpr{base + ".val", base + ".xz", 1};
+            return FsExpr{base + ".val", base + ".xz", drive_full(1), 1};
           }
           if (expr.unary_op == '&' || expr.unary_op == '|' ||
               expr.unary_op == '^') {
@@ -1780,7 +1905,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             func += (width > 32) ? "64" : "32";
             std::string base = func + "(" + fs_make_expr(operand, width) + ", " +
                                std::to_string(width) + "u)";
-            return FsExpr{base + ".val", base + ".xz", 1};
+            return FsExpr{base + ".val", base + ".xz", drive_full(1), 1};
           }
           return fs_allx_expr(width);
         }
@@ -1810,7 +1935,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             std::string base =
                 func + "(" + fs_make_expr(lhs, width) + ", " +
                 fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
-            return FsExpr{base + ".val", base + ".xz", 1};
+            return FsExpr{base + ".val", base + ".xz", drive_full(1), 1};
           }
           if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
               expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
@@ -1876,13 +2001,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           FsExpr then_expr = emit_expr4(*expr.then_expr);
           FsExpr else_expr = emit_expr4(*expr.else_expr);
           int width = std::max(then_expr.width, else_expr.width);
+          FsExpr then_resized = fs_resize_expr(then_expr, width);
+          FsExpr else_resized = fs_resize_expr(else_expr, width);
           std::string func = (width > 32) ? "fs_mux64" : "fs_mux32";
           std::string base =
               func + "(" + fs_make_expr(cond, cond.width) + ", " +
-              fs_make_expr(then_expr, width) + ", " +
-              fs_make_expr(else_expr, width) + ", " +
+              fs_make_expr(then_resized, width) + ", " +
+              fs_make_expr(else_resized, width) + ", " +
               std::to_string(width) + "u)";
-          return FsExpr{base + ".val", base + ".xz", width};
+          std::string cond_zero = literal_for_width(0, cond.width);
+          std::string cond_known = "(" + cond.xz + " == " + cond_zero + ")";
+          std::string cond_true =
+              "(" + cond_known + " && " + cond.val + " != " + cond_zero + ")";
+          std::string cond_false =
+              "(" + cond_known + " && " + cond.val + " == " + cond_zero + ")";
+          std::string drive =
+              "(" + cond_true + " ? " + then_resized.drive + " : (" +
+              cond_false + " ? " + else_resized.drive + " : (" +
+              then_resized.drive + " | " + else_resized.drive + ")))";
+          return FsExpr{base + ".val", base + ".xz", drive, width};
         }
         case ExprKind::kSelect: {
           FsExpr base = emit_expr4(*expr.base);
@@ -1905,7 +2042,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 "((" + xguard + ") ? ((" + bounds + ") ? ((" + base.xz +
                 " >> " + idx + ") & " + mask + ") : " + zero + ") : " + mask +
                 ")";
-            return FsExpr{val, xz, width};
+            std::string drive =
+                "((" + xguard + ") ? ((" + bounds + ") ? ((" + base.drive +
+                " >> " + idx + ") & " + mask + ") : " + mask + ") : " + mask +
+                ")";
+            return FsExpr{val, xz, drive, width};
           }
           int lo = std::min(expr.msb, expr.lsb);
           int hi = std::max(expr.msb, expr.lsb);
@@ -1915,7 +2056,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                             std::to_string(lo) + "u) & " + mask + ")";
           std::string xz = "((" + base.xz + " >> " +
                            std::to_string(lo) + "u) & " + mask + ")";
-          return FsExpr{val, xz, width};
+          std::string drive = "((" + base.drive + " >> " +
+                              std::to_string(lo) + "u) & " + mask + ")";
+          return FsExpr{val, xz, drive, width};
         }
         case ExprKind::kIndex: {
           if (!expr.base || !expr.index) {
@@ -1945,7 +2088,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   xz_name(expr.base->ident) + "[" + base +
                   "] : " + literal_for_width(0, element_width) + ") : " +
                   mask_literal(element_width) + ")";
-              return FsExpr{val, xz, element_width};
+              return FsExpr{val, xz, drive_full(element_width),
+                            element_width};
             }
           }
           FsExpr base = emit_expr4(*expr.base);
@@ -1959,9 +2103,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::string xz = "((" + cond + ") ? (((" + base.xz + " >> " +
                            index.val + ") & " + literal_for_width(1, 1) +
                            ")) : 1u)";
-          return FsExpr{val, xz, width};
+          std::string drive = "((" + cond + ") ? (((" + base.drive + " >> " +
+                              index.val + ") & " + literal_for_width(1, 1) +
+                              ")) : 1u)";
+          return FsExpr{val, xz, drive, width};
         }
         case ExprKind::kCall:
+          if (expr.ident == "$time") {
+            int width = 64;
+            return FsExpr{literal_for_width(0, width),
+                          literal_for_width(0, width), drive_full(width),
+                          width};
+          }
           return fs_allx_expr(1);
         case ExprKind::kConcat:
           return emit_concat4(expr);
@@ -2112,8 +2265,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         continue;
       }
       if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
-          sequential_regs.count(net.name) > 0) {
+          (sequential_regs.count(net.name) > 0 ||
+           initial_regs.count(net.name) > 0)) {
         reg_names.push_back(net.name);
+      }
+    }
+    std::vector<std::string> trireg_names;
+    for (const auto& net : module.nets) {
+      if (net.array_size > 0) {
+        continue;
+      }
+      if (net.type == NetType::kTrireg && !IsOutputPort(module, net.name)) {
+        trireg_names.push_back(net.name);
       }
     }
     std::vector<std::string> init_reg_names;
@@ -2160,6 +2323,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
           << buffer_index++ << ")]]";
     }
+    for (const auto& reg : trireg_names) {
+      out << ",\n";
+      std::string type = TypeForWidth(SignalWidth(module, reg));
+      out << "  device " << type << "* " << val_name(reg) << " [[buffer("
+          << buffer_index++ << ")]]";
+      out << ",\n";
+      out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
+          << buffer_index++ << ")]]";
+    }
     for (const auto* net : array_nets) {
       out << ",\n";
       std::string type = TypeForWidth(net->width);
@@ -2184,20 +2356,27 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (net.array_size > 0) {
         continue;
       }
-      if (net.type == NetType::kWire) {
-        locals.insert(net.name);
-      } else if (net.type == NetType::kReg) {
+      if (net.type == NetType::kReg) {
         if (sequential_regs.count(net.name) > 0) {
           regs.insert(net.name);
         } else if (!IsOutputPort(module, net.name)) {
           locals.insert(net.name);
         }
+        continue;
+      }
+      if (IsTriregNet(net.type)) {
+        regs.insert(net.name);
+        continue;
+      }
+      if (!IsOutputPort(module, net.name)) {
+        locals.insert(net.name);
       }
     }
 
     auto driven = CollectDrivenSignals(module);
     for (const auto& net : module.nets) {
-      if (net.array_size > 0 || net.type != NetType::kWire) {
+      if (net.array_size > 0 || net.type == NetType::kReg ||
+          IsTriregNet(net.type)) {
         continue;
       }
       if (driven.count(net.name) > 0 || locals.count(net.name) == 0) {
@@ -2215,15 +2394,224 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
 
     std::vector<size_t> ordered_assigns = OrderAssigns(module);
+    std::unordered_map<std::string, std::vector<size_t>> assign_groups;
+    assign_groups.reserve(module.assigns.size());
+    for (size_t i = 0; i < module.assigns.size(); ++i) {
+      assign_groups[module.assigns[i].lhs].push_back(i);
+    }
+    std::unordered_set<std::string> multi_driver;
+    std::unordered_map<std::string, size_t> drivers_remaining;
+    struct DriverInfo {
+      std::string val;
+      std::string xz;
+      std::string drive;
+      std::string strength0;
+      std::string strength1;
+    };
+    std::unordered_map<size_t, DriverInfo> driver_info;
+    std::unordered_map<std::string, std::vector<size_t>> drivers_for_net;
+    for (const auto& entry : assign_groups) {
+      bool force_resolve =
+          IsTriregNet(SignalNetType(module, entry.first));
+      if (entry.second.size() <= 1 && !force_resolve) {
+        continue;
+      }
+      multi_driver.insert(entry.first);
+      drivers_remaining[entry.first] = entry.second.size();
+      drivers_for_net[entry.first] = entry.second;
+      for (size_t idx = 0; idx < entry.second.size(); ++idx) {
+        size_t assign_index = entry.second[idx];
+        const Assign& assign = module.assigns[assign_index];
+        DriverInfo info;
+        info.val =
+            "__gpga_drv_" + entry.first + "_" + std::to_string(idx) + "_val";
+        info.xz =
+            "__gpga_drv_" + entry.first + "_" + std::to_string(idx) + "_xz";
+        info.drive =
+            "__gpga_drv_" + entry.first + "_" + std::to_string(idx) + "_drive";
+        info.strength0 = StrengthLiteral(assign.strength0);
+        info.strength1 = StrengthLiteral(assign.strength1);
+        driver_info[assign_index] = std::move(info);
+      }
+    }
+
+    auto emit_driver = [&](const Assign& assign, const DriverInfo& info) {
+      if (!assign.rhs) {
+        return;
+      }
+      int lhs_width = SignalWidth(module, assign.lhs);
+      std::string type = TypeForWidth(lhs_width);
+      if (assign.lhs_has_range) {
+        int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+        int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+        int slice_width = hi - lo + 1;
+        FsExpr rhs = emit_expr4_sized(*assign.rhs, slice_width);
+        std::string mask = mask_literal(slice_width);
+        std::string cast = (lhs_width > 32) ? "(ulong)" : "(uint)";
+        out << "  " << type << " " << info.val << " = ((" << cast << rhs.val
+            << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
+        out << "  " << type << " " << info.xz << " = ((" << cast << rhs.xz
+            << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
+        out << "  " << type << " " << info.drive << " = ((" << cast
+            << rhs.drive << " & " << mask << ") << " << std::to_string(lo)
+            << "u);\n";
+        return;
+      }
+      FsExpr rhs = emit_expr4_sized(*assign.rhs, lhs_width);
+      out << "  " << type << " " << info.val << " = " << rhs.val << ";\n";
+      out << "  " << type << " " << info.xz << " = " << rhs.xz << ";\n";
+      out << "  " << type << " " << info.drive << " = " << rhs.drive << ";\n";
+    };
+
+    auto emit_resolve = [&](const std::string& name,
+                            const std::vector<size_t>& indices) {
+      NetType net_type = SignalNetType(module, name);
+      bool wired_and = IsWiredAndNet(net_type);
+      bool wired_or = IsWiredOrNet(net_type);
+      bool is_trireg = IsTriregNet(net_type);
+      int lhs_width = SignalWidth(module, name);
+      std::string type = TypeForWidth(lhs_width);
+      std::string one = (lhs_width > 32) ? "1ul" : "1u";
+      std::string zero = drive_zero(lhs_width);
+      std::string resolved_val = "__gpga_res_" + name + "_val";
+      std::string resolved_xz = "__gpga_res_" + name + "_xz";
+      std::string resolved_drive = "__gpga_res_" + name + "_drive";
+      out << "  " << type << " " << resolved_val << " = " << zero << ";\n";
+      out << "  " << type << " " << resolved_xz << " = " << zero << ";\n";
+      out << "  " << type << " " << resolved_drive << " = " << zero << ";\n";
+      out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
+      out << "    " << type << " mask = (" << one << " << bit);\n";
+      if (wired_and || wired_or) {
+        out << "    bool has0 = false;\n";
+        out << "    bool has1 = false;\n";
+        out << "    bool hasx = false;\n";
+        for (size_t idx : indices) {
+          const auto& info = driver_info[idx];
+          out << "    if ((" << info.drive << " & mask) != " << zero << ") {\n";
+          out << "      if ((" << info.xz << " & mask) != " << zero << ") {\n";
+          out << "        hasx = true;\n";
+          out << "      } else if ((" << info.val << " & mask) != " << zero
+              << ") {\n";
+          out << "        has1 = true;\n";
+          out << "      } else {\n";
+          out << "        has0 = true;\n";
+          out << "      }\n";
+          out << "    }\n";
+        }
+        out << "    if (!has0 && !has1 && !hasx) {\n";
+        out << "      " << resolved_xz << " |= mask;\n";
+        out << "      continue;\n";
+        out << "    }\n";
+        out << "    " << resolved_drive << " |= mask;\n";
+        if (wired_and) {
+          out << "    if (has0) {\n";
+          out << "      // 0 dominates wired-AND\n";
+          out << "    } else if (hasx) {\n";
+          out << "      " << resolved_xz << " |= mask;\n";
+          out << "    } else {\n";
+          out << "      " << resolved_val << " |= mask;\n";
+          out << "    }\n";
+        } else {
+          out << "    if (has1) {\n";
+          out << "      " << resolved_val << " |= mask;\n";
+          out << "    } else if (hasx) {\n";
+          out << "      " << resolved_xz << " |= mask;\n";
+          out << "    } else {\n";
+          out << "      // 0 dominates wired-OR\n";
+          out << "    }\n";
+        }
+        out << "    continue;\n";
+      }
+      out << "    uint best0 = 0u;\n";
+      out << "    uint best1 = 0u;\n";
+      out << "    uint bestx = 0u;\n";
+      for (size_t idx : indices) {
+        const auto& info = driver_info[idx];
+        out << "    if ((" << info.drive << " & mask) != " << zero << ") {\n";
+        out << "      if ((" << info.xz << " & mask) != " << zero << ") {\n";
+        out << "        uint x_strength = (" << info.strength0 << " > "
+            << info.strength1 << ") ? " << info.strength0 << " : "
+            << info.strength1 << ";\n";
+        out << "        bestx = (bestx > x_strength) ? bestx : x_strength;\n";
+        out << "      } else if ((" << info.val << " & mask) != " << zero
+            << ") {\n";
+        out << "        best1 = (best1 > " << info.strength1 << ") ? best1 : "
+            << info.strength1 << ";\n";
+        out << "      } else {\n";
+        out << "        best0 = (best0 > " << info.strength0 << ") ? best0 : "
+            << info.strength0 << ";\n";
+        out << "      }\n";
+        out << "    }\n";
+      }
+      out << "    if (best0 == 0u && best1 == 0u && bestx == 0u) {\n";
+      out << "      " << resolved_xz << " |= mask;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    " << resolved_drive << " |= mask;\n";
+      out << "    uint max01 = (best0 > best1) ? best0 : best1;\n";
+      out << "    if ((bestx >= max01) && max01 != 0u) {\n";
+      out << "      " << resolved_xz << " |= mask;\n";
+      out << "    } else if (best0 > best1) {\n";
+      out << "      // 0 wins\n";
+      out << "    } else if (best1 > best0) {\n";
+      out << "      " << resolved_val << " |= mask;\n";
+      out << "    } else {\n";
+      out << "      " << resolved_xz << " |= mask;\n";
+      out << "    }\n";
+      out << "  }\n";
+
+      bool is_output = IsOutputPort(module, name) || regs.count(name) > 0;
+      bool is_local = locals.count(name) > 0 && !is_output &&
+                      regs.count(name) == 0;
+      if (is_output) {
+        if (is_trireg) {
+          out << "  " << val_name(name) << "[gid] = ("
+              << val_name(name) << "[gid] & ~" << resolved_drive << ") | ("
+              << resolved_val << " & " << resolved_drive << ");\n";
+          out << "  " << xz_name(name) << "[gid] = ("
+              << xz_name(name) << "[gid] & ~" << resolved_drive << ") | ("
+              << resolved_xz << " & " << resolved_drive << ");\n";
+        } else {
+          out << "  " << val_name(name) << "[gid] = " << resolved_val << ";\n";
+          out << "  " << xz_name(name) << "[gid] = " << resolved_xz << ";\n";
+        }
+      } else if (is_local) {
+        if (declared.count(name) == 0) {
+          out << "  " << type << " " << val_name(name) << ";\n";
+          out << "  " << type << " " << xz_name(name) << ";\n";
+          declared.insert(name);
+        }
+        out << "  " << val_name(name) << " = " << resolved_val << ";\n";
+        out << "  " << xz_name(name) << " = " << resolved_xz << ";\n";
+      } else {
+        out << "  // Unmapped resolved assign: " << name << "\n";
+      }
+    };
     std::unordered_map<std::string, std::vector<const Assign*>> partial_assigns;
     for (const auto& assign : module.assigns) {
-      if (assign.lhs_has_range) {
+      if (assign.lhs_has_range && multi_driver.count(assign.lhs) == 0) {
         partial_assigns[assign.lhs].push_back(&assign);
       }
     }
     for (size_t index : ordered_assigns) {
       const auto& assign = module.assigns[index];
       if (!assign.rhs) {
+        continue;
+      }
+      if (multi_driver.count(assign.lhs) > 0) {
+        auto info_it = driver_info.find(index);
+        if (info_it != driver_info.end()) {
+          emit_driver(assign, info_it->second);
+        }
+        auto remain_it = drivers_remaining.find(assign.lhs);
+        if (remain_it != drivers_remaining.end()) {
+          if (remain_it->second > 0) {
+            remain_it->second -= 1;
+          }
+          if (remain_it->second == 0) {
+            emit_resolve(assign.lhs, drivers_for_net[assign.lhs]);
+          }
+        }
         continue;
       }
       if (assign.lhs_has_range) {
@@ -2337,6 +2725,38 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
              ")";
     };
 
+    auto fs_merge_expr = [&](FsExpr lhs, FsExpr rhs, int width) -> FsExpr {
+      lhs = fs_resize_expr(lhs, width);
+      rhs = fs_resize_expr(rhs, width);
+      std::string func = (width > 32) ? "fs_merge64" : "fs_merge32";
+      std::string base =
+          func + "(" + fs_make_expr(lhs, width) + ", " +
+          fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
+      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
+    };
+
+    auto signal_lvalue4 = [&](const std::string& name, std::string* val,
+                              std::string* xz, int* width) -> bool {
+      if (!val || !xz || !width) {
+        return false;
+      }
+      *width = SignalWidth(module, name);
+      if (*width <= 0) {
+        return false;
+      }
+      if (IsOutputPort(module, name) || regs.count(name) > 0) {
+        *val = val_name(name) + "[gid]";
+        *xz = xz_name(name) + "[gid]";
+        return true;
+      }
+      if (locals.count(name) > 0) {
+        *val = val_name(name);
+        *xz = xz_name(name);
+        return true;
+      }
+      return false;
+    };
+
     std::function<void(const Statement&, int)> emit_comb_stmt;
     emit_comb_stmt = [&](const Statement& stmt, int indent) {
       std::string pad(indent, ' ');
@@ -2364,7 +2784,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         FsExpr cond =
             stmt.condition ? emit_expr4(*stmt.condition)
                            : FsExpr{literal_for_width(0, 1),
-                                    literal_for_width(0, 1), 1};
+                                    literal_for_width(0, 1),
+                                    drive_full(1), 1};
         out << pad << "if (" << cond_bool(cond) << ") {\n";
         for (const auto& inner : stmt.then_branch) {
           emit_comb_stmt(inner, indent + 2);
@@ -2384,7 +2805,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         FsExpr case_expr = stmt.case_expr
                                ? emit_expr4(*stmt.case_expr)
                                : FsExpr{literal_for_width(0, 1),
-                                        literal_for_width(0, 1), 1};
+                                        literal_for_width(0, 1),
+                                        drive_full(1), 1};
         bool first_case = true;
         for (const auto& item : stmt.case_items) {
           std::string cond;
@@ -2427,6 +2849,51 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           emit_comb_stmt(inner, indent + 2);
         }
         out << pad << "}\n";
+        return;
+      }
+      if (stmt.kind == StatementKind::kDelay) {
+        out << pad << "// delay control ignored in MSL v0\n";
+        for (const auto& inner : stmt.delay_body) {
+          emit_comb_stmt(inner, indent);
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kEventControl) {
+        out << pad << "// event control ignored in MSL v0\n";
+        for (const auto& inner : stmt.event_body) {
+          emit_comb_stmt(inner, indent);
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kWait) {
+        out << pad << "// wait ignored in MSL v0\n";
+        for (const auto& inner : stmt.wait_body) {
+          emit_comb_stmt(inner, indent);
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kForever) {
+        out << pad << "// forever ignored in MSL v0\n";
+        return;
+      }
+      if (stmt.kind == StatementKind::kFork) {
+        out << pad << "// fork/join executed sequentially in MSL v0\n";
+        for (const auto& inner : stmt.fork_branches) {
+          emit_comb_stmt(inner, indent);
+        }
+        return;
+      }
+      if (stmt.kind == StatementKind::kDisable) {
+        out << pad << "// disable ignored in MSL v0\n";
+        return;
+      }
+      if (stmt.kind == StatementKind::kEventTrigger) {
+        out << pad << "// event trigger ignored in MSL v0\n";
+        return;
+      }
+      if (stmt.kind == StatementKind::kTaskCall) {
+        out << pad << "// task call ignored in MSL v0\n";
+        return;
       }
     };
 
@@ -2437,6 +2904,68 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       for (const auto& stmt : block.statements) {
         emit_comb_stmt(stmt, 2);
       }
+    }
+    for (const auto& sw : module.switches) {
+      std::string a_val;
+      std::string a_xz;
+      std::string b_val;
+      std::string b_xz;
+      int a_width = 0;
+      int b_width = 0;
+      if (!signal_lvalue4(sw.a, &a_val, &a_xz, &a_width) ||
+          !signal_lvalue4(sw.b, &b_val, &b_xz, &b_width)) {
+        continue;
+      }
+      int width = std::min(a_width, b_width);
+      FsExpr a_expr{a_val, a_xz, drive_full(width), width};
+      FsExpr b_expr{b_val, b_xz, drive_full(width), width};
+      FsExpr merged = fs_merge_expr(a_expr, b_expr, width);
+
+      std::string cond_false;
+      if (sw.kind == SwitchKind::kTran) {
+        cond_false = "false";
+      } else if (sw.kind == SwitchKind::kTranif1 ||
+                 sw.kind == SwitchKind::kTranif0) {
+        FsExpr cond = sw.control ? emit_expr4(*sw.control)
+                                 : FsExpr{literal_for_width(0, 1),
+                                          literal_for_width(0, 1),
+                                          drive_full(1), 1};
+        std::string zero = literal_for_width(0, cond.width);
+        std::string known =
+            "(" + cond.xz + " == " + literal_for_width(0, cond.width) + ")";
+        std::string is_zero = "(" + cond.val + " == " + zero + ")";
+        std::string is_one = "(" + cond.val + " != " + zero + ")";
+        if (sw.kind == SwitchKind::kTranif1) {
+          cond_false = known + " && " + is_zero;
+        } else {
+          cond_false = known + " && " + is_one;
+        }
+      } else {
+        FsExpr cond = sw.control ? emit_expr4(*sw.control)
+                                 : FsExpr{literal_for_width(0, 1),
+                                          literal_for_width(0, 1),
+                                          drive_full(1), 1};
+        FsExpr cond_n = sw.control_n ? emit_expr4(*sw.control_n)
+                                     : FsExpr{literal_for_width(0, 1),
+                                              literal_for_width(0, 1),
+                                              drive_full(1), 1};
+        std::string known =
+            "(" + cond.xz + " == " + literal_for_width(0, cond.width) + " && " +
+            cond_n.xz + " == " + literal_for_width(0, cond_n.width) + ")";
+        std::string on =
+            "(" + cond.val + " != " + literal_for_width(0, cond.width) +
+            " && " + cond_n.val + " == " + literal_for_width(0, cond_n.width) +
+            ")";
+        cond_false = known + " && !" + on;
+      }
+
+      out << "  if (" << cond_false << ") {\n";
+      out << "  } else {\n";
+      out << "    " << a_val << " = " << merged.val << ";\n";
+      out << "    " << a_xz << " = " << merged.xz << ";\n";
+      out << "    " << b_val << " = " << merged.val << ";\n";
+      out << "    " << b_xz << " = " << merged.xz << ";\n";
+      out << "  }\n";
     }
     out << "}\n";
 
@@ -2460,6 +2989,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
       }
       for (const auto& reg : init_reg_names) {
+        out << ",\n";
+        std::string type = TypeForWidth(SignalWidth(module, reg));
+        out << "  device " << type << "* " << val_name(reg) << " [[buffer("
+            << buffer_index++ << ")]]";
+        out << ",\n";
+        out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
+            << buffer_index++ << ")]]";
+      }
+      for (const auto& reg : trireg_names) {
         out << ",\n";
         std::string type = TypeForWidth(SignalWidth(module, reg));
         out << "  device " << type << "* " << val_name(reg) << " [[buffer("
@@ -2492,14 +3030,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (net.array_size > 0) {
           continue;
         }
-        if (net.type == NetType::kWire) {
-          init_locals.insert(net.name);
-        } else if (net.type == NetType::kReg) {
+        if (net.type == NetType::kReg) {
           if (initial_regs.count(net.name) > 0) {
             init_regs.insert(net.name);
           } else if (!IsOutputPort(module, net.name)) {
             init_locals.insert(net.name);
           }
+          continue;
+        }
+        if (IsTriregNet(net.type)) {
+          init_regs.insert(net.name);
+          continue;
+        }
+        if (!IsOutputPort(module, net.name)) {
+          init_locals.insert(net.name);
         }
       }
 
@@ -2616,6 +3160,51 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             emit_init_stmt(inner, indent + 2);
           }
           out << pad << "}\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kDelay) {
+          out << pad << "// delay control ignored in MSL v0\n";
+          for (const auto& inner : stmt.delay_body) {
+            emit_init_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventControl) {
+          out << pad << "// event control ignored in MSL v0\n";
+          for (const auto& inner : stmt.event_body) {
+            emit_init_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWait) {
+          out << pad << "// wait ignored in MSL v0\n";
+          for (const auto& inner : stmt.wait_body) {
+            emit_init_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          out << pad << "// forever ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kFork) {
+          out << pad << "// fork/join executed sequentially in MSL v0\n";
+          for (const auto& inner : stmt.fork_branches) {
+            emit_init_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kDisable) {
+          out << pad << "// disable ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventTrigger) {
+          out << pad << "// event trigger ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kTaskCall) {
+          out << pad << "// task call ignored in MSL v0\n";
+          return;
         }
       };
 
@@ -2692,7 +3281,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  if (gid >= params.count) {\n";
       out << "    return;\n";
       out << "  }\n";
-      out << "  // Tick kernel: sequential logic (posedge only in v0).\n";
+      out << "  // Tick kernel: sequential logic (posedge/negedge in v0).\n";
       for (const auto* net : array_nets) {
         out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
         out << "    " << val_name(net->name + "_next") << "[(gid * "
@@ -2713,7 +3302,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (net.type == NetType::kWire) {
           tick_locals.insert(net.name);
         } else if (net.type == NetType::kReg) {
-          if (sequential_regs.count(net.name) > 0) {
+          if (sequential_regs.count(net.name) > 0 ||
+              initial_regs.count(net.name) > 0) {
             tick_regs.insert(net.name);
           }
         }
@@ -2837,7 +3427,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           FsExpr cond =
               stmt.condition ? emit_expr4(*stmt.condition)
                              : FsExpr{literal_for_width(0, 1),
-                                      literal_for_width(0, 1), 1};
+                                      literal_for_width(0, 1),
+                                      drive_full(1), 1};
           out << pad << "if (" << cond_bool(cond) << ") {\n";
           for (const auto& inner : stmt.then_branch) {
             emit_stmt(inner, indent + 2);
@@ -2857,7 +3448,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         FsExpr case_expr = stmt.case_expr
                                  ? emit_expr4(*stmt.case_expr)
                                  : FsExpr{literal_for_width(0, 1),
-                                          literal_for_width(0, 1), 1};
+                                          literal_for_width(0, 1),
+                                          drive_full(1), 1};
         bool first_case = true;
         for (const auto& item : stmt.case_items) {
           std::string cond;
@@ -2900,6 +3492,51 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             emit_stmt(inner, indent + 2);
           }
           out << pad << "}\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kDelay) {
+          out << pad << "// delay control ignored in MSL v0\n";
+          for (const auto& inner : stmt.delay_body) {
+            emit_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventControl) {
+          out << pad << "// event control ignored in MSL v0\n";
+          for (const auto& inner : stmt.event_body) {
+            emit_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWait) {
+          out << pad << "// wait ignored in MSL v0\n";
+          for (const auto& inner : stmt.wait_body) {
+            emit_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          out << pad << "// forever ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kFork) {
+          out << pad << "// fork/join executed sequentially in MSL v0\n";
+          for (const auto& inner : stmt.fork_branches) {
+            emit_stmt(inner, indent);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kDisable) {
+          out << pad << "// disable ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventTrigger) {
+          out << pad << "// event trigger ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kTaskCall) {
+          out << pad << "// task call ignored in MSL v0\n";
+          return;
         }
       };
 
@@ -2909,8 +3546,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           continue;
         }
         out << "  // always @(";
-        out << (block.edge == EdgeKind::kPosedge ? "posedge " : "negedge ");
-        out << block.clock << ")\n";
+        if (!block.sensitivity.empty()) {
+          out << block.sensitivity;
+        } else {
+          out << (block.edge == EdgeKind::kPosedge ? "posedge " : "negedge ");
+          out << block.clock;
+        }
+        out << ")\n";
 
         nb_map.clear();
         std::unordered_set<std::string> nb_targets;
@@ -2975,7 +3617,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       continue;
     }
     if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
-        sequential_regs.count(net.name) > 0) {
+        (sequential_regs.count(net.name) > 0 ||
+         initial_regs.count(net.name) > 0)) {
       reg_names.push_back(net.name);
     }
   }
@@ -3045,20 +3688,22 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     if (net.array_size > 0) {
       continue;
     }
-    if (net.type == NetType::kWire) {
-      locals.insert(net.name);
-    } else if (net.type == NetType::kReg) {
+    if (net.type == NetType::kReg) {
       if (sequential_regs.count(net.name) > 0) {
         regs.insert(net.name);
       } else if (!IsOutputPort(module, net.name)) {
         locals.insert(net.name);
       }
+      continue;
+    }
+    if (!IsOutputPort(module, net.name)) {
+      locals.insert(net.name);
     }
   }
 
   auto driven = CollectDrivenSignals(module);
   for (const auto& net : module.nets) {
-    if (net.array_size > 0 || net.type != NetType::kWire) {
+    if (net.array_size > 0 || net.type == NetType::kReg) {
       continue;
     }
     if (driven.count(net.name) > 0 || locals.count(net.name) == 0) {
@@ -3345,14 +3990,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (net.array_size > 0) {
         continue;
       }
-      if (net.type == NetType::kWire) {
-        init_locals.insert(net.name);
-      } else if (net.type == NetType::kReg) {
+      if (net.type == NetType::kReg) {
         if (initial_regs.count(net.name) > 0) {
           init_regs.insert(net.name);
         } else if (!IsOutputPort(module, net.name)) {
           init_locals.insert(net.name);
         }
+        continue;
+      }
+      if (!IsOutputPort(module, net.name)) {
+        init_locals.insert(net.name);
       }
     }
 
@@ -3561,7 +4208,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if (gid >= params.count) {\n";
     out << "    return;\n";
     out << "  }\n";
-    out << "  // Tick kernel: sequential logic (posedge only in v0).\n";
+    out << "  // Tick kernel: sequential logic (posedge/negedge in v0).\n";
     for (const auto* net : array_nets) {
       out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
       out << "    " << net->name << "_next[(gid * " << net->array_size
@@ -3579,7 +4226,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (net.type == NetType::kWire) {
         tick_locals.insert(net.name);
       } else if (net.type == NetType::kReg) {
-        if (sequential_regs.count(net.name) > 0) {
+        if (sequential_regs.count(net.name) > 0 ||
+            initial_regs.count(net.name) > 0) {
           tick_regs.insert(net.name);
         }
       }
@@ -3797,8 +4445,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         continue;
       }
       out << "  // always @(";
-      out << (block.edge == EdgeKind::kPosedge ? "posedge " : "negedge ");
-      out << block.clock << ")\n";
+      if (!block.sensitivity.empty()) {
+        out << block.sensitivity;
+      } else {
+        out << (block.edge == EdgeKind::kPosedge ? "posedge " : "negedge ");
+        out << block.clock;
+      }
+      out << ")\n";
 
       std::unordered_set<std::string> nb_targets;
       for (const auto& stmt : block.statements) {

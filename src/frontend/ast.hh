@@ -30,6 +30,41 @@ struct Expr;
 enum class NetType {
   kWire,
   kReg,
+  kWand,
+  kWor,
+  kTri0,
+  kTri1,
+  kTriand,
+  kTrior,
+  kTrireg,
+  kSupply0,
+  kSupply1,
+};
+
+enum class Strength {
+  kHighZ,
+  kWeak,
+  kPull,
+  kStrong,
+  kSupply,
+};
+
+enum class SwitchKind {
+  kTran,
+  kTranif1,
+  kTranif0,
+  kCmos,
+};
+
+struct Switch {
+  SwitchKind kind = SwitchKind::kTran;
+  std::string a;
+  std::string b;
+  std::unique_ptr<Expr> control;
+  std::unique_ptr<Expr> control_n;
+  Strength strength0 = Strength::kStrong;
+  Strength strength1 = Strength::kStrong;
+  bool has_strength = false;
 };
 
 struct ArrayDim {
@@ -131,6 +166,9 @@ struct Assign {
   int lhs_lsb = 0;
   bool lhs_has_range = false;
   std::unique_ptr<Expr> rhs;
+  Strength strength0 = Strength::kStrong;
+  Strength strength1 = Strength::kStrong;
+  bool has_strength = false;
 };
 
 struct SequentialAssign {
@@ -138,6 +176,7 @@ struct SequentialAssign {
   std::unique_ptr<Expr> lhs_index;
   std::vector<std::unique_ptr<Expr>> lhs_indices;
   std::unique_ptr<Expr> rhs;
+  std::unique_ptr<Expr> delay;
   bool nonblocking = true;
 };
 
@@ -149,6 +188,14 @@ enum class StatementKind {
   kFor,
   kWhile,
   kRepeat,
+  kDelay,
+  kEventControl,
+  kEventTrigger,
+  kWait,
+  kForever,
+  kFork,
+  kDisable,
+  kTaskCall,
 };
 
 enum class CaseKind {
@@ -178,10 +225,23 @@ struct Statement {
   std::vector<Statement> while_body;
   std::unique_ptr<Expr> repeat_count;
   std::vector<Statement> repeat_body;
+  std::unique_ptr<Expr> delay;
+  std::vector<Statement> delay_body;
+  std::unique_ptr<Expr> event_expr;
+  std::vector<Statement> event_body;
+  std::unique_ptr<Expr> wait_condition;
+  std::vector<Statement> wait_body;
+  std::vector<Statement> forever_body;
+  std::vector<Statement> fork_branches;
+  std::string disable_target;
+  std::string task_name;
+  std::vector<std::unique_ptr<Expr>> task_args;
+  std::string trigger_target;
   std::unique_ptr<Expr> condition;
   std::vector<Statement> then_branch;
   std::vector<Statement> else_branch;
   std::vector<Statement> block;
+  std::string block_label;
   std::unique_ptr<Expr> case_expr;
   std::vector<CaseItem> case_items;
   std::vector<Statement> default_branch;
@@ -197,7 +257,33 @@ enum class EdgeKind {
 struct AlwaysBlock {
   EdgeKind edge = EdgeKind::kPosedge;
   std::string clock;
+  std::string sensitivity;
   std::vector<Statement> statements;
+};
+
+enum class TaskArgDir {
+  kInput,
+  kOutput,
+  kInout,
+};
+
+struct TaskArg {
+  TaskArgDir dir = TaskArgDir::kInput;
+  std::string name;
+  int width = 1;
+  bool is_signed = false;
+  std::shared_ptr<Expr> msb_expr;
+  std::shared_ptr<Expr> lsb_expr;
+};
+
+struct Task {
+  std::string name;
+  std::vector<TaskArg> args;
+  std::vector<Statement> body;
+};
+
+struct EventDecl {
+  std::string name;
 };
 
 struct Connection {
@@ -217,15 +303,27 @@ struct Instance {
   std::vector<Connection> connections;
 };
 
+struct DefParam {
+  std::string instance;
+  std::string param;
+  std::unique_ptr<Expr> expr;
+  int line = 0;
+  int column = 0;
+};
+
 struct Module {
   std::string name;
   std::vector<Port> ports;
   std::vector<Net> nets;
   std::vector<Assign> assigns;
+  std::vector<Switch> switches;
   std::vector<Instance> instances;
   std::vector<AlwaysBlock> always_blocks;
   std::vector<Parameter> parameters;
   std::vector<Function> functions;
+  std::vector<Task> tasks;
+  std::vector<EventDecl> events;
+  std::vector<DefParam> defparams;
 };
 
 struct Program {

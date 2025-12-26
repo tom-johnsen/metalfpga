@@ -158,6 +158,9 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       return 1;
     }
     case gpga::ExprKind::kCall:
+      if (expr.ident == "$time") {
+        return 64;
+      }
       return 32;
     case gpga::ExprKind::kConcat: {
       int total = 0;
@@ -217,8 +220,9 @@ bool ExprSigned(const gpga::Expr& expr, const gpga::Module& module) {
     }
     case gpga::ExprKind::kSelect:
     case gpga::ExprKind::kIndex:
-    case gpga::ExprKind::kCall:
     case gpga::ExprKind::kConcat:
+      return false;
+    case gpga::ExprKind::kCall:
       return false;
   }
   return false;
@@ -540,6 +544,8 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
       }
       os << pad << lhs
          << (stmt.assign.nonblocking ? " <= " : " = ")
+         << (stmt.assign.delay ? "#" + ExprToString(*stmt.assign.delay, module) + " "
+                               : "")
          << ExprToString(*stmt.assign.rhs, module) << ";\n";
     }
     return;
@@ -611,11 +617,100 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     return;
   }
   if (stmt.kind == gpga::StatementKind::kBlock) {
-    os << pad << "begin\n";
+    os << pad << "begin";
+    if (!stmt.block_label.empty()) {
+      os << " : " << stmt.block_label;
+    }
+    os << "\n";
     for (const auto& inner : stmt.block) {
       DumpStatement(inner, module, indent + 2, os);
     }
-    os << pad << "end\n";
+    os << pad << "end";
+    if (!stmt.block_label.empty()) {
+      os << " : " << stmt.block_label;
+    }
+    os << "\n";
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kDelay) {
+    std::string delay =
+        stmt.delay ? ExprToString(*stmt.delay, module) : "0";
+    os << pad << "#" << delay;
+    if (stmt.delay_body.empty()) {
+      os << ";\n";
+      return;
+    }
+    os << "\n";
+    for (const auto& inner : stmt.delay_body) {
+      DumpStatement(inner, module, indent + 2, os);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kEventControl) {
+    std::string expr =
+        stmt.event_expr ? ExprToString(*stmt.event_expr, module) : "*";
+    os << pad << "@(" << expr << ")";
+    if (stmt.event_body.empty()) {
+      os << ";\n";
+      return;
+    }
+    os << "\n";
+    for (const auto& inner : stmt.event_body) {
+      DumpStatement(inner, module, indent + 2, os);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kEventTrigger) {
+    os << pad << "-> " << stmt.trigger_target << ";\n";
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kWait) {
+    std::string expr =
+        stmt.wait_condition ? ExprToString(*stmt.wait_condition, module) : "0";
+    os << pad << "wait (" << expr << ")";
+    if (stmt.wait_body.empty()) {
+      os << ";\n";
+      return;
+    }
+    os << "\n";
+    for (const auto& inner : stmt.wait_body) {
+      DumpStatement(inner, module, indent + 2, os);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kForever) {
+    os << pad << "forever\n";
+    for (const auto& inner : stmt.forever_body) {
+      DumpStatement(inner, module, indent + 2, os);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kFork) {
+    os << pad << "fork";
+    if (!stmt.block_label.empty()) {
+      os << " : " << stmt.block_label;
+    }
+    os << "\n";
+    for (const auto& inner : stmt.fork_branches) {
+      DumpStatement(inner, module, indent + 2, os);
+    }
+    os << pad << "join\n";
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kDisable) {
+    os << pad << "disable " << stmt.disable_target << ";\n";
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kTaskCall) {
+    os << pad << stmt.task_name << "(";
+    for (size_t i = 0; i < stmt.task_args.size(); ++i) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << ExprToString(*stmt.task_args[i], module);
+    }
+    os << ");\n";
+    return;
   }
 }
 
@@ -643,7 +738,42 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
   }
   os << "Nets:\n";
   for (const auto& net : top.nets) {
-    const char* type = (net.type == gpga::NetType::kReg) ? "reg" : "wire";
+    const char* type = "wire";
+    switch (net.type) {
+      case gpga::NetType::kWire:
+        type = "wire";
+        break;
+      case gpga::NetType::kReg:
+        type = "reg";
+        break;
+      case gpga::NetType::kWand:
+        type = "wand";
+        break;
+      case gpga::NetType::kWor:
+        type = "wor";
+        break;
+      case gpga::NetType::kTri0:
+        type = "tri0";
+        break;
+      case gpga::NetType::kTri1:
+        type = "tri1";
+        break;
+      case gpga::NetType::kTriand:
+        type = "triand";
+        break;
+      case gpga::NetType::kTrior:
+        type = "trior";
+        break;
+      case gpga::NetType::kTrireg:
+        type = "trireg";
+        break;
+      case gpga::NetType::kSupply0:
+        type = "supply0";
+        break;
+      case gpga::NetType::kSupply1:
+        type = "supply1";
+        break;
+    }
     os << "  - " << type;
     if (net.is_signed) {
       os << " signed";
@@ -653,6 +783,12 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
       os << " [" << net.array_size << "]";
     }
     os << "\n";
+  }
+  if (!top.events.empty()) {
+    os << "Events:\n";
+    for (const auto& evt : top.events) {
+      os << "  - event " << evt.name << "\n";
+    }
   }
   os << "Assigns:\n";
   for (const auto& assign : top.assigns) {
@@ -686,16 +822,50 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
       os << "  - " << lhs << " = " << rhs << "\n";
     }
   }
+  os << "Switches:\n";
+  for (const auto& sw : top.switches) {
+    const char* kind = "tran";
+    switch (sw.kind) {
+      case gpga::SwitchKind::kTran:
+        kind = "tran";
+        break;
+      case gpga::SwitchKind::kTranif1:
+        kind = "tranif1";
+        break;
+      case gpga::SwitchKind::kTranif0:
+        kind = "tranif0";
+        break;
+      case gpga::SwitchKind::kCmos:
+        kind = "cmos";
+        break;
+    }
+    os << "  - " << kind << " " << sw.a << " <-> " << sw.b;
+    if (sw.control) {
+      os << " (" << ExprToString(*sw.control, top) << ")";
+    }
+    if (sw.control_n) {
+      os << " / (" << ExprToString(*sw.control_n, top) << ")";
+    }
+    os << "\n";
+  }
   os << "Always blocks:\n";
   for (const auto& block : top.always_blocks) {
     if (block.edge == gpga::EdgeKind::kCombinational) {
-      os << "  - always @*\n";
+      if (!block.sensitivity.empty() && block.sensitivity != "*") {
+        os << "  - always @(" << block.sensitivity << ")\n";
+      } else {
+        os << "  - always @*\n";
+      }
     } else if (block.edge == gpga::EdgeKind::kInitial) {
       os << "  - initial\n";
     } else {
-      os << "  - always @("
-         << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")
-         << block.clock << ")\n";
+      if (!block.sensitivity.empty()) {
+        os << "  - always @(" << block.sensitivity << ")\n";
+      } else {
+        os << "  - always @("
+           << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")
+           << block.clock << ")\n";
+      }
     }
     for (const auto& stmt : block.statements) {
       DumpStatement(stmt, top, 4, os);
