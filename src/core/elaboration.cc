@@ -58,6 +58,8 @@ void ForceUnsizedWidth(Expr* expr, int width) {
         }
       }
       return;
+    case ExprKind::kString:
+      return;
     case ExprKind::kUnary:
       ForceUnsizedWidth(expr->operand.get(), width);
       return;
@@ -700,6 +702,7 @@ std::unique_ptr<Expr> CloneExprWithParams(
   auto out = std::make_unique<Expr>();
   out->kind = expr.kind;
   out->ident = expr.ident;
+  out->string_value = expr.string_value;
   out->number = expr.number;
   out->value_bits = expr.value_bits;
   out->x_bits = expr.x_bits;
@@ -712,7 +715,7 @@ std::unique_ptr<Expr> CloneExprWithParams(
   out->op = expr.op;
   out->unary_op = expr.unary_op;
 
-  if (expr.kind == ExprKind::kNumber) {
+  if (expr.kind == ExprKind::kNumber || expr.kind == ExprKind::kString) {
     return out;
   }
   if (expr.kind == ExprKind::kUnary) {
@@ -1446,6 +1449,8 @@ int ExprWidth(const Expr& expr, const Module& module) {
         return expr.number_width;
       }
       return MinimalWidth(expr.number);
+    case ExprKind::kString:
+      return 0;
     case ExprKind::kUnary:
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
           expr.unary_op == '|' || expr.unary_op == '^') {
@@ -1527,6 +1532,8 @@ bool IsAllOnesExpr(const Expr& expr, const Module& module, int* width_out) {
           (width == 64) ? 0xFFFFFFFFFFFFFFFFull : ((1ull << width) - 1ull);
       return expr.number == mask;
     }
+    case ExprKind::kString:
+      return false;
     case ExprKind::kConcat: {
       int base_width = 0;
       for (const auto& element : expr.elements) {
@@ -1907,6 +1914,8 @@ void CollectIdentifiers(const Expr& expr,
       return;
     case ExprKind::kNumber:
       return;
+    case ExprKind::kString:
+      return;
     case ExprKind::kUnary:
       if (expr.operand) {
         CollectIdentifiers(*expr.operand, out);
@@ -2074,6 +2083,8 @@ void CollectSignalRefs(const Expr& expr, const ParamBindings& params,
       }
       return;
     case ExprKind::kNumber:
+      return;
+    case ExprKind::kString:
       return;
   }
 }

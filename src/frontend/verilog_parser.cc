@@ -18,6 +18,7 @@ namespace {
 enum class TokenKind {
   kIdentifier,
   kNumber,
+  kString,
   kSymbol,
   kEnd,
 };
@@ -95,6 +96,57 @@ std::vector<Token> Tokenize(const std::string& text) {
         }
         continue;
       }
+    }
+    if (c == '"') {
+      int token_line = line;
+      int token_column = column;
+      ++i;
+      ++column;
+      std::string value;
+      while (i < text.size()) {
+        char ch = text[i];
+        if (ch == '"') {
+          ++i;
+          ++column;
+          break;
+        }
+        if (ch == '\\' && i + 1 < text.size()) {
+          char esc = text[i + 1];
+          switch (esc) {
+            case 'n':
+              value.push_back('\n');
+              break;
+            case 't':
+              value.push_back('\t');
+              break;
+            case 'r':
+              value.push_back('\r');
+              break;
+            case '"':
+              value.push_back('"');
+              break;
+            case '\\':
+              value.push_back('\\');
+              break;
+            default:
+              value.push_back(esc);
+              break;
+          }
+          i += 2;
+          column += 2;
+          continue;
+        }
+        if (ch == '\n') {
+          ++line;
+          column = 1;
+        } else {
+          ++column;
+        }
+        value.push_back(ch);
+        ++i;
+      }
+      push(TokenKind::kString, value, token_line, token_column);
+      continue;
     }
     if (IsIdentStart(c)) {
       int token_line = line;
@@ -422,6 +474,24 @@ bool PreprocessVerilogInternal(
         ++line_number;
         continue;
       }
+      if (directive == "celldefine" || directive == "endcelldefine" ||
+          directive == "protect" || directive == "endprotect" ||
+          directive == "delay_mode_path" || directive == "delay_mode_unit" ||
+          directive == "delay_mode_distributed") {
+        output << "\n";
+        ++line_number;
+        continue;
+      }
+      if (directive == "default_nettype" ||
+          directive == "unconnected_drive" ||
+          directive == "nounconnected_drive" ||
+          directive == "resetall") {
+        diagnostics->Add(Severity::kError,
+                         "unsupported compiler directive `" + directive + "'",
+                         SourceLocation{path, line_number,
+                                        static_cast<int>(first + 1)});
+        return false;
+      }
       if (!directive.empty()) {
         diagnostics->Add(Severity::kError,
                          "unsupported compiler directive `" + directive + "'",
@@ -441,8 +511,28 @@ bool PreprocessVerilogInternal(
       ++line_number;
       continue;
     }
+    auto strip_line_comment = [](const std::string& input) -> std::string {
+      std::string out;
+      out.reserve(input.size());
+      bool in_string = false;
+      for (size_t i = 0; i < input.size(); ++i) {
+        char c = input[i];
+        if (c == '"' && (i == 0 || input[i - 1] != '\\')) {
+          in_string = !in_string;
+          out.push_back(c);
+          continue;
+        }
+        if (!in_string && c == '/' && i + 1 < input.size() &&
+            input[i + 1] == '/') {
+          break;
+        }
+        out.push_back(c);
+      }
+      return out;
+    };
+    std::string line_for_expand = strip_line_comment(line);
     std::string expanded;
-    if (!ExpandDefines(line, *defines, path, line_number, diagnostics,
+    if (!ExpandDefines(line_for_expand, *defines, path, line_number, diagnostics,
                        &expanded)) {
       return false;
     }
@@ -1427,6 +1517,9 @@ class Parser {
 
   bool ParseFunction(Module* module) {
     Function func;
+    if (MatchKeyword("automatic")) {
+      // automatic functions are treated like static in v0.
+    }
     bool is_signed = false;
     if (MatchKeyword("signed")) {
       is_signed = true;
@@ -2139,6 +2232,10 @@ class Parser {
   bool ParseIntegerDecl(Module* module) {
     const int width = 32;
     const bool is_signed = true;
+    if (MatchKeyword("signed") || MatchKeyword("unsigned")) {
+      ErrorHere("integer signedness not supported in v0");
+      return false;
+    }
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
@@ -2203,6 +2300,10 @@ class Parser {
   }
 
   bool ParseLocalIntegerDecl() {
+    if (MatchKeyword("signed") || MatchKeyword("unsigned")) {
+      ErrorHere("integer signedness not supported in v0");
+      return false;
+    }
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
@@ -3882,27 +3983,65 @@ class Parser {
     if (!out_block) {
       return false;
     }
-    if (!MatchSymbol("@")) {
-      ErrorHere("expected '@' after 'always'");
-      return false;
-    }
-    if (!MatchSymbol("(")) {
-      ErrorHere("expected '(' after '@'");
-      return false;
-    }
     EdgeKind edge = EdgeKind::kCombinational;
     std::string clock;
     std::string sensitivity;
     bool has_edge = false;
-    if (MatchSymbol("*")) {
-      sensitivity = "*";
-      if (!MatchSymbol(")")) {
-        ErrorHere("expected ')' after sensitivity list");
-        return false;
-      }
-    } else {
-      bool first_item = true;
-      while (true) {
+    if (MatchSymbol("@")) {
+      if (MatchSymbol("*")) {
+        sensitivity = "*";
+      } else if (MatchSymbol("(")) {
+        if (MatchSymbol("*")) {
+          sensitivity = "*";
+          if (!MatchSymbol(")")) {
+            ErrorHere("expected ')' after sensitivity list");
+            return false;
+          }
+        } else {
+          bool first_item = true;
+          while (true) {
+            bool item_has_edge = false;
+            EdgeKind item_edge = EdgeKind::kCombinational;
+            if (MatchKeyword("posedge")) {
+              item_has_edge = true;
+              item_edge = EdgeKind::kPosedge;
+            } else if (MatchKeyword("negedge")) {
+              item_has_edge = true;
+              item_edge = EdgeKind::kNegedge;
+            }
+            std::string signal;
+            if (!ConsumeIdentifier(&signal)) {
+              ErrorHere("expected identifier in sensitivity list");
+              return false;
+            }
+            if (!first_item) {
+              sensitivity += ", ";
+            }
+            if (item_has_edge) {
+              sensitivity += (item_edge == EdgeKind::kPosedge) ? "posedge "
+                                                              : "negedge ";
+            }
+            sensitivity += signal;
+            if (item_has_edge && !has_edge) {
+              has_edge = true;
+              edge = item_edge;
+              clock = signal;
+            }
+            if (MatchSymbol(")")) {
+              break;
+            }
+            if (MatchSymbol(",") || MatchKeyword("or")) {
+              first_item = false;
+              continue;
+            }
+            ErrorHere("expected ')' after sensitivity list");
+            return false;
+          }
+          if (!has_edge) {
+            edge = EdgeKind::kCombinational;
+          }
+        }
+      } else {
         bool item_has_edge = false;
         EdgeKind item_edge = EdgeKind::kCombinational;
         if (MatchKeyword("posedge")) {
@@ -3912,37 +4051,29 @@ class Parser {
           item_has_edge = true;
           item_edge = EdgeKind::kNegedge;
         }
-        std::string signal;
-        if (!ConsumeIdentifier(&signal)) {
-          ErrorHere("expected identifier in sensitivity list");
-          return false;
+        if (MatchSymbol("*")) {
+          sensitivity = "*";
+        } else {
+          std::string signal;
+          if (!ConsumeIdentifier(&signal)) {
+            ErrorHere("expected identifier in sensitivity list");
+            return false;
+          }
+          if (item_has_edge) {
+            sensitivity = (item_edge == EdgeKind::kPosedge) ? "posedge "
+                                                            : "negedge ";
+            sensitivity += signal;
+            has_edge = true;
+            edge = item_edge;
+            clock = signal;
+          } else {
+            sensitivity = signal;
+          }
         }
-        if (!first_item) {
-          sensitivity += ", ";
-        }
-        if (item_has_edge) {
-          sensitivity += (item_edge == EdgeKind::kPosedge) ? "posedge "
-                                                          : "negedge ";
-        }
-        sensitivity += signal;
-        if (item_has_edge && !has_edge) {
-          has_edge = true;
-          edge = item_edge;
-          clock = signal;
-        }
-        if (MatchSymbol(")")) {
-          break;
-        }
-        if (MatchSymbol(",") || MatchKeyword("or")) {
-          first_item = false;
-          continue;
-        }
-        ErrorHere("expected ')' after sensitivity list");
-        return false;
       }
-      if (!has_edge) {
-        edge = EdgeKind::kCombinational;
-      }
+    } else if (!(Peek().kind == TokenKind::kSymbol && Peek().text == "#")) {
+      ErrorHere("expected '@' or delay control after 'always'");
+      return false;
     }
 
     AlwaysBlock block;
@@ -3997,11 +4128,44 @@ class Parser {
     if (Peek().kind == TokenKind::kSymbol && Peek().text == "@") {
       return ParseEventControlStatement(out_statement);
     }
+    if (Peek().kind == TokenKind::kSymbol && Peek().text == "$") {
+      return ParseSystemTaskStatement(out_statement);
+    }
     if (Peek().kind == TokenKind::kSymbol &&
         (Peek().text == "->" ||
          (Peek().text == "-" && Peek(1).kind == TokenKind::kSymbol &&
           Peek(1).text == ">"))) {
       return ParseEventTriggerStatement(out_statement);
+    }
+    if (MatchKeyword("assert")) {
+      ErrorHere("assert not supported in v0");
+      return false;
+    }
+    if (MatchKeyword("unique")) {
+      if (MatchKeyword("case") || MatchKeyword("casez") ||
+          MatchKeyword("casex")) {
+        ErrorHere("unique case not supported in v0");
+        return false;
+      }
+      if (MatchKeyword("if")) {
+        ErrorHere("unique if not supported in v0");
+        return false;
+      }
+      ErrorHere("unique statement not supported in v0");
+      return false;
+    }
+    if (MatchKeyword("priority")) {
+      if (MatchKeyword("case") || MatchKeyword("casez") ||
+          MatchKeyword("casex")) {
+        ErrorHere("priority case not supported in v0");
+        return false;
+      }
+      if (MatchKeyword("if")) {
+        ErrorHere("priority if not supported in v0");
+        return false;
+      }
+      ErrorHere("priority statement not supported in v0");
+      return false;
     }
     if (MatchKeyword("if")) {
       return ParseIfStatement(out_statement);
@@ -4083,6 +4247,14 @@ class Parser {
     }
     std::unique_ptr<Expr> event_expr;
     if (MatchSymbol("(")) {
+      if (MatchSymbol("*")) {
+        ErrorHere("event control '*' not supported in v0");
+        return false;
+      }
+      if (MatchKeyword("posedge") || MatchKeyword("negedge")) {
+        ErrorHere("edge-sensitive event control not supported in v0");
+        return false;
+      }
       event_expr = ParseExpr();
       if (!event_expr) {
         return false;
@@ -4092,6 +4264,14 @@ class Parser {
         return false;
       }
     } else {
+      if (MatchSymbol("*")) {
+        ErrorHere("event control '*' not supported in v0");
+        return false;
+      }
+      if (MatchKeyword("posedge") || MatchKeyword("negedge")) {
+        ErrorHere("edge-sensitive event control not supported in v0");
+        return false;
+      }
       event_expr = ParseExpr();
       if (!event_expr) {
         return false;
@@ -4133,6 +4313,56 @@ class Parser {
     Statement stmt;
     stmt.kind = StatementKind::kEventTrigger;
     stmt.trigger_target = std::move(name);
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
+  bool ParseSystemTaskStatement(Statement* out_statement) {
+    if (!MatchSymbol("$")) {
+      return false;
+    }
+    std::string name;
+    if (!ConsumeIdentifier(&name)) {
+      ErrorHere("expected system task name after '$'");
+      return false;
+    }
+    Statement stmt;
+    stmt.kind = StatementKind::kTaskCall;
+    stmt.task_name = "$" + name;
+    if (MatchSymbol(";")) {
+      *out_statement = std::move(stmt);
+      return true;
+    }
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after system task");
+      return false;
+    }
+    bool prev_allow = allow_string_literals_;
+    allow_string_literals_ = true;
+    if (!MatchSymbol(")")) {
+      while (true) {
+        auto arg = ParseExpr();
+        if (!arg) {
+          allow_string_literals_ = prev_allow;
+          return false;
+        }
+        stmt.task_args.push_back(std::move(arg));
+        if (MatchSymbol(",")) {
+          continue;
+        }
+        break;
+      }
+      if (!MatchSymbol(")")) {
+        allow_string_literals_ = prev_allow;
+        ErrorHere("expected ')' after system task");
+        return false;
+      }
+    }
+    allow_string_literals_ = prev_allow;
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after system task");
+      return false;
+    }
     *out_statement = std::move(stmt);
     return true;
   }
@@ -4763,6 +4993,16 @@ class Parser {
   std::unique_ptr<Expr> ParseEquality() {
     auto left = ParseRelational();
     while (true) {
+      if (Peek().kind == TokenKind::kSymbol &&
+          Peek(1).kind == TokenKind::kSymbol &&
+          Peek(2).kind == TokenKind::kSymbol &&
+          ((Peek().text == "=" && Peek(1).text == "=" &&
+            Peek(2).text == "?") ||
+           (Peek().text == "!" && Peek(1).text == "=" &&
+            Peek(2).text == "?"))) {
+        ErrorHere("wildcard equality not supported in v0");
+        return nullptr;
+      }
       if (MatchSymbol2("==")) {
         auto right = ParseRelational();
         left = MakeBinary('E', std::move(left), std::move(right));
@@ -4891,6 +5131,12 @@ class Parser {
   std::unique_ptr<Expr> ParseMulDiv() {
     auto left = ParseUnary();
     while (true) {
+      if (Peek().kind == TokenKind::kSymbol &&
+          Peek(1).kind == TokenKind::kSymbol &&
+          Peek().text == "*" && Peek(1).text == "*") {
+        ErrorHere("power operator '**' not supported in v0");
+        return nullptr;
+      }
       if (MatchSymbol("*")) {
         auto right = ParseUnary();
         left = MakeBinary('*', std::move(left), std::move(right));
@@ -5017,6 +5263,15 @@ class Parser {
           expr = std::move(folded);
         }
       }
+    } else if (Peek().kind == TokenKind::kString) {
+      if (!allow_string_literals_) {
+        ErrorHere("string literal not supported in v0 outside system tasks");
+        return nullptr;
+      }
+      expr = std::make_unique<Expr>();
+      expr->kind = ExprKind::kString;
+      expr->string_value = Peek().text;
+      Advance();
     } else if (MatchSymbol("{")) {
       expr = ParseConcat();
     } else if (MatchSymbol("'")) {
@@ -5042,7 +5297,21 @@ class Parser {
     } else if (Peek().kind == TokenKind::kIdentifier) {
       std::string name = Peek().text;
       Advance();
-      if (MatchSymbol("(")) {
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == ".") {
+        ErrorHere("hierarchical names not supported in v0");
+        return nullptr;
+      }
+      if (MatchSymbol("'")) {
+        auto size_expr = std::make_unique<Expr>();
+        size_expr->kind = ExprKind::kIdentifier;
+        size_expr->ident = name;
+        int64_t size_value = 0;
+        if (!EvalConstExpr(*size_expr, &size_value) || size_value <= 0) {
+          ErrorHere("literal width must be constant and positive");
+          return nullptr;
+        }
+        expr = ParseBasedLiteral(static_cast<uint64_t>(size_value));
+      } else if (MatchSymbol("(")) {
         auto call = std::make_unique<Expr>();
         call->kind = ExprKind::kCall;
         call->ident = name;
@@ -5210,6 +5479,13 @@ class Parser {
   }
 
   std::unique_ptr<Expr> ParseConcat() {
+    if (Peek().kind == TokenKind::kSymbol &&
+        Peek(1).kind == TokenKind::kSymbol &&
+        ((Peek().text == "<" && Peek(1).text == "<") ||
+         (Peek().text == ">" && Peek(1).text == ">"))) {
+      ErrorHere("streaming operator not supported in v0");
+      return nullptr;
+    }
     std::unique_ptr<Expr> first = ParseExpr();
     if (!first) {
       return nullptr;
@@ -5622,6 +5898,7 @@ class Parser {
   std::unordered_set<std::string> current_genvars_;
   Module* current_module_ = nullptr;
   ParseOptions options_;
+  bool allow_string_literals_ = false;
   int generate_id_ = 0;
 
   bool EvalConstExpr(const Expr& expr, int64_t* out_value) {
@@ -5633,6 +5910,9 @@ class Parser {
         }
         *out_value = static_cast<int64_t>(expr.number);
         return true;
+      case ExprKind::kString:
+        ErrorHere("string literal not allowed in constant expression");
+        return false;
       case ExprKind::kIdentifier: {
         auto it = current_params_.find(expr.ident);
         if (it == current_params_.end()) {
@@ -5830,6 +6110,8 @@ class Parser {
         }
         *out_value = static_cast<int64_t>(expr.number);
         return true;
+      case ExprKind::kString:
+        return false;
       case ExprKind::kIdentifier: {
         auto it = current_params_.find(expr.ident);
         if (it == current_params_.end()) {

@@ -87,6 +87,7 @@ struct Net {
 enum class ExprKind {
   kIdentifier,
   kNumber,
+  kString,
   kUnary,
   kBinary,
   kTernary,
@@ -99,6 +100,7 @@ enum class ExprKind {
 struct Expr {
   ExprKind kind = ExprKind::kIdentifier;
   std::string ident;
+  std::string string_value;
   uint64_t number = 0;
   uint64_t value_bits = 0;
   uint64_t x_bits = 0;

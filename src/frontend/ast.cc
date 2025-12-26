@@ -40,6 +40,8 @@ bool ExprIsSigned(const Expr& expr) {
       return false;
     case ExprKind::kNumber:
       return expr.is_signed;
+    case ExprKind::kString:
+      return false;
     case ExprKind::kUnary:
       if (expr.unary_op == 'S') {
         return true;
@@ -147,6 +149,7 @@ std::unique_ptr<Expr> CloneExpr(const Expr& expr) {
   auto out = std::make_unique<Expr>();
   out->kind = expr.kind;
   out->ident = expr.ident;
+  out->string_value = expr.string_value;
   out->number = expr.number;
   out->value_bits = expr.value_bits;
   out->x_bits = expr.x_bits;
@@ -228,6 +231,11 @@ bool EvalConstExpr4State(const Expr& expr,
       *out_value = ResizeValue(out, width);
       return true;
     }
+    case ExprKind::kString:
+      if (error) {
+        *error = "string literal not allowed in constant expression";
+      }
+      return false;
     case ExprKind::kIdentifier: {
       auto it = params.find(expr.ident);
       if (it == params.end()) {

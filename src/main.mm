@@ -117,6 +117,8 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
         return expr.number_width;
       }
       return MinimalWidth(expr.number);
+    case gpga::ExprKind::kString:
+      return 0;
     case gpga::ExprKind::kUnary:
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
           expr.unary_op == '|' || expr.unary_op == '^') {
@@ -179,6 +181,8 @@ bool ExprSigned(const gpga::Expr& expr, const gpga::Module& module) {
       return SignalSigned(module, expr.ident);
     case gpga::ExprKind::kNumber:
       return expr.is_signed || !expr.has_base;
+    case gpga::ExprKind::kString:
+      return false;
     case gpga::ExprKind::kUnary:
       if (expr.unary_op == 'S') {
         return true;
@@ -252,6 +256,8 @@ bool IsAllOnesExpr(const gpga::Expr& expr, const gpga::Module& module,
                           : ((1ULL << width) - 1ULL);
       return expr.number == mask;
     }
+    case gpga::ExprKind::kString:
+      return false;
     case gpga::ExprKind::kConcat: {
       int base_width = 0;
       for (const auto& element : expr.elements) {
@@ -410,6 +416,8 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
       }
       return std::to_string(expr.number);
     }
+    case gpga::ExprKind::kString:
+      return "\"" + expr.string_value + "\"";
     case gpga::ExprKind::kUnary: {
       std::string operand =
           expr.operand ? ExprToString(*expr.operand, module) : "0";
