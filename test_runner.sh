@@ -55,9 +55,16 @@ if command -v rg >/dev/null 2>&1; then
 fi
 
 should_expect_fail() {
-    case "$1" in
+    local file="$1"
+    local use_4state="${2:-0}"
+    case "$file" in
         *test_comb_loop.v) echo "combinational cycle (expected)"; return 0 ;;
-        *test_multidriver.v) echo "multiple drivers (expected)"; return 0 ;;
+        *test_multidriver.v)
+            if [ "$use_4state" -eq 0 ]; then
+                echo "multiple drivers (expected)"
+                return 0
+            fi
+            ;;
         *test_recursive_module.v) echo "recursive instantiation (expected)"; return 0 ;;
     esac
     return 1
@@ -241,18 +248,18 @@ for vfile in $VERILOG_FILES; do
     filename=$(basename "$vfile" .v)
     dirname=$(dirname "$vfile")
 
+    use_4state=$FORCE_4STATE
+    if [ "$use_4state" -eq 0 ]; then
+        if needs_4state "$vfile" || file_suggests_4state "$vfile"; then
+            use_4state=1
+        fi
+    fi
+    use_auto=$FORCE_AUTO
+
     # Expected-failure tests count as fail when they fail
-    EXPECT_REASON=$(should_expect_fail "$vfile")
+    EXPECT_REASON=$(should_expect_fail "$vfile" "$use_4state")
     if [ $? -eq 0 ]; then
         echo -e "${YELLOW}Testing: $vfile ($EXPECT_REASON)${NC}" | tee -a "$LOG_FILE"
-
-        use_4state=$FORCE_4STATE
-        if [ "$use_4state" -eq 0 ]; then
-            if needs_4state "$vfile" || file_suggests_4state "$vfile"; then
-                use_4state=1
-            fi
-        fi
-        use_auto=$FORCE_AUTO
 
         if [ "$use_4state" -eq 1 ]; then
             echo "  Using --4state flag" | tee -a "$LOG_FILE"
@@ -319,14 +326,6 @@ for vfile in $VERILOG_FILES; do
     fi
 
     echo -e "${YELLOW}Testing: $vfile${NC}" | tee -a "$LOG_FILE"
-
-    use_4state=$FORCE_4STATE
-    if [ "$use_4state" -eq 0 ]; then
-        if needs_4state "$vfile" || file_suggests_4state "$vfile"; then
-            use_4state=1
-        fi
-    fi
-    use_auto=$FORCE_AUTO
 
     if [ "$use_4state" -eq 1 ]; then
         echo "  Using --4state flag" | tee -a "$LOG_FILE"

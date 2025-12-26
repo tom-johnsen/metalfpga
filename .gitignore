@@ -10,3 +10,5 @@ persistent/
 msl/
 host/
 test_results/
+docs/PLAN.md
+docs/IDEA.md

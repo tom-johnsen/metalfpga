@@ -534,6 +534,9 @@ struct SystemTaskInfo {
   size_t monitor_max_args = 0;
   std::vector<const Statement*> monitor_stmts;
   std::unordered_map<const Statement*, uint32_t> monitor_ids;
+  size_t strobe_max_args = 0;
+  std::vector<const Statement*> strobe_stmts;
+  std::unordered_map<const Statement*, uint32_t> strobe_ids;
   std::vector<std::string> string_table;
   std::unordered_map<std::string, uint32_t> string_ids;
 };
@@ -570,6 +573,11 @@ void CollectSystemTaskInfo(const Statement& stmt, SystemTaskInfo* info) {
       info->monitor_max_args =
           std::max(info->monitor_max_args, stmt.task_args.size());
       info->monitor_stmts.push_back(&stmt);
+    }
+    if (stmt.task_name == "$strobe") {
+      info->strobe_max_args =
+          std::max(info->strobe_max_args, stmt.task_args.size());
+      info->strobe_stmts.push_back(&stmt);
     }
     bool ident_as_string = TaskTreatsIdentifierAsString(stmt.task_name);
     for (const auto& arg : stmt.task_args) {
@@ -673,6 +681,10 @@ SystemTaskInfo BuildSystemTaskInfo(const Module& module) {
   info.monitor_ids.reserve(info.monitor_stmts.size());
   for (size_t i = 0; i < info.monitor_stmts.size(); ++i) {
     info.monitor_ids[info.monitor_stmts[i]] = static_cast<uint32_t>(i);
+  }
+  info.strobe_ids.reserve(info.strobe_stmts.size());
+  for (size_t i = 0; i < info.strobe_stmts.size(); ++i) {
+    info.strobe_ids[info.strobe_stmts[i]] = static_cast<uint32_t>(i);
   }
   return info;
 }
@@ -4207,11 +4219,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
 
         std::unordered_map<const Statement*, uint32_t> monitor_pid;
+        std::unordered_map<const Statement*, uint32_t> strobe_pid;
         std::function<void(const Statement&, uint32_t)> collect_monitor_pids;
         collect_monitor_pids = [&](const Statement& stmt, uint32_t pid) {
           if (stmt.kind == StatementKind::kTaskCall &&
               stmt.task_name == "$monitor") {
             monitor_pid[&stmt] = pid;
+          }
+          if (stmt.kind == StatementKind::kTaskCall &&
+              stmt.task_name == "$strobe") {
+            strobe_pid[&stmt] = pid;
           }
           if (stmt.kind == StatementKind::kIf) {
             for (const auto& inner : stmt.then_branch) {
@@ -4465,6 +4482,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
               << "u;\n";
         }
+        if (!system_task_info.strobe_stmts.empty()) {
+          out << "constexpr uint GPGA_SCHED_STROBE_COUNT = "
+              << system_task_info.strobe_stmts.size() << "u;\n";
+        }
         if (system_task_info.has_system_tasks) {
           size_t max_args = std::max<size_t>(1, system_task_info.max_args);
           out << "constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
@@ -4483,6 +4504,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
           out << "constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
           out << "constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
+          out << "constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
           out << "struct GpgaServiceRecord {\n";
           out << "  uint kind;\n";
           out << "  uint pid;\n";
@@ -4602,14 +4624,22 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_status [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
-        if (!system_task_info.monitor_stmts.empty()) {
-          emit_param("  device uint* sched_monitor_active [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_monitor_enable [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_monitor_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_monitor_xz [[buffer(" +
+      if (!system_task_info.monitor_stmts.empty()) {
+        emit_param("  device uint* sched_monitor_active [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_monitor_enable [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_monitor_val [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_monitor_xz [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
+      if (!system_task_info.strobe_stmts.empty()) {
+        emit_param("  device uint* sched_strobe_pending [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
+        if (!system_task_info.strobe_stmts.empty()) {
+          emit_param("  device uint* sched_strobe_pending [[buffer(" +
                      std::to_string(buffer_index++) + ")]]");
         }
         if (system_task_info.has_system_tasks) {
@@ -4638,15 +4668,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
         out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
         out << "    }\n";
-        if (!system_task_info.monitor_stmts.empty()) {
-          out << "    sched_monitor_enable[gid] = 1u;\n";
-          out << "    for (uint m = 0u; m < GPGA_SCHED_MONITOR_COUNT; ++m) {\n";
-          out << "      sched_monitor_active[(gid * GPGA_SCHED_MONITOR_COUNT) + m] = 0u;\n";
-          out << "      for (uint a = 0u; a < GPGA_SCHED_MONITOR_MAX_ARGS; ++a) {\n";
-          out << "        uint offset = ((gid * GPGA_SCHED_MONITOR_COUNT) + m) * GPGA_SCHED_MONITOR_MAX_ARGS + a;\n";
-          out << "        sched_monitor_val[offset] = 0ul;\n";
-          out << "        sched_monitor_xz[offset] = 0ul;\n";
-          out << "      }\n";
+      if (!system_task_info.monitor_stmts.empty()) {
+        out << "    sched_monitor_enable[gid] = 1u;\n";
+        out << "    for (uint m = 0u; m < GPGA_SCHED_MONITOR_COUNT; ++m) {\n";
+        out << "      sched_monitor_active[(gid * GPGA_SCHED_MONITOR_COUNT) + m] = 0u;\n";
+        out << "      for (uint a = 0u; a < GPGA_SCHED_MONITOR_MAX_ARGS; ++a) {\n";
+        out << "        uint offset = ((gid * GPGA_SCHED_MONITOR_COUNT) + m) * GPGA_SCHED_MONITOR_MAX_ARGS + a;\n";
+        out << "        sched_monitor_val[offset] = 0ul;\n";
+        out << "        sched_monitor_xz[offset] = 0ul;\n";
+        out << "      }\n";
+        out << "    }\n";
+      }
+      if (!system_task_info.strobe_stmts.empty()) {
+        out << "    for (uint s = 0u; s < GPGA_SCHED_STROBE_COUNT; ++s) {\n";
+        out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
+        out << "    }\n";
+      }
+        if (!system_task_info.strobe_stmts.empty()) {
+          out << "    for (uint s = 0u; s < GPGA_SCHED_STROBE_COUNT; ++s) {\n";
+          out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
           out << "    }\n";
         }
         out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
@@ -4947,6 +4987,44 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "}\n";
         };
 
+        auto emit_service_record_with_pid =
+            [&](const char* kind_expr, const std::string& pid_expr,
+                const std::string& format_id_expr,
+                const std::vector<ServiceArg>& args, int indent) -> void {
+          std::string pad(indent, ' ');
+          out << pad << "{\n";
+          out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
+          out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+          out << pad << "    sched_error[gid] = 1u;\n";
+          out << pad << "    steps = 0u;\n";
+          out << pad << "  } else {\n";
+          out << pad
+              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+                 "__gpga_svc_index;\n";
+          out << pad
+              << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+          out << pad << "    sched_service[__gpga_svc_offset].kind = "
+              << kind_expr << ";\n";
+          out << pad << "    sched_service[__gpga_svc_offset].pid = "
+              << pid_expr << ";\n";
+          out << pad << "    sched_service[__gpga_svc_offset].format_id = "
+              << format_id_expr << ";\n";
+          out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
+              << args.size() << "u;\n";
+          for (size_t i = 0; i < args.size(); ++i) {
+            out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
+                << "] = " << args[i].kind << ";\n";
+            out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
+                << "] = " << args[i].width << "u;\n";
+            out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
+                << "] = " << args[i].val << ";\n";
+            out << pad << "    sched_service[__gpga_svc_offset].arg_xz[" << i
+                << "] = " << args[i].xz << ";\n";
+          }
+          out << pad << "  }\n";
+          out << pad << "}\n";
+        };
+
         auto emit_monitor_snapshot =
             [&](uint32_t monitor_id, const std::vector<ServiceArg>& args,
                 int indent, bool force_emit) -> std::string {
@@ -5007,6 +5085,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!system_task_info.monitor_stmts.empty()) {
               out << std::string(indent, ' ') << "sched_monitor_enable[gid] = 0u;\n";
             }
+            return;
+          }
+          if (name == "$strobe") {
+            auto it = system_task_info.strobe_ids.find(&stmt);
+            if (it == system_task_info.strobe_ids.end()) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            uint32_t strobe_id = it->second;
+            std::string pad(indent, ' ');
+            out << pad << "sched_strobe_pending[(gid * "
+                << "GPGA_SCHED_STROBE_COUNT) + " << strobe_id << "u] += 1u;\n";
             return;
           }
           const char* kind_expr = nullptr;
@@ -5804,6 +5896,31 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             emit_monitor_record(pid_expr, format_id_expr, args, 10);
             out << "        }\n";
             out << "      }\n";
+          }
+        }
+        if (!system_task_info.strobe_stmts.empty()) {
+          out << "      // Strobe emissions.\n";
+          for (size_t i = 0; i < system_task_info.strobe_stmts.size(); ++i) {
+            const Statement* strobe_stmt = system_task_info.strobe_stmts[i];
+            std::string format_id_expr;
+            std::vector<ServiceArg> args;
+            build_service_args(*strobe_stmt, strobe_stmt->task_name,
+                               &format_id_expr, &args);
+            uint32_t strobe_pid_value = 0u;
+            auto pid_it = strobe_pid.find(strobe_stmt);
+            if (pid_it != strobe_pid.end()) {
+              strobe_pid_value = pid_it->second;
+            }
+            std::string pid_expr = std::to_string(strobe_pid_value) + "u";
+            out << "      uint __gpga_strobe_count = sched_strobe_pending[(gid * "
+                << "GPGA_SCHED_STROBE_COUNT) + " << i << "u];\n";
+            out << "      while (__gpga_strobe_count > 0u) {\n";
+            emit_service_record_with_pid("GPGA_SERVICE_KIND_STROBE", pid_expr,
+                                         format_id_expr, args, 8);
+            out << "        __gpga_strobe_count -= 1u;\n";
+            out << "      }\n";
+            out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + "
+                << i << "u] = 0u;\n";
           }
         }
         out << "      bool any_ready = false;\n";
@@ -7189,12 +7306,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::sort(sched_reg_names.begin(), sched_reg_names.end());
 
       std::unordered_map<const Statement*, uint32_t> monitor_pid;
-      if (!system_task_info.monitor_stmts.empty()) {
+      std::unordered_map<const Statement*, uint32_t> strobe_pid;
+      if (!system_task_info.monitor_stmts.empty() ||
+          !system_task_info.strobe_stmts.empty()) {
         std::function<void(const Statement&, uint32_t)> collect_monitor_pids;
         collect_monitor_pids = [&](const Statement& stmt, uint32_t pid) {
           if (stmt.kind == StatementKind::kTaskCall &&
               stmt.task_name == "$monitor") {
             monitor_pid[&stmt] = pid;
+            return;
+          }
+          if (stmt.kind == StatementKind::kTaskCall &&
+              stmt.task_name == "$strobe") {
+            strobe_pid[&stmt] = pid;
             return;
           }
           if (stmt.kind == StatementKind::kIf) {
@@ -7320,6 +7444,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
             << "u;\n";
       }
+      if (!system_task_info.strobe_stmts.empty()) {
+        out << "constexpr uint GPGA_SCHED_STROBE_COUNT = "
+            << system_task_info.strobe_stmts.size() << "u;\n";
+      }
       if (system_task_info.has_system_tasks) {
         size_t max_args = std::max<size_t>(1, system_task_info.max_args);
         out << "constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
@@ -7338,6 +7466,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
         out << "constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
         out << "constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
+        out << "constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -7762,6 +7891,42 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << pad << "}\n";
       };
 
+      auto emit_service_record_with_pid =
+          [&](const char* kind_expr, const std::string& pid_expr,
+              const std::string& format_id_expr,
+              const std::vector<ServiceArg>& args, int indent) -> void {
+        std::string pad(indent, ' ');
+        out << pad << "{\n";
+        out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
+        out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+        out << pad << "    sched_error[gid] = 1u;\n";
+        out << pad << "    steps = 0u;\n";
+        out << pad << "  } else {\n";
+        out << pad
+            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+               "__gpga_svc_index;\n";
+        out << pad
+            << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+        out << pad << "    sched_service[__gpga_svc_offset].kind = "
+            << kind_expr << ";\n";
+        out << pad << "    sched_service[__gpga_svc_offset].pid = "
+            << pid_expr << ";\n";
+        out << pad << "    sched_service[__gpga_svc_offset].format_id = "
+            << format_id_expr << ";\n";
+        out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
+            << args.size() << "u;\n";
+        for (size_t i = 0; i < args.size(); ++i) {
+          out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
+              << "] = " << args[i].kind << ";\n";
+          out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
+              << "] = " << args[i].width << "u;\n";
+          out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
+              << "] = " << args[i].val << ";\n";
+        }
+        out << pad << "  }\n";
+        out << pad << "}\n";
+      };
+
       auto emit_monitor_snapshot =
           [&](uint32_t monitor_id, const std::vector<ServiceArg>& args,
               int indent, bool force_emit) -> std::string {
@@ -7818,6 +7983,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << std::string(indent, ' ')
                 << "sched_monitor_enable[gid] = 0u;\n";
           }
+          return;
+        }
+        if (name == "$strobe") {
+          auto it = system_task_info.strobe_ids.find(&stmt);
+          if (it == system_task_info.strobe_ids.end()) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          uint32_t strobe_id = it->second;
+          std::string pad(indent, ' ');
+          out << pad << "sched_strobe_pending[(gid * "
+              << "GPGA_SCHED_STROBE_COUNT) + " << strobe_id << "u] += 1u;\n";
           return;
         }
         const char* kind_expr = nullptr;
@@ -8575,6 +8754,31 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           emit_monitor_record(pid_expr, format_id_expr, args, 10);
           out << "        }\n";
           out << "      }\n";
+        }
+      }
+      if (!system_task_info.strobe_stmts.empty()) {
+        out << "      // Strobe emissions.\n";
+        for (size_t i = 0; i < system_task_info.strobe_stmts.size(); ++i) {
+          const Statement* strobe_stmt = system_task_info.strobe_stmts[i];
+          std::string format_id_expr;
+          std::vector<ServiceArg> args;
+          build_service_args(*strobe_stmt, strobe_stmt->task_name,
+                             &format_id_expr, &args);
+          uint32_t strobe_pid_value = 0u;
+          auto pid_it = strobe_pid.find(strobe_stmt);
+          if (pid_it != strobe_pid.end()) {
+            strobe_pid_value = pid_it->second;
+          }
+          std::string pid_expr = std::to_string(strobe_pid_value) + "u";
+          out << "      uint __gpga_strobe_count = sched_strobe_pending[(gid * "
+              << "GPGA_SCHED_STROBE_COUNT) + " << i << "u];\n";
+          out << "      while (__gpga_strobe_count > 0u) {\n";
+          emit_service_record_with_pid("GPGA_SERVICE_KIND_STROBE", pid_expr,
+                                       format_id_expr, args, 8);
+          out << "        __gpga_strobe_count -= 1u;\n";
+          out << "      }\n";
+          out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + "
+              << i << "u] = 0u;\n";
         }
       }
       out << "      bool any_ready = false;\n";

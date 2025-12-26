@@ -1211,8 +1211,9 @@ class Parser {
       } else {
         output_width = LookupSignalWidth(out_name);
         if (output_width <= 0) {
-          ErrorHere("gate output width unknown in v0");
-          return false;
+          AddOrUpdateNet(current_module_, out_name, NetType::kWire, 1, false,
+                         nullptr, nullptr, {});
+          output_width = 1;
         }
       }
 
@@ -3943,6 +3944,10 @@ class Parser {
       return false;
     }
     assign.rhs = std::move(rhs);
+    if (LookupSignalWidth(assign.lhs) <= 0) {
+      AddOrUpdateNet(module, assign.lhs, NetType::kWire, 1, false, nullptr,
+                     nullptr, {});
+    }
     module->assigns.push_back(std::move(assign));
     return true;
   }

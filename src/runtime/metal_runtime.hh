@@ -23,6 +23,7 @@ enum class ServiceKind : uint32_t {
   kReadmemh = 5u,
   kReadmemb = 6u,
   kStop = 7u,
+  kStrobe = 8u,
 };
 
 struct ServiceStringTable {

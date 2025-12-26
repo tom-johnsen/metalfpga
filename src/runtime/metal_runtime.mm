@@ -273,7 +273,8 @@ ServiceDrainResult DrainSchedulerServices(
         out << "$stop (pid=" << pid << ")\n";
         break;
       case ServiceKind::kDisplay:
-      case ServiceKind::kMonitor: {
+      case ServiceKind::kMonitor:
+      case ServiceKind::kStrobe: {
         std::string fmt = (format_id != 0xFFFFFFFFu)
                               ? ResolveString(strings, format_id)
                               : "";
