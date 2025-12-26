@@ -199,6 +199,70 @@ inline FourState64 fs_mul64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
   return fs_make64(a.val * b.val, 0ul, width);
 }
+inline FourState32 fs_pow32(FourState32 a, FourState32 b, uint width) {
+  if ((a.xz | b.xz) != 0u) return fs_allx32(width);
+  uint mask = fs_mask32(width);
+  uint base = a.val & mask;
+  uint exp = b.val & mask;
+  uint result = 1u;
+  while (exp != 0u) {
+    if (exp & 1u) {
+      result *= base;
+    }
+    base *= base;
+    exp >>= 1u;
+  }
+  return fs_make32(result, 0u, width);
+}
+inline FourState64 fs_pow64(FourState64 a, FourState64 b, uint width) {
+  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
+  ulong mask = fs_mask64(width);
+  ulong base = a.val & mask;
+  ulong exp = b.val & mask;
+  ulong result = 1ul;
+  while (exp != 0ul) {
+    if (exp & 1ul) {
+      result *= base;
+    }
+    base *= base;
+    exp >>= 1ul;
+  }
+  return fs_make64(result, 0ul, width);
+}
+inline FourState32 fs_spow32(FourState32 a, FourState32 b, uint width) {
+  if ((a.xz | b.xz) != 0u) return fs_allx32(width);
+  uint mask = fs_mask32(width);
+  int exp = fs_sign32(b.val & mask, width);
+  if (exp < 0) return fs_make32(0u, 0u, width);
+  uint base = a.val & mask;
+  uint result = 1u;
+  uint exp_u = uint(exp);
+  while (exp_u != 0u) {
+    if (exp_u & 1u) {
+      result *= base;
+    }
+    base *= base;
+    exp_u >>= 1u;
+  }
+  return fs_make32(result, 0u, width);
+}
+inline FourState64 fs_spow64(FourState64 a, FourState64 b, uint width) {
+  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
+  ulong mask = fs_mask64(width);
+  long exp = fs_sign64(b.val & mask, width);
+  if (exp < 0) return fs_make64(0ul, 0ul, width);
+  ulong base = a.val & mask;
+  ulong result = 1ul;
+  ulong exp_u = ulong(exp);
+  while (exp_u != 0ul) {
+    if (exp_u & 1ul) {
+      result *= base;
+    }
+    base *= base;
+    exp_u >>= 1ul;
+  }
+  return fs_make64(result, 0ul, width);
+}
 inline FourState32 fs_div32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u || b.val == 0u) return fs_allx32(width);
   return fs_make32(a.val / b.val, 0u, width);

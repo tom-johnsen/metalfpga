@@ -384,6 +384,9 @@ bool EvalConstExpr4State(const Expr& expr,
         case '*':
           width = clamp_width(lhs_width + rhs_width);
           break;
+        case 'p':
+          width = clamp_width(lhs_width);
+          break;
         case '/':
         case '%':
           width = clamp_width(lhs_width);
@@ -421,6 +424,31 @@ bool EvalConstExpr4State(const Expr& expr,
             *out_value = AllX(width);
           } else {
             *out_value = MakeKnown(left.value_bits * right.value_bits, width);
+          }
+          return true;
+        case 'p':
+          if (left.HasXorZ() || right.HasXorZ()) {
+            *out_value = AllX(width);
+          } else {
+            uint64_t base = left.value_bits & mask;
+            uint64_t exp = right.value_bits & mask;
+            if (signed_cmp) {
+              int64_t signed_exp = SignedValue(exp, width);
+              if (signed_exp < 0) {
+                *out_value = MakeKnown(0, width);
+                return true;
+              }
+              exp = static_cast<uint64_t>(signed_exp);
+            }
+            uint64_t result = 1ull;
+            while (exp != 0) {
+              if (exp & 1ull) {
+                result = (result * base) & mask;
+              }
+              base = (base * base) & mask;
+              exp >>= 1ull;
+            }
+            *out_value = MakeKnown(result, width);
           }
           return true;
         case '/':
@@ -525,6 +553,33 @@ bool EvalConstExpr4State(const Expr& expr,
                 MakeKnown(left.value_bits != right.value_bits ? 1 : 0, 1);
           }
           return true;
+        case 'C':
+        case 'c': {
+          FourStateValue left_raw = ResizeValue(lhs, width);
+          FourStateValue right_raw = ResizeValue(rhs, width);
+          uint64_t val_diff =
+              (left_raw.value_bits ^ right_raw.value_bits) & mask;
+          uint64_t x_diff = (left_raw.x_bits ^ right_raw.x_bits) & mask;
+          uint64_t z_diff = (left_raw.z_bits ^ right_raw.z_bits) & mask;
+          bool equal = (val_diff | x_diff | z_diff) == 0;
+          *out_value = MakeKnown((expr.op == 'c') ? !equal : equal, 1);
+          return true;
+        }
+        case 'W':
+        case 'w': {
+          FourStateValue left_raw = ResizeValue(lhs, width);
+          FourStateValue right_raw = ResizeValue(rhs, width);
+          uint64_t ignore = (right_raw.x_bits | right_raw.z_bits) & mask;
+          uint64_t cared = (~ignore) & mask;
+          if ((left_raw.x_bits | left_raw.z_bits) & cared) {
+            *out_value = MakeKnown(expr.op == 'w' ? 1 : 0, 1);
+            return true;
+          }
+          bool equal =
+              (((left_raw.value_bits ^ right_raw.value_bits) & cared) == 0);
+          *out_value = MakeKnown((expr.op == 'w') ? !equal : equal, 1);
+          return true;
+        }
         case '<':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(1);

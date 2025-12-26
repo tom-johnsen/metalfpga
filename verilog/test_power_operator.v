@@ -1,6 +1,6 @@
 // Test: Power operator **
 // Feature: Exponentiation operator
-// Expected: Should fail - ** operator not yet implemented
+// Expected: Should pass - exponentiation operator
 
 module test_power_operator;
   reg [15:0] base, exponent, result;

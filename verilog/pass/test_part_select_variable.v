@@ -1,6 +1,6 @@
 // Test: Variable part select (indexed part select)
 // Feature: +: and -: part select operators
-// Expected: Should fail - variable part select not yet implemented
+// Expected: Should pass - indexed part select
 
 module test_part_select_variable;
   reg [31:0] data;

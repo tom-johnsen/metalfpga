@@ -177,6 +177,14 @@ struct SequentialAssign {
   std::string lhs;
   std::unique_ptr<Expr> lhs_index;
   std::vector<std::unique_ptr<Expr>> lhs_indices;
+  bool lhs_has_range = false;
+  bool lhs_indexed_range = false;
+  bool lhs_indexed_desc = false;
+  int lhs_indexed_width = 0;
+  int lhs_msb = 0;
+  int lhs_lsb = 0;
+  std::unique_ptr<Expr> lhs_msb_expr;
+  std::unique_ptr<Expr> lhs_lsb_expr;
   std::unique_ptr<Expr> rhs;
   std::unique_ptr<Expr> delay;
   bool nonblocking = true;
@@ -206,6 +214,12 @@ enum class CaseKind {
   kCaseX,
 };
 
+enum class EventEdgeKind {
+  kAny,
+  kPosedge,
+  kNegedge,
+};
+
 struct Statement;
 
 struct CaseItem {
@@ -229,6 +243,7 @@ struct Statement {
   std::vector<Statement> repeat_body;
   std::unique_ptr<Expr> delay;
   std::vector<Statement> delay_body;
+  EventEdgeKind event_edge = EventEdgeKind::kAny;
   std::unique_ptr<Expr> event_expr;
   std::vector<Statement> event_body;
   std::unique_ptr<Expr> wait_condition;

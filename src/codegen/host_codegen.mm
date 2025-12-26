@@ -264,6 +264,8 @@ std::string EmitHostStub(const Module& module) {
            "/sched_join_count\n";
     out << "//                      sched_parent/sched_join_tag/sched_time\n";
     out << "//                      sched_phase/sched_initialized/sched_event_pending\n";
+    out << "//                      sched_wait_edge_kind/sched_edge_prev_*\n";
+    out << "//                      sched_edge_star_prev_*\n";
     out << "//                      sched_error/sched_status + GpgaSchedParams\n";
     if (sys_info.has_tasks) {
       out << "//   service buffers: sched_service_count + sched_service\n";

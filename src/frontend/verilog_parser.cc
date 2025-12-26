@@ -708,6 +708,24 @@ class Parser {
     return false;
   }
 
+  bool ConsumeHierIdentifier(std::string* out) {
+    std::string name;
+    if (!ConsumeIdentifier(&name)) {
+      return false;
+    }
+    while (MatchSymbol(".")) {
+      std::string part;
+      if (!ConsumeIdentifier(&part)) {
+        ErrorHere("expected identifier after '.'");
+        return false;
+      }
+      name += ".";
+      name += part;
+    }
+    *out = name;
+    return true;
+  }
+
   bool ConsumeNumber(int* out) {
     if (Peek().kind == TokenKind::kNumber) {
       *out = std::stoi(Peek().text);
@@ -1419,23 +1437,30 @@ class Parser {
   bool ParseDefparam(Module* module) {
     while (true) {
       const Token& start_token = Peek();
-      std::string instance_name;
-      if (!ConsumeIdentifier(&instance_name)) {
+      std::vector<std::string> parts;
+      std::string part;
+      if (!ConsumeIdentifier(&part)) {
         ErrorHere("expected instance name in defparam");
         return false;
       }
-      if (!MatchSymbol(".")) {
-        ErrorHere("expected '.' after instance name in defparam");
+      parts.push_back(part);
+      while (MatchSymbol(".")) {
+        if (!ConsumeIdentifier(&part)) {
+          ErrorHere("expected identifier after '.' in defparam");
+          return false;
+        }
+        parts.push_back(part);
+      }
+      if (parts.size() < 2) {
+        ErrorHere("expected parameter name in defparam");
         return false;
       }
-      std::string param_name;
-      if (!ConsumeIdentifier(&param_name)) {
-        ErrorHere("expected parameter name after '.' in defparam");
-        return false;
-      }
-      if (MatchSymbol(".")) {
-        ErrorHere("hierarchical defparam not supported in v0");
-        return false;
+      std::string param_name = parts.back();
+      parts.pop_back();
+      std::string instance_name = parts.front();
+      for (size_t i = 1; i < parts.size(); ++i) {
+        instance_name += ".";
+        instance_name += parts[i];
       }
       if (!MatchSymbol("=")) {
         ErrorHere("expected '=' in defparam");
@@ -2232,10 +2257,11 @@ class Parser {
 
   bool ParseIntegerDecl(Module* module) {
     const int width = 32;
-    const bool is_signed = true;
-    if (MatchKeyword("signed") || MatchKeyword("unsigned")) {
-      ErrorHere("integer signedness not supported in v0");
-      return false;
+    bool is_signed = true;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    } else if (MatchKeyword("unsigned")) {
+      is_signed = false;
     }
     while (true) {
       std::string name;
@@ -2259,7 +2285,12 @@ class Parser {
 
   bool ParseTimeDecl(Module* module) {
     const int width = 64;
-    const bool is_signed = false;
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    } else if (MatchKeyword("unsigned")) {
+      is_signed = false;
+    }
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
@@ -2301,9 +2332,12 @@ class Parser {
   }
 
   bool ParseLocalIntegerDecl() {
-    if (MatchKeyword("signed") || MatchKeyword("unsigned")) {
-      ErrorHere("integer signedness not supported in v0");
-      return false;
+    const int width = 32;
+    bool is_signed = true;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    } else if (MatchKeyword("unsigned")) {
+      is_signed = false;
     }
     while (true) {
       std::string name;
@@ -2311,6 +2345,22 @@ class Parser {
         ErrorHere("expected identifier in integer declaration");
         return false;
       }
+      if (current_module_) {
+        for (const auto& port : current_module_->ports) {
+          if (port.name == name) {
+            ErrorHere("local integer redeclares port '" + name + "'");
+            return false;
+          }
+        }
+        for (const auto& net : current_module_->nets) {
+          if (net.name == name) {
+            ErrorHere("local integer redeclares net '" + name + "'");
+            return false;
+          }
+        }
+      }
+      AddOrUpdateNet(current_module_, name, NetType::kWire, width, is_signed,
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
       if (MatchSymbol(",")) {
         continue;
       }
@@ -2324,12 +2374,35 @@ class Parser {
   }
 
   bool ParseLocalTimeDecl() {
+    const int width = 64;
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    } else if (MatchKeyword("unsigned")) {
+      is_signed = false;
+    }
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
         ErrorHere("expected identifier in time declaration");
         return false;
       }
+      if (current_module_) {
+        for (const auto& port : current_module_->ports) {
+          if (port.name == name) {
+            ErrorHere("local time redeclares port '" + name + "'");
+            return false;
+          }
+        }
+        for (const auto& net : current_module_->nets) {
+          if (net.name == name) {
+            ErrorHere("local time redeclares net '" + name + "'");
+            return false;
+          }
+        }
+      }
+      AddOrUpdateNet(current_module_, name, NetType::kWire, width, is_signed,
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
       if (MatchSymbol(",")) {
         continue;
       }
@@ -2864,7 +2937,7 @@ class Parser {
       }
     }
     std::string lhs;
-    if (!ConsumeIdentifier(&lhs)) {
+    if (!ConsumeHierIdentifier(&lhs)) {
       ErrorHere("expected identifier after 'assign'");
       return false;
     }
@@ -3066,6 +3139,15 @@ class Parser {
     if (statement.kind == StatementKind::kAssign) {
       out_statement->assign.lhs =
           RenameIdent(statement.assign.lhs, ctx.renames);
+      out_statement->assign.lhs_has_range = statement.assign.lhs_has_range;
+      out_statement->assign.lhs_indexed_range =
+          statement.assign.lhs_indexed_range;
+      out_statement->assign.lhs_indexed_desc =
+          statement.assign.lhs_indexed_desc;
+      out_statement->assign.lhs_indexed_width =
+          statement.assign.lhs_indexed_width;
+      out_statement->assign.lhs_msb = statement.assign.lhs_msb;
+      out_statement->assign.lhs_lsb = statement.assign.lhs_lsb;
       if (statement.assign.lhs_index) {
         out_statement->assign.lhs_index =
             CloneExprGenerate(*statement.assign.lhs_index, ctx.renames,
@@ -3086,6 +3168,14 @@ class Parser {
       if (statement.assign.delay) {
         out_statement->assign.delay =
             CloneExprGenerate(*statement.assign.delay, ctx.renames, ctx.consts);
+      }
+      if (statement.assign.lhs_msb_expr) {
+        out_statement->assign.lhs_msb_expr = CloneExprGenerate(
+            *statement.assign.lhs_msb_expr, ctx.renames, ctx.consts);
+      }
+      if (statement.assign.lhs_lsb_expr) {
+        out_statement->assign.lhs_lsb_expr = CloneExprGenerate(
+            *statement.assign.lhs_lsb_expr, ctx.renames, ctx.consts);
       }
       out_statement->assign.nonblocking = statement.assign.nonblocking;
       return true;
@@ -3218,6 +3308,7 @@ class Parser {
       return true;
     }
     if (statement.kind == StatementKind::kEventControl) {
+      out_statement->event_edge = statement.event_edge;
       if (statement.event_expr) {
         out_statement->event_expr =
             CloneExprGenerate(*statement.event_expr, ctx.renames, ctx.consts);
@@ -3858,7 +3949,7 @@ class Parser {
       }
     }
     std::string lhs;
-    if (!ConsumeIdentifier(&lhs)) {
+    if (!ConsumeHierIdentifier(&lhs)) {
       ErrorHere("expected identifier after 'assign'");
       return false;
     }
@@ -3944,7 +4035,8 @@ class Parser {
       return false;
     }
     assign.rhs = std::move(rhs);
-    if (LookupSignalWidth(assign.lhs) <= 0) {
+    if (assign.lhs.find('.') == std::string::npos &&
+        LookupSignalWidth(assign.lhs) <= 0) {
       AddOrUpdateNet(module, assign.lhs, NetType::kWire, 1, false, nullptr,
                      nullptr, {});
     }
@@ -4143,31 +4235,36 @@ class Parser {
       return ParseEventTriggerStatement(out_statement);
     }
     if (MatchKeyword("assert")) {
-      ErrorHere("assert not supported in v0");
-      return false;
+      return ParseAssertStatement(out_statement);
     }
     if (MatchKeyword("unique")) {
-      if (MatchKeyword("case") || MatchKeyword("casez") ||
-          MatchKeyword("casex")) {
-        ErrorHere("unique case not supported in v0");
-        return false;
+      if (MatchKeyword("casez")) {
+        return ParseCaseStatement(out_statement, CaseKind::kCaseZ);
+      }
+      if (MatchKeyword("casex")) {
+        return ParseCaseStatement(out_statement, CaseKind::kCaseX);
+      }
+      if (MatchKeyword("case")) {
+        return ParseCaseStatement(out_statement, CaseKind::kCase);
       }
       if (MatchKeyword("if")) {
-        ErrorHere("unique if not supported in v0");
-        return false;
+        return ParseIfStatement(out_statement);
       }
       ErrorHere("unique statement not supported in v0");
       return false;
     }
     if (MatchKeyword("priority")) {
-      if (MatchKeyword("case") || MatchKeyword("casez") ||
-          MatchKeyword("casex")) {
-        ErrorHere("priority case not supported in v0");
-        return false;
+      if (MatchKeyword("casez")) {
+        return ParseCaseStatement(out_statement, CaseKind::kCaseZ);
+      }
+      if (MatchKeyword("casex")) {
+        return ParseCaseStatement(out_statement, CaseKind::kCaseX);
+      }
+      if (MatchKeyword("case")) {
+        return ParseCaseStatement(out_statement, CaseKind::kCase);
       }
       if (MatchKeyword("if")) {
-        ErrorHere("priority if not supported in v0");
-        return false;
+        return ParseIfStatement(out_statement);
       }
       ErrorHere("priority statement not supported in v0");
       return false;
@@ -4251,39 +4348,30 @@ class Parser {
       return false;
     }
     std::unique_ptr<Expr> event_expr;
-    if (MatchSymbol("(")) {
-      if (MatchSymbol("*")) {
-        ErrorHere("event control '*' not supported in v0");
-        return false;
-      }
-      if (MatchKeyword("posedge") || MatchKeyword("negedge")) {
-        ErrorHere("edge-sensitive event control not supported in v0");
-        return false;
-      }
-      event_expr = ParseExpr();
-      if (!event_expr) {
-        return false;
-      }
-      if (!MatchSymbol(")")) {
-        ErrorHere("expected ')' after event control");
-        return false;
-      }
+    EventEdgeKind edge = EventEdgeKind::kAny;
+    bool has_paren = MatchSymbol("(");
+    if (MatchSymbol("*")) {
+      // @* or @(*)
     } else {
-      if (MatchSymbol("*")) {
-        ErrorHere("event control '*' not supported in v0");
-        return false;
-      }
-      if (MatchKeyword("posedge") || MatchKeyword("negedge")) {
-        ErrorHere("edge-sensitive event control not supported in v0");
-        return false;
+      if (MatchKeyword("posedge")) {
+        edge = EventEdgeKind::kPosedge;
+      } else if (MatchKeyword("negedge")) {
+        edge = EventEdgeKind::kNegedge;
       }
       event_expr = ParseExpr();
       if (!event_expr) {
         return false;
       }
     }
+    if (has_paren) {
+      if (!MatchSymbol(")")) {
+        ErrorHere("expected ')' after event control");
+        return false;
+      }
+    }
     Statement stmt;
     stmt.kind = StatementKind::kEventControl;
+    stmt.event_edge = edge;
     stmt.event_expr = std::move(event_expr);
     if (MatchSymbol(";")) {
       *out_statement = std::move(stmt);
@@ -4307,7 +4395,7 @@ class Parser {
       }
     }
     std::string name;
-    if (!ConsumeIdentifier(&name)) {
+    if (!ConsumeHierIdentifier(&name)) {
       ErrorHere("expected event name after '->'");
       return false;
     }
@@ -4368,6 +4456,35 @@ class Parser {
       ErrorHere("expected ';' after system task");
       return false;
     }
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
+  bool ParseAssertStatement(Statement* out_statement) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'assert'");
+      return false;
+    }
+    std::unique_ptr<Expr> condition = ParseExpr();
+    if (!condition) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after assert condition");
+      return false;
+    }
+    std::vector<Statement> then_body;
+    if (!ParseStatementBody(&then_body)) {
+      return false;
+    }
+    if (MatchKeyword("else")) {
+      std::vector<Statement> else_body;
+      if (!ParseStatementBody(&else_body)) {
+        return false;
+      }
+    }
+    Statement stmt;
+    stmt.kind = StatementKind::kBlock;
     *out_statement = std::move(stmt);
     return true;
   }
@@ -4750,28 +4867,100 @@ class Parser {
 
   bool ParseSequentialAssign(Statement* out_statement) {
     std::string lhs;
-    if (!ConsumeIdentifier(&lhs)) {
+    if (!ConsumeHierIdentifier(&lhs)) {
       ErrorHere("expected identifier in sequential assignment");
       return false;
     }
     std::unique_ptr<Expr> lhs_index;
     std::vector<std::unique_ptr<Expr>> lhs_indices;
+    bool lhs_has_range = false;
+    bool lhs_indexed_range = false;
+    bool lhs_indexed_desc = false;
+    int lhs_indexed_width = 0;
+    int lhs_msb = 0;
+    int lhs_lsb = 0;
+    std::unique_ptr<Expr> lhs_msb_expr;
+    std::unique_ptr<Expr> lhs_lsb_expr;
     while (MatchSymbol("[")) {
-      auto index = ParseExpr();
-      if (!index) {
+      auto msb_expr = ParseExpr();
+      if (!msb_expr) {
         return false;
       }
+      if (MatchSymbol("+:") || MatchSymbol("-:")) {
+        bool indexed_desc = (Previous().text == "-:");
+        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
+          ErrorHere("indexed part select requires identifier");
+          return false;
+        }
+        std::unique_ptr<Expr> width_expr = ParseExpr();
+        if (!width_expr) {
+          return false;
+        }
+        int64_t width_value = 0;
+        if (!EvalConstExpr(*width_expr, &width_value) || width_value <= 0) {
+          ErrorHere("indexed part select width must be constant");
+          return false;
+        }
+        auto base_clone = CloneExprSimple(*msb_expr);
+        auto width_minus = MakeNumberExpr(
+            static_cast<uint64_t>(width_value - 1));
+        std::unique_ptr<Expr> lsb_expr;
+        std::unique_ptr<Expr> msb_out;
+        if (indexed_desc) {
+          msb_out = std::move(msb_expr);
+          lsb_expr = MakeBinary('-', std::move(base_clone),
+                                std::move(width_minus));
+        } else {
+          lsb_expr = std::move(msb_expr);
+          msb_out = MakeBinary('+', std::move(base_clone),
+                               std::move(width_minus));
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return false;
+        }
+        lhs_has_range = true;
+        lhs_indexed_range = true;
+        lhs_indexed_desc = indexed_desc;
+        lhs_indexed_width = static_cast<int>(width_value);
+        lhs_msb_expr = std::move(msb_out);
+        lhs_lsb_expr = std::move(lsb_expr);
+        break;
+      }
       if (MatchSymbol(":")) {
-        ErrorHere("part-select assignment target not supported in v0");
-        return false;
+        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
+          ErrorHere("part select requires identifier");
+          return false;
+        }
+        std::unique_ptr<Expr> lsb_expr = ParseExpr();
+        if (!lsb_expr) {
+          return false;
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return false;
+        }
+        lhs_has_range = true;
+        lhs_msb_expr = std::move(msb_expr);
+        lhs_lsb_expr = std::move(lsb_expr);
+        int64_t msb = 0;
+        int64_t lsb = 0;
+        if (!TryEvalConstExpr(*lhs_msb_expr, &msb) ||
+            !TryEvalConstExpr(*lhs_lsb_expr, &lsb)) {
+          ErrorHere("part select indices must be constant in v0");
+          return false;
+        }
+        lhs_msb = static_cast<int>(msb);
+        lhs_lsb = static_cast<int>(lsb);
+        break;
       }
       if (!MatchSymbol("]")) {
         ErrorHere("expected ']' after assignment target");
         return false;
       }
-      lhs_indices.push_back(std::move(index));
+      lhs_indices.push_back(std::move(msb_expr));
     }
-    if (lhs_indices.size() == 1) {
+    if (!lhs_has_range && lhs_indices.size() == 1) {
       lhs_index = std::move(lhs_indices.front());
       lhs_indices.clear();
     }
@@ -4808,6 +4997,14 @@ class Parser {
     stmt.assign.lhs = lhs;
     stmt.assign.lhs_index = std::move(lhs_index);
     stmt.assign.lhs_indices = std::move(lhs_indices);
+    stmt.assign.lhs_has_range = lhs_has_range;
+    stmt.assign.lhs_indexed_range = lhs_indexed_range;
+    stmt.assign.lhs_indexed_desc = lhs_indexed_desc;
+    stmt.assign.lhs_indexed_width = lhs_indexed_width;
+    stmt.assign.lhs_msb = lhs_msb;
+    stmt.assign.lhs_lsb = lhs_lsb;
+    stmt.assign.lhs_msb_expr = std::move(lhs_msb_expr);
+    stmt.assign.lhs_lsb_expr = std::move(lhs_lsb_expr);
     stmt.assign.rhs = std::move(rhs);
     stmt.assign.delay = std::move(delay);
     stmt.assign.nonblocking = nonblocking;
@@ -4998,15 +5195,25 @@ class Parser {
   std::unique_ptr<Expr> ParseEquality() {
     auto left = ParseRelational();
     while (true) {
-      if (Peek().kind == TokenKind::kSymbol &&
-          Peek(1).kind == TokenKind::kSymbol &&
-          Peek(2).kind == TokenKind::kSymbol &&
-          ((Peek().text == "=" && Peek(1).text == "=" &&
-            Peek(2).text == "?") ||
-           (Peek().text == "!" && Peek(1).text == "=" &&
-            Peek(2).text == "?"))) {
-        ErrorHere("wildcard equality not supported in v0");
-        return nullptr;
+      if (MatchSymbol3("===")) {
+        auto right = ParseRelational();
+        left = MakeBinary('C', std::move(left), std::move(right));
+        continue;
+      }
+      if (MatchSymbol3("!==")) {
+        auto right = ParseRelational();
+        left = MakeBinary('c', std::move(left), std::move(right));
+        continue;
+      }
+      if (MatchSymbol3("==?")) {
+        auto right = ParseRelational();
+        left = MakeBinary('W', std::move(left), std::move(right));
+        continue;
+      }
+      if (MatchSymbol3("!=?")) {
+        auto right = ParseRelational();
+        left = MakeBinary('w', std::move(left), std::move(right));
+        continue;
       }
       if (MatchSymbol2("==")) {
         auto right = ParseRelational();
@@ -5136,12 +5343,6 @@ class Parser {
   std::unique_ptr<Expr> ParseMulDiv() {
     auto left = ParseUnary();
     while (true) {
-      if (Peek().kind == TokenKind::kSymbol &&
-          Peek(1).kind == TokenKind::kSymbol &&
-          Peek().text == "*" && Peek(1).text == "*") {
-        ErrorHere("power operator '**' not supported in v0");
-        return nullptr;
-      }
       if (MatchSymbol("*")) {
         auto right = ParseUnary();
         left = MakeBinary('*', std::move(left), std::move(right));
@@ -5158,6 +5359,21 @@ class Parser {
         continue;
       }
       break;
+    }
+    return left;
+  }
+
+  std::unique_ptr<Expr> ParsePower() {
+    auto left = ParsePrimary();
+    if (!left) {
+      return nullptr;
+    }
+    if (MatchSymbol2("**")) {
+      auto right = ParseUnary();
+      if (!right) {
+        return nullptr;
+      }
+      left = MakeBinary('p', std::move(left), std::move(right));
     }
     return left;
   }
@@ -5212,7 +5428,7 @@ class Parser {
       expr->operand = ParseUnary();
       return expr;
     }
-    return ParsePrimary();
+    return ParsePower();
   }
 
   std::unique_ptr<Expr> ParsePrimary() {
@@ -5300,10 +5516,8 @@ class Parser {
         expr->is_signed = true;
       }
     } else if (Peek().kind == TokenKind::kIdentifier) {
-      std::string name = Peek().text;
-      Advance();
-      if (Peek().kind == TokenKind::kSymbol && Peek().text == ".") {
-        ErrorHere("hierarchical names not supported in v0");
+      std::string name;
+      if (!ConsumeHierIdentifier(&name)) {
         return nullptr;
       }
       if (MatchSymbol("'")) {
@@ -6008,6 +6222,24 @@ class Parser {
           case '*':
             *out_value = lhs * rhs;
             return true;
+          case 'p': {
+            if (rhs < 0) {
+              *out_value = 0;
+              return true;
+            }
+            int64_t result = 1;
+            int64_t base = lhs;
+            uint64_t exp = static_cast<uint64_t>(rhs);
+            while (exp != 0) {
+              if (exp & 1ull) {
+                result *= base;
+              }
+              base *= base;
+              exp >>= 1ull;
+            }
+            *out_value = result;
+            return true;
+          }
           case '/':
             if (rhs == 0) {
               ErrorHere("division by zero in constant expression");
@@ -6041,6 +6273,14 @@ class Parser {
             *out_value = (lhs == rhs) ? 1 : 0;
             return true;
           case 'N':
+            *out_value = (lhs != rhs) ? 1 : 0;
+            return true;
+          case 'C':
+          case 'W':
+            *out_value = (lhs == rhs) ? 1 : 0;
+            return true;
+          case 'c':
+          case 'w':
             *out_value = (lhs != rhs) ? 1 : 0;
             return true;
           case '<':
@@ -6204,6 +6444,24 @@ class Parser {
           case '*':
             *out_value = lhs * rhs;
             return true;
+          case 'p': {
+            if (rhs < 0) {
+              *out_value = 0;
+              return true;
+            }
+            int64_t result = 1;
+            int64_t base = lhs;
+            uint64_t exp = static_cast<uint64_t>(rhs);
+            while (exp != 0) {
+              if (exp & 1ull) {
+                result *= base;
+              }
+              base *= base;
+              exp >>= 1ull;
+            }
+            *out_value = result;
+            return true;
+          }
           case '/':
             if (rhs == 0) {
               return false;
@@ -6235,6 +6493,14 @@ class Parser {
             *out_value = (lhs == rhs) ? 1 : 0;
             return true;
           case 'N':
+            *out_value = (lhs != rhs) ? 1 : 0;
+            return true;
+          case 'C':
+          case 'W':
+            *out_value = (lhs == rhs) ? 1 : 0;
+            return true;
+          case 'c':
+          case 'w':
             *out_value = (lhs != rhs) ? 1 : 0;
             return true;
           case '<':

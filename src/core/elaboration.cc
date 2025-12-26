@@ -244,7 +244,7 @@ void UpdateBindingsFromStatement(const Statement& statement,
   if (statement.kind == StatementKind::kAssign) {
     const auto& assign = statement.assign;
     if (assign.nonblocking || assign.lhs_index ||
-        !assign.lhs_indices.empty() || !assign.rhs) {
+        !assign.lhs_indices.empty() || assign.lhs_has_range || !assign.rhs) {
       params->values.erase(assign.lhs);
       params->exprs.erase(assign.lhs);
       return;
@@ -401,7 +401,8 @@ bool FindLoopVarUpdate(const std::vector<Statement>& body,
       if (stmt.assign.lhs != loop_var) {
         continue;
       }
-      if (stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty()) {
+      if (stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty() ||
+          stmt.assign.lhs_has_range) {
         diagnostics->Add(Severity::kError,
                          "while-loop step cannot use indexed assignment in v0");
         return false;
@@ -874,6 +875,12 @@ bool CloneStatement(
   out->block_label = statement.block_label;
   if (statement.kind == StatementKind::kAssign) {
     out->assign.lhs = rename(statement.assign.lhs);
+    out->assign.lhs_has_range = statement.assign.lhs_has_range;
+    out->assign.lhs_indexed_range = statement.assign.lhs_indexed_range;
+    out->assign.lhs_indexed_desc = statement.assign.lhs_indexed_desc;
+    out->assign.lhs_indexed_width = statement.assign.lhs_indexed_width;
+    out->assign.lhs_msb = statement.assign.lhs_msb;
+    out->assign.lhs_lsb = statement.assign.lhs_lsb;
     if (!statement.assign.lhs_indices.empty()) {
       const Net* net = FindNet(source_module, statement.assign.lhs);
       if (!net || net->array_dims.empty()) {
@@ -915,6 +922,39 @@ bool CloneStatement(
       }
       out->assign.lhs_index =
           SimplifyExpr(std::move(out->assign.lhs_index), flat_module);
+    }
+    if (statement.assign.lhs_msb_expr) {
+      out->assign.lhs_msb_expr =
+          CloneExprWithParams(*statement.assign.lhs_msb_expr, rename, params,
+                              &source_module, diagnostics, nullptr);
+      if (!out->assign.lhs_msb_expr) {
+        return false;
+      }
+      out->assign.lhs_msb_expr =
+          SimplifyExpr(std::move(out->assign.lhs_msb_expr), flat_module);
+    }
+    if (statement.assign.lhs_lsb_expr) {
+      out->assign.lhs_lsb_expr =
+          CloneExprWithParams(*statement.assign.lhs_lsb_expr, rename, params,
+                              &source_module, diagnostics, nullptr);
+      if (!out->assign.lhs_lsb_expr) {
+        return false;
+      }
+      out->assign.lhs_lsb_expr =
+          SimplifyExpr(std::move(out->assign.lhs_lsb_expr), flat_module);
+    }
+    if (out->assign.lhs_has_range && !out->assign.lhs_indexed_range) {
+      int64_t msb = 0;
+      int64_t lsb = 0;
+      if (!out->assign.lhs_msb_expr || !out->assign.lhs_lsb_expr ||
+          !TryEvalConstExprWithParams(*out->assign.lhs_msb_expr, params, &msb) ||
+          !TryEvalConstExprWithParams(*out->assign.lhs_lsb_expr, params, &lsb)) {
+        diagnostics->Add(Severity::kError,
+                         "part-select assignment indices must be constant in v0");
+        return false;
+      }
+      out->assign.lhs_msb = static_cast<int>(msb);
+      out->assign.lhs_lsb = static_cast<int>(lsb);
     }
     if (statement.assign.rhs) {
       out->assign.rhs =
@@ -1212,6 +1252,7 @@ bool CloneStatement(
   }
   if (statement.kind == StatementKind::kEventControl) {
     out->kind = StatementKind::kEventControl;
+    out->event_edge = statement.event_edge;
     if (statement.event_expr) {
       out->event_expr =
           CloneExprWithParams(*statement.event_expr, rename, params,
@@ -1461,12 +1502,16 @@ int ExprWidth(const Expr& expr, const Module& module) {
       }
       return expr.operand ? ExprWidth(*expr.operand, module) : 32;
     case ExprKind::kBinary: {
-      if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
-          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
-          expr.op == 'A' || expr.op == 'O') {
+      if (expr.op == 'E' || expr.op == 'N' || expr.op == 'C' ||
+          expr.op == 'c' || expr.op == 'W' || expr.op == 'w' ||
+          expr.op == '<' || expr.op == '>' || expr.op == 'L' ||
+          expr.op == 'G' || expr.op == 'A' || expr.op == 'O') {
         return 1;
       }
       if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
+        return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
+      }
+      if (expr.op == 'p') {
         return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
       }
       int lhs = expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
@@ -1832,7 +1877,8 @@ void CollectAssignedSignalsNoIndex(const Statement& statement,
   switch (statement.kind) {
     case StatementKind::kAssign:
       if (!statement.assign.lhs_index &&
-          statement.assign.lhs_indices.empty()) {
+          statement.assign.lhs_indices.empty() &&
+          !statement.assign.lhs_has_range) {
         out->insert(statement.assign.lhs);
       }
       break;
@@ -2501,6 +2547,35 @@ bool InlineModule(const Program& program, const Module& module,
   }
 
   auto rename = [&](const std::string& ident) -> std::string {
+    if (ident.find('.') != std::string::npos) {
+      std::string top_name = hier_prefix;
+      size_t top_dot = top_name.find('.');
+      if (top_dot != std::string::npos) {
+        top_name = top_name.substr(0, top_dot);
+      }
+      bool absolute = (!top_name.empty() &&
+                       ident.rfind(top_name + ".", 0) == 0);
+      std::string path = ident;
+      if (absolute) {
+        path = ident.substr(top_name.size() + 1);
+      }
+      std::string flat;
+      size_t start = 0;
+      while (start < path.size()) {
+        size_t next = path.find('.', start);
+        if (next == std::string::npos) {
+          flat += path.substr(start);
+          break;
+        }
+        flat += path.substr(start, next - start);
+        flat += "__";
+        start = next + 1;
+      }
+      if (!absolute && !prefix.empty()) {
+        flat = prefix + flat;
+      }
+      return flat;
+    }
     auto it = port_map.find(ident);
     if (it != port_map.end()) {
       return it->second.signal;
@@ -2775,11 +2850,14 @@ bool InlineModule(const Program& program, const Module& module,
       return false;
     }
 
+    std::string child_prefix = prefix + instance.name + "__";
+    std::string child_hier = hier_prefix + "." + instance.name;
     std::unordered_map<std::string, PortBinding> child_port_map;
     std::unordered_set<std::string> child_ports;
     std::unordered_map<std::string, PortDir> child_port_dirs;
     std::unordered_map<std::string, int> child_port_widths;
     std::unordered_map<std::string, bool> child_port_signed;
+    std::unordered_map<std::string, NetType> child_port_types;
     for (const auto& port : child->ports) {
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr,
@@ -2787,11 +2865,19 @@ bool InlineModule(const Program& program, const Module& module,
                              "port '" + port.name + "'")) {
         return false;
       }
+      NetType port_type = NetType::kWire;
+      if (const Net* net = FindNet(*child, port.name)) {
+        port_type = net->type;
+      }
       child_ports.insert(port.name);
       child_port_dirs[port.name] = port.dir;
       child_port_widths[port.name] = width;
       child_port_signed[port.name] = port.is_signed;
+      child_port_types[port.name] = port_type;
+      child_port_map[port.name] = PortBinding{child_prefix + port.name};
     }
+    std::unordered_set<std::string> seen_ports;
+    std::unordered_set<std::string> connected_ports;
     const bool positional = !instance.connections.empty() &&
                             !instance.connections.front().port.empty() &&
                             std::isdigit(static_cast<unsigned char>(
@@ -2818,74 +2904,26 @@ bool InlineModule(const Program& program, const Module& module,
                              "' in instance '" + instance.name + "'");
         return false;
       }
-      if (child_port_map.find(port_name) != child_port_map.end()) {
+      if (seen_ports.count(port_name) > 0) {
         diagnostics->Add(Severity::kError,
                          "duplicate connection for port '" + port_name +
                              "' in instance '" + instance.name + "'");
         return false;
       }
+      seen_ports.insert(port_name);
       if (!connection.expr) {
         continue;
       }
-      if (connection.expr->kind == ExprKind::kIdentifier) {
-        const std::string signal = rename(connection.expr->ident);
-        child_port_map[port_name] = PortBinding{signal};
-        continue;
-      }
-      if (connection.expr->kind == ExprKind::kNumber) {
-        if (child_port_dirs[port_name] != PortDir::kInput) {
-          diagnostics->Add(Severity::kError,
-                           "literal connection only allowed for input port '" +
-                               port_name + "' in instance '" +
-                               instance.name + "'");
-          return false;
-        }
-        std::string literal_name =
-            prefix + instance.name + "__" + port_name + "__lit";
-        int width = child_port_widths[port_name];
-        if (!AddFlatNet(literal_name, width, child_port_signed[port_name],
-                        NetType::kWire, {},
-                        hier_prefix + "." + instance.name + "." + port_name +
-                            ".__lit",
-                        out, net_names, flat_to_hier, diagnostics)) {
-          return false;
-        }
-        child_port_map[port_name] = PortBinding{literal_name};
-        auto literal_expr = CloneExprWithParams(*connection.expr,
-                                                 [](const std::string& ident) {
-                                                   return ident;
-                                                 },
-                                                 params, &module, diagnostics,
-                                                 nullptr);
-        if (!literal_expr) {
-          return false;
-        }
-        Assign literal_assign;
-        literal_assign.lhs = literal_name;
-        literal_assign.rhs = std::move(literal_expr);
-        out->assigns.push_back(std::move(literal_assign));
-        continue;
-      }
-
+      connected_ports.insert(port_name);
       auto resolved_expr = CloneExprWithParams(*connection.expr, rename, params,
                                                &module, diagnostics, nullptr);
       if (!resolved_expr) {
         return false;
       }
+      const std::string& port_signal = child_port_map[port_name].signal;
       if (child_port_dirs[port_name] == PortDir::kInput) {
-        std::string expr_name =
-            prefix + instance.name + "__" + port_name + "__expr";
-        int width = child_port_widths[port_name];
-        if (!AddFlatNet(expr_name, width, child_port_signed[port_name],
-                        NetType::kWire, {},
-                        hier_prefix + "." + instance.name + "." + port_name +
-                            ".__expr",
-                        out, net_names, flat_to_hier, diagnostics)) {
-          return false;
-        }
-        child_port_map[port_name] = PortBinding{expr_name};
         Assign expr_assign;
-        expr_assign.lhs = expr_name;
+        expr_assign.lhs = port_signal;
         expr_assign.rhs = std::move(resolved_expr);
         out->assigns.push_back(std::move(expr_assign));
         continue;
@@ -2920,17 +2958,6 @@ bool InlineModule(const Program& program, const Module& module,
             "output port connections must be identifiers or constant selects in v0");
         return false;
       }
-      std::string temp_name =
-          prefix + instance.name + "__" + port_name + "__out";
-      int width = child_port_widths[port_name];
-      if (!AddFlatNet(temp_name, width, child_port_signed[port_name],
-                      NetType::kWire, {},
-                      hier_prefix + "." + instance.name + "." + port_name +
-                          ".__out",
-                      out, net_names, flat_to_hier, diagnostics)) {
-        return false;
-      }
-      child_port_map[port_name] = PortBinding{temp_name};
       Assign out_assign;
       out_assign.lhs = base_name;
       out_assign.lhs_has_range = true;
@@ -2938,34 +2965,32 @@ bool InlineModule(const Program& program, const Module& module,
       out_assign.lhs_lsb = lsb;
       auto rhs = std::make_unique<Expr>();
       rhs->kind = ExprKind::kIdentifier;
-      rhs->ident = temp_name;
+      rhs->ident = port_signal;
       out_assign.rhs = std::move(rhs);
       out->assigns.push_back(std::move(out_assign));
     }
 
-    std::string child_prefix = prefix + instance.name + "__";
-    std::string child_hier = hier_prefix + "." + instance.name;
-
     for (const auto& port : child->ports) {
-      if (child_port_map.find(port.name) == child_port_map.end()) {
+      std::string port_name = port.name;
+      std::string port_net = child_prefix + port_name;
+      NetType type = child_port_types[port_name];
+      if (!AddFlatNet(port_net, child_port_widths[port_name],
+                      child_port_signed[port_name], type, {},
+                      child_hier + "." + port_name, out, net_names,
+                      flat_to_hier, diagnostics)) {
+        return false;
+      }
+      if (connected_ports.count(port_name) == 0) {
         if (port.dir == PortDir::kInput) {
           diagnostics->Add(Severity::kWarning,
                            "unconnected input '" + port.name +
                                "' in instance '" + instance.name +
                                "' (defaulting to " +
                                std::string(enable_4state ? "X" : "0") + ")");
-          std::string default_name = child_prefix + port.name;
-          if (!AddFlatNet(default_name, child_port_widths[port.name],
-                          child_port_signed[port.name], NetType::kWire, {},
-                          child_hier + "." + port.name, out, net_names,
-                          flat_to_hier, diagnostics)) {
-            return false;
-          }
-          child_port_map[port.name] = PortBinding{default_name};
           Assign default_assign;
-          default_assign.lhs = default_name;
+          default_assign.lhs = port_net;
           default_assign.rhs = enable_4state
-                                   ? MakeAllXExpr(child_port_widths[port.name])
+                                   ? MakeAllXExpr(child_port_widths[port_name])
                                    : MakeNumberExpr(0);
           out->assigns.push_back(std::move(default_assign));
         } else {

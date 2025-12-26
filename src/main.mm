@@ -137,6 +137,9 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
         return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
       }
+      if (expr.op == 'p') {
+        return expr.lhs ? ExprWidth(*expr.lhs, module) : 32;
+      }
       return std::max(expr.lhs ? ExprWidth(*expr.lhs, module) : 32,
                       expr.rhs ? ExprWidth(*expr.rhs, module) : 32);
     case gpga::ExprKind::kTernary:
@@ -655,9 +658,18 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     return;
   }
   if (stmt.kind == gpga::StatementKind::kEventControl) {
-    std::string expr =
-        stmt.event_expr ? ExprToString(*stmt.event_expr, module) : "*";
-    os << pad << "@(" << expr << ")";
+    if (!stmt.event_expr) {
+      os << pad << "@*";
+    } else {
+      std::string expr = ExprToString(*stmt.event_expr, module);
+      os << pad << "@(";
+      if (stmt.event_edge == gpga::EventEdgeKind::kPosedge) {
+        os << "posedge ";
+      } else if (stmt.event_edge == gpga::EventEdgeKind::kNegedge) {
+        os << "negedge ";
+      }
+      os << expr << ")";
+    }
     if (stmt.event_body.empty()) {
       os << ";\n";
       return;
