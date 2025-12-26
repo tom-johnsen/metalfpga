@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Compiles a subset of Verilog HDL into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.3 - Full generate/loop coverage, signed arithmetic, and 4-state logic support. 114 passing test cases in `verilog/pass/`.
+**Current Status**: v0.4 (in development) - Event scheduling system in progress. Full generate/loop coverage, signed arithmetic, and 4-state logic support. 174 passing test cases in `verilog/pass/`.
 
 ## What is this?
 
@@ -98,17 +98,21 @@ cmake --build build
 **High Priority**:
 - System tasks (`$display`, `$monitor`, `$finish`, etc.)
 - Tasks (procedural `task` blocks)
+- Event scheduling system (in development for v0.4)
+- `time` data type and `$time` system function
+- Named events (`event` keyword and `->` trigger)
 
 **Medium Priority**:
 - General timing controls (`#` delays)
 - Sensitivity lists beyond `@*` and `@(posedge/negedge clk)`
+- `timescale` directive
 
 **Low Priority**:
 - SystemVerilog constructs
 
 ## Test Suite
 
-**114 passing test cases** in `verilog/pass/`:
+**174 passing test cases** in `verilog/pass/`:
 - Arithmetic and logic operations
 - Reduction operators (all 6 variants: &, |, ^, ~&, ~|, ~^)
   - Comprehensive coverage: nested, slices, wide buses (64/128/256-bit)
@@ -162,6 +166,9 @@ The compiler detects and reports:
 - [IR Invariants](docs/gpga/ir_invariants.md) - Flattened netlist guarantees
 - [Roadmap](docs/gpga/roadmap.md) - Development milestones
 - [4-State Logic Plan](4STATE.md) - X/Z support design document
+- [Bit Packing Strategy](docs/bit_packing_strategy.md) - GPU memory optimization techniques
+- [Verilog Reference](docs/VERILOG_REFERENCE.md) - Language reference
+- [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ## Project Structure
 
@@ -169,13 +176,19 @@ The compiler detects and reports:
 src/
   frontend/       # Verilog parser and AST
   core/           # Elaboration and flattening
+  ir/             # Intermediate representation
   codegen/        # MSL and host code generation
+  msl/            # Metal Shading Language backend
   runtime/        # Metal runtime wrapper
   utils/          # Diagnostics and utilities
 verilog/
-  pass/           # Passing test cases
+  pass/           # Passing test cases (174 files)
   test_*.v        # Additional test coverage
-docs/gpga/        # Documentation
+docs/
+  gpga/           # Core documentation
+  bit_packing_strategy.md  # GPU memory optimization
+  VERILOG_REFERENCE.md     # Language reference
+  ASYNC_DEBUGGING.md       # Async circuit debugging
 ```
 
 ## Contributing
