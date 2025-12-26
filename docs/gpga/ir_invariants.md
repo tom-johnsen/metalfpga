@@ -23,7 +23,11 @@ flattened netlist it produces.
 - Unconnected inputs are defaulted to 0 (2-state) or X (4-state) with a
   warning and a synthesized assign.
 - Unconnected outputs are allowed with a warning.
-- Multiple drivers for the same signal are rejected as an error.
+- Multiple continuous drivers on wire-like nets are allowed in 4-state; regs/always
+  conflicts still error. Wired net types (`wand`/`wor`/`triand`/`trior`) preserve
+  their net type through elaboration.
+- Switch primitives (`tran`, `tranif0/1`, `cmos`) are preserved with flat
+  terminal names and width-checked during elaboration.
 - Combinational cycles in continuous assigns are rejected as an error.
 
 ## Expressions

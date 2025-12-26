@@ -150,7 +150,7 @@ done
 
 The compiler detects and reports:
 - Combinational loops
-- Multiple drivers on signals
+- Multiple drivers on regs or mixed always/assign conflicts (wire multi-drive is resolved in 4-state)
 - Recursive module instantiation
 - Undeclared signals
 - Width mismatches (with warnings)

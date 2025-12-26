@@ -7,14 +7,19 @@
 - output
 - inout
 - wire
+- tri (alias of wire)
 - assign
+- continuous assign drive strengths (`(strong0, strong1)` etc)
 - module instantiation (named + positional port connections)
 - reg
 - integer (32-bit signed reg)
 - signed (ports/nets)
 - local reg declarations inside procedural blocks (treated as locals)
+- compiler directives: `define` / `undef`, `ifdef` / `ifndef` / `else` / `endif`, `include`, `timescale` (ignored)
 - always
 - always @*
+- always @(a, b, c) / always @(a or b)
+- always @(posedge clk, negedge reset) (edge lists; first edge used for tick scheduling)
 - initial
 - begin / end
 - posedge
@@ -27,7 +32,9 @@
 - indexed access (`mem[addr]`, `mem[row][col]`, `a[i]` for variable bit select)
 - parameter (module header and body, constant expressions only)
 - localparam (module body, constant expressions only)
+- defparam (single-level instance overrides)
 - function (inputs + single return assignment, inlined during elaboration)
+- specify / endspecify (parsed and ignored; timing not modeled)
 - ternary `?:`
 - unary operators (`~`, `-`, `+`)
 - logical operators (`!`, `&&`, `||`)
@@ -47,6 +54,12 @@
 - case / casez / casex (procedural)
 - `$signed(...)` / `$unsigned(...)` casts
 - `$clog2(...)` constant folding
+- pullup / pulldown (pull strength + highz for opposite value)
+- gate primitives (`buf`, `not`, `and`, `or`, `nand`, `nor`, `xor`, `xnor`,
+  `bufif0/1`, `notif0/1`, `nmos`, `pmos`) with drive strengths (no delays)
+- switch primitives (`tran`, `tranif0/1`, `cmos`) in 4-state mode (no delays)
+- special net types (`wand`, `wor`, `tri0`, `tri1`, `triand`, `trior`,
+  `trireg`, `supply0`, `supply1`)
 
 ### Operators implemented
 - `+` `-` `%`
@@ -62,11 +75,12 @@
 ### Elaboration rules
 - Unconnected inputs default to 0 (2-state) or X (4-state) with a warning
 - Unconnected outputs are ignored with a warning
-- Multiple drivers on a net is an error
+- Multiple continuous drivers on wire nets are resolved in 4-state; regs/always conflicts still error
 
 ### Codegen notes
 - Shift overshoot uses Verilog semantics: `a << s` or `a >> s` yields 0 when `s >= width`
 - Unsized literals are minimally sized and explicitly zext/trunc'd to the context width
+- Tristate `Z` is treated as high-impedance for driver resolution; reading `Z` behaves like `X`
 
 ## Planned
 - tasks
