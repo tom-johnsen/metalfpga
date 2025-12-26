@@ -1001,6 +1001,222 @@ void CollectAssignedSignals(const Statement& stmt,
   }
 }
 
+void CollectReadSignalsExpr(const Expr& expr,
+                            std::unordered_set<std::string>* out) {
+  if (!out) {
+    return;
+  }
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+      out->insert(expr.ident);
+      return;
+    case ExprKind::kUnary:
+      if (expr.operand) {
+        CollectReadSignalsExpr(*expr.operand, out);
+      }
+      return;
+    case ExprKind::kBinary:
+      if (expr.lhs) {
+        CollectReadSignalsExpr(*expr.lhs, out);
+      }
+      if (expr.rhs) {
+        CollectReadSignalsExpr(*expr.rhs, out);
+      }
+      return;
+    case ExprKind::kTernary:
+      if (expr.condition) {
+        CollectReadSignalsExpr(*expr.condition, out);
+      }
+      if (expr.then_expr) {
+        CollectReadSignalsExpr(*expr.then_expr, out);
+      }
+      if (expr.else_expr) {
+        CollectReadSignalsExpr(*expr.else_expr, out);
+      }
+      return;
+    case ExprKind::kSelect:
+      if (expr.base) {
+        CollectReadSignalsExpr(*expr.base, out);
+      }
+      if (expr.msb_expr) {
+        CollectReadSignalsExpr(*expr.msb_expr, out);
+      }
+      if (expr.lsb_expr) {
+        CollectReadSignalsExpr(*expr.lsb_expr, out);
+      }
+      return;
+    case ExprKind::kIndex:
+      if (expr.base) {
+        CollectReadSignalsExpr(*expr.base, out);
+      }
+      if (expr.index) {
+        CollectReadSignalsExpr(*expr.index, out);
+      }
+      return;
+    case ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        if (arg) {
+          CollectReadSignalsExpr(*arg, out);
+        }
+      }
+      return;
+    case ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        if (element) {
+          CollectReadSignalsExpr(*element, out);
+        }
+      }
+      if (expr.repeat_expr) {
+        CollectReadSignalsExpr(*expr.repeat_expr, out);
+      }
+      return;
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return;
+  }
+}
+
+void CollectReadSignals(const Statement& stmt,
+                        std::unordered_set<std::string>* out) {
+  if (!out) {
+    return;
+  }
+  if (stmt.kind == StatementKind::kAssign) {
+    if (stmt.assign.rhs) {
+      CollectReadSignalsExpr(*stmt.assign.rhs, out);
+    }
+    if (stmt.assign.lhs_index) {
+      CollectReadSignalsExpr(*stmt.assign.lhs_index, out);
+    }
+    for (const auto& index : stmt.assign.lhs_indices) {
+      if (index) {
+        CollectReadSignalsExpr(*index, out);
+      }
+    }
+    if (stmt.assign.delay) {
+      CollectReadSignalsExpr(*stmt.assign.delay, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    if (stmt.condition) {
+      CollectReadSignalsExpr(*stmt.condition, out);
+    }
+    for (const auto& inner : stmt.then_branch) {
+      CollectReadSignals(inner, out);
+    }
+    for (const auto& inner : stmt.else_branch) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    if (stmt.case_expr) {
+      CollectReadSignalsExpr(*stmt.case_expr, out);
+    }
+    for (const auto& item : stmt.case_items) {
+      for (const auto& label : item.labels) {
+        if (label) {
+          CollectReadSignalsExpr(*label, out);
+        }
+      }
+      for (const auto& inner : item.body) {
+        CollectReadSignals(inner, out);
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    if (stmt.for_init_rhs) {
+      CollectReadSignalsExpr(*stmt.for_init_rhs, out);
+    }
+    if (stmt.for_condition) {
+      CollectReadSignalsExpr(*stmt.for_condition, out);
+    }
+    if (stmt.for_step_rhs) {
+      CollectReadSignalsExpr(*stmt.for_step_rhs, out);
+    }
+    for (const auto& inner : stmt.for_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    if (stmt.while_condition) {
+      CollectReadSignalsExpr(*stmt.while_condition, out);
+    }
+    for (const auto& inner : stmt.while_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    if (stmt.repeat_count) {
+      CollectReadSignalsExpr(*stmt.repeat_count, out);
+    }
+    for (const auto& inner : stmt.repeat_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    if (stmt.delay) {
+      CollectReadSignalsExpr(*stmt.delay, out);
+    }
+    for (const auto& inner : stmt.delay_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    if (stmt.event_expr) {
+      CollectReadSignalsExpr(*stmt.event_expr, out);
+    }
+    for (const auto& inner : stmt.event_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    if (stmt.wait_condition) {
+      CollectReadSignalsExpr(*stmt.wait_condition, out);
+    }
+    for (const auto& inner : stmt.wait_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kTaskCall) {
+    for (const auto& arg : stmt.task_args) {
+      if (arg) {
+        CollectReadSignalsExpr(*arg, out);
+      }
+    }
+    return;
+  }
+}
+
 bool IsSchedulerStatementKind(StatementKind kind) {
   switch (kind) {
     case StatementKind::kDelay:
@@ -1392,9 +1608,10 @@ std::string EmitBitSelectUpdate(const std::string& base_expr,
                                 const std::string& rhs_expr) {
   std::string idx = "uint(" + index_expr + ")";
   std::string one = (base_width > 32) ? "1ul" : "1u";
-  std::string cast = (base_width > 32) ? "(ulong)" : "(uint)";
+  std::string cast = CastForWidth(base_width);
+  std::string rhs_masked = MaskForWidthExpr(rhs_expr, 1);
   std::string clear = "~(" + one + " << " + idx + ")";
-  std::string set = "((" + cast + rhs_expr + " & " + one + ") << " + idx + ")";
+  std::string set = "((" + cast + rhs_masked + ") << " + idx + ")";
   return "(" + base_expr + " & " + clear + ") | " + set;
 }
 
@@ -1404,604 +1621,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   std::ostringstream out;
   out << "#include <metal_stdlib>\n";
   out << "using namespace metal;\n\n";
+  if (four_state) {
+    out << "#include \"gpga_4state.h\"\n\n";
+  }
   out << "struct GpgaParams { uint count; };\n\n";
   out << "constexpr ulong __gpga_time = 0ul;\n\n";
   out << "// Placeholder MSL emitted by GPGA.\n\n";
   const bool needs_scheduler = ModuleNeedsScheduler(module);
   const SystemTaskInfo system_task_info = BuildSystemTaskInfo(module);
-  if (four_state) {
-    out << "struct FourState32 { uint val; uint xz; };\n";
-    out << "struct FourState64 { ulong val; ulong xz; };\n";
-    out << "inline uint fs_mask32(uint width) {\n";
-    out << "  return (width >= 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);\n";
-    out << "}\n";
-    out << "inline ulong fs_mask64(uint width) {\n";
-    out << "  return (width >= 64u) ? 0xFFFFFFFFFFFFFFFFul : ((1ul << width) - 1ul);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_make32(uint val, uint xz, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  FourState32 out = {val & mask, xz & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_make64(ulong val, ulong xz, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  FourState64 out = {val & mask, xz & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_allx32(uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  FourState32 out = {0u, mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_allx64(uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  FourState64 out = {0ul, mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_resize32(FourState32 a, uint width) {\n";
-    out << "  return fs_make32(a.val, a.xz, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_resize64(FourState64 a, uint width) {\n";
-    out << "  return fs_make64(a.val, a.xz, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sext32(FourState32 a, uint src_width, uint target_width) {\n";
-    out << "  if (target_width == 0u || src_width == 0u) return fs_make32(0u, 0u, target_width);\n";
-    out << "  if (target_width <= src_width) return fs_make32(a.val, a.xz, target_width);\n";
-    out << "  uint src_mask = fs_mask32(src_width);\n";
-    out << "  uint tgt_mask = fs_mask32(target_width);\n";
-    out << "  uint val = a.val & src_mask;\n";
-    out << "  uint xz = a.xz & src_mask;\n";
-    out << "  uint sign_mask = 1u << (src_width - 1u);\n";
-    out << "  uint sign_xz = xz & sign_mask;\n";
-    out << "  uint sign_val = val & sign_mask;\n";
-    out << "  uint ext_mask = tgt_mask & ~src_mask;\n";
-    out << "  uint ext_val = sign_val ? ext_mask : 0u;\n";
-    out << "  uint ext_xz = sign_xz ? ext_mask : 0u;\n";
-    out << "  return fs_make32(val | ext_val, xz | ext_xz, target_width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sext64(FourState64 a, uint src_width, uint target_width) {\n";
-    out << "  if (target_width == 0u || src_width == 0u) return fs_make64(0ul, 0ul, target_width);\n";
-    out << "  if (target_width <= src_width) return fs_make64(a.val, a.xz, target_width);\n";
-    out << "  ulong src_mask = fs_mask64(src_width);\n";
-    out << "  ulong tgt_mask = fs_mask64(target_width);\n";
-    out << "  ulong val = a.val & src_mask;\n";
-    out << "  ulong xz = a.xz & src_mask;\n";
-    out << "  ulong sign_mask = 1ul << (src_width - 1u);\n";
-    out << "  ulong sign_xz = xz & sign_mask;\n";
-    out << "  ulong sign_val = val & sign_mask;\n";
-    out << "  ulong ext_mask = tgt_mask & ~src_mask;\n";
-    out << "  ulong ext_val = sign_val ? ext_mask : 0ul;\n";
-    out << "  ulong ext_xz = sign_xz ? ext_mask : 0ul;\n";
-    out << "  return fs_make64(val | ext_val, xz | ext_xz, target_width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_merge32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint bx = b.xz & mask;\n";
-    out << "  uint ak = (~ax) & mask;\n";
-    out << "  uint bk = (~bx) & mask;\n";
-    out << "  uint same = ~(a.val ^ b.val) & ak & bk & mask;\n";
-    out << "  FourState32 out = {a.val & same, mask & ~same};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_merge64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong bx = b.xz & mask;\n";
-    out << "  ulong ak = (~ax) & mask;\n";
-    out << "  ulong bk = (~bx) & mask;\n";
-    out << "  ulong same = ~(a.val ^ b.val) & ak & bk & mask;\n";
-    out << "  FourState64 out = {a.val & same, mask & ~same};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_not32(FourState32 a, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  FourState32 out = {(~a.val) & mask, a.xz & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_not64(FourState64 a, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  FourState64 out = {(~a.val) & mask, a.xz & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_and32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint bx = b.xz & mask;\n";
-    out << "  uint a0 = (~a.val) & ~ax & mask;\n";
-    out << "  uint b0 = (~b.val) & ~bx & mask;\n";
-    out << "  uint a1 = a.val & ~ax & mask;\n";
-    out << "  uint b1 = b.val & ~bx & mask;\n";
-    out << "  uint known0 = a0 | b0;\n";
-    out << "  uint known1 = a1 & b1;\n";
-    out << "  uint unknown = mask & ~(known0 | known1);\n";
-    out << "  FourState32 out = {known1, unknown};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_and64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong bx = b.xz & mask;\n";
-    out << "  ulong a0 = (~a.val) & ~ax & mask;\n";
-    out << "  ulong b0 = (~b.val) & ~bx & mask;\n";
-    out << "  ulong a1 = a.val & ~ax & mask;\n";
-    out << "  ulong b1 = b.val & ~bx & mask;\n";
-    out << "  ulong known0 = a0 | b0;\n";
-    out << "  ulong known1 = a1 & b1;\n";
-    out << "  ulong unknown = mask & ~(known0 | known1);\n";
-    out << "  FourState64 out = {known1, unknown};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_or32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint bx = b.xz & mask;\n";
-    out << "  uint a0 = (~a.val) & ~ax & mask;\n";
-    out << "  uint b0 = (~b.val) & ~bx & mask;\n";
-    out << "  uint a1 = a.val & ~ax & mask;\n";
-    out << "  uint b1 = b.val & ~bx & mask;\n";
-    out << "  uint known1 = a1 | b1;\n";
-    out << "  uint known0 = a0 & b0;\n";
-    out << "  uint unknown = mask & ~(known0 | known1);\n";
-    out << "  FourState32 out = {known1, unknown};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_or64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong bx = b.xz & mask;\n";
-    out << "  ulong a0 = (~a.val) & ~ax & mask;\n";
-    out << "  ulong b0 = (~b.val) & ~bx & mask;\n";
-    out << "  ulong a1 = a.val & ~ax & mask;\n";
-    out << "  ulong b1 = b.val & ~bx & mask;\n";
-    out << "  ulong known1 = a1 | b1;\n";
-    out << "  ulong known0 = a0 & b0;\n";
-    out << "  ulong unknown = mask & ~(known0 | known1);\n";
-    out << "  FourState64 out = {known1, unknown};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_xor32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint unknown = (a.xz | b.xz) & mask;\n";
-    out << "  FourState32 out = {(a.val ^ b.val) & ~unknown & mask, unknown};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_xor64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong unknown = (a.xz | b.xz) & mask;\n";
-    out << "  FourState64 out = {(a.val ^ b.val) & ~unknown & mask, unknown};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_add32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
-    out << "  return fs_make32(a.val + b.val, 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_add64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
-    out << "  return fs_make64(a.val + b.val, 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sub32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
-    out << "  return fs_make32(a.val - b.val, 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sub64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
-    out << "  return fs_make64(a.val - b.val, 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_mul32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
-    out << "  return fs_make32(a.val * b.val, 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_mul64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
-    out << "  return fs_make64(a.val * b.val, 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_div32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u || b.val == 0u) return fs_allx32(width);\n";
-    out << "  return fs_make32(a.val / b.val, 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_div64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul || b.val == 0ul) return fs_allx64(width);\n";
-    out << "  return fs_make64(a.val / b.val, 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_mod32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u || b.val == 0u) return fs_allx32(width);\n";
-    out << "  return fs_make32(a.val % b.val, 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_mod64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul || b.val == 0ul) return fs_allx64(width);\n";
-    out << "  return fs_make64(a.val % b.val, 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_cmp32(uint value, bool pred) {\n";
-    out << "  FourState32 out = {pred ? 1u : 0u, 0u};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_cmp64(ulong value, bool pred) {\n";
-    out << "  FourState64 out = {pred ? 1ul : 0ul, 0ul};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_eq32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  return fs_make32((a.val == b.val) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_eq64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  return fs_make64((a.val == b.val) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_ne32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  return fs_make32((a.val != b.val) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_ne64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  return fs_make64((a.val != b.val) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_lt32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  return fs_make32((a.val < b.val) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_lt64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  return fs_make64((a.val < b.val) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_gt32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  return fs_make32((a.val > b.val) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_gt64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  return fs_make64((a.val > b.val) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_le32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  return fs_make32((a.val <= b.val) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_le64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  return fs_make64((a.val <= b.val) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_ge32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  return fs_make32((a.val >= b.val) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_ge64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  return fs_make64((a.val >= b.val) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_shl32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if (b.xz != 0u) return fs_allx32(width);\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint shift = b.val;\n";
-    out << "  if (shift >= width) return fs_make32(0u, 0u, width);\n";
-    out << "  FourState32 out = {(a.val << shift) & mask, (a.xz << shift) & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_shl64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if (b.xz != 0ul) return fs_allx64(width);\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong shift = b.val;\n";
-    out << "  if (shift >= width) return fs_make64(0ul, 0ul, width);\n";
-    out << "  FourState64 out = {(a.val << shift) & mask, (a.xz << shift) & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_shr32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  if (b.xz != 0u) return fs_allx32(width);\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint shift = b.val;\n";
-    out << "  if (shift >= width) return fs_make32(0u, 0u, width);\n";
-    out << "  FourState32 out = {(a.val >> shift) & mask, (a.xz >> shift) & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState64 fs_shr64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  if (b.xz != 0ul) return fs_allx64(width);\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong shift = b.val;\n";
-    out << "  if (shift >= width) return fs_make64(0ul, 0ul, width);\n";
-    out << "  FourState64 out = {(a.val >> shift) & mask, (a.xz >> shift) & mask};\n";
-    out << "  return out;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_mux32(FourState32 cond, FourState32 t, FourState32 f, uint width) {\n";
-    out << "  if (cond.xz != 0u) return fs_merge32(t, f, width);\n";
-    out << "  return (cond.val != 0u) ? fs_resize32(t, width) : fs_resize32(f, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_mux64(FourState64 cond, FourState64 t, FourState64 f, uint width) {\n";
-    out << "  if (cond.xz != 0ul) return fs_merge64(t, f, width);\n";
-    out << "  return (cond.val != 0ul) ? fs_resize64(t, width) : fs_resize64(f, width);\n";
-    out << "}\n\n";
-    out << "inline FourState32 fs_red_and32(FourState32 a, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint a0 = (~a.val) & ~ax & mask;\n";
-    out << "  uint a1 = a.val & ~ax & mask;\n";
-    out << "  if (a0 != 0u) return fs_make32(0u, 0u, 1u);\n";
-    out << "  if (a1 == mask) return fs_make32(1u, 0u, 1u);\n";
-    out << "  return fs_allx32(1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_red_and64(FourState64 a, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong a0 = (~a.val) & ~ax & mask;\n";
-    out << "  ulong a1 = a.val & ~ax & mask;\n";
-    out << "  if (a0 != 0ul) return fs_make64(0ul, 0ul, 1u);\n";
-    out << "  if (a1 == mask) return fs_make64(1ul, 0ul, 1u);\n";
-    out << "  return fs_allx64(1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_red_or32(FourState32 a, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint a0 = (~a.val) & ~ax & mask;\n";
-    out << "  uint a1 = a.val & ~ax & mask;\n";
-    out << "  if (a1 != 0u) return fs_make32(1u, 0u, 1u);\n";
-    out << "  if (a0 == mask) return fs_make32(0u, 0u, 1u);\n";
-    out << "  return fs_allx32(1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_red_or64(FourState64 a, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong a0 = (~a.val) & ~ax & mask;\n";
-    out << "  ulong a1 = a.val & ~ax & mask;\n";
-    out << "  if (a1 != 0ul) return fs_make64(1ul, 0ul, 1u);\n";
-    out << "  if (a0 == mask) return fs_make64(0ul, 0ul, 1u);\n";
-    out << "  return fs_allx64(1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_red_xor32(FourState32 a, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz & mask) != 0u) return fs_allx32(1u);\n";
-    out << "  uint parity = popcount(a.val & mask) & 1u;\n";
-    out << "  return fs_make32(parity, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_red_xor64(FourState64 a, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz & mask) != 0ul) return fs_allx64(1u);\n";
-    out << "  ulong val = a.val & mask;\n";
-    out << "  uint lo = uint(val);\n";
-    out << "  uint hi = uint(val >> 32u);\n";
-    out << "  uint parity = (popcount(lo) + popcount(hi)) & 1u;\n";
-    out << "  return fs_make64(ulong(parity), 0ul, 1u);\n";
-    out << "}\n\n";
-    out << "inline int fs_sign32(uint val, uint width) {\n";
-    out << "  if (width >= 32u) return int(val);\n";
-    out << "  uint shift = 32u - width;\n";
-    out << "  return int(val << shift) >> shift;\n";
-    out << "}\n";
-    out << "inline long fs_sign64(ulong val, uint width) {\n";
-    out << "  if (width >= 64u) return long(val);\n";
-    out << "  uint shift = 64u - width;\n";
-    out << "  return long(val << shift) >> shift;\n";
-    out << "}\n";
-    out << "inline FourState32 fs_slt32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  int sa = fs_sign32(a.val & mask, width);\n";
-    out << "  int sb = fs_sign32(b.val & mask, width);\n";
-    out << "  return fs_make32((sa < sb) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_slt64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  long sa = fs_sign64(a.val & mask, width);\n";
-    out << "  long sb = fs_sign64(b.val & mask, width);\n";
-    out << "  return fs_make64((sa < sb) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sle32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  int sa = fs_sign32(a.val & mask, width);\n";
-    out << "  int sb = fs_sign32(b.val & mask, width);\n";
-    out << "  return fs_make32((sa <= sb) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sle64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  long sa = fs_sign64(a.val & mask, width);\n";
-    out << "  long sb = fs_sign64(b.val & mask, width);\n";
-    out << "  return fs_make64((sa <= sb) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sgt32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  int sa = fs_sign32(a.val & mask, width);\n";
-    out << "  int sb = fs_sign32(b.val & mask, width);\n";
-    out << "  return fs_make32((sa > sb) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sgt64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  long sa = fs_sign64(a.val & mask, width);\n";
-    out << "  long sb = fs_sign64(b.val & mask, width);\n";
-    out << "  return fs_make64((sa > sb) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sge32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(1u);\n";
-    out << "  int sa = fs_sign32(a.val & mask, width);\n";
-    out << "  int sb = fs_sign32(b.val & mask, width);\n";
-    out << "  return fs_make32((sa >= sb) ? 1u : 0u, 0u, 1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sge64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);\n";
-    out << "  long sa = fs_sign64(a.val & mask, width);\n";
-    out << "  long sb = fs_sign64(b.val & mask, width);\n";
-    out << "  return fs_make64((sa >= sb) ? 1ul : 0ul, 0ul, 1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sdiv32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
-    out << "  int sa = fs_sign32(a.val & mask, width);\n";
-    out << "  int sb = fs_sign32(b.val & mask, width);\n";
-    out << "  if (sb == 0) return fs_allx32(width);\n";
-    out << "  int res = sa / sb;\n";
-    out << "  return fs_make32(uint(res), 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sdiv64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
-    out << "  long sa = fs_sign64(a.val & mask, width);\n";
-    out << "  long sb = fs_sign64(b.val & mask, width);\n";
-    out << "  if (sb == 0) return fs_allx64(width);\n";
-    out << "  long res = sa / sb;\n";
-    out << "  return fs_make64(ulong(res), 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_smod32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if ((a.xz | b.xz) != 0u) return fs_allx32(width);\n";
-    out << "  int sa = fs_sign32(a.val & mask, width);\n";
-    out << "  int sb = fs_sign32(b.val & mask, width);\n";
-    out << "  if (sb == 0) return fs_allx32(width);\n";
-    out << "  int res = sa % sb;\n";
-    out << "  return fs_make32(uint(res), 0u, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_smod64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if ((a.xz | b.xz) != 0ul) return fs_allx64(width);\n";
-    out << "  long sa = fs_sign64(a.val & mask, width);\n";
-    out << "  long sb = fs_sign64(b.val & mask, width);\n";
-    out << "  if (sb == 0) return fs_allx64(width);\n";
-    out << "  long res = sa % sb;\n";
-    out << "  return fs_make64(ulong(res), 0ul, width);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_sar32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  if (b.xz != 0u) return fs_allx32(width);\n";
-    out << "  uint shift = b.val;\n";
-    out << "  if (width == 0u) return fs_make32(0u, 0u, 0u);\n";
-    out << "  uint sign_mask = 1u << (width - 1u);\n";
-    out << "  if ((a.xz & sign_mask) != 0u) return fs_allx32(width);\n";
-    out << "  uint sign = (a.val & sign_mask) ? mask : 0u;\n";
-    out << "  if (shift >= width) return fs_make32(sign, 0u, width);\n";
-    out << "  uint fill_mask = (shift == 0u) ? 0u : (~0u << (width - shift));\n";
-    out << "  uint shifted_val = (a.val >> shift) | (sign & fill_mask);\n";
-    out << "  uint shifted_xz = (a.xz >> shift) & mask;\n";
-    out << "  return fs_make32(shifted_val, shifted_xz, width);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_sar64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  if (b.xz != 0ul) return fs_allx64(width);\n";
-    out << "  ulong shift = b.val;\n";
-    out << "  if (width == 0u) return fs_make64(0ul, 0ul, 0u);\n";
-    out << "  ulong sign_mask = 1ul << (width - 1u);\n";
-    out << "  if ((a.xz & sign_mask) != 0ul) return fs_allx64(width);\n";
-    out << "  ulong sign = (a.val & sign_mask) ? mask : 0ul;\n";
-    out << "  if (shift >= width) return fs_make64(sign, 0ul, width);\n";
-    out << "  ulong fill_mask = (shift == 0u) ? 0ul : (~0ul << (width - shift));\n";
-    out << "  ulong shifted_val = (a.val >> shift) | (sign & fill_mask);\n";
-    out << "  ulong shifted_xz = (a.xz >> shift) & mask;\n";
-    out << "  return fs_make64(shifted_val, shifted_xz, width);\n";
-    out << "}\n\n";
-    out << "inline FourState32 fs_log_not32(FourState32 a, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint known1 = a.val & ~ax & mask;\n";
-    out << "  if (known1 != 0u) return fs_make32(0u, 0u, 1u);\n";
-    out << "  if (ax == 0u && (a.val & mask) == 0u) return fs_make32(1u, 0u, 1u);\n";
-    out << "  return fs_allx32(1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_log_not64(FourState64 a, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong known1 = a.val & ~ax & mask;\n";
-    out << "  if (known1 != 0ul) return fs_make64(0ul, 0ul, 1u);\n";
-    out << "  if (ax == 0ul && (a.val & mask) == 0ul) return fs_make64(1ul, 0ul, 1u);\n";
-    out << "  return fs_allx64(1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_log_and32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint bx = b.xz & mask;\n";
-    out << "  uint a_known1 = a.val & ~ax & mask;\n";
-    out << "  uint b_known1 = b.val & ~bx & mask;\n";
-    out << "  bool a_true = a_known1 != 0u;\n";
-    out << "  bool b_true = b_known1 != 0u;\n";
-    out << "  bool a_false = (ax == 0u && (a.val & mask) == 0u);\n";
-    out << "  bool b_false = (bx == 0u && (b.val & mask) == 0u);\n";
-    out << "  if (a_false || b_false) return fs_make32(0u, 0u, 1u);\n";
-    out << "  if (a_true && b_true) return fs_make32(1u, 0u, 1u);\n";
-    out << "  return fs_allx32(1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_log_and64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong bx = b.xz & mask;\n";
-    out << "  ulong a_known1 = a.val & ~ax & mask;\n";
-    out << "  ulong b_known1 = b.val & ~bx & mask;\n";
-    out << "  bool a_true = a_known1 != 0ul;\n";
-    out << "  bool b_true = b_known1 != 0ul;\n";
-    out << "  bool a_false = (ax == 0ul && (a.val & mask) == 0ul);\n";
-    out << "  bool b_false = (bx == 0ul && (b.val & mask) == 0ul);\n";
-    out << "  if (a_false || b_false) return fs_make64(0ul, 0ul, 1u);\n";
-    out << "  if (a_true && b_true) return fs_make64(1ul, 0ul, 1u);\n";
-    out << "  return fs_allx64(1u);\n";
-    out << "}\n";
-    out << "inline FourState32 fs_log_or32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint bx = b.xz & mask;\n";
-    out << "  uint a_known1 = a.val & ~ax & mask;\n";
-    out << "  uint b_known1 = b.val & ~bx & mask;\n";
-    out << "  bool a_true = a_known1 != 0u;\n";
-    out << "  bool b_true = b_known1 != 0u;\n";
-    out << "  bool a_false = (ax == 0u && (a.val & mask) == 0u);\n";
-    out << "  bool b_false = (bx == 0u && (b.val & mask) == 0u);\n";
-    out << "  if (a_true || b_true) return fs_make32(1u, 0u, 1u);\n";
-    out << "  if (a_false && b_false) return fs_make32(0u, 0u, 1u);\n";
-    out << "  return fs_allx32(1u);\n";
-    out << "}\n";
-    out << "inline FourState64 fs_log_or64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong bx = b.xz & mask;\n";
-    out << "  ulong a_known1 = a.val & ~ax & mask;\n";
-    out << "  ulong b_known1 = b.val & ~bx & mask;\n";
-    out << "  bool a_true = a_known1 != 0ul;\n";
-    out << "  bool b_true = b_known1 != 0ul;\n";
-    out << "  bool a_false = (ax == 0ul && (a.val & mask) == 0ul);\n";
-    out << "  bool b_false = (bx == 0ul && (b.val & mask) == 0ul);\n";
-    out << "  if (a_true || b_true) return fs_make64(1ul, 0ul, 1u);\n";
-    out << "  if (a_false && b_false) return fs_make64(0ul, 0ul, 1u);\n";
-    out << "  return fs_allx64(1u);\n";
-    out << "}\n\n";
-    out << "inline bool fs_case_eq32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ax = a.xz & mask;\n";
-    out << "  uint bx = b.xz & mask;\n";
-    out << "  if ((ax ^ bx) != 0u) return false;\n";
-    out << "  uint known = (~(ax | bx)) & mask;\n";
-    out << "  return ((a.val ^ b.val) & known) == 0u;\n";
-    out << "}\n";
-    out << "inline bool fs_case_eq64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ax = a.xz & mask;\n";
-    out << "  ulong bx = b.xz & mask;\n";
-    out << "  if ((ax ^ bx) != 0ul) return false;\n";
-    out << "  ulong known = (~(ax | bx)) & mask;\n";
-    out << "  return ((a.val ^ b.val) & known) == 0ul;\n";
-    out << "}\n";
-    out << "inline bool fs_casez32(FourState32 a, FourState32 b, uint ignore_mask, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint ignore = ignore_mask & mask;\n";
-    out << "  uint cared = (~ignore) & mask;\n";
-    out << "  if ((a.xz & cared) != 0u) return false;\n";
-    out << "  return ((a.val ^ b.val) & cared) == 0u;\n";
-    out << "}\n";
-    out << "inline bool fs_casez64(FourState64 a, FourState64 b, ulong ignore_mask, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong ignore = ignore_mask & mask;\n";
-    out << "  ulong cared = (~ignore) & mask;\n";
-    out << "  if ((a.xz & cared) != 0ul) return false;\n";
-    out << "  return ((a.val ^ b.val) & cared) == 0ul;\n";
-    out << "}\n";
-    out << "inline bool fs_casex32(FourState32 a, FourState32 b, uint width) {\n";
-    out << "  uint mask = fs_mask32(width);\n";
-    out << "  uint cared = (~(a.xz | b.xz)) & mask;\n";
-    out << "  return ((a.val ^ b.val) & cared) == 0u;\n";
-    out << "}\n";
-    out << "inline bool fs_casex64(FourState64 a, FourState64 b, uint width) {\n";
-    out << "  ulong mask = fs_mask64(width);\n";
-    out << "  ulong cared = (~(a.xz | b.xz)) & mask;\n";
-    out << "  return ((a.val ^ b.val) & cared) == 0ul;\n";
-    out << "}\n\n";
-  }
   if (four_state) {
     auto suffix_for_width = [](int width) -> std::string {
       return (width > 32) ? "ul" : "u";
@@ -2027,9 +1654,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string xz;
       std::string drive;
       int width = 0;
+      std::string full;
+      bool is_const = false;
+      uint64_t const_val = 0;
+      uint64_t const_xz = 0;
+      uint64_t const_drive = 0;
+    };
+
+    auto fs_expr_from_base = [&](const std::string& base,
+                                 const std::string& drive,
+                                 int width) -> FsExpr {
+      return FsExpr{base + ".val", base + ".xz", drive, width, base};
+    };
+
+    auto fs_const_expr = [&](uint64_t val_bits, uint64_t xz_bits,
+                             uint64_t drive_bits, int width) -> FsExpr {
+      uint64_t mask = MaskForWidth64(width);
+      FsExpr out;
+      out.width = width;
+      out.const_val = val_bits & mask;
+      out.const_xz = xz_bits & mask;
+      out.const_drive = drive_bits & mask;
+      out.is_const = true;
+      out.val = literal_for_width(out.const_val, width);
+      out.xz = literal_for_width(out.const_xz, width);
+      out.drive = literal_for_width(out.const_drive, width);
+      return out;
     };
 
     auto fs_make_expr = [&](const FsExpr& expr, int width) -> std::string {
+      if (expr.is_const && expr.width == width) {
+        std::string type = (width > 32) ? "FourState64" : "FourState32";
+        return type + "{" + literal_for_width(expr.const_val, width) + ", " +
+               literal_for_width(expr.const_xz, width) + "}";
+      }
+      if (!expr.full.empty() && expr.width == width) {
+        return expr.full;
+      }
       if (width > 32) {
         return "fs_make64(" + expr.val + ", " + expr.xz + ", " +
                std::to_string(width) + "u)";
@@ -2061,27 +1722,65 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return "(" + widened + " | " + upper_drive + ")";
     };
 
+    auto fs_const_extend = [&](const FsExpr& expr, int width,
+                               bool sign_extend) -> FsExpr {
+      if (!expr.is_const) {
+        return expr;
+      }
+      if (width <= 0) {
+        return fs_const_expr(0u, 0u, 0u, width);
+      }
+      uint64_t src_mask = MaskForWidth64(expr.width);
+      uint64_t dst_mask = MaskForWidth64(width);
+      uint64_t val = expr.const_val & src_mask;
+      uint64_t xz = expr.const_xz & src_mask;
+      uint64_t drive = expr.const_drive & src_mask;
+      if (width > expr.width) {
+        uint64_t ext_mask = dst_mask & ~src_mask;
+        if (sign_extend && expr.width > 0) {
+          int sign_width = std::min(expr.width, 64);
+          uint64_t sign_mask =
+              (sign_width > 0) ? (1ull << (sign_width - 1)) : 0ull;
+          uint64_t ext_val = (val & sign_mask) ? ext_mask : 0u;
+          uint64_t ext_xz = (xz & sign_mask) ? ext_mask : 0u;
+          uint64_t ext_drive = (drive & sign_mask) ? ext_mask : 0u;
+          val |= ext_val;
+          xz |= ext_xz;
+          drive |= ext_drive;
+        } else {
+          drive |= ext_mask;
+        }
+      }
+      return fs_const_expr(val, xz, drive, width);
+    };
+
     auto fs_resize_expr = [&](const FsExpr& expr, int width) -> FsExpr {
       if (expr.width == width) {
         return expr;
+      }
+      if (expr.is_const) {
+        return fs_const_extend(expr, width, false);
       }
       std::string func = (width > 32) ? "fs_resize64" : "fs_resize32";
       std::string base = func + "(" + fs_make_expr(expr, expr.width) + ", " +
                          std::to_string(width) + "u)";
       std::string drive = fs_resize_drive(expr, width, false);
-      return FsExpr{base + ".val", base + ".xz", drive, width};
+      return fs_expr_from_base(base, drive, width);
     };
 
     auto fs_sext_expr = [&](const FsExpr& expr, int width) -> FsExpr {
       if (expr.width >= width) {
         return fs_resize_expr(expr, width);
       }
+      if (expr.is_const) {
+        return fs_const_extend(expr, width, true);
+      }
       std::string func = (width > 32) ? "fs_sext64" : "fs_sext32";
       std::string base =
           func + "(" + fs_make_expr(expr, expr.width) + ", " +
           std::to_string(expr.width) + "u, " + std::to_string(width) + "u)";
       std::string drive = fs_resize_drive(expr, width, true);
-      return FsExpr{base + ".val", base + ".xz", drive, width};
+      return fs_expr_from_base(base, drive, width);
     };
 
     auto fs_extend_expr = [&](const FsExpr& expr, int width,
@@ -2090,9 +1789,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     auto fs_allx_expr = [&](int width) -> FsExpr {
-      std::string func = (width > 32) ? "fs_allx64" : "fs_allx32";
-      std::string base = func + "(" + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
+      uint64_t mask = MaskForWidth64(width);
+      return fs_const_expr(0u, mask, mask, width);
     };
 
     auto fs_unary = [&](const char* op, const FsExpr& arg, int width) -> FsExpr {
@@ -2101,7 +1799,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(arg, width) + ", " +
           std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
+      return fs_expr_from_base(base, drive_full(width), width);
     };
 
     auto fs_binary = [&](const char* op, FsExpr lhs, FsExpr rhs, int width,
@@ -2113,7 +1811,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(lhs, width) + ", " +
           fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
+      return fs_expr_from_base(base, drive_full(width), width);
     };
 
     auto fs_shift = [&](const char* op, FsExpr lhs, FsExpr rhs,
@@ -2135,11 +1833,244 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(lhs, width) + ", " +
           fs_make_expr(rhs, rhs_width) + ", " + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
+      return fs_expr_from_base(base, drive_full(width), width);
+    };
+
+    struct ExprUse {
+      int count = 0;
+      int cost = 0;
+    };
+
+    struct CseState {
+      std::unordered_map<std::string, ExprUse> uses;
+      std::unordered_map<std::string, FsExpr> temps;
+      int min_cost = 4;
+      int indent = 0;
+    };
+
+    auto is_cse_candidate = [&](const Expr& expr) -> bool {
+      switch (expr.kind) {
+        case ExprKind::kIdentifier:
+        case ExprKind::kNumber:
+        case ExprKind::kString:
+        case ExprKind::kCall:
+          return false;
+        default:
+          return true;
+      }
+    };
+
+    auto expr_key = [&](const Expr& expr, const auto& self) -> std::string {
+      switch (expr.kind) {
+        case ExprKind::kIdentifier:
+          return "id:" + expr.ident;
+        case ExprKind::kNumber: {
+          int width = expr.has_width && expr.number_width > 0
+                          ? expr.number_width
+                          : ExprWidth(expr, module);
+          return "num:" + std::to_string(expr.value_bits) + ":" +
+                 std::to_string(expr.x_bits) + ":" +
+                 std::to_string(expr.z_bits) + ":" +
+                 std::to_string(width) + (expr.is_signed ? ":s" : ":u");
+        }
+        case ExprKind::kString:
+          return "str";
+        case ExprKind::kUnary:
+          return std::string("un:") + expr.unary_op + "(" +
+                 (expr.operand ? self(*expr.operand, self) : "") + ")";
+        case ExprKind::kBinary:
+          return std::string("bin:") + expr.op + "(" +
+                 (expr.lhs ? self(*expr.lhs, self) : "") + "," +
+                 (expr.rhs ? self(*expr.rhs, self) : "") + ")";
+        case ExprKind::kTernary:
+          return "ter(" +
+                 (expr.condition ? self(*expr.condition, self) : "") + "?" +
+                 (expr.then_expr ? self(*expr.then_expr, self) : "") + ":" +
+                 (expr.else_expr ? self(*expr.else_expr, self) : "") + ")";
+        case ExprKind::kSelect: {
+          std::string key = "sel(" +
+                            (expr.base ? self(*expr.base, self) : "") + ",";
+          if (expr.indexed_range && expr.lsb_expr) {
+            key += "idx:" + std::to_string(expr.indexed_width) + ":" +
+                   (expr.indexed_desc ? "d:" : "a:") +
+                   self(*expr.lsb_expr, self) + ")";
+          } else {
+            key += std::to_string(expr.msb) + ":" +
+                   std::to_string(expr.lsb) + ")";
+          }
+          return key;
+        }
+        case ExprKind::kIndex:
+          return "idx(" +
+                 (expr.base ? self(*expr.base, self) : "") + "," +
+                 (expr.index ? self(*expr.index, self) : "") + ")";
+        case ExprKind::kCall: {
+          std::string key = "call:" + expr.ident + "(";
+          for (const auto& arg : expr.call_args) {
+            if (!arg) {
+              continue;
+            }
+            if (key.back() != '(') {
+              key += ",";
+            }
+            key += self(*arg, self);
+          }
+          key += ")";
+          return key;
+        }
+        case ExprKind::kConcat: {
+          std::string key = "cat:" + std::to_string(expr.repeat) + "(";
+          for (const auto& element : expr.elements) {
+            if (!element) {
+              continue;
+            }
+            if (key.back() != '(') {
+              key += ",";
+            }
+            key += self(*element, self);
+          }
+          key += ")";
+          return key;
+        }
+      }
+      return "unknown";
+    };
+
+    auto collect_expr_uses = [&](const Expr& expr, const auto& self,
+                                 CseState* state) -> int {
+      if (!state) {
+        return 1;
+      }
+      int cost = 1;
+      switch (expr.kind) {
+        case ExprKind::kUnary:
+          if (expr.operand) {
+            cost += self(*expr.operand, self, state);
+          }
+          break;
+        case ExprKind::kBinary:
+          if (expr.lhs) {
+            cost += self(*expr.lhs, self, state);
+          }
+          if (expr.rhs) {
+            cost += self(*expr.rhs, self, state);
+          }
+          break;
+        case ExprKind::kTernary:
+          if (expr.condition) {
+            cost += self(*expr.condition, self, state);
+          }
+          if (expr.then_expr) {
+            cost += self(*expr.then_expr, self, state);
+          }
+          if (expr.else_expr) {
+            cost += self(*expr.else_expr, self, state);
+          }
+          break;
+        case ExprKind::kSelect:
+          if (expr.base) {
+            cost += self(*expr.base, self, state);
+          }
+          if (expr.indexed_range && expr.lsb_expr) {
+            cost += self(*expr.lsb_expr, self, state);
+          }
+          break;
+        case ExprKind::kIndex:
+          if (expr.base) {
+            cost += self(*expr.base, self, state);
+          }
+          if (expr.index) {
+            cost += self(*expr.index, self, state);
+          }
+          break;
+        case ExprKind::kCall:
+          for (const auto& arg : expr.call_args) {
+            if (!arg) {
+              continue;
+            }
+            cost += self(*arg, self, state);
+          }
+          break;
+        case ExprKind::kConcat:
+          for (const auto& element : expr.elements) {
+            if (!element) {
+              continue;
+            }
+            cost += self(*element, self, state);
+          }
+          if (expr.repeat_expr) {
+            cost += self(*expr.repeat_expr, self, state);
+          }
+          break;
+        default:
+          break;
+      }
+      std::string key = expr_key(expr, expr_key);
+      ExprUse& entry = state->uses[key];
+      entry.count += 1;
+      if (entry.cost < cost) {
+        entry.cost = cost;
+      }
+      return cost;
+    };
+
+    int fs_temp_index = 0;
+    int switch_temp_index = 0;
+    CseState* active_cse = nullptr;
+
+    auto should_cse = [&](const Expr& expr, const std::string& key,
+                          const CseState* state) -> bool {
+      if (!state || !is_cse_candidate(expr)) {
+        return false;
+      }
+      auto it = state->uses.find(key);
+      if (it == state->uses.end()) {
+        return false;
+      }
+      return it->second.count > 1 && it->second.cost >= state->min_cost;
+    };
+
+    auto emit_cse_temp = [&](const FsExpr& expr,
+                             CseState* state) -> FsExpr {
+      if (!state || expr.width <= 0) {
+        return expr;
+      }
+      std::string name = "__gpga_fs_tmp" + std::to_string(fs_temp_index++);
+      std::string type = (expr.width > 32) ? "FourState64" : "FourState32";
+      std::string dtype = (expr.width > 32) ? "ulong" : "uint";
+      std::string pad(state->indent, ' ');
+      out << pad << type << " " << name << " = "
+          << fs_make_expr(expr, expr.width) << ";\n";
+      out << pad << dtype << " " << name << "_drive = " << expr.drive << ";\n";
+      return FsExpr{name + ".val", name + ".xz", name + "_drive", expr.width,
+                    name};
     };
 
     std::function<FsExpr(const Expr&)> emit_expr4;
+    std::function<FsExpr(const Expr&)> emit_expr4_impl;
     std::function<FsExpr(const Expr&)> emit_concat4;
+    std::function<FsExpr(const FsExpr&, int, bool, bool)> maybe_hoist_full;
+
+    emit_expr4 = [&](const Expr& expr) -> FsExpr {
+      if (!active_cse) {
+        return emit_expr4_impl(expr);
+      }
+      std::string key = expr_key(expr, expr_key);
+      bool use_cse = should_cse(expr, key, active_cse);
+      if (use_cse) {
+        auto it = active_cse->temps.find(key);
+        if (it != active_cse->temps.end()) {
+          return it->second;
+        }
+      }
+      FsExpr value = emit_expr4_impl(expr);
+      if (use_cse) {
+        FsExpr temp = emit_cse_temp(value, active_cse);
+        active_cse->temps.emplace(key, temp);
+        return temp;
+      }
+      return value;
+    };
 
     emit_concat4 = [&](const Expr& expr) -> FsExpr {
       int total_width = ExprWidth(expr, module);
@@ -2156,7 +2087,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::string masked_val = MaskForWidthExpr(part.val, width);
           std::string masked_xz = MaskForWidthExpr(part.xz, width);
           std::string masked_drive = MaskForWidthExpr(part.drive, width);
-          std::string cast = (total_width > 32) ? "(ulong)" : "(uint)";
+          std::string cast = CastForWidth(total_width);
           acc_val = "(" + acc_val + " | (" + cast + masked_val + " << " +
                     std::to_string(shift) + "u))";
           acc_xz = "(" + acc_xz + " | (" + cast + masked_xz + " << " +
@@ -2168,7 +2099,31 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return FsExpr{acc_val, acc_xz, acc_drive, total_width};
     };
 
-    emit_expr4 = [&](const Expr& expr) -> FsExpr {
+    const std::unordered_map<std::string, int64_t> kEmptyParams;
+    auto try_eval_const_expr4 = [&](const Expr& expr, FsExpr* out) -> bool {
+      if (!out) {
+        return false;
+      }
+      FourStateValue value;
+      if (!EvalConstExpr4State(expr, kEmptyParams, &value, nullptr)) {
+        return false;
+      }
+      int width = ExprWidth(expr, module);
+      uint64_t mask = MaskForWidth64(width);
+      uint64_t val_bits = value.value_bits & mask;
+      uint64_t x_bits = value.x_bits & mask;
+      uint64_t z_bits = value.z_bits & mask;
+      uint64_t xz_bits = (x_bits | z_bits) & mask;
+      uint64_t drive_bits = mask & ~z_bits;
+      *out = fs_const_expr(val_bits, xz_bits, drive_bits, width);
+      return true;
+    };
+
+    emit_expr4_impl = [&](const Expr& expr) -> FsExpr {
+      FsExpr const_expr;
+      if (try_eval_const_expr4(expr, &const_expr)) {
+        return const_expr;
+      }
       switch (expr.kind) {
         case ExprKind::kIdentifier: {
           const Port* port = FindPort(module, expr.ident);
@@ -2187,12 +2142,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                           : ExprWidth(expr, module);
           uint64_t xz_bits = expr.x_bits | expr.z_bits;
           uint64_t drive_bits = MaskForWidth64(width) & ~expr.z_bits;
-          FsExpr out;
-          out.width = width;
-          out.val = literal_for_width(expr.value_bits, width);
-          out.xz = literal_for_width(xz_bits, width);
-          out.drive = literal_for_width(drive_bits, width);
-          return out;
+          return fs_const_expr(expr.value_bits, xz_bits, drive_bits, width);
         }
         case ExprKind::kString:
           return fs_allx_expr(1);
@@ -2220,7 +2170,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             std::string base =
                 func + "(" + fs_make_expr(operand, width) + ", " +
                 std::to_string(width) + "u)";
-            return FsExpr{base + ".val", base + ".xz", drive_full(1), 1};
+            return fs_expr_from_base(base, drive_full(1), 1);
           }
           if (expr.unary_op == '&' || expr.unary_op == '|' ||
               expr.unary_op == '^') {
@@ -2233,7 +2183,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             func += (width > 32) ? "64" : "32";
             std::string base = func + "(" + fs_make_expr(operand, width) + ", " +
                                std::to_string(width) + "u)";
-            return FsExpr{base + ".val", base + ".xz", drive_full(1), 1};
+            return fs_expr_from_base(base, drive_full(1), 1);
           }
           return fs_allx_expr(width);
         }
@@ -2263,7 +2213,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             std::string base =
                 func + "(" + fs_make_expr(lhs, width) + ", " +
                 fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
-            return FsExpr{base + ".val", base + ".xz", drive_full(1), 1};
+            return fs_expr_from_base(base, drive_full(1), 1);
           }
           if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
               expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
@@ -2326,6 +2276,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         case ExprKind::kTernary: {
           FsExpr cond = emit_expr4(*expr.condition);
+          if (active_cse) {
+            cond = maybe_hoist_full(cond, active_cse->indent, false, true);
+          }
           FsExpr then_expr = emit_expr4(*expr.then_expr);
           FsExpr else_expr = emit_expr4(*expr.else_expr);
           int width = std::max(then_expr.width, else_expr.width);
@@ -2347,14 +2300,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               "(" + cond_true + " ? " + then_resized.drive + " : (" +
               cond_false + " ? " + else_resized.drive + " : (" +
               then_resized.drive + " | " + else_resized.drive + ")))";
-          return FsExpr{base + ".val", base + ".xz", drive, width};
+          return fs_expr_from_base(base, drive, width);
         }
         case ExprKind::kSelect: {
           FsExpr base = emit_expr4(*expr.base);
           if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
             int width = expr.indexed_width;
             FsExpr shift = emit_expr4(*expr.lsb_expr);
+            if (active_cse) {
+              shift = maybe_hoist_full(shift, active_cse->indent, false, false);
+            }
             std::string mask = mask_literal(width);
+            if (shift.is_const) {
+              if (shift.const_xz != 0) {
+                return fs_allx_expr(width);
+              }
+              uint32_t idx_val =
+                  static_cast<uint32_t>(shift.const_val);
+              if (idx_val >= static_cast<uint32_t>(base.width)) {
+                return fs_const_expr(0u, 0u, MaskForWidth64(width), width);
+              }
+              std::string idx = std::to_string(idx_val) + "u";
+              if (base.is_const && base.width <= 64 && idx_val < 64) {
+                uint64_t mask_value = MaskForWidth64(width);
+                uint64_t val_bits = (base.const_val >> idx_val) & mask_value;
+                uint64_t xz_bits = (base.const_xz >> idx_val) & mask_value;
+                uint64_t drive_bits =
+                    (base.const_drive >> idx_val) & mask_value;
+                return fs_const_expr(val_bits, xz_bits, drive_bits, width);
+              }
+              std::string val =
+                  "((" + base.val + " >> " + idx + ") & " + mask + ")";
+              std::string xz =
+                  "((" + base.xz + " >> " + idx + ") & " + mask + ")";
+              std::string drive =
+                  "((" + base.drive + " >> " + idx + ") & " + mask + ")";
+              return FsExpr{val, xz, drive, width};
+            }
             std::string idx = "uint(" + shift.val + ")";
             std::string zero = literal_for_width(0, width);
             std::string xguard =
@@ -2398,8 +2380,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (IsArrayNet(module, expr.base->ident, &element_width,
                            &array_size)) {
               FsExpr idx = emit_expr4(*expr.index);
+              if (active_cse) {
+                idx = maybe_hoist_full(idx, active_cse->indent, false, false);
+              }
               std::string idx_val = idx.val;
               std::string idx_xz = idx.xz;
+              if (idx.is_const) {
+                if (idx.const_xz != 0) {
+                  return fs_allx_expr(element_width);
+                }
+                if (idx.const_val >= static_cast<uint64_t>(array_size)) {
+                  return fs_const_expr(0u, 0u, MaskForWidth64(element_width),
+                                       element_width);
+                }
+                std::string base = "(gid * " + std::to_string(array_size) +
+                                   "u) + uint(" + idx_val + ")";
+                return FsExpr{val_name(expr.base->ident) + "[" + base + "]",
+                              xz_name(expr.base->ident) + "[" + base + "]",
+                              drive_full(element_width), element_width};
+              }
               std::string guard = "(" + idx_val + " < " +
                                   std::to_string(array_size) + "u)";
               std::string xguard = "(" + idx_xz + " == " +
@@ -2422,7 +2421,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           FsExpr base = emit_expr4(*expr.base);
           FsExpr index = emit_expr4(*expr.index);
+          if (active_cse) {
+            index = maybe_hoist_full(index, active_cse->indent, false, false);
+          }
           int width = 1;
+          if (index.is_const) {
+            if (index.const_xz != 0) {
+              return fs_allx_expr(width);
+            }
+            std::string idx = index.val;
+            std::string val = "(((" + base.val + " >> " + idx + ") & " +
+                              literal_for_width(1, 1) + "))";
+            std::string xz = "(((" + base.xz + " >> " + idx + ") & " +
+                             literal_for_width(1, 1) + "))";
+            std::string drive = "(((" + base.drive + " >> " + idx + ") & " +
+                                 literal_for_width(1, 1) + "))";
+            return FsExpr{val, xz, drive, width};
+          }
           std::string cond = "(" + index.xz + " == " +
                              literal_for_width(0, index.width) + ")";
           std::string val = "((" + cond + ") ? (((" + base.val + " >> " +
@@ -2490,6 +2505,55 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return fs_extend_expr(out_expr, target_width, signed_expr);
     };
 
+    auto emit_expr4_with_cse = [&](const Expr& expr, int indent) -> FsExpr {
+      CseState cse;
+      cse.indent = indent;
+      collect_expr_uses(expr, collect_expr_uses, &cse);
+      active_cse = &cse;
+      FsExpr out_expr = emit_expr4(expr);
+      active_cse = nullptr;
+      return out_expr;
+    };
+
+    auto emit_expr4_sized_with_cse = [&](const Expr& expr, int target_width,
+                                         int indent) -> FsExpr {
+      CseState cse;
+      cse.indent = indent;
+      collect_expr_uses(expr, collect_expr_uses, &cse);
+      active_cse = &cse;
+      FsExpr out_expr = emit_expr4(expr);
+      active_cse = nullptr;
+      bool signed_expr = ExprSigned(expr, module);
+      return fs_extend_expr(out_expr, target_width, signed_expr);
+    };
+
+    maybe_hoist_full = [&](const FsExpr& expr, int indent,
+                           bool need_drive, bool force_small) -> FsExpr {
+      if (expr.full.empty() || expr.width <= 0) {
+        return expr;
+      }
+      const size_t kMinHoist = 200;
+      size_t min_len = force_small ? 0 : kMinHoist;
+      if (expr.full.size() < min_len) {
+        return expr;
+      }
+      if (expr.full.rfind("__gpga_fs_tmp", 0) == 0) {
+        return expr;
+      }
+      std::string name = "__gpga_fs_tmp" + std::to_string(fs_temp_index++);
+      std::string type = (expr.width > 32) ? "FourState64" : "FourState32";
+      std::string dtype = (expr.width > 32) ? "ulong" : "uint";
+      std::string pad(indent, ' ');
+      out << pad << type << " " << name << " = " << expr.full << ";\n";
+      std::string drive_expr = expr.drive;
+      if (need_drive) {
+        out << pad << dtype << " " << name << "_drive = " << expr.drive
+            << ";\n";
+        drive_expr = name + "_drive";
+      }
+      return FsExpr{name + ".val", name + ".xz", drive_expr, expr.width, name};
+    };
+
     struct Lvalue4 {
       std::string val;
       std::string xz;
@@ -2525,7 +2589,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     auto build_lvalue4 = [&](const SequentialAssign& assign,
                              const std::unordered_set<std::string>& locals,
                              const std::unordered_set<std::string>& regs,
-                             bool use_next) -> Lvalue4 {
+                             bool use_next, int indent) -> Lvalue4 {
       Lvalue4 out;
       if (assign.lhs_index) {
         int element_width = 0;
@@ -2543,16 +2607,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return out;
           }
           FsExpr idx = emit_expr4(*assign.lhs_index);
+          idx = maybe_hoist_full(idx, indent, false, false);
           std::string idx_val = idx.val;
           std::string idx_xz = idx.xz;
           int base_width = SignalWidth(module, assign.lhs);
-          std::string guard = "(" + idx_xz + " == " +
-                              literal_for_width(0, idx.width) + " && " +
-                              idx_val + " < " + std::to_string(base_width) +
-                              "u)";
+          if (idx.is_const) {
+            if (idx.const_xz != 0) {
+              return out;
+            }
+            if (idx.const_val >= static_cast<uint64_t>(base_width)) {
+              return out;
+            }
+          } else {
+            out.guard = "(" + idx_xz + " == " +
+                        literal_for_width(0, idx.width) + " && " + idx_val +
+                        " < " + std::to_string(base_width) + "u)";
+          }
           out.val = base_val;
           out.xz = base_xz;
-          out.guard = guard;
           out.bit_index_val = idx_val;
           out.bit_index_xz = idx_xz;
           out.width = 1;
@@ -2562,12 +2634,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return out;
         }
         FsExpr idx = emit_expr4(*assign.lhs_index);
+        idx = maybe_hoist_full(idx, indent, false, false);
         std::string idx_val = idx.val;
         std::string idx_xz = idx.xz;
-        std::string guard = "(" + idx_xz + " == " +
-                            literal_for_width(0, idx.width) + " && " +
-                            idx_val + " < " + std::to_string(array_size) +
-                            "u)";
+        if (idx.is_const) {
+          if (idx.const_xz != 0) {
+            return out;
+          }
+          if (idx.const_val >= static_cast<uint64_t>(array_size)) {
+            return out;
+          }
+        } else {
+          out.guard = "(" + idx_xz + " == " +
+                      literal_for_width(0, idx.width) + " && " + idx_val +
+                      " < " + std::to_string(array_size) + "u)";
+        }
         std::string base = "(gid * " + std::to_string(array_size) +
                            "u) + uint(" + idx_val + ")";
         std::string name = assign.lhs;
@@ -2576,7 +2657,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         out.val = val_name(name) + "[" + base + "]";
         out.xz = xz_name(name) + "[" + base + "]";
-        out.guard = guard;
         out.width = element_width;
         out.ok = true;
         out.is_array = true;
@@ -2674,7 +2754,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
     }
     for (const auto& reg : reg_names) {
-      out << ",\n";
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
       std::string type = TypeForWidth(SignalWidth(module, reg));
       out << "  device " << type << "* " << val_name(reg) << " [[buffer("
           << buffer_index++ << ")]]";
@@ -2683,7 +2766,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           << buffer_index++ << ")]]";
     }
     for (const auto& reg : trireg_names) {
-      out << ",\n";
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
       std::string type = TypeForWidth(SignalWidth(module, reg));
       out << "  device " << type << "* " << val_name(reg) << " [[buffer("
           << buffer_index++ << ")]]";
@@ -2692,7 +2778,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           << buffer_index++ << ")]]";
     }
     for (const auto* net : array_nets) {
-      out << ",\n";
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
       std::string type = TypeForWidth(net->width);
       out << "  device " << type << "* " << val_name(net->name)
           << " [[buffer(" << buffer_index++ << ")]]";
@@ -2700,7 +2789,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  device " << type << "* " << xz_name(net->name)
           << " [[buffer(" << buffer_index++ << ")]]";
     }
-    out << ",\n";
+    if (!first) {
+      out << ",\n";
+    }
+    first = false;
     out << "  constant GpgaParams& params [[buffer(" << buffer_index++
         << ")]],\n";
     out << "  uint gid [[thread_position_in_grid]]) {\n";
@@ -2734,8 +2826,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     auto driven = CollectDrivenSignals(module);
     for (const auto& net : module.nets) {
-      if (net.array_size > 0 || net.type == NetType::kReg ||
-          IsTriregNet(net.type)) {
+      if (net.array_size > 0 || IsTriregNet(net.type)) {
         continue;
       }
       if (driven.count(net.name) > 0 || locals.count(net.name) == 0) {
@@ -2759,7 +2850,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       assign_groups[module.assigns[i].lhs].push_back(i);
     }
     std::unordered_set<std::string> multi_driver;
-    std::unordered_map<std::string, size_t> drivers_remaining;
+    std::unordered_map<std::string, size_t> drivers_remaining_template;
     struct DriverInfo {
       std::string val;
       std::string xz;
@@ -2776,7 +2867,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         continue;
       }
       multi_driver.insert(entry.first);
-      drivers_remaining[entry.first] = entry.second.size();
+      drivers_remaining_template[entry.first] = entry.second.size();
       drivers_for_net[entry.first] = entry.second;
       for (size_t idx = 0; idx < entry.second.size(); ++idx) {
         size_t assign_index = entry.second[idx];
@@ -2804,9 +2895,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
         int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
         int slice_width = hi - lo + 1;
-        FsExpr rhs = emit_expr4_sized(*assign.rhs, slice_width);
+        FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, slice_width, 2);
+        rhs = maybe_hoist_full(rhs, 2, true, true);
         std::string mask = mask_literal(slice_width);
-        std::string cast = (lhs_width > 32) ? "(ulong)" : "(uint)";
+        std::string cast = CastForWidth(lhs_width);
         out << "  " << type << " " << info.val << " = ((" << cast << rhs.val
             << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
         out << "  " << type << " " << info.xz << " = ((" << cast << rhs.xz
@@ -2816,14 +2908,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << "u);\n";
         return;
       }
-      FsExpr rhs = emit_expr4_sized(*assign.rhs, lhs_width);
+      FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, lhs_width, 2);
+      rhs = maybe_hoist_full(rhs, 2, true, true);
       out << "  " << type << " " << info.val << " = " << rhs.val << ";\n";
       out << "  " << type << " " << info.xz << " = " << rhs.xz << ";\n";
       out << "  " << type << " " << info.drive << " = " << rhs.drive << ";\n";
     };
 
     auto emit_resolve = [&](const std::string& name,
-                            const std::vector<size_t>& indices) {
+                            const std::vector<size_t>& indices,
+                            const std::unordered_set<std::string>& locals_ctx,
+                            const std::unordered_set<std::string>& regs_ctx,
+                            std::unordered_set<std::string>* declared_ctx) {
       NetType net_type = SignalNetType(module, name);
       bool wired_and = IsWiredAndNet(net_type);
       bool wired_or = IsWiredOrNet(net_type);
@@ -2880,48 +2976,53 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "    }\n";
         }
         out << "    continue;\n";
-      }
-      out << "    uint best0 = 0u;\n";
-      out << "    uint best1 = 0u;\n";
-      out << "    uint bestx = 0u;\n";
-      for (size_t idx : indices) {
-        const auto& info = driver_info[idx];
-        out << "    if ((" << info.drive << " & mask) != " << zero << ") {\n";
-        out << "      if ((" << info.xz << " & mask) != " << zero << ") {\n";
-        out << "        uint x_strength = (" << info.strength0 << " > "
-            << info.strength1 << ") ? " << info.strength0 << " : "
-            << info.strength1 << ";\n";
-        out << "        bestx = (bestx > x_strength) ? bestx : x_strength;\n";
-        out << "      } else if ((" << info.val << " & mask) != " << zero
-            << ") {\n";
-        out << "        best1 = (best1 > " << info.strength1 << ") ? best1 : "
-            << info.strength1 << ";\n";
-        out << "      } else {\n";
-        out << "        best0 = (best0 > " << info.strength0 << ") ? best0 : "
-            << info.strength0 << ";\n";
-        out << "      }\n";
+      } else {
+        out << "    uint best0 = 0u;\n";
+        out << "    uint best1 = 0u;\n";
+        out << "    uint bestx = 0u;\n";
+        for (size_t idx : indices) {
+          const auto& info = driver_info[idx];
+          out << "    if ((" << info.drive << " & mask) != " << zero << ") {\n";
+          out << "      if ((" << info.xz << " & mask) != " << zero << ") {\n";
+          if (info.strength0 == info.strength1) {
+            out << "        uint x_strength = " << info.strength0 << ";\n";
+          } else {
+            out << "        uint x_strength = (" << info.strength0 << " > "
+                << info.strength1 << ") ? " << info.strength0 << " : "
+                << info.strength1 << ";\n";
+          }
+          out << "        bestx = (bestx > x_strength) ? bestx : x_strength;\n";
+          out << "      } else if ((" << info.val << " & mask) != " << zero
+              << ") {\n";
+          out << "        best1 = (best1 > " << info.strength1 << ") ? best1 : "
+              << info.strength1 << ";\n";
+          out << "      } else {\n";
+          out << "        best0 = (best0 > " << info.strength0 << ") ? best0 : "
+              << info.strength0 << ";\n";
+          out << "      }\n";
+          out << "    }\n";
+        }
+        out << "    if (best0 == 0u && best1 == 0u && bestx == 0u) {\n";
+        out << "      " << resolved_xz << " |= mask;\n";
+        out << "      continue;\n";
+        out << "    }\n";
+        out << "    " << resolved_drive << " |= mask;\n";
+        out << "    uint max01 = (best0 > best1) ? best0 : best1;\n";
+        out << "    if ((bestx >= max01) && max01 != 0u) {\n";
+        out << "      " << resolved_xz << " |= mask;\n";
+        out << "    } else if (best0 > best1) {\n";
+        out << "      // 0 wins\n";
+        out << "    } else if (best1 > best0) {\n";
+        out << "      " << resolved_val << " |= mask;\n";
+        out << "    } else {\n";
+        out << "      " << resolved_xz << " |= mask;\n";
         out << "    }\n";
       }
-      out << "    if (best0 == 0u && best1 == 0u && bestx == 0u) {\n";
-      out << "      " << resolved_xz << " |= mask;\n";
-      out << "      continue;\n";
-      out << "    }\n";
-      out << "    " << resolved_drive << " |= mask;\n";
-      out << "    uint max01 = (best0 > best1) ? best0 : best1;\n";
-      out << "    if ((bestx >= max01) && max01 != 0u) {\n";
-      out << "      " << resolved_xz << " |= mask;\n";
-      out << "    } else if (best0 > best1) {\n";
-      out << "      // 0 wins\n";
-      out << "    } else if (best1 > best0) {\n";
-      out << "      " << resolved_val << " |= mask;\n";
-      out << "    } else {\n";
-      out << "      " << resolved_xz << " |= mask;\n";
-      out << "    }\n";
       out << "  }\n";
 
-      bool is_output = IsOutputPort(module, name) || regs.count(name) > 0;
-      bool is_local = locals.count(name) > 0 && !is_output &&
-                      regs.count(name) == 0;
+      bool is_output = IsOutputPort(module, name) || regs_ctx.count(name) > 0;
+      bool is_local = locals_ctx.count(name) > 0 && !is_output &&
+                      regs_ctx.count(name) == 0;
       if (is_output) {
         if (is_trireg) {
           out << "  " << val_name(name) << "[gid] = ("
@@ -2935,10 +3036,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "  " << xz_name(name) << "[gid] = " << resolved_xz << ";\n";
         }
       } else if (is_local) {
-        if (declared.count(name) == 0) {
+        if (declared_ctx && declared_ctx->count(name) == 0) {
           out << "  " << type << " " << val_name(name) << ";\n";
           out << "  " << type << " " << xz_name(name) << ";\n";
-          declared.insert(name);
+          if (declared_ctx) {
+            declared_ctx->insert(name);
+          }
         }
         out << "  " << val_name(name) << " = " << resolved_val << ";\n";
         out << "  " << xz_name(name) << " = " << resolved_xz << ";\n";
@@ -2946,118 +3049,141 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  // Unmapped resolved assign: " << name << "\n";
       }
     };
-    std::unordered_map<std::string, std::vector<const Assign*>> partial_assigns;
-    for (const auto& assign : module.assigns) {
-      if (assign.lhs_has_range && multi_driver.count(assign.lhs) == 0) {
-        partial_assigns[assign.lhs].push_back(&assign);
-      }
-    }
-    for (size_t index : ordered_assigns) {
-      const auto& assign = module.assigns[index];
-      if (!assign.rhs) {
-        continue;
-      }
-      if (multi_driver.count(assign.lhs) > 0) {
-        auto info_it = driver_info.find(index);
-        if (info_it != driver_info.end()) {
-          emit_driver(assign, info_it->second);
-        }
-        auto remain_it = drivers_remaining.find(assign.lhs);
-        if (remain_it != drivers_remaining.end()) {
-          if (remain_it->second > 0) {
-            remain_it->second -= 1;
+    auto emit_continuous_assigns =
+        [&](const std::unordered_set<std::string>& locals_ctx,
+            const std::unordered_set<std::string>& regs_ctx,
+            std::unordered_set<std::string>* declared_ctx) {
+          std::unordered_map<std::string, size_t> drivers_remaining =
+              drivers_remaining_template;
+          std::unordered_map<std::string, std::vector<const Assign*>>
+              partial_assigns;
+          for (const auto& assign : module.assigns) {
+            if (assign.lhs_has_range && multi_driver.count(assign.lhs) == 0) {
+              partial_assigns[assign.lhs].push_back(&assign);
+            }
           }
-          if (remain_it->second == 0) {
-            emit_resolve(assign.lhs, drivers_for_net[assign.lhs]);
+          for (size_t index : ordered_assigns) {
+            const auto& assign = module.assigns[index];
+            if (!assign.rhs) {
+              continue;
+            }
+            if (multi_driver.count(assign.lhs) > 0) {
+              auto info_it = driver_info.find(index);
+              if (info_it != driver_info.end()) {
+                emit_driver(assign, info_it->second);
+              }
+              auto remain_it = drivers_remaining.find(assign.lhs);
+              if (remain_it != drivers_remaining.end()) {
+                if (remain_it->second > 0) {
+                  remain_it->second -= 1;
+                }
+                if (remain_it->second == 0) {
+                  emit_resolve(assign.lhs, drivers_for_net[assign.lhs],
+                               locals_ctx, regs_ctx, declared_ctx);
+                }
+              }
+              continue;
+            }
+            if (assign.lhs_has_range) {
+              continue;
+            }
+            Lvalue4 lhs = build_lvalue4_assign(assign, locals_ctx, regs_ctx);
+            if (!lhs.ok) {
+              continue;
+            }
+            FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, lhs.width, 2);
+            rhs = maybe_hoist_full(rhs, 2, false, true);
+            if (IsOutputPort(module, assign.lhs) ||
+                regs_ctx.count(assign.lhs) > 0) {
+              out << "  " << lhs.val << " = " << rhs.val << ";\n";
+              out << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+            } else if (locals_ctx.count(assign.lhs) > 0) {
+              if (declared_ctx && declared_ctx->count(assign.lhs) == 0) {
+                std::string type = TypeForWidth(lhs.width);
+                out << "  " << type << " " << lhs.val << " = " << rhs.val
+                    << ";\n";
+                out << "  " << type << " " << lhs.xz << " = " << rhs.xz
+                    << ";\n";
+                declared_ctx->insert(assign.lhs);
+              } else {
+                out << "  " << lhs.val << " = " << rhs.val << ";\n";
+                out << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+              }
+            }
           }
-        }
-        continue;
-      }
-      if (assign.lhs_has_range) {
-        continue;
-      }
-      Lvalue4 lhs = build_lvalue4_assign(assign, locals, regs);
-      if (!lhs.ok) {
-        continue;
-      }
-      FsExpr rhs = emit_expr4_sized(*assign.rhs, lhs.width);
-      if (IsOutputPort(module, assign.lhs) || regs.count(assign.lhs) > 0) {
-        out << "  " << lhs.val << " = " << rhs.val << ";\n";
-        out << "  " << lhs.xz << " = " << rhs.xz << ";\n";
-      } else if (locals.count(assign.lhs) > 0) {
-        if (declared.count(assign.lhs) == 0) {
-          std::string type = TypeForWidth(lhs.width);
-          out << "  " << type << " " << lhs.val << " = " << rhs.val << ";\n";
-          out << "  " << type << " " << lhs.xz << " = " << rhs.xz << ";\n";
-          declared.insert(assign.lhs);
-        } else {
-          out << "  " << lhs.val << " = " << rhs.val << ";\n";
-          out << "  " << lhs.xz << " = " << rhs.xz << ";\n";
-        }
-      }
-    }
-    for (const auto& entry : partial_assigns) {
-      const std::string& name = entry.first;
-      int lhs_width = SignalWidth(module, name);
-      std::string type = TypeForWidth(lhs_width);
-      bool target_is_local =
-          locals.count(name) > 0 && !IsOutputPort(module, name) &&
-          regs.count(name) == 0;
-      std::string temp_val =
-          target_is_local ? val_name(name) : ("__gpga_partial_" + name + "_val");
-      std::string temp_xz =
-          target_is_local ? xz_name(name) : ("__gpga_partial_" + name + "_xz");
-      std::string zero = literal_for_width(0, lhs_width);
-      if (target_is_local) {
-        if (declared.count(name) == 0) {
-          out << "  " << type << " " << temp_val << " = " << zero << ";\n";
-          out << "  " << type << " " << temp_xz << " = " << zero << ";\n";
-          declared.insert(name);
-        } else {
-          out << "  " << temp_val << " = " << zero << ";\n";
-          out << "  " << temp_xz << " = " << zero << ";\n";
-        }
-      } else {
-        out << "  " << type << " " << temp_val << " = " << zero << ";\n";
-        out << "  " << type << " " << temp_xz << " = " << zero << ";\n";
-      }
-      for (const auto* assign : entry.second) {
-        int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
-        int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
-        int slice_width = hi - lo + 1;
-        FsExpr rhs = emit_expr4_sized(*assign->rhs, slice_width);
-        std::string mask = mask_literal(slice_width);
-        std::string shifted_mask =
-            "(" + mask + " << " + std::to_string(lo) + "u)";
-        std::string cast = (lhs_width > 32) ? "(ulong)" : "(uint)";
-        out << "  " << temp_val << " = (" << temp_val << " & ~"
-            << shifted_mask << ") | ((" << cast << rhs.val << " & " << mask
-            << ") << " << std::to_string(lo) << "u);\n";
-        out << "  " << temp_xz << " = (" << temp_xz << " & ~"
-            << shifted_mask << ") | ((" << cast << rhs.xz << " & " << mask
-            << ") << " << std::to_string(lo) << "u);\n";
-      }
-      if (!target_is_local) {
-        if (IsOutputPort(module, name) || regs.count(name) > 0) {
-          out << "  " << val_name(name) << "[gid] = " << temp_val << ";\n";
-          out << "  " << xz_name(name) << "[gid] = " << temp_xz << ";\n";
-        } else if (locals.count(name) > 0) {
-          if (declared.count(name) == 0) {
-            out << "  " << type << " " << val_name(name) << " = " << temp_val
-                << ";\n";
-            out << "  " << type << " " << xz_name(name) << " = " << temp_xz
-                << ";\n";
-            declared.insert(name);
-          } else {
-            out << "  " << val_name(name) << " = " << temp_val << ";\n";
-            out << "  " << xz_name(name) << " = " << temp_xz << ";\n";
+          for (const auto& entry : partial_assigns) {
+            const std::string& name = entry.first;
+            int lhs_width = SignalWidth(module, name);
+            std::string type = TypeForWidth(lhs_width);
+            bool target_is_local =
+                locals_ctx.count(name) > 0 && !IsOutputPort(module, name) &&
+                regs_ctx.count(name) == 0;
+            std::string temp_val =
+                target_is_local ? val_name(name)
+                                : ("__gpga_partial_" + name + "_val");
+            std::string temp_xz =
+                target_is_local ? xz_name(name)
+                                : ("__gpga_partial_" + name + "_xz");
+            std::string zero = literal_for_width(0, lhs_width);
+            if (target_is_local) {
+              if (declared_ctx && declared_ctx->count(name) == 0) {
+                out << "  " << type << " " << temp_val << " = " << zero
+                    << ";\n";
+                out << "  " << type << " " << temp_xz << " = " << zero
+                    << ";\n";
+                declared_ctx->insert(name);
+              } else {
+                out << "  " << temp_val << " = " << zero << ";\n";
+                out << "  " << temp_xz << " = " << zero << ";\n";
+              }
+            } else {
+              out << "  " << type << " " << temp_val << " = " << zero
+                  << ";\n";
+              out << "  " << type << " " << temp_xz << " = " << zero << ";\n";
+            }
+            for (const auto* assign : entry.second) {
+              int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
+              int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
+              int slice_width = hi - lo + 1;
+              FsExpr rhs =
+                  emit_expr4_sized_with_cse(*assign->rhs, slice_width, 2);
+              rhs = maybe_hoist_full(rhs, 2, false, true);
+              std::string mask = mask_literal(slice_width);
+              std::string shifted_mask =
+                  "(" + mask + " << " + std::to_string(lo) + "u)";
+              std::string cast = CastForWidth(lhs_width);
+              out << "  " << temp_val << " = (" << temp_val << " & ~"
+                  << shifted_mask << ") | ((" << cast << rhs.val << " & "
+                  << mask << ") << " << std::to_string(lo) << "u);\n";
+              out << "  " << temp_xz << " = (" << temp_xz << " & ~"
+                  << shifted_mask << ") | ((" << cast << rhs.xz << " & "
+                  << mask << ") << " << std::to_string(lo) << "u);\n";
+            }
+            if (!target_is_local) {
+              if (IsOutputPort(module, name) || regs_ctx.count(name) > 0) {
+                out << "  " << val_name(name) << "[gid] = " << temp_val
+                    << ";\n";
+                out << "  " << xz_name(name) << "[gid] = " << temp_xz
+                    << ";\n";
+              } else if (locals_ctx.count(name) > 0) {
+                if (declared_ctx && declared_ctx->count(name) == 0) {
+                  out << "  " << type << " " << val_name(name) << " = "
+                      << temp_val << ";\n";
+                  out << "  " << type << " " << xz_name(name) << " = "
+                      << temp_xz << ";\n";
+                  declared_ctx->insert(name);
+                } else {
+                  out << "  " << val_name(name) << " = " << temp_val << ";\n";
+                  out << "  " << xz_name(name) << " = " << temp_xz << ";\n";
+                }
+              } else {
+                out << "  // Unmapped assign: " << name << " = " << temp_val
+                    << ";\n";
+              }
+            }
           }
-        } else {
-          out << "  // Unmapped assign: " << name << " = " << temp_val
-              << ";\n";
-        }
-      }
-    }
+        };
+    emit_continuous_assigns(locals, regs, &declared);
 
     std::unordered_set<std::string> comb_targets;
     for (const auto& block : module.always_blocks) {
@@ -3084,6 +3210,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
              ")";
     };
 
+    auto eval_const_bool = [&](const FsExpr& expr, bool* value) -> bool {
+      if (!value || !expr.is_const || expr.width > 64) {
+        return false;
+      }
+      if (expr.const_xz != 0) {
+        *value = false;
+        return true;
+      }
+      *value = (expr.const_val != 0);
+      return true;
+    };
+
     auto fs_merge_expr = [&](FsExpr lhs, FsExpr rhs, int width) -> FsExpr {
       lhs = fs_resize_expr(lhs, width);
       rhs = fs_resize_expr(rhs, width);
@@ -3091,7 +3229,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string base =
           func + "(" + fs_make_expr(lhs, width) + ", " +
           fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
-      return FsExpr{base + ".val", base + ".xz", drive_full(width), width};
+      return fs_expr_from_base(base, drive_full(width), width);
     };
 
     auto signal_lvalue4 = [&](const std::string& name, std::string* val,
@@ -3123,14 +3261,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string pad(indent, ' ');
       std::string idx = "uint(" + lhs.bit_index_val + ")";
       std::string one = (lhs.base_width > 32) ? "1ul" : "1u";
-      std::string cast = (lhs.base_width > 32) ? "(ulong)" : "(uint)";
+      std::string cast = CastForWidth(lhs.base_width);
       std::string mask = "(" + one + " << " + idx + ")";
+      std::string rhs_val_masked = MaskForWidthExpr(rhs.val, 1);
+      std::string rhs_xz_masked = MaskForWidthExpr(rhs.xz, 1);
       std::string update_val =
-          "(" + target_val + " & ~" + mask + ") | ((" + cast + rhs.val + " & " +
-          one + ") << " + idx + ")";
+          "(" + target_val + " & ~" + mask + ") | ((" + cast + rhs_val_masked +
+          ") << " + idx + ")";
       std::string update_xz =
-          "(" + target_xz + " & ~" + mask + ") | ((" + cast + rhs.xz + " & " +
-          one + ") << " + idx + ")";
+          "(" + target_xz + " & ~" + mask + ") | ((" + cast + rhs_xz_masked +
+          ") << " + idx + ")";
       if (!lhs.guard.empty()) {
         out << pad << "if " << lhs.guard << " {\n";
         out << pad << "  " << target_val << " = " << update_val << ";\n";
@@ -3147,11 +3287,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (!stmt.assign.rhs) {
           return;
         }
-        Lvalue4 lhs = build_lvalue4(stmt.assign, locals, regs, false);
+        Lvalue4 lhs = build_lvalue4(stmt.assign, locals, regs, false, indent);
         if (!lhs.ok) {
           return;
         }
-        FsExpr rhs = emit_expr4_sized(*stmt.assign.rhs, lhs.width);
+        FsExpr rhs =
+            emit_expr4_sized_with_cse(*stmt.assign.rhs, lhs.width, indent);
+        rhs = maybe_hoist_full(rhs, indent, false, true);
         if (lhs.is_bit_select) {
           emit_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
           return;
@@ -3169,10 +3311,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       if (stmt.kind == StatementKind::kIf) {
         FsExpr cond =
-            stmt.condition ? emit_expr4(*stmt.condition)
+            stmt.condition ? emit_expr4_with_cse(*stmt.condition, indent)
                            : FsExpr{literal_for_width(0, 1),
                                     literal_for_width(0, 1),
                                     drive_full(1), 1};
+        bool cond_value = false;
+        if (eval_const_bool(cond, &cond_value)) {
+          const auto& branch =
+              cond_value ? stmt.then_branch : stmt.else_branch;
+          for (const auto& inner : branch) {
+            emit_comb_stmt(inner, indent);
+          }
+          return;
+        }
+        cond = maybe_hoist_full(cond, indent, false, true);
         out << pad << "if (" << cond_bool(cond) << ") {\n";
         for (const auto& inner : stmt.then_branch) {
           emit_comb_stmt(inner, indent + 2);
@@ -3190,7 +3342,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       if (stmt.kind == StatementKind::kCase) {
         FsExpr case_expr = stmt.case_expr
-                               ? emit_expr4(*stmt.case_expr)
+                               ? emit_expr4_with_cse(*stmt.case_expr, indent)
                                : FsExpr{literal_for_width(0, 1),
                                         literal_for_width(0, 1),
                                         drive_full(1), 1};
@@ -3306,7 +3458,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       int width = std::min(a_width, b_width);
       FsExpr a_expr{a_val, a_xz, drive_full(width), width};
       FsExpr b_expr{b_val, b_xz, drive_full(width), width};
-      FsExpr merged = fs_merge_expr(a_expr, b_expr, width);
 
       std::string cond_false;
       if (sw.kind == SwitchKind::kTran) {
@@ -3348,10 +3499,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
       out << "  if (" << cond_false << ") {\n";
       out << "  } else {\n";
-      out << "    " << a_val << " = " << merged.val << ";\n";
-      out << "    " << a_xz << " = " << merged.xz << ";\n";
-      out << "    " << b_val << " = " << merged.val << ";\n";
-      out << "    " << b_xz << " = " << merged.xz << ";\n";
+      int temp_index = switch_temp_index++;
+      std::string fs_type = (width > 32) ? "FourState64" : "FourState32";
+      std::string a_tmp = "__gpga_sw_a" + std::to_string(temp_index);
+      std::string b_tmp = "__gpga_sw_b" + std::to_string(temp_index);
+      std::string m_tmp = "__gpga_sw_m" + std::to_string(temp_index);
+      out << "    " << fs_type << " " << a_tmp << " = "
+          << fs_make_expr(a_expr, width) << ";\n";
+      out << "    " << fs_type << " " << b_tmp << " = "
+          << fs_make_expr(b_expr, width) << ";\n";
+      FsExpr a_saved = fs_expr_from_base(a_tmp, drive_full(width), width);
+      FsExpr b_saved = fs_expr_from_base(b_tmp, drive_full(width), width);
+      FsExpr merged = fs_merge_expr(a_saved, b_saved, width);
+      out << "    " << fs_type << " " << m_tmp << " = " << merged.full
+          << ";\n";
+      out << "    " << a_val << " = " << m_tmp << ".val;\n";
+      out << "    " << a_xz << " = " << m_tmp << ".xz;\n";
+      out << "    " << b_val << " = " << m_tmp << ".val;\n";
+      out << "    " << b_xz << " = " << m_tmp << ".xz;\n";
       out << "  }\n";
     }
     out << "}\n";
@@ -3376,7 +3541,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
       }
       for (const auto& reg : init_reg_names) {
-        out << ",\n";
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
         std::string type = TypeForWidth(SignalWidth(module, reg));
         out << "  device " << type << "* " << val_name(reg) << " [[buffer("
             << buffer_index++ << ")]]";
@@ -3385,7 +3553,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << buffer_index++ << ")]]";
       }
       for (const auto& reg : trireg_names) {
-        out << ",\n";
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
         std::string type = TypeForWidth(SignalWidth(module, reg));
         out << "  device " << type << "* " << val_name(reg) << " [[buffer("
             << buffer_index++ << ")]]";
@@ -3394,7 +3565,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << buffer_index++ << ")]]";
       }
       for (const auto* net : array_nets) {
-        out << ",\n";
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
         std::string type = TypeForWidth(net->width);
         out << "  device " << type << "* " << val_name(net->name)
             << " [[buffer(" << buffer_index++ << ")]]";
@@ -3402,7 +3576,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  device " << type << "* " << xz_name(net->name)
             << " [[buffer(" << buffer_index++ << ")]]";
       }
-      out << ",\n";
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
       out << "  constant GpgaParams& params [[buffer(" << buffer_index++
           << ")]],\n";
       out << "  uint gid [[thread_position_in_grid]]) {\n";
@@ -3452,8 +3629,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  " << type << " " << xz_name(target) << ";\n";
         init_declared.insert(target);
       }
+      for (const auto& net : module.nets) {
+        if (net.array_size > 0) {
+          continue;
+        }
+        if (init_locals.count(net.name) == 0 ||
+            init_declared.count(net.name) > 0) {
+          continue;
+        }
+        std::string type = TypeForWidth(net.width);
+        std::string zero = literal_for_width(0, net.width);
+        std::string mask = mask_literal(net.width);
+        out << "  " << type << " " << val_name(net.name) << " = " << zero
+            << ";\n";
+        out << "  " << type << " " << xz_name(net.name) << " = " << mask
+            << ";\n";
+        init_declared.insert(net.name);
+      }
+
+      emit_continuous_assigns(init_locals, init_regs, &init_declared);
 
       std::function<void(const Statement&, int)> emit_init_stmt;
+      std::function<void(const std::vector<Statement>&, int)> emit_init_block;
       auto emit_init_bit_select4 =
           [&](const Lvalue4& lhs, const FsExpr& rhs,
               const std::string& target_val, const std::string& target_xz,
@@ -3467,11 +3664,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
           Lvalue4 lhs = build_lvalue4(stmt.assign, init_locals, init_regs,
-                                      false);
+                                      false, indent);
           if (!lhs.ok) {
             return;
           }
-          FsExpr rhs = emit_expr4_sized(*stmt.assign.rhs, lhs.width);
+          FsExpr rhs =
+              emit_expr4_sized_with_cse(*stmt.assign.rhs, lhs.width, indent);
+          rhs = maybe_hoist_full(rhs, indent, false, true);
           if (lhs.is_bit_select) {
             emit_init_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
             return;
@@ -3488,17 +3687,22 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         if (stmt.kind == StatementKind::kIf) {
-          FsExpr cond = stmt.condition ? emit_expr4(*stmt.condition)
-                                       : fs_allx_expr(1);
-          out << pad << "if (" << cond_bool(cond) << ") {\n";
-          for (const auto& inner : stmt.then_branch) {
-            emit_init_stmt(inner, indent + 2);
+          FsExpr cond = stmt.condition
+                            ? emit_expr4_with_cse(*stmt.condition, indent)
+                            : fs_allx_expr(1);
+          bool cond_value = false;
+          if (eval_const_bool(cond, &cond_value)) {
+            const auto& branch =
+                cond_value ? stmt.then_branch : stmt.else_branch;
+            emit_init_block(branch, indent);
+            return;
           }
+          cond = maybe_hoist_full(cond, indent, false, true);
+          out << pad << "if (" << cond_bool(cond) << ") {\n";
+          emit_init_block(stmt.then_branch, indent + 2);
           if (!stmt.else_branch.empty()) {
             out << pad << "} else {\n";
-            for (const auto& inner : stmt.else_branch) {
-              emit_init_stmt(inner, indent + 2);
-            }
+            emit_init_block(stmt.else_branch, indent + 2);
             out << pad << "}\n";
           } else {
             out << pad << "}\n";
@@ -3509,11 +3713,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (!stmt.case_expr) {
             return;
           }
-          FsExpr case_expr = emit_expr4(*stmt.case_expr);
+          FsExpr case_expr = emit_expr4_with_cse(*stmt.case_expr, indent);
           if (stmt.case_items.empty()) {
-            for (const auto& inner : stmt.default_branch) {
-              emit_init_stmt(inner, indent);
-            }
+            emit_init_block(stmt.default_branch, indent);
             return;
           }
           bool first_case = true;
@@ -3536,15 +3738,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             } else {
               out << pad << "} else if (" << cond << ") {\n";
             }
-            for (const auto& inner : item.body) {
-              emit_init_stmt(inner, indent + 2);
-            }
+            emit_init_block(item.body, indent + 2);
           }
           if (!stmt.default_branch.empty()) {
             out << pad << "} else {\n";
-            for (const auto& inner : stmt.default_branch) {
-              emit_init_stmt(inner, indent + 2);
-            }
+            emit_init_block(stmt.default_branch, indent + 2);
             out << pad << "}\n";
           } else if (!first_case) {
             out << pad << "}\n";
@@ -3553,31 +3751,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         if (stmt.kind == StatementKind::kBlock) {
           out << pad << "{\n";
-          for (const auto& inner : stmt.block) {
-            emit_init_stmt(inner, indent + 2);
-          }
+          emit_init_block(stmt.block, indent + 2);
           out << pad << "}\n";
           return;
         }
         if (stmt.kind == StatementKind::kDelay) {
           out << pad << "// delay control ignored in MSL v0\n";
-          for (const auto& inner : stmt.delay_body) {
-            emit_init_stmt(inner, indent);
-          }
+          emit_init_block(stmt.delay_body, indent);
           return;
         }
         if (stmt.kind == StatementKind::kEventControl) {
           out << pad << "// event control ignored in MSL v0\n";
-          for (const auto& inner : stmt.event_body) {
-            emit_init_stmt(inner, indent);
-          }
+          emit_init_block(stmt.event_body, indent);
           return;
         }
         if (stmt.kind == StatementKind::kWait) {
           out << pad << "// wait ignored in MSL v0\n";
-          for (const auto& inner : stmt.wait_body) {
-            emit_init_stmt(inner, indent);
-          }
+          emit_init_block(stmt.wait_body, indent);
           return;
         }
         if (stmt.kind == StatementKind::kForever) {
@@ -3586,9 +3776,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         if (stmt.kind == StatementKind::kFork) {
           out << pad << "// fork/join executed sequentially in MSL v0\n";
-          for (const auto& inner : stmt.fork_branches) {
-            emit_init_stmt(inner, indent);
-          }
+          emit_init_block(stmt.fork_branches, indent);
           return;
         }
         if (stmt.kind == StatementKind::kDisable) {
@@ -3604,14 +3792,47 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
       };
+      emit_init_block = [&](const std::vector<Statement>& statements,
+                            int indent) {
+        std::unordered_map<std::string, size_t> last_assign;
+        std::vector<char> drop(statements.size(), 0);
+        for (size_t i = 0; i < statements.size(); ++i) {
+          std::unordered_set<std::string> reads;
+          CollectReadSignals(statements[i], &reads);
+          for (const auto& name : reads) {
+            last_assign.erase(name);
+          }
+          const auto& stmt = statements[i];
+          bool simple_assign = stmt.kind == StatementKind::kAssign &&
+                               !stmt.assign.lhs_index &&
+                               stmt.assign.lhs_indices.empty();
+          if (simple_assign) {
+            const std::string& lhs = stmt.assign.lhs;
+            auto it = last_assign.find(lhs);
+            if (it != last_assign.end()) {
+              drop[it->second] = 1;
+            }
+            last_assign[lhs] = i;
+          }
+          if (stmt.kind == StatementKind::kTaskCall ||
+              stmt.kind == StatementKind::kDisable ||
+              stmt.kind == StatementKind::kEventTrigger) {
+            last_assign.clear();
+          }
+        }
+        for (size_t i = 0; i < statements.size(); ++i) {
+          if (drop[i]) {
+            continue;
+          }
+          emit_init_stmt(statements[i], indent);
+        }
+      };
 
       for (const auto& block : module.always_blocks) {
         if (block.edge != EdgeKind::kInitial) {
           continue;
         }
-        for (const auto& stmt : block.statements) {
-          emit_init_stmt(stmt, 2);
-        }
+        emit_init_block(block.statements, 2);
       }
       out << "}\n";
     }
@@ -3645,7 +3866,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
       }
       for (const auto& reg : reg_names) {
-        out << ",\n";
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
         std::string type = TypeForWidth(SignalWidth(module, reg));
         out << "  device " << type << "* " << val_name(reg) << " [[buffer("
             << buffer_index++ << ")]]";
@@ -3654,7 +3878,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << buffer_index++ << ")]]";
       }
       for (const auto* net : array_nets) {
-        out << ",\n";
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
         std::string type = TypeForWidth(net->width);
         out << "  device " << type << "* " << val_name(net->name)
             << " [[buffer(" << buffer_index++ << ")]]";
@@ -3663,7 +3890,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << " [[buffer(" << buffer_index++ << ")]]";
       }
       for (const auto* net : array_nets) {
-        out << ",\n";
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
         std::string type = TypeForWidth(net->width);
         out << "  device " << type << "* " << val_name(net->name + "_next")
             << " [[buffer(" << buffer_index++ << ")]]";
@@ -3671,7 +3901,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  device " << type << "* " << xz_name(net->name + "_next")
             << " [[buffer(" << buffer_index++ << ")]]";
       }
-      out << ",\n";
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
       out << "  constant GpgaParams& params [[buffer(" << buffer_index++
           << ")]],\n";
       out << "  uint gid [[thread_position_in_grid]]) {\n";
@@ -3748,23 +3981,85 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       };
 
-      std::function<void(const Statement&, int)> emit_stmt;
-      emit_stmt = [&](const Statement& stmt, int indent) {
+      struct ExprCacheEntry {
+        FsExpr expr;
+        std::unordered_set<std::string> deps;
+      };
+      struct ExprCache {
+        ExprCache* parent = nullptr;
+        std::unordered_map<std::string, ExprCacheEntry> entries;
+        std::unordered_set<std::string> blocked;
+      };
+      auto expr_cache_key = [&](const Expr& expr, int target_width) {
+        int width = target_width > 0 ? target_width : ExprWidth(expr, module);
+        std::string key = expr_key(expr, expr_key) + ":w" +
+                          std::to_string(width);
+        key += ExprSigned(expr, module) ? ":s" : ":u";
+        return key;
+      };
+      auto cache_entry_blocked = [&](const ExprCache* cache,
+                                     const ExprCacheEntry& entry) -> bool {
+        for (const auto& dep : entry.deps) {
+          for (const ExprCache* cur = cache; cur; cur = cur->parent) {
+            if (cur->blocked.count(dep) > 0) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      auto cache_lookup = [&](ExprCache* cache,
+                              const std::string& key) -> const ExprCacheEntry* {
+        for (ExprCache* cur = cache; cur; cur = cur->parent) {
+          auto it = cur->entries.find(key);
+          if (it == cur->entries.end()) {
+            continue;
+          }
+          if (!cache_entry_blocked(cache, it->second)) {
+            return &it->second;
+          }
+        }
+        return nullptr;
+      };
+      auto emit_expr4_cached = [&](const Expr& expr, int target_width,
+                                   int indent, ExprCache* cache) -> FsExpr {
+        int width = target_width > 0 ? target_width : ExprWidth(expr, module);
+        std::string key = expr_cache_key(expr, width);
+        if (cache) {
+          if (const ExprCacheEntry* entry = cache_lookup(cache, key)) {
+            return entry->expr;
+          }
+        }
+        FsExpr out_expr = emit_expr4_sized_with_cse(expr, width, indent);
+        out_expr = maybe_hoist_full(out_expr, indent, false, true);
+        if (cache) {
+          ExprCacheEntry entry;
+          entry.expr = out_expr;
+          CollectReadSignalsExpr(expr, &entry.deps);
+          cache->entries.emplace(key, std::move(entry));
+        }
+        return out_expr;
+      };
+
+      std::function<void(const Statement&, int, ExprCache*)> emit_stmt;
+      emit_stmt = [&](const Statement& stmt, int indent, ExprCache* cache) {
         std::string pad(indent, ' ');
         if (stmt.kind == StatementKind::kAssign) {
           if (!stmt.assign.rhs) {
             return;
           }
           Lvalue4 lhs =
-              build_lvalue4(stmt.assign, tick_locals, tick_regs, false);
+              build_lvalue4(stmt.assign, tick_locals, tick_regs, false, indent);
           if (!lhs.ok) {
             return;
           }
-          FsExpr rhs = emit_expr4_sized(*stmt.assign.rhs, lhs.width);
+          FsExpr rhs =
+              emit_expr4_cached(*stmt.assign.rhs, lhs.width, indent, cache);
           if (lhs.is_array) {
             if (stmt.assign.nonblocking) {
               Lvalue4 next =
-                  build_lvalue4(stmt.assign, tick_locals, tick_regs, true);
+                  build_lvalue4(stmt.assign, tick_locals, tick_regs, true,
+                                indent);
               if (!next.ok) {
                 return;
               }
@@ -3780,7 +4075,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               return;
             }
             Lvalue4 next =
-                build_lvalue4(stmt.assign, tick_locals, tick_regs, true);
+                build_lvalue4(stmt.assign, tick_locals, tick_regs, true,
+                              indent);
             if (!lhs.guard.empty()) {
               out << pad << "if " << lhs.guard << " {\n";
               out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
@@ -3814,6 +4110,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
             }
             emit_bit_select4(lhs, rhs, target_val, target_xz, indent);
+            if (!stmt.assign.nonblocking && cache) {
+              cache->blocked.insert(stmt.assign.lhs);
+            }
             return;
           }
           if (stmt.assign.nonblocking && nb_map.count(stmt.assign.lhs) > 0) {
@@ -3831,46 +4130,81 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << lhs.val << " = " << rhs.val << ";\n";
             out << pad << lhs.xz << " = " << rhs.xz << ";\n";
           }
+          if (!stmt.assign.nonblocking && cache) {
+            cache->blocked.insert(stmt.assign.lhs);
+          }
           return;
         }
         if (stmt.kind == StatementKind::kIf) {
           FsExpr cond =
-              stmt.condition ? emit_expr4(*stmt.condition)
+              stmt.condition
+                  ? emit_expr4_cached(*stmt.condition,
+                                      ExprWidth(*stmt.condition, module),
+                                      indent, cache)
                              : FsExpr{literal_for_width(0, 1),
                                       literal_for_width(0, 1),
                                       drive_full(1), 1};
+          bool cond_value = false;
+          if (eval_const_bool(cond, &cond_value)) {
+            const auto& branch =
+                cond_value ? stmt.then_branch : stmt.else_branch;
+            for (const auto& inner : branch) {
+              emit_stmt(inner, indent, cache);
+            }
+            return;
+          }
           out << pad << "if (" << cond_bool(cond) << ") {\n";
+          ExprCache then_cache;
+          then_cache.parent = cache;
           for (const auto& inner : stmt.then_branch) {
-            emit_stmt(inner, indent + 2);
+            emit_stmt(inner, indent + 2, &then_cache);
           }
           if (!stmt.else_branch.empty()) {
             out << pad << "} else {\n";
+            ExprCache else_cache;
+            else_cache.parent = cache;
             for (const auto& inner : stmt.else_branch) {
-              emit_stmt(inner, indent + 2);
+              emit_stmt(inner, indent + 2, &else_cache);
+            }
+            if (cache) {
+              for (const auto& name : then_cache.blocked) {
+                cache->blocked.insert(name);
+              }
+              for (const auto& name : else_cache.blocked) {
+                cache->blocked.insert(name);
+              }
             }
             out << pad << "}\n";
           } else {
+            if (cache) {
+              for (const auto& name : then_cache.blocked) {
+                cache->blocked.insert(name);
+              }
+            }
             out << pad << "}\n";
           }
           return;
         }
-      if (stmt.kind == StatementKind::kCase) {
-        FsExpr case_expr = stmt.case_expr
-                                 ? emit_expr4(*stmt.case_expr)
-                                 : FsExpr{literal_for_width(0, 1),
-                                          literal_for_width(0, 1),
-                                          drive_full(1), 1};
-        bool first_case = true;
-        for (const auto& item : stmt.case_items) {
-          std::string cond;
-          for (const auto& label : item.labels) {
-            std::string piece =
-                emit_case_cond4(stmt.case_kind, case_expr, *label,
-                                stmt.case_expr.get());
-            if (!cond.empty()) {
-              cond += " || ";
-            }
-            cond += piece;
+        if (stmt.kind == StatementKind::kCase) {
+          FsExpr case_expr =
+              stmt.case_expr
+                  ? emit_expr4_cached(*stmt.case_expr,
+                                      ExprWidth(*stmt.case_expr, module),
+                                      indent, cache)
+                  : FsExpr{literal_for_width(0, 1),
+                           literal_for_width(0, 1), drive_full(1), 1};
+          bool first_case = true;
+          std::unordered_set<std::string> case_blocked;
+          for (const auto& item : stmt.case_items) {
+            std::string cond;
+            for (const auto& label : item.labels) {
+              std::string piece =
+                  emit_case_cond4(stmt.case_kind, case_expr, *label,
+                                  stmt.case_expr.get());
+              if (!cond.empty()) {
+                cond += " || ";
+              }
+              cond += piece;
             }
             if (cond.empty()) {
               continue;
@@ -3881,25 +4215,40 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             } else {
               out << pad << "} else if (" << cond << ") {\n";
             }
+            ExprCache branch_cache;
+            branch_cache.parent = cache;
             for (const auto& inner : item.body) {
-              emit_stmt(inner, indent + 2);
+              emit_stmt(inner, indent + 2, &branch_cache);
+            }
+            for (const auto& name : branch_cache.blocked) {
+              case_blocked.insert(name);
             }
           }
           if (!stmt.default_branch.empty()) {
             out << pad << "} else {\n";
+            ExprCache branch_cache;
+            branch_cache.parent = cache;
             for (const auto& inner : stmt.default_branch) {
-              emit_stmt(inner, indent + 2);
+              emit_stmt(inner, indent + 2, &branch_cache);
+            }
+            for (const auto& name : branch_cache.blocked) {
+              case_blocked.insert(name);
             }
             out << pad << "}\n";
           } else if (!first_case) {
             out << pad << "}\n";
+          }
+          if (cache) {
+            for (const auto& name : case_blocked) {
+              cache->blocked.insert(name);
+            }
           }
           return;
         }
         if (stmt.kind == StatementKind::kBlock) {
           out << pad << "{\n";
           for (const auto& inner : stmt.block) {
-            emit_stmt(inner, indent + 2);
+            emit_stmt(inner, indent + 2, cache);
           }
           out << pad << "}\n";
           return;
@@ -3907,21 +4256,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (stmt.kind == StatementKind::kDelay) {
           out << pad << "// delay control ignored in MSL v0\n";
           for (const auto& inner : stmt.delay_body) {
-            emit_stmt(inner, indent);
+            emit_stmt(inner, indent, cache);
           }
           return;
         }
         if (stmt.kind == StatementKind::kEventControl) {
           out << pad << "// event control ignored in MSL v0\n";
           for (const auto& inner : stmt.event_body) {
-            emit_stmt(inner, indent);
+            emit_stmt(inner, indent, cache);
           }
           return;
         }
         if (stmt.kind == StatementKind::kWait) {
           out << pad << "// wait ignored in MSL v0\n";
           for (const auto& inner : stmt.wait_body) {
-            emit_stmt(inner, indent);
+            emit_stmt(inner, indent, cache);
           }
           return;
         }
@@ -3931,8 +4280,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         if (stmt.kind == StatementKind::kFork) {
           out << pad << "// fork/join executed sequentially in MSL v0\n";
+          std::unordered_set<std::string> fork_blocked;
           for (const auto& inner : stmt.fork_branches) {
-            emit_stmt(inner, indent);
+            ExprCache branch_cache;
+            branch_cache.parent = cache;
+            emit_stmt(inner, indent, &branch_cache);
+            for (const auto& name : branch_cache.blocked) {
+              fork_blocked.insert(name);
+            }
+          }
+          if (cache) {
+            for (const auto& name : fork_blocked) {
+              cache->blocked.insert(name);
+            }
           }
           return;
         }
@@ -3983,8 +4343,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << xz_name(target) << "[gid];\n";
         }
 
+        ExprCache block_cache;
         for (const auto& stmt : block.statements) {
-          emit_stmt(stmt, 2);
+          emit_stmt(stmt, 2, &block_cache);
         }
 
         for (const auto& entry : nb_map) {
@@ -4752,15 +5113,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           std::string pad(indent, ' ');
           Lvalue4 lhs =
-              build_lvalue4(assign, locals_override, sched_regs, false);
+              build_lvalue4(assign, locals_override, sched_regs, false, indent);
           if (!lhs.ok) {
             return;
           }
-          FsExpr rhs = emit_expr4_sized(*assign.rhs, lhs.width);
+          FsExpr rhs =
+              emit_expr4_sized_with_cse(*assign.rhs, lhs.width, indent);
+          rhs = maybe_hoist_full(rhs, indent, false, true);
           if (assign.nonblocking) {
             if (assign.lhs_index) {
               Lvalue4 next =
-                  build_lvalue4(assign, locals_override, sched_regs, true);
+                  build_lvalue4(assign, locals_override, sched_regs, true,
+                                indent);
               if (next.ok) {
                 if (!next.guard.empty()) {
                   out << pad << "if " << next.guard << " {\n";
@@ -4808,7 +5172,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           temp.lhs = name;
           temp.nonblocking = false;
           Lvalue4 lhs =
-              build_lvalue4(temp, locals_override, sched_regs, false);
+              build_lvalue4(temp, locals_override, sched_regs, false, indent);
           if (!lhs.ok) {
             return;
           }
@@ -5397,7 +5761,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             target_assign.lhs = call_arg->ident;
             target_assign.nonblocking = false;
             Lvalue4 target =
-                build_lvalue4(target_assign, sched_locals, sched_regs, false);
+                build_lvalue4(target_assign, sched_locals, sched_regs, false,
+                              indent);
             int target_width = ExprWidth(*call_arg, module);
             task_outs.push_back(TaskOutArg{arg.name, target, target_width});
           }
@@ -6212,7 +6577,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string mask_literal = std::to_string(mask) + suffix;
       std::string shifted_mask =
           "(" + mask_literal + " << " + std::to_string(lo) + "u)";
-      std::string cast = (lhs_width > 32) ? "(ulong)" : "(uint)";
+      std::string cast = CastForWidth(lhs_width);
       out << "  " << temp << " = (" << temp << " & ~" << shifted_mask << ") | (("
           << cast << rhs << " & " << mask_literal << ") << "
           << std::to_string(lo) << "u);\n";

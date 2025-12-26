@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Compiles a subset of Verilog HDL into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.4 (in development) - Event scheduling system in progress. Full generate/loop coverage, signed arithmetic, and 4-state logic support. 174 passing test cases in `verilog/pass/`.
+**Current Status**: v0.4+ (in active development) - Event scheduling, system tasks, procedural tasks, and switch-level modeling added. Full generate/loop coverage, signed arithmetic, and 4-state logic support. **225 passing test cases** in `verilog/pass/`.
 
 ## What is this?
 
@@ -13,6 +13,8 @@ metalfpga is a "GPGA" (GPU-based FPGA) compiler that:
 - Emits host-side stubs (runtime wiring is still TODO)
 
 This allows FPGA designers to prototype and validate hardware designs on GPUs before synthesis to actual hardware, leveraging massive parallelism for fast simulation.
+
+**Note**: The emitted Metal Shading Language (MSL) code is verbose and generally correct, but has not been thoroughly validated through kernel execution. The codegen produces structurally sound MSL that implements the intended semantics, though bugs may surface during actual GPU dispatch. Runtime validation is the next development phase.
 
 ## Quick Start
 
@@ -93,26 +95,38 @@ cmake --build build
   - X/Z literals (`8'bz`, `4'b10zx`, etc.)
   - X/Z propagation in operations
   - See [4STATE.md](4STATE.md) for details
+- System tasks:
+  - `$display`, `$write` - Console output with format specifiers (%h, %d, %b, %o, %t)
+  - `$monitor`, `$strobe` - Monitored value printing
+  - `$finish`, `$stop` - Simulation control
+  - `$time`, `$stime`, `$realtime` - Time retrieval
+  - `$timeformat`, `$printtimescale` - Time formatting
+  - `$readmemh`, `$readmemb` - Memory initialization
+  - `$dumpfile`, `$dumpvars` - Waveform dumping
+  - `$sformat` - String formatting
+  - `$signed`, `$unsigned`, `$clog2` - Type/math functions
+- Tasks (procedural `task` blocks with inputs/outputs)
+- `time` data type and time system functions
+- Named events (`event` keyword and `->` trigger)
+- Switch-level modeling:
+  - Transmission gates: `tran`, `tranif0`, `tranif1`, `rtran`, `rtranif0`, `rtranif1`
+  - MOS switches: `nmos`, `pmos`, `rnmos`, `rpmos`, `cmos`, `rcmos`
+  - Drive strengths: `supply0`, `supply1`, `strong0`, `strong1`, `pull0`, `pull1`, `weak0`, `weak1`, `highz0`, `highz1`
+  - Net types: `wire`, `wand`, `wor`, `tri`, `triand`, `trior`, `tri0`, `tri1`, `supply0`, `supply1`
+- Timing delays (`#` delay syntax)
+- `timescale` directive
 
 ### ❌ Not Yet Implemented
 **High Priority**:
-- System tasks (`$display`, `$monitor`, `$finish`, etc.)
-- Tasks (procedural `task` blocks)
-- Event scheduling system (in development for v0.4)
-- `time` data type and `$time` system function
-- Named events (`event` keyword and `->` trigger)
-
-**Medium Priority**:
-- General timing controls (`#` delays)
-- Sensitivity lists beyond `@*` and `@(posedge/negedge clk)`
-- `timescale` directive
+- Event scheduling refinement (initial implementation complete, needs testing/validation)
+- Full sensitivity list support beyond `@*` and `@(posedge/negedge clk)`
 
 **Low Priority**:
 - SystemVerilog constructs
 
 ## Test Suite
 
-**174 passing test cases** in `verilog/pass/`:
+**225 passing test cases** in `verilog/pass/`:
 - Arithmetic and logic operations
 - Reduction operators (all 6 variants: &, |, ^, ~&, ~|, ~^)
   - Comprehensive coverage: nested, slices, wide buses (64/128/256-bit)
@@ -132,6 +146,12 @@ cmake --build build
 - 4-state logic with X/Z values
 - Parentheses and expression grouping
 - Width extension and truncation
+- System tasks ($display, $monitor, $time, $finish, $readmemh/b, etc.)
+- Procedural tasks with inputs/outputs
+- Switch-level modeling (transmission gates, MOS switches, drive strengths)
+- Named events and event triggering
+- Timing controls and delays
+- Advanced net types (wand, wor, tri variants, supply nets)
 
 **In-development test coverage** in `verilog/`:
 - Additional tests and edge cases beyond the passing suite
@@ -182,7 +202,8 @@ src/
   runtime/        # Metal runtime wrapper
   utils/          # Diagnostics and utilities
 verilog/
-  pass/           # Passing test cases (174 files)
+  pass/           # Passing test cases (225 files)
+  systemverilog/  # SystemVerilog feature tests
   test_*.v        # Additional test coverage
 docs/
   gpga/           # Core documentation
