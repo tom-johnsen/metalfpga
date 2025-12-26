@@ -186,6 +186,8 @@ struct ParamBindings {
   std::unordered_map<std::string, std::unique_ptr<Expr>> exprs;
 };
 
+const std::unordered_map<std::string, std::string>* g_task_renames = nullptr;
+
 std::unique_ptr<Expr> SimplifyExpr(std::unique_ptr<Expr> expr,
                                    const Module& module);
 std::unique_ptr<Expr> MakeNumberExpr(uint64_t value);
@@ -1286,6 +1288,12 @@ bool CloneStatement(
   if (statement.kind == StatementKind::kTaskCall) {
     out->kind = StatementKind::kTaskCall;
     out->task_name = statement.task_name;
+    if (g_task_renames) {
+      auto it = g_task_renames->find(statement.task_name);
+      if (it != g_task_renames->end()) {
+        out->task_name = it->second;
+      }
+    }
     for (const auto& arg : statement.task_args) {
       auto cloned_arg =
           CloneExprWithParams(*arg, rename, params, &source_module,
@@ -2515,6 +2523,14 @@ bool InlineModule(const Program& program, const Module& module,
     return true;
   };
 
+  std::unordered_map<std::string, std::string> task_renames;
+  for (const auto& task : module.tasks) {
+    task_renames[task.name] =
+        prefix.empty() ? task.name : (prefix + task.name);
+  }
+  const auto* prev_task_renames = g_task_renames;
+  g_task_renames = &task_renames;
+
   if (prefix.empty()) {
     out->name = module.name;
     out->parameters.clear();
@@ -2577,6 +2593,31 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
     }
+    out->tasks.clear();
+    for (const auto& task : module.tasks) {
+      Task flat_task;
+      flat_task.name = task_renames[task.name];
+      for (const auto& arg : task.args) {
+        int width = arg.width;
+        if (!ResolveRangeWidth(arg.width, arg.msb_expr, arg.lsb_expr, params,
+                               &width, diagnostics,
+                               "task '" + task.name + "' arg '" + arg.name +
+                                   "'")) {
+          return false;
+        }
+        TaskArg flat_arg;
+        flat_arg.dir = arg.dir;
+        flat_arg.name = arg.name;
+        flat_arg.width = width;
+        flat_arg.is_signed = arg.is_signed;
+        flat_task.args.push_back(std::move(flat_arg));
+      }
+      if (!CloneStatementList(task.body, rename, params, module, *out,
+                              &flat_task.body, diagnostics)) {
+        return false;
+      }
+      out->tasks.push_back(std::move(flat_task));
+    }
   } else {
     for (const auto& port : module.ports) {
       if (port_map.find(port.name) != port_map.end()) {
@@ -2622,6 +2663,30 @@ bool InlineModule(const Program& program, const Module& module,
                           hier_prefix + "." + event_decl.name)) {
         return false;
       }
+    }
+    for (const auto& task : module.tasks) {
+      Task flat_task;
+      flat_task.name = task_renames[task.name];
+      for (const auto& arg : task.args) {
+        int width = arg.width;
+        if (!ResolveRangeWidth(arg.width, arg.msb_expr, arg.lsb_expr, params,
+                               &width, diagnostics,
+                               "task '" + task.name + "' arg '" + arg.name +
+                                   "'")) {
+          return false;
+        }
+        TaskArg flat_arg;
+        flat_arg.dir = arg.dir;
+        flat_arg.name = arg.name;
+        flat_arg.width = width;
+        flat_arg.is_signed = arg.is_signed;
+        flat_task.args.push_back(std::move(flat_arg));
+      }
+      if (!CloneStatementList(task.body, rename, params, module, *out,
+                              &flat_task.body, diagnostics)) {
+        return false;
+      }
+      out->tasks.push_back(std::move(flat_task));
     }
   }
 
@@ -2907,6 +2972,7 @@ bool InlineModule(const Program& program, const Module& module,
     }
   }
 
+  g_task_renames = prev_task_renames;
   stack->erase(module.name);
   return true;
 }

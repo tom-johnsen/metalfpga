@@ -34,7 +34,28 @@ const Function* FindFunction(const Module& module, const std::string& name) {
   return nullptr;
 }
 
+const Task* FindTask(const Module& module, const std::string& name) {
+  for (const auto& task : module.tasks) {
+    if (task.name == name) {
+      return &task;
+    }
+  }
+  return nullptr;
+}
+
+const std::unordered_map<std::string, int>* g_task_arg_widths = nullptr;
+const std::unordered_map<std::string, bool>* g_task_arg_signed = nullptr;
+
 int SignalWidth(const Module& module, const std::string& name) {
+  if (g_task_arg_widths) {
+    auto it = g_task_arg_widths->find(name);
+    if (it != g_task_arg_widths->end()) {
+      return it->second;
+    }
+  }
+  if (name == "__gpga_time") {
+    return 64;
+  }
   for (const auto& port : module.ports) {
     if (port.name == name) {
       return port.width;
@@ -70,6 +91,15 @@ bool IsWiredOrNet(NetType type) {
 }
 
 bool SignalSigned(const Module& module, const std::string& name) {
+  if (g_task_arg_signed) {
+    auto it = g_task_arg_signed->find(name);
+    if (it != g_task_arg_signed->end()) {
+      return it->second;
+    }
+  }
+  if (name == "__gpga_time") {
+    return false;
+  }
   for (const auto& port : module.ports) {
     if (port.name == name) {
       return port.is_signed;
@@ -804,6 +834,97 @@ void CollectAssignedSignals(const Statement& stmt,
   }
 }
 
+bool IsSchedulerStatementKind(StatementKind kind) {
+  switch (kind) {
+    case StatementKind::kDelay:
+    case StatementKind::kEventControl:
+    case StatementKind::kWait:
+    case StatementKind::kForever:
+    case StatementKind::kFork:
+    case StatementKind::kDisable:
+    case StatementKind::kEventTrigger:
+    case StatementKind::kTaskCall:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool StatementNeedsScheduler(const Statement& stmt) {
+  if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
+    return true;
+  }
+  if (IsSchedulerStatementKind(stmt.kind)) {
+    return true;
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    for (const auto& inner : stmt.then_branch) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+    for (const auto& inner : stmt.else_branch) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    for (const auto& item : stmt.case_items) {
+      for (const auto& inner : item.body) {
+        if (StatementNeedsScheduler(inner)) {
+          return true;
+        }
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    for (const auto& inner : stmt.for_body) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    for (const auto& inner : stmt.while_body) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    for (const auto& inner : stmt.repeat_body) {
+      if (StatementNeedsScheduler(inner)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool ModuleNeedsScheduler(const Module& module) {
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      if (StatementNeedsScheduler(stmt)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 std::unordered_set<std::string> CollectDrivenSignals(const Module& module) {
   std::unordered_set<std::string> driven;
   for (const auto& assign : module.assigns) {
@@ -1019,7 +1140,7 @@ std::string EmitExpr(const Expr& expr, const Module& module,
     }
     case ExprKind::kCall:
       if (expr.ident == "$time") {
-        return "0ul";
+        return "__gpga_time";
       }
       return "/*function_call*/0u";
     case ExprKind::kConcat:
@@ -1031,9 +1152,12 @@ std::string EmitExpr(const Expr& expr, const Module& module,
 struct LvalueInfo {
   std::string expr;
   std::string guard;
+  std::string bit_index;
   int width = 0;
+  int base_width = 0;
   bool ok = false;
   bool is_array = false;
+  bool is_bit_select = false;
 };
 
 LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
@@ -1045,6 +1169,24 @@ LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
     int element_width = 0;
     int array_size = 0;
     if (!IsArrayNet(module, assign.lhs, &element_width, &array_size)) {
+      std::string base;
+      if (IsOutputPort(module, assign.lhs) || regs.count(assign.lhs) > 0) {
+        base = assign.lhs + "[gid]";
+      } else if (locals.count(assign.lhs) > 0) {
+        base = assign.lhs;
+      } else {
+        return out;
+      }
+      std::string index =
+          EmitExpr(*assign.lhs_index, module, locals, regs);
+      int base_width = SignalWidth(module, assign.lhs);
+      out.expr = base;
+      out.bit_index = index;
+      out.base_width = base_width;
+      out.width = 1;
+      out.guard = "(uint(" + index + ") < " + std::to_string(base_width) + "u)";
+      out.ok = true;
+      out.is_bit_select = true;
       return out;
     }
     std::string index =
@@ -1075,6 +1217,18 @@ LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
   return out;
 }
 
+std::string EmitBitSelectUpdate(const std::string& base_expr,
+                                const std::string& index_expr,
+                                int base_width,
+                                const std::string& rhs_expr) {
+  std::string idx = "uint(" + index_expr + ")";
+  std::string one = (base_width > 32) ? "1ul" : "1u";
+  std::string cast = (base_width > 32) ? "(ulong)" : "(uint)";
+  std::string clear = "~(" + one + " << " + idx + ")";
+  std::string set = "((" + cast + rhs_expr + " & " + one + ") << " + idx + ")";
+  return "(" + base_expr + " & " + clear + ") | " + set;
+}
+
 }  // namespace
 
 std::string EmitMSLStub(const Module& module, bool four_state) {
@@ -1082,7 +1236,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   out << "#include <metal_stdlib>\n";
   out << "using namespace metal;\n\n";
   out << "struct GpgaParams { uint count; };\n\n";
+  out << "constexpr ulong __gpga_time = 0ul;\n\n";
   out << "// Placeholder MSL emitted by GPGA.\n\n";
+  const bool needs_scheduler = ModuleNeedsScheduler(module);
   if (four_state) {
     out << "struct FourState32 { uint val; uint xz; };\n";
     out << "struct FourState64 { ulong val; ulong xz; };\n";
@@ -2111,9 +2267,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         case ExprKind::kCall:
           if (expr.ident == "$time") {
             int width = 64;
-            return FsExpr{literal_for_width(0, width),
-                          literal_for_width(0, width), drive_full(width),
-                          width};
+            return FsExpr{"__gpga_time", literal_for_width(0, width),
+                          drive_full(width), width};
           }
           return fs_allx_expr(1);
         case ExprKind::kConcat:
@@ -2167,9 +2322,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string val;
       std::string xz;
       std::string guard;
+      std::string bit_index_val;
+      std::string bit_index_xz;
       int width = 0;
+      int base_width = 0;
       bool ok = false;
       bool is_array = false;
+      bool is_bit_select = false;
     };
 
     auto build_lvalue4_assign =
@@ -2200,6 +2359,34 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         int element_width = 0;
         int array_size = 0;
         if (!IsArrayNet(module, assign.lhs, &element_width, &array_size)) {
+          std::string base_val;
+          std::string base_xz;
+          if (IsOutputPort(module, assign.lhs) || regs.count(assign.lhs) > 0) {
+            base_val = val_name(assign.lhs) + "[gid]";
+            base_xz = xz_name(assign.lhs) + "[gid]";
+          } else if (locals.count(assign.lhs) > 0) {
+            base_val = val_name(assign.lhs);
+            base_xz = xz_name(assign.lhs);
+          } else {
+            return out;
+          }
+          FsExpr idx = emit_expr4(*assign.lhs_index);
+          std::string idx_val = idx.val;
+          std::string idx_xz = idx.xz;
+          int base_width = SignalWidth(module, assign.lhs);
+          std::string guard = "(" + idx_xz + " == " +
+                              literal_for_width(0, idx.width) + " && " +
+                              idx_val + " < " + std::to_string(base_width) +
+                              "u)";
+          out.val = base_val;
+          out.xz = base_xz;
+          out.guard = guard;
+          out.bit_index_val = idx_val;
+          out.bit_index_xz = idx_xz;
+          out.width = 1;
+          out.base_width = base_width;
+          out.ok = true;
+          out.is_bit_select = true;
           return out;
         }
         FsExpr idx = emit_expr4(*assign.lhs_index);
@@ -2758,6 +2945,30 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     std::function<void(const Statement&, int)> emit_comb_stmt;
+    auto emit_bit_select4 = [&](const Lvalue4& lhs, const FsExpr& rhs,
+                                const std::string& target_val,
+                                const std::string& target_xz, int indent) {
+      std::string pad(indent, ' ');
+      std::string idx = "uint(" + lhs.bit_index_val + ")";
+      std::string one = (lhs.base_width > 32) ? "1ul" : "1u";
+      std::string cast = (lhs.base_width > 32) ? "(ulong)" : "(uint)";
+      std::string mask = "(" + one + " << " + idx + ")";
+      std::string update_val =
+          "(" + target_val + " & ~" + mask + ") | ((" + cast + rhs.val + " & " +
+          one + ") << " + idx + ")";
+      std::string update_xz =
+          "(" + target_xz + " & ~" + mask + ") | ((" + cast + rhs.xz + " & " +
+          one + ") << " + idx + ")";
+      if (!lhs.guard.empty()) {
+        out << pad << "if " << lhs.guard << " {\n";
+        out << pad << "  " << target_val << " = " << update_val << ";\n";
+        out << pad << "  " << target_xz << " = " << update_xz << ";\n";
+        out << pad << "}\n";
+      } else {
+        out << pad << target_val << " = " << update_val << ";\n";
+        out << pad << target_xz << " = " << update_xz << ";\n";
+      }
+    };
     emit_comb_stmt = [&](const Statement& stmt, int indent) {
       std::string pad(indent, ' ');
       if (stmt.kind == StatementKind::kAssign) {
@@ -2769,6 +2980,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         FsExpr rhs = emit_expr4_sized(*stmt.assign.rhs, lhs.width);
+        if (lhs.is_bit_select) {
+          emit_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
+          return;
+        }
         if (!lhs.guard.empty()) {
           out << pad << "if " << lhs.guard << " {\n";
           out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
@@ -2969,7 +3184,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     out << "}\n";
 
-    if (has_initial) {
+    if (has_initial && !needs_scheduler) {
       out << "\n";
       out << "kernel void gpga_" << module.name << "_init(";
       buffer_index = 0;
@@ -3067,6 +3282,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
 
       std::function<void(const Statement&, int)> emit_init_stmt;
+      auto emit_init_bit_select4 =
+          [&](const Lvalue4& lhs, const FsExpr& rhs,
+              const std::string& target_val, const std::string& target_xz,
+              int indent) {
+            emit_bit_select4(lhs, rhs, target_val, target_xz, indent);
+          };
       emit_init_stmt = [&](const Statement& stmt, int indent) {
         std::string pad(indent, ' ');
         if (stmt.kind == StatementKind::kAssign) {
@@ -3079,6 +3300,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
           FsExpr rhs = emit_expr4_sized(*stmt.assign.rhs, lhs.width);
+          if (lhs.is_bit_select) {
+            emit_init_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
+            return;
+          }
           if (!lhs.guard.empty()) {
             out << pad << "if " << lhs.guard << " {\n";
             out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
@@ -3406,6 +3631,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             return;
           }
+          if (lhs.is_bit_select) {
+            std::string target_val = lhs.val;
+            std::string target_xz = lhs.xz;
+            if (stmt.assign.nonblocking) {
+              auto it = nb_map.find(stmt.assign.lhs);
+              if (it != nb_map.end()) {
+                target_val = it->second.val;
+                target_xz = it->second.xz;
+              }
+            }
+            emit_bit_select4(lhs, rhs, target_val, target_xz, indent);
+            return;
+          }
           if (stmt.assign.nonblocking && nb_map.count(stmt.assign.lhs) > 0) {
             NbTemp temp = nb_map[stmt.assign.lhs];
             out << pad << temp.val << " = " << rhs.val << ";\n";
@@ -3585,6 +3823,1420 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       }
       out << "}\n";
+    }
+    if (needs_scheduler) {
+      struct ProcDef {
+        int pid = 0;
+        const std::vector<Statement>* body = nullptr;
+        const Statement* single = nullptr;
+      };
+
+      std::vector<const AlwaysBlock*> initial_blocks;
+      for (const auto& block : module.always_blocks) {
+        if (block.edge == EdgeKind::kInitial) {
+          initial_blocks.push_back(&block);
+        }
+      }
+
+      if (!initial_blocks.empty()) {
+        std::unordered_map<std::string, int> event_ids;
+        for (size_t i = 0; i < module.events.size(); ++i) {
+          event_ids[module.events[i].name] = static_cast<int>(i);
+        }
+
+        struct ForkInfo {
+          int tag = 0;
+          std::vector<int> children;
+        };
+
+        std::unordered_map<const Statement*, ForkInfo> fork_info;
+        std::vector<ProcDef> procs;
+        std::vector<int> proc_parent;
+        std::vector<int> proc_join_tag;
+
+        int next_pid = 0;
+        for (const auto* block : initial_blocks) {
+          procs.push_back(ProcDef{next_pid, &block->statements, nullptr});
+          proc_parent.push_back(-1);
+          proc_join_tag.push_back(-1);
+          ++next_pid;
+        }
+        const int root_proc_count = next_pid;
+        int next_fork_tag = 0;
+
+        std::function<void(const Statement&, int)> collect_forks;
+        std::function<void(const std::vector<Statement>&, int)>
+            collect_forks_in_list;
+        collect_forks = [&](const Statement& stmt, int parent_pid) {
+          if (stmt.kind == StatementKind::kFork) {
+            ForkInfo info;
+            info.tag = next_fork_tag++;
+            for (const auto& branch : stmt.fork_branches) {
+              int child_pid = next_pid++;
+              info.children.push_back(child_pid);
+              procs.push_back(ProcDef{child_pid, nullptr, &branch});
+              proc_parent.push_back(parent_pid);
+              proc_join_tag.push_back(info.tag);
+              collect_forks(branch, child_pid);
+            }
+            fork_info[&stmt] = info;
+            return;
+          }
+          if (stmt.kind == StatementKind::kIf) {
+            for (const auto& inner : stmt.then_branch) {
+              collect_forks(inner, parent_pid);
+            }
+            for (const auto& inner : stmt.else_branch) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kBlock) {
+            for (const auto& inner : stmt.block) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kFor) {
+            for (const auto& inner : stmt.for_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWhile) {
+            for (const auto& inner : stmt.while_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kRepeat) {
+            for (const auto& inner : stmt.repeat_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kDelay) {
+            for (const auto& inner : stmt.delay_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kEventControl) {
+            for (const auto& inner : stmt.event_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWait) {
+            for (const auto& inner : stmt.wait_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kForever) {
+            for (const auto& inner : stmt.forever_body) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kCase) {
+            for (const auto& item : stmt.case_items) {
+              for (const auto& inner : item.body) {
+                collect_forks(inner, parent_pid);
+              }
+            }
+            for (const auto& inner : stmt.default_branch) {
+              collect_forks(inner, parent_pid);
+            }
+            return;
+          }
+        };
+        collect_forks_in_list = [&](const std::vector<Statement>& stmts,
+                                    int parent_pid) {
+          for (const auto& stmt : stmts) {
+            collect_forks(stmt, parent_pid);
+          }
+        };
+        for (int i = 0; i < root_proc_count; ++i) {
+          collect_forks_in_list(*procs[i].body, procs[i].pid);
+        }
+
+        std::unordered_map<const Statement*, int> wait_ids;
+        std::vector<const Expr*> wait_exprs;
+        std::function<void(const Statement&)> collect_waits;
+        collect_waits = [&](const Statement& stmt) -> void {
+          if (stmt.kind == StatementKind::kWait && stmt.wait_condition) {
+            if (wait_ids.find(&stmt) == wait_ids.end()) {
+              wait_ids[&stmt] = static_cast<int>(wait_exprs.size());
+              wait_exprs.push_back(stmt.wait_condition.get());
+            }
+          }
+          if (stmt.kind == StatementKind::kIf) {
+            for (const auto& inner : stmt.then_branch) {
+              collect_waits(inner);
+            }
+            for (const auto& inner : stmt.else_branch) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kBlock) {
+            for (const auto& inner : stmt.block) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kFor) {
+            for (const auto& inner : stmt.for_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWhile) {
+            for (const auto& inner : stmt.while_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kRepeat) {
+            for (const auto& inner : stmt.repeat_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kDelay) {
+            for (const auto& inner : stmt.delay_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kEventControl) {
+            for (const auto& inner : stmt.event_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWait) {
+            for (const auto& inner : stmt.wait_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kForever) {
+            for (const auto& inner : stmt.forever_body) {
+              collect_waits(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kCase) {
+            for (const auto& item : stmt.case_items) {
+              for (const auto& inner : item.body) {
+                collect_waits(inner);
+              }
+            }
+            for (const auto& inner : stmt.default_branch) {
+              collect_waits(inner);
+            }
+            return;
+          }
+        };
+        for (const auto& block : module.always_blocks) {
+          for (const auto& stmt : block.statements) {
+            collect_waits(stmt);
+          }
+        }
+
+        std::unordered_set<std::string> nb_targets;
+        std::unordered_set<std::string> nb_array_targets;
+        std::function<void(const Statement&)> collect_nb_targets;
+        collect_nb_targets = [&](const Statement& stmt) -> void {
+          if (stmt.kind == StatementKind::kAssign && stmt.assign.nonblocking) {
+            if (stmt.assign.lhs_index) {
+              nb_array_targets.insert(stmt.assign.lhs);
+            } else {
+              nb_targets.insert(stmt.assign.lhs);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kIf) {
+            for (const auto& inner : stmt.then_branch) {
+              collect_nb_targets(inner);
+            }
+            for (const auto& inner : stmt.else_branch) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kBlock) {
+            for (const auto& inner : stmt.block) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kFor) {
+            for (const auto& inner : stmt.for_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWhile) {
+            for (const auto& inner : stmt.while_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kRepeat) {
+            for (const auto& inner : stmt.repeat_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kDelay) {
+            for (const auto& inner : stmt.delay_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kEventControl) {
+            for (const auto& inner : stmt.event_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWait) {
+            for (const auto& inner : stmt.wait_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kForever) {
+            for (const auto& inner : stmt.forever_body) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kCase) {
+            for (const auto& item : stmt.case_items) {
+              for (const auto& inner : item.body) {
+                collect_nb_targets(inner);
+              }
+            }
+            for (const auto& inner : stmt.default_branch) {
+              collect_nb_targets(inner);
+            }
+            return;
+          }
+        };
+        for (const auto& block : module.always_blocks) {
+          for (const auto& stmt : block.statements) {
+            collect_nb_targets(stmt);
+          }
+        }
+
+        std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
+                                                   nb_targets.end());
+        std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+        std::vector<const Net*> nb_array_nets;
+        for (const auto& net : module.nets) {
+          if (net.array_size <= 0) {
+            continue;
+          }
+          if (nb_array_targets.count(net.name) > 0) {
+            nb_array_nets.push_back(&net);
+          }
+        }
+        std::sort(nb_array_nets.begin(), nb_array_nets.end(),
+                  [](const Net* a, const Net* b) { return a->name < b->name; });
+
+        std::unordered_set<std::string> sched_locals;
+        std::unordered_set<std::string> sched_regs;
+        for (const auto& net : module.nets) {
+          if (net.array_size > 0) {
+            continue;
+          }
+          if (net.type == NetType::kReg || IsTriregNet(net.type)) {
+            sched_regs.insert(net.name);
+            continue;
+          }
+          if (!IsOutputPort(module, net.name)) {
+            sched_locals.insert(net.name);
+          }
+        }
+
+        std::unordered_set<std::string> sched_reg_set;
+        for (const auto& net : module.nets) {
+          if ((net.type == NetType::kReg || IsTriregNet(net.type)) &&
+              !IsOutputPort(module, net.name)) {
+            sched_reg_set.insert(net.name);
+          }
+        }
+        std::vector<std::string> sched_reg_names(sched_reg_set.begin(),
+                                                 sched_reg_set.end());
+        std::sort(sched_reg_names.begin(), sched_reg_names.end());
+
+        out << "\n";
+        out << "struct GpgaSchedParams { uint max_steps; uint max_proc_steps; };\n";
+        out << "constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size()
+            << "u;\n";
+        out << "constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
+            << "u;\n";
+        out << "constexpr uint GPGA_SCHED_EVENT_COUNT = "
+            << module.events.size() << "u;\n";
+        out << "constexpr uint GPGA_SCHED_MAX_READY = " << procs.size()
+            << "u;\n";
+        out << "constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
+        out << "constexpr uint GPGA_SCHED_MAX_NBA = "
+            << nb_targets_sorted.size() << "u;\n";
+        out << "constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
+        out << "constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
+        out << "constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
+        out << "constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
+        out << "constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
+        out << "constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
+        out << "constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
+        out << "constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
+        out << "constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
+        out << "constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
+        out << "constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
+        out << "constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
+        out << "constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
+        out << "constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
+        out << "constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
+        out << "constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
+        out << "inline uint gpga_sched_index(uint gid, uint pid) {\n";
+        out << "  return (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
+        out << "}\n";
+        out << "constant uint gpga_proc_parent[GPGA_SCHED_PROC_COUNT] = {";
+        for (size_t i = 0; i < procs.size(); ++i) {
+          uint32_t parent =
+              proc_parent[i] < 0 ? 0xFFFFFFFFu
+                                 : static_cast<uint32_t>(proc_parent[i]);
+          if (i > 0) {
+            out << ", ";
+          }
+          out << parent << "u";
+        }
+        out << "};\n";
+        out << "constant uint gpga_proc_join_tag[GPGA_SCHED_PROC_COUNT] = {";
+        for (size_t i = 0; i < procs.size(); ++i) {
+          uint32_t tag = proc_join_tag[i] < 0
+                             ? 0xFFFFFFFFu
+                             : static_cast<uint32_t>(proc_join_tag[i]);
+          if (i > 0) {
+            out << ", ";
+          }
+          out << tag << "u";
+        }
+        out << "};\n";
+
+        out << "\n";
+        out << "kernel void gpga_" << module.name << "_sched_step(";
+        int buffer_index = 0;
+        bool first = true;
+        auto emit_param = [&](const std::string& text) {
+          if (!first) {
+            out << ",\n";
+          }
+          first = false;
+          out << text;
+        };
+        for (const auto& port : module.ports) {
+          std::string qualifier =
+              (port.dir == PortDir::kInput) ? "constant" : "device";
+          std::string type = TypeForWidth(port.width);
+          emit_param("  " + qualifier + " " + type + "* " +
+                     val_name(port.name) + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  " + qualifier + " " + type + "* " +
+                     xz_name(port.name) + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto& reg : sched_reg_names) {
+          std::string type = TypeForWidth(SignalWidth(module, reg));
+          emit_param("  device " + type + "* " + val_name(reg) +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+          emit_param("  device " + type + "* " + xz_name(reg) +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto* net : array_nets) {
+          std::string type = TypeForWidth(net->width);
+          emit_param("  device " + type + "* " + val_name(net->name) +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+          emit_param("  device " + type + "* " + xz_name(net->name) +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto& target : nb_targets_sorted) {
+          std::string type = TypeForWidth(SignalWidth(module, target));
+          emit_param("  device " + type + "* nb_" + val_name(target) +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+          emit_param("  device " + type + "* nb_" + xz_name(target) +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto* net : nb_array_nets) {
+          std::string type = TypeForWidth(net->width);
+          emit_param("  device " + type + "* " +
+                     val_name(net->name + "_next") + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device " + type + "* " +
+                     xz_name(net->name + "_next") + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+        emit_param("  device uint* sched_pc [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_state [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_wait_kind [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_wait_id [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_wait_event [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_wait_time [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_join_count [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_parent [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_join_tag [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_time [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_phase [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_initialized [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_event_pending [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_error [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_status [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  constant GpgaSchedParams& sched [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  constant GpgaParams& params [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  uint gid [[thread_position_in_grid]]) {\n");
+        out << "  if (gid >= params.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  ulong __gpga_time = sched_time[gid];\n";
+        out << "  if (sched_initialized[gid] == 0u) {\n";
+        out << "    sched_time[gid] = 0ul;\n";
+        out << "    __gpga_time = 0ul;\n";
+        out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+        out << "    sched_error[gid] = 0u;\n";
+        out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+        out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+        out << "    }\n";
+        out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "      uint idx = gpga_sched_index(gid, pid);\n";
+        out << "      sched_pc[idx] = 0u;\n";
+        out << "      sched_state[idx] = (pid < GPGA_SCHED_ROOT_COUNT)\n";
+        out << "          ? GPGA_SCHED_PROC_READY : GPGA_SCHED_PROC_BLOCKED;\n";
+        out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "      sched_wait_id[idx] = 0u;\n";
+        out << "      sched_wait_event[idx] = 0u;\n";
+        out << "      sched_wait_time[idx] = 0ul;\n";
+        out << "      sched_join_count[idx] = 0u;\n";
+        out << "      sched_parent[idx] = gpga_proc_parent[pid];\n";
+        out << "      sched_join_tag[idx] = gpga_proc_join_tag[pid];\n";
+        out << "    }\n";
+        out << "    sched_initialized[gid] = 1u;\n";
+        out << "  }\n";
+        out << "  if (sched_error[gid] != 0u) {\n";
+        out << "    sched_status[gid] = GPGA_SCHED_STATUS_ERROR;\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  sched_status[gid] = GPGA_SCHED_STATUS_RUNNING;\n";
+        out << "  bool finished = false;\n";
+        out << "  uint steps = sched.max_steps;\n";
+        out << "  while (steps > 0u) {\n";
+        out << "    bool did_work = false;\n";
+        out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
+        if (!nb_targets_sorted.empty()) {
+          out << "      // Initialize NBA buffers for this delta.\n";
+          for (const auto& target : nb_targets_sorted) {
+            out << "      nb_" << val_name(target) << "[gid] = "
+                << val_name(target) << "[gid];\n";
+            out << "      nb_" << xz_name(target) << "[gid] = "
+                << xz_name(target) << "[gid];\n";
+          }
+        }
+        if (!nb_array_nets.empty()) {
+          out << "      // Initialize array NBA buffers.\n";
+          for (const auto* net : nb_array_nets) {
+            out << "      for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
+            out << "        " << val_name(net->name + "_next") << "[(gid * "
+                << net->array_size << "u) + i] = " << val_name(net->name)
+                << "[(gid * " << net->array_size << "u) + i];\n";
+            out << "        " << xz_name(net->name + "_next") << "[(gid * "
+                << net->array_size << "u) + i] = " << xz_name(net->name)
+                << "[(gid * " << net->array_size << "u) + i];\n";
+            out << "      }\n";
+          }
+        }
+        out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "        uint idx = gpga_sched_index(gid, pid);\n";
+        out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+        out << "          did_work = true;\n";
+        out << "          steps--;\n";
+        out << "          switch (pid) {\n";
+
+        auto emit_inline_assign =
+            [&](const SequentialAssign& assign, int indent,
+                const std::unordered_set<std::string>& locals_override) -> void {
+          if (!assign.rhs) {
+            return;
+          }
+          std::string pad(indent, ' ');
+          Lvalue4 lhs =
+              build_lvalue4(assign, locals_override, sched_regs, false);
+          if (!lhs.ok) {
+            return;
+          }
+          FsExpr rhs = emit_expr4_sized(*assign.rhs, lhs.width);
+          if (assign.nonblocking) {
+            if (assign.lhs_index) {
+              Lvalue4 next =
+                  build_lvalue4(assign, locals_override, sched_regs, true);
+              if (next.ok) {
+                if (!next.guard.empty()) {
+                  out << pad << "if " << next.guard << " {\n";
+                  out << pad << "  " << next.val << " = " << rhs.val << ";\n";
+                  out << pad << "  " << next.xz << " = " << rhs.xz << ";\n";
+                  out << pad << "}\n";
+                } else {
+                  out << pad << next.val << " = " << rhs.val << ";\n";
+                  out << pad << next.xz << " = " << rhs.xz << ";\n";
+                }
+              }
+              return;
+            }
+            if (lhs.is_bit_select) {
+              std::string target_val = "nb_" + val_name(assign.lhs) + "[gid]";
+              std::string target_xz = "nb_" + xz_name(assign.lhs) + "[gid]";
+              emit_bit_select4(lhs, rhs, target_val, target_xz, indent);
+              return;
+            }
+            out << pad << "nb_" << val_name(assign.lhs) << "[gid] = "
+                << rhs.val << ";\n";
+            out << pad << "nb_" << xz_name(assign.lhs) << "[gid] = "
+                << rhs.xz << ";\n";
+            return;
+          }
+          if (lhs.is_bit_select) {
+            emit_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
+            return;
+          }
+          if (!lhs.guard.empty()) {
+            out << pad << "if " << lhs.guard << " {\n";
+            out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+            out << pad << "}\n";
+          } else {
+            out << pad << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << lhs.xz << " = " << rhs.xz << ";\n";
+          }
+        };
+
+        auto emit_lvalue_store =
+            [&](const std::string& name, const FsExpr& rhs, int indent,
+                const std::unordered_set<std::string>& locals_override) -> void {
+          SequentialAssign temp;
+          temp.lhs = name;
+          temp.nonblocking = false;
+          Lvalue4 lhs =
+              build_lvalue4(temp, locals_override, sched_regs, false);
+          if (!lhs.ok) {
+            return;
+          }
+          std::string pad(indent, ' ');
+          if (!lhs.guard.empty()) {
+            out << pad << "if " << lhs.guard << " {\n";
+            out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+            out << pad << "}\n";
+          } else {
+            out << pad << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << lhs.xz << " = " << rhs.xz << ";\n";
+          }
+        };
+
+        auto emit_inline_stmt =
+            [&](const Statement& stmt, int indent,
+                const std::unordered_set<std::string>& locals_override,
+                const auto& self) -> void {
+          std::string pad(indent, ' ');
+          if (stmt.kind == StatementKind::kEventTrigger) {
+            auto it = event_ids.find(stmt.trigger_target);
+            if (it == event_ids.end()) {
+              out << pad << "sched_error[gid] = 1u;\n";
+              out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            out << pad << "sched_event_pending[(gid * "
+                << "GPGA_SCHED_EVENT_COUNT) + " << it->second << "u] = 1u;\n";
+            return;
+          }
+          if (stmt.kind == StatementKind::kAssign) {
+            if (stmt.assign.delay) {
+              out << pad << "sched_error[gid] = 1u;\n";
+              out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            emit_inline_assign(stmt.assign, indent, locals_override);
+            return;
+          }
+          if (StatementNeedsScheduler(stmt)) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          if (stmt.kind == StatementKind::kIf) {
+            FsExpr cond = stmt.condition
+                               ? emit_expr4(*stmt.condition)
+                               : FsExpr{literal_for_width(0, 1),
+                                        literal_for_width(0, 1),
+                                        drive_full(1), 1};
+            out << pad << "if (" << cond_bool(cond) << ") {\n";
+            for (const auto& inner : stmt.then_branch) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            if (!stmt.else_branch.empty()) {
+              out << pad << "} else {\n";
+              for (const auto& inner : stmt.else_branch) {
+                self(inner, indent + 2, locals_override, self);
+              }
+              out << pad << "}\n";
+            } else {
+              out << pad << "}\n";
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kCase) {
+            if (!stmt.case_expr) {
+              return;
+            }
+            FsExpr case_expr = emit_expr4(*stmt.case_expr);
+            bool first = true;
+            for (const auto& item : stmt.case_items) {
+              std::string cond;
+              for (const auto& label : item.labels) {
+                std::string piece =
+                    emit_case_cond4(stmt.case_kind, case_expr, *label,
+                                    stmt.case_expr.get());
+                if (!cond.empty()) {
+                  cond += " || ";
+                }
+                cond += piece;
+              }
+              if (cond.empty()) {
+                continue;
+              }
+              if (first) {
+                out << pad << "if (" << cond << ") {\n";
+                first = false;
+              } else {
+                out << pad << "} else if (" << cond << ") {\n";
+              }
+              for (const auto& inner : item.body) {
+                self(inner, indent + 2, locals_override, self);
+              }
+            }
+            if (!stmt.default_branch.empty()) {
+              out << pad << "} else {\n";
+              for (const auto& inner : stmt.default_branch) {
+                self(inner, indent + 2, locals_override, self);
+              }
+              out << pad << "}\n";
+            } else if (!first) {
+              out << pad << "}\n";
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kFor) {
+            int width = SignalWidth(module, stmt.for_init_lhs);
+            FsExpr init =
+                stmt.for_init_rhs ? emit_expr4_sized(*stmt.for_init_rhs, width)
+                                  : FsExpr{literal_for_width(0, width),
+                                           literal_for_width(0, width),
+                                           drive_full(width), width};
+            emit_lvalue_store(stmt.for_init_lhs, init, indent, locals_override);
+            FsExpr cond =
+                stmt.for_condition ? emit_expr4(*stmt.for_condition)
+                                   : FsExpr{literal_for_width(0, 1),
+                                            literal_for_width(0, 1),
+                                            drive_full(1), 1};
+            out << pad << "while (" << cond_bool(cond) << ") {\n";
+            for (const auto& inner : stmt.for_body) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            int step_width = SignalWidth(module, stmt.for_step_lhs);
+            FsExpr step =
+                stmt.for_step_rhs ? emit_expr4_sized(*stmt.for_step_rhs, step_width)
+                                  : FsExpr{literal_for_width(0, step_width),
+                                           literal_for_width(0, step_width),
+                                           drive_full(step_width), step_width};
+            emit_lvalue_store(stmt.for_step_lhs, step, indent + 2,
+                              locals_override);
+            out << pad << "}\n";
+            return;
+          }
+          if (stmt.kind == StatementKind::kWhile) {
+            FsExpr cond =
+                stmt.while_condition ? emit_expr4(*stmt.while_condition)
+                                     : FsExpr{literal_for_width(0, 1),
+                                              literal_for_width(0, 1),
+                                              drive_full(1), 1};
+            out << pad << "while (" << cond_bool(cond) << ") {\n";
+            for (const auto& inner : stmt.while_body) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            out << pad << "}\n";
+            return;
+          }
+          if (stmt.kind == StatementKind::kRepeat) {
+            FsExpr count =
+                stmt.repeat_count
+                    ? emit_expr4_sized(*stmt.repeat_count, 32)
+                    : FsExpr{literal_for_width(0, 32), literal_for_width(0, 32),
+                             drive_full(32), 32};
+            out << pad << "for (uint __gpga_rep = 0u; __gpga_rep < " << count.val
+                << "; ++__gpga_rep) {\n";
+            for (const auto& inner : stmt.repeat_body) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            out << pad << "}\n";
+            return;
+          }
+          if (stmt.kind == StatementKind::kBlock) {
+            out << pad << "{\n";
+            for (const auto& inner : stmt.block) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            out << pad << "}\n";
+            return;
+          }
+        };
+
+        auto emit_task_call =
+            [&](const Statement& stmt, int indent,
+                const auto& emit_inline_stmt_fn) -> void {
+          const Task* task = FindTask(module, stmt.task_name);
+          if (!task) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          std::unordered_set<std::string> task_locals = sched_locals;
+          std::unordered_map<std::string, int> task_widths;
+          std::unordered_map<std::string, bool> task_signed;
+          struct TaskOutArg {
+            std::string name;
+            Lvalue4 target;
+            int target_width = 0;
+          };
+          std::vector<TaskOutArg> task_outs;
+          task_widths.reserve(task->args.size());
+          task_signed.reserve(task->args.size());
+          task_outs.reserve(task->args.size());
+
+          for (const auto& arg : task->args) {
+            task_widths[arg.name] = arg.width;
+            task_signed[arg.name] = arg.is_signed;
+          }
+
+          for (size_t i = 0; i < task->args.size(); ++i) {
+            const auto& arg = task->args[i];
+            const Expr* call_arg = nullptr;
+            if (i < stmt.task_args.size()) {
+              call_arg = stmt.task_args[i].get();
+            }
+            std::string type = TypeForWidth(arg.width);
+            if (arg.dir == TaskArgDir::kInput) {
+              FsExpr expr = call_arg ? emit_expr4_sized(*call_arg, arg.width)
+                                     : FsExpr{literal_for_width(0, arg.width),
+                                              literal_for_width(0, arg.width),
+                                              drive_full(arg.width),
+                                              arg.width};
+              out << std::string(indent, ' ') << type << " "
+                  << val_name(arg.name) << " = " << expr.val << ";\n";
+              out << std::string(indent, ' ') << type << " "
+                  << xz_name(arg.name) << " = " << expr.xz << ";\n";
+              task_locals.insert(arg.name);
+              continue;
+            }
+            if (!call_arg || call_arg->kind != ExprKind::kIdentifier) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            FsExpr init = emit_expr4_sized(*call_arg, arg.width);
+            out << std::string(indent, ' ') << type << " "
+                << val_name(arg.name) << " = " << init.val << ";\n";
+            out << std::string(indent, ' ') << type << " "
+                << xz_name(arg.name) << " = " << init.xz << ";\n";
+            task_locals.insert(arg.name);
+            SequentialAssign target_assign;
+            target_assign.lhs = call_arg->ident;
+            target_assign.nonblocking = false;
+            Lvalue4 target =
+                build_lvalue4(target_assign, sched_locals, sched_regs, false);
+            int target_width = ExprWidth(*call_arg, module);
+            task_outs.push_back(TaskOutArg{arg.name, target, target_width});
+          }
+
+          const auto* prev_widths = g_task_arg_widths;
+          const auto* prev_signed = g_task_arg_signed;
+          g_task_arg_widths = &task_widths;
+          g_task_arg_signed = &task_signed;
+          for (const auto& inner : task->body) {
+            emit_inline_stmt_fn(inner, indent, task_locals,
+                                emit_inline_stmt_fn);
+          }
+          for (const auto& out_arg : task_outs) {
+            if (!out_arg.target.ok) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              continue;
+            }
+            Expr arg_expr;
+            arg_expr.kind = ExprKind::kIdentifier;
+            arg_expr.ident = out_arg.name;
+            FsExpr value =
+                emit_expr4_sized(arg_expr, out_arg.target_width);
+            if (!out_arg.target.guard.empty()) {
+              out << std::string(indent, ' ') << "if "
+                  << out_arg.target.guard << " {\n";
+              out << std::string(indent, ' ') << "  " << out_arg.target.val
+                  << " = " << value.val << ";\n";
+              out << std::string(indent, ' ') << "  " << out_arg.target.xz
+                  << " = " << value.xz << ";\n";
+              out << std::string(indent, ' ') << "}\n";
+            } else {
+              out << std::string(indent, ' ') << out_arg.target.val << " = "
+                  << value.val << ";\n";
+              out << std::string(indent, ' ') << out_arg.target.xz << " = "
+                  << value.xz << ";\n";
+            }
+          }
+          g_task_arg_widths = prev_widths;
+          g_task_arg_signed = prev_signed;
+        };
+
+        for (const auto& proc : procs) {
+          std::vector<const Statement*> stmts;
+          if (proc.body) {
+            for (const auto& stmt : *proc.body) {
+              stmts.push_back(&stmt);
+            }
+          } else if (proc.single) {
+            stmts.push_back(proc.single);
+          }
+          std::unordered_map<const Statement*, int> pc_for_stmt;
+          int pc_counter = 0;
+          for (const auto* stmt : stmts) {
+            pc_for_stmt[stmt] = pc_counter++;
+          }
+          const int pc_done = pc_counter++;
+          struct BodyCase {
+            int pc = 0;
+            const Statement* owner = nullptr;
+            std::vector<const Statement*> body;
+            int next_pc = 0;
+            int loop_pc = -1;
+            bool is_forever_body = false;
+            bool is_assign_delay = false;
+          };
+          std::vector<BodyCase> body_cases;
+
+          std::unordered_map<std::string, int> block_end_pc;
+          for (size_t i = 0; i < stmts.size(); ++i) {
+            const auto* stmt = stmts[i];
+            if (stmt->kind == StatementKind::kBlock &&
+                !stmt->block_label.empty()) {
+              int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
+                                                   : pc_done;
+              block_end_pc[stmt->block_label] = next_pc;
+            }
+          }
+
+          out << "            case " << proc.pid << ": {\n";
+          out << "              uint pc = sched_pc[idx];\n";
+          out << "              switch (pc) {\n";
+          for (size_t i = 0; i < stmts.size(); ++i) {
+            const Statement& stmt = *stmts[i];
+            int pc = pc_for_stmt[&stmt];
+            int next_pc =
+                (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]] : pc_done;
+            out << "                case " << pc << ": {\n";
+            if (stmt.kind == StatementKind::kAssign) {
+              if (!stmt.assign.rhs) {
+                out << "                  sched_pc[idx] = " << next_pc
+                    << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              if (stmt.assign.delay) {
+                int body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = next_pc;
+                body_case.is_assign_delay = true;
+                body_cases.push_back(std::move(body_case));
+                FsExpr delay_expr =
+                    emit_expr4_sized(*stmt.assign.delay, 64);
+                out << "                  ulong __gpga_delay = "
+                    << delay_expr.val << ";\n";
+                out << "                  sched_wait_kind[idx] = "
+                       "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                       "GPGA_SCHED_WAIT_TIME;\n";
+                out << "                  sched_wait_time[idx] = __gpga_time + "
+                       "__gpga_delay;\n";
+                out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kDelay) {
+              int body_pc = -1;
+              if (!stmt.delay_body.empty()) {
+                body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = next_pc;
+                for (const auto& inner : stmt.delay_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_cases.push_back(std::move(body_case));
+              }
+              FsExpr delay_expr =
+                  stmt.delay ? emit_expr4_sized(*stmt.delay, 64)
+                             : FsExpr{literal_for_width(0, 64),
+                                      literal_for_width(0, 64),
+                                      drive_full(64), 64};
+              out << "                  ulong __gpga_delay = " << delay_expr.val
+                  << ";\n";
+              out << "                  sched_wait_kind[idx] = "
+                     "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                     "GPGA_SCHED_WAIT_TIME;\n";
+              out << "                  sched_wait_time[idx] = __gpga_time + "
+                     "__gpga_delay;\n";
+              out << "                  sched_pc[idx] = "
+                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                   : std::to_string(next_pc) + "u")
+                  << ";\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kEventControl) {
+              int body_pc = -1;
+              if (!stmt.event_body.empty()) {
+                body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = next_pc;
+                for (const auto& inner : stmt.event_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_cases.push_back(std::move(body_case));
+              }
+              int event_id = -1;
+              if (stmt.event_expr &&
+                  stmt.event_expr->kind == ExprKind::kIdentifier) {
+                auto it = event_ids.find(stmt.event_expr->ident);
+                if (it != event_ids.end()) {
+                  event_id = it->second;
+                }
+              }
+              if (event_id < 0) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EVENT;\n";
+              out << "                  sched_wait_event[idx] = " << event_id
+                  << "u;\n";
+              out << "                  sched_pc[idx] = "
+                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                   : std::to_string(next_pc) + "u")
+                  << ";\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kWait) {
+              int body_pc = -1;
+              if (!stmt.wait_body.empty()) {
+                body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = next_pc;
+                for (const auto& inner : stmt.wait_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_cases.push_back(std::move(body_case));
+              }
+              int wait_id = -1;
+              auto it = wait_ids.find(&stmt);
+              if (it != wait_ids.end()) {
+                wait_id = it->second;
+              }
+              if (!stmt.wait_condition || wait_id < 0) {
+                out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              FsExpr cond = emit_expr4(*stmt.wait_condition);
+              out << "                  if (" << cond_bool(cond) << ") {\n";
+              if (body_pc >= 0) {
+                out << "                    sched_pc[idx] = " << body_pc << "u;\n";
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              } else {
+                out << "                    sched_pc[idx] = " << next_pc << "u;\n";
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              }
+              out << "                    break;\n";
+              out << "                  }\n";
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_COND;\n";
+              out << "                  sched_wait_id[idx] = " << wait_id << "u;\n";
+              out << "                  sched_pc[idx] = "
+                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                   : std::to_string(next_pc) + "u")
+                  << ";\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kForever) {
+              if (stmt.forever_body.empty()) {
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              const Statement& body_stmt = stmt.forever_body.front();
+              if (body_stmt.kind != StatementKind::kDelay) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              int body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = pc;
+              body_case.loop_pc = pc;
+              body_case.is_forever_body = true;
+              for (const auto& inner : body_stmt.delay_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+              FsExpr delay_expr =
+                  body_stmt.delay ? emit_expr4_sized(*body_stmt.delay, 64)
+                                  : FsExpr{literal_for_width(0, 64),
+                                           literal_for_width(0, 64),
+                                           drive_full(64), 64};
+              out << "                  ulong __gpga_delay = " << delay_expr.val
+                  << ";\n";
+              out << "                  sched_wait_kind[idx] = "
+                     "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                     "GPGA_SCHED_WAIT_TIME;\n";
+              out << "                  sched_wait_time[idx] = __gpga_time + "
+                     "__gpga_delay;\n";
+              out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kFork) {
+              auto it = fork_info.find(&stmt);
+              if (it == fork_info.end()) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              const ForkInfo& info = it->second;
+              for (int child : info.children) {
+                out << "                  {\n";
+                out << "                    uint cidx = gpga_sched_index(gid, "
+                    << child << "u);\n";
+                out << "                    sched_pc[cidx] = 0u;\n";
+                out << "                    sched_state[cidx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                    sched_wait_kind[cidx] = GPGA_SCHED_WAIT_NONE;\n";
+                out << "                    sched_wait_id[cidx] = 0u;\n";
+                out << "                    sched_wait_event[cidx] = 0u;\n";
+                out << "                    sched_wait_time[cidx] = 0ul;\n";
+                out << "                    sched_join_count[cidx] = 0u;\n";
+                out << "                  }\n";
+              }
+              out << "                  sched_join_count[idx] = "
+                  << info.children.size() << "u;\n";
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_JOIN;\n";
+              out << "                  sched_wait_id[idx] = " << info.tag << "u;\n";
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kDisable) {
+              auto it = block_end_pc.find(stmt.disable_target);
+              if (it == block_end_pc.end()) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              out << "                  sched_pc[idx] = " << it->second << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kEventTrigger) {
+              int event_id = -1;
+              auto it = event_ids.find(stmt.trigger_target);
+              if (it != event_ids.end()) {
+                event_id = it->second;
+              }
+              if (event_id < 0) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              out << "                  sched_event_pending[(gid * "
+                  << "GPGA_SCHED_EVENT_COUNT) + " << event_id << "u] = 1u;\n";
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kTaskCall) {
+              emit_task_call(stmt, 18, emit_inline_stmt);
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          for (const auto& body_case : body_cases) {
+            out << "                case " << body_case.pc << ": {\n";
+            if (body_case.is_assign_delay) {
+              emit_inline_assign(body_case.owner->assign, 18, sched_locals);
+              out << "                  sched_pc[idx] = " << body_case.next_pc
+                  << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            for (const auto* inner : body_case.body) {
+              emit_inline_stmt(*inner, 18, sched_locals, emit_inline_stmt);
+            }
+            out << "                  sched_pc[idx] = " << body_case.next_pc
+                << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "                case " << pc_done << ": {\n";
+          out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "                  break;\n";
+          out << "                }\n";
+          out << "                default: {\n";
+          out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "                  break;\n";
+          out << "                }\n";
+          out << "              }\n";
+          out << "              break;\n";
+          out << "            }\n";
+        }
+        out << "            default: {\n";
+        out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "              break;\n";
+        out << "            }\n";
+        out << "          }\n";
+        out << "          if (sched_state[idx] == GPGA_SCHED_PROC_DONE) {\n";
+        out << "            uint parent = sched_parent[idx];\n";
+        out << "            if (parent != GPGA_SCHED_NO_PARENT) {\n";
+        out << "              uint pidx = gpga_sched_index(gid, parent);\n";
+        out << "              if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+        out << "                  sched_wait_id[pidx] == sched_join_tag[idx]) {\n";
+        out << "                if (sched_join_count[pidx] > 0u) {\n";
+        out << "                  sched_join_count[pidx] -= 1u;\n";
+        out << "                }\n";
+        out << "                if (sched_join_count[pidx] == 0u) {\n";
+        out << "                  sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "                  sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+        out << "                }\n";
+        out << "              }\n";
+        out << "            }\n";
+        out << "          }\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      if (!did_work) {\n";
+        out << "        sched_phase[gid] = GPGA_SCHED_PHASE_NBA;\n";
+        out << "      }\n";
+        out << "      continue;\n";
+        out << "    }\n";
+        out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_NBA) {\n";
+        if (!nb_targets_sorted.empty()) {
+          out << "      // Commit scalar NBAs.\n";
+          for (const auto& target : nb_targets_sorted) {
+            out << "      " << val_name(target) << "[gid] = nb_"
+                << val_name(target) << "[gid];\n";
+            out << "      " << xz_name(target) << "[gid] = nb_"
+                << xz_name(target) << "[gid];\n";
+          }
+        }
+        if (!nb_array_nets.empty()) {
+          out << "      // Commit array NBAs.\n";
+          for (const auto* net : nb_array_nets) {
+            out << "      for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
+            out << "        " << val_name(net->name) << "[(gid * "
+                << net->array_size << "u) + i] = "
+                << val_name(net->name + "_next") << "[(gid * "
+                << net->array_size << "u) + i];\n";
+            out << "        " << xz_name(net->name) << "[(gid * "
+                << net->array_size << "u) + i] = "
+                << xz_name(net->name + "_next") << "[(gid * "
+                << net->array_size << "u) + i];\n";
+            out << "      }\n";
+          }
+        }
+        out << "      bool any_ready = false;\n";
+        out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "        uint idx = gpga_sched_index(gid, pid);\n";
+        out << "        if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
+        out << "          continue;\n";
+        out << "        }\n";
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_DELTA) {\n";
+        out << "          sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "          sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "          any_ready = true;\n";
+        out << "          continue;\n";
+        out << "        }\n";
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
+        out << "          uint ev = sched_wait_event[idx];\n";
+        out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
+        out << "          if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
+        out << "              sched_event_pending[eidx] != 0u) {\n";
+        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "            any_ready = true;\n";
+        out << "          }\n";
+        out << "          continue;\n";
+        out << "        }\n";
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_COND) {\n";
+        out << "          bool ready = false;\n";
+        out << "          switch (sched_wait_id[idx]) {\n";
+        for (size_t i = 0; i < wait_exprs.size(); ++i) {
+          FsExpr cond = emit_expr4(*wait_exprs[i]);
+          out << "            case " << i << "u:\n";
+          out << "              ready = (" << cond_bool(cond) << ");\n";
+          out << "              break;\n";
+        }
+        out << "            default:\n";
+        out << "              ready = false;\n";
+        out << "              break;\n";
+        out << "          }\n";
+        out << "          if (ready) {\n";
+        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "            any_ready = true;\n";
+        out << "          }\n";
+        out << "          continue;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+        out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+        out << "      }\n";
+        out << "      if (any_ready) {\n";
+        out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+        out << "        continue;\n";
+        out << "      }\n";
+        out << "      // Advance time to next wakeup.\n";
+        out << "      bool have_time = false;\n";
+        out << "      ulong next_time = ~0ul;\n";
+        out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "        uint idx = gpga_sched_index(gid, pid);\n";
+        out << "        if (sched_wait_kind[idx] != GPGA_SCHED_WAIT_TIME) {\n";
+        out << "          continue;\n";
+        out << "        }\n";
+        out << "        ulong t = sched_wait_time[idx];\n";
+        out << "        if (!have_time || t < next_time) {\n";
+        out << "          have_time = true;\n";
+        out << "          next_time = t;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      if (have_time) {\n";
+        out << "        sched_time[gid] = next_time;\n";
+        out << "        __gpga_time = next_time;\n";
+        out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "          uint idx = gpga_sched_index(gid, pid);\n";
+        out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_TIME &&\n";
+        out << "              sched_wait_time[idx] == next_time) {\n";
+        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "          }\n";
+        out << "        }\n";
+        out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+        out << "        continue;\n";
+        out << "      }\n";
+        out << "      finished = true;\n";
+        out << "      break;\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "  if (sched_error[gid] != 0u) {\n";
+        out << "    sched_status[gid] = GPGA_SCHED_STATUS_ERROR;\n";
+        out << "  } else if (finished) {\n";
+        out << "    sched_status[gid] = GPGA_SCHED_STATUS_FINISHED;\n";
+        out << "  } else {\n";
+        out << "    sched_status[gid] = GPGA_SCHED_STATUS_IDLE;\n";
+        out << "  }\n";
+        out << "}\n";
+      }
     }
     return out.str();
   }
@@ -3845,12 +5497,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       std::string sized =
           EmitExprSized(*stmt.assign.rhs, lvalue.width, module, locals, regs);
+      if (lvalue.is_bit_select) {
+        std::string update = EmitBitSelectUpdate(
+            lvalue.expr, lvalue.bit_index, lvalue.base_width, sized);
         if (!lvalue.guard.empty()) {
           out << pad << "if " << lvalue.guard << " {\n";
-          out << pad << "  " << lvalue.expr << " = " << sized << ";\n";
+          out << pad << "  " << lvalue.expr << " = " << update << ";\n";
           out << pad << "}\n";
         } else {
-          out << pad << lvalue.expr << " = " << sized << ";\n";
+          out << pad << lvalue.expr << " = " << update << ";\n";
+        }
+        return;
+      }
+      if (!lvalue.guard.empty()) {
+        out << pad << "if " << lvalue.guard << " {\n";
+        out << pad << "  " << lvalue.expr << " = " << sized << ";\n";
+        out << pad << "}\n";
+      } else {
+        out << pad << lvalue.expr << " = " << sized << ";\n";
       }
       return;
     }
@@ -3939,7 +5603,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
   out << "}\n";
 
-  if (has_initial) {
+  if (has_initial && !needs_scheduler) {
     out << "\n";
     out << "kernel void gpga_" << module.name << "_init(";
     buffer_index = 0;
@@ -4050,6 +5714,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string sized =
             EmitExprSized(*stmt.assign.rhs, lvalue.width, module, init_locals,
                           init_regs);
+        if (lvalue.is_bit_select) {
+          std::string update = EmitBitSelectUpdate(
+              lvalue.expr, lvalue.bit_index, lvalue.base_width, sized);
+          if (!lvalue.guard.empty()) {
+            out << pad << "if " << lvalue.guard << " {\n";
+            out << pad << "  " << lvalue.expr << " = " << update << ";\n";
+            out << pad << "}\n";
+          } else {
+            out << pad << lvalue.expr << " = " << update << ";\n";
+          }
+          return;
+        }
         if (!lvalue.guard.empty()) {
           out << pad << "if " << lvalue.guard << " {\n";
           out << pad << "  " << lvalue.expr << " = " << sized << ";\n";
@@ -4311,6 +5987,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           return;
         }
+        if (lvalue.is_bit_select) {
+          std::string target = lvalue.expr;
+          if (stmt.assign.nonblocking) {
+            auto it = nb_map.find(stmt.assign.lhs);
+            if (it != nb_map.end()) {
+              target = it->second;
+            }
+          }
+          std::string update = EmitBitSelectUpdate(
+              target, lvalue.bit_index, lvalue.base_width, sized);
+          if (!lvalue.guard.empty()) {
+            out << pad << "if " << lvalue.guard << " {\n";
+            out << pad << "  " << target << " = " << update << ";\n";
+            out << pad << "}\n";
+          } else {
+            out << pad << target << " = " << update << ";\n";
+          }
+          return;
+        }
         if (stmt.assign.nonblocking && !stmt.assign.lhs_index) {
           auto it = nb_map.find(stmt.assign.lhs);
           if (it != nb_map.end()) {
@@ -4479,6 +6174,1353 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     }
     out << "}\n";
+  }
+  if (needs_scheduler) {
+    struct ProcDef {
+      int pid = 0;
+      const std::vector<Statement>* body = nullptr;
+      const Statement* single = nullptr;
+    };
+
+    std::vector<const AlwaysBlock*> initial_blocks;
+    for (const auto& block : module.always_blocks) {
+      if (block.edge == EdgeKind::kInitial) {
+        initial_blocks.push_back(&block);
+      }
+    }
+
+    if (!initial_blocks.empty()) {
+      std::unordered_map<std::string, int> event_ids;
+      for (size_t i = 0; i < module.events.size(); ++i) {
+        event_ids[module.events[i].name] = static_cast<int>(i);
+      }
+
+      struct ForkInfo {
+        int tag = 0;
+        std::vector<int> children;
+      };
+
+      std::unordered_map<const Statement*, ForkInfo> fork_info;
+      std::vector<ProcDef> procs;
+      std::vector<int> proc_parent;
+      std::vector<int> proc_join_tag;
+
+      int next_pid = 0;
+      for (const auto* block : initial_blocks) {
+        procs.push_back(ProcDef{next_pid, &block->statements, nullptr});
+        proc_parent.push_back(-1);
+        proc_join_tag.push_back(-1);
+        ++next_pid;
+      }
+      const int root_proc_count = next_pid;
+      int next_fork_tag = 0;
+
+      std::function<void(const Statement&, int)> collect_forks;
+      std::function<void(const std::vector<Statement>&, int)>
+          collect_forks_in_list;
+      collect_forks = [&](const Statement& stmt, int parent_pid) {
+        if (stmt.kind == StatementKind::kFork) {
+          ForkInfo info;
+          info.tag = next_fork_tag++;
+          for (const auto& branch : stmt.fork_branches) {
+            int child_pid = next_pid++;
+            info.children.push_back(child_pid);
+            procs.push_back(ProcDef{child_pid, nullptr, &branch});
+            proc_parent.push_back(parent_pid);
+            proc_join_tag.push_back(info.tag);
+            collect_forks(branch, child_pid);
+          }
+          fork_info[&stmt] = info;
+          return;
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          for (const auto& inner : stmt.then_branch) {
+            collect_forks(inner, parent_pid);
+          }
+          for (const auto& inner : stmt.else_branch) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          for (const auto& inner : stmt.block) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kFor) {
+          for (const auto& inner : stmt.for_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWhile) {
+          for (const auto& inner : stmt.while_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kRepeat) {
+          for (const auto& inner : stmt.repeat_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kDelay) {
+          for (const auto& inner : stmt.delay_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventControl) {
+          for (const auto& inner : stmt.event_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWait) {
+          for (const auto& inner : stmt.wait_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          for (const auto& inner : stmt.forever_body) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          for (const auto& item : stmt.case_items) {
+            for (const auto& inner : item.body) {
+              collect_forks(inner, parent_pid);
+            }
+          }
+          for (const auto& inner : stmt.default_branch) {
+            collect_forks(inner, parent_pid);
+          }
+          return;
+        }
+      };
+      collect_forks_in_list = [&](const std::vector<Statement>& stmts,
+                                  int parent_pid) {
+        for (const auto& stmt : stmts) {
+          collect_forks(stmt, parent_pid);
+        }
+      };
+      for (int i = 0; i < root_proc_count; ++i) {
+        collect_forks_in_list(*procs[i].body, procs[i].pid);
+      }
+
+      std::unordered_map<const Statement*, int> wait_ids;
+      std::vector<const Expr*> wait_exprs;
+      std::function<void(const Statement&)> collect_waits;
+      collect_waits = [&](const Statement& stmt) -> void {
+        if (stmt.kind == StatementKind::kWait && stmt.wait_condition) {
+          if (wait_ids.find(&stmt) == wait_ids.end()) {
+            wait_ids[&stmt] = static_cast<int>(wait_exprs.size());
+            wait_exprs.push_back(stmt.wait_condition.get());
+          }
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          for (const auto& inner : stmt.then_branch) {
+            collect_waits(inner);
+          }
+          for (const auto& inner : stmt.else_branch) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          for (const auto& inner : stmt.block) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kFor) {
+          for (const auto& inner : stmt.for_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWhile) {
+          for (const auto& inner : stmt.while_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kRepeat) {
+          for (const auto& inner : stmt.repeat_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kDelay) {
+          for (const auto& inner : stmt.delay_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventControl) {
+          for (const auto& inner : stmt.event_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWait) {
+          for (const auto& inner : stmt.wait_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          for (const auto& inner : stmt.forever_body) {
+            collect_waits(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          for (const auto& item : stmt.case_items) {
+            for (const auto& inner : item.body) {
+              collect_waits(inner);
+            }
+          }
+          for (const auto& inner : stmt.default_branch) {
+            collect_waits(inner);
+          }
+          return;
+        }
+      };
+      for (const auto& block : module.always_blocks) {
+        for (const auto& stmt : block.statements) {
+          collect_waits(stmt);
+        }
+      }
+
+      std::unordered_set<std::string> nb_targets;
+      std::unordered_set<std::string> nb_array_targets;
+      std::function<void(const Statement&)> collect_nb_targets;
+      collect_nb_targets = [&](const Statement& stmt) -> void {
+        if (stmt.kind == StatementKind::kAssign && stmt.assign.nonblocking) {
+          if (stmt.assign.lhs_index) {
+            nb_array_targets.insert(stmt.assign.lhs);
+          } else {
+            nb_targets.insert(stmt.assign.lhs);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          for (const auto& inner : stmt.then_branch) {
+            collect_nb_targets(inner);
+          }
+          for (const auto& inner : stmt.else_branch) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          for (const auto& inner : stmt.block) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kFor) {
+          for (const auto& inner : stmt.for_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWhile) {
+          for (const auto& inner : stmt.while_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kRepeat) {
+          for (const auto& inner : stmt.repeat_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kDelay) {
+          for (const auto& inner : stmt.delay_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventControl) {
+          for (const auto& inner : stmt.event_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWait) {
+          for (const auto& inner : stmt.wait_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          for (const auto& inner : stmt.forever_body) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          for (const auto& item : stmt.case_items) {
+            for (const auto& inner : item.body) {
+              collect_nb_targets(inner);
+            }
+          }
+          for (const auto& inner : stmt.default_branch) {
+            collect_nb_targets(inner);
+          }
+          return;
+        }
+      };
+      for (const auto& block : module.always_blocks) {
+        for (const auto& stmt : block.statements) {
+          collect_nb_targets(stmt);
+        }
+      }
+
+      std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
+                                                 nb_targets.end());
+      std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+      std::vector<const Net*> nb_array_nets;
+      for (const auto& net : module.nets) {
+        if (net.array_size <= 0) {
+          continue;
+        }
+        if (nb_array_targets.count(net.name) > 0) {
+          nb_array_nets.push_back(&net);
+        }
+      }
+      std::sort(nb_array_nets.begin(), nb_array_nets.end(),
+                [](const Net* a, const Net* b) { return a->name < b->name; });
+
+      std::unordered_set<std::string> sched_locals;
+      std::unordered_set<std::string> sched_regs;
+      for (const auto& net : module.nets) {
+        if (net.array_size > 0) {
+          continue;
+        }
+        if (net.type == NetType::kReg || IsTriregNet(net.type)) {
+          sched_regs.insert(net.name);
+          continue;
+        }
+        if (!IsOutputPort(module, net.name)) {
+          sched_locals.insert(net.name);
+        }
+      }
+
+      std::unordered_set<std::string> sched_reg_set;
+      for (const auto& net : module.nets) {
+        if ((net.type == NetType::kReg || IsTriregNet(net.type)) &&
+            !IsOutputPort(module, net.name)) {
+          sched_reg_set.insert(net.name);
+        }
+      }
+      std::vector<std::string> sched_reg_names(sched_reg_set.begin(),
+                                               sched_reg_set.end());
+      std::sort(sched_reg_names.begin(), sched_reg_names.end());
+
+      out << "\n";
+      out << "struct GpgaSchedParams { uint max_steps; uint max_proc_steps; };\n";
+      out << "constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size() << "u;\n";
+      out << "constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
+          << "u;\n";
+      out << "constexpr uint GPGA_SCHED_EVENT_COUNT = "
+          << module.events.size() << "u;\n";
+      out << "constexpr uint GPGA_SCHED_MAX_READY = " << procs.size() << "u;\n";
+      out << "constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
+      out << "constexpr uint GPGA_SCHED_MAX_NBA = " << nb_targets_sorted.size()
+          << "u;\n";
+      out << "constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
+      out << "constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
+      out << "constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
+      out << "constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
+      out << "constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
+      out << "constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
+      out << "constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
+      out << "constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
+      out << "constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
+      out << "constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
+      out << "constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
+      out << "constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
+      out << "constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
+      out << "constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
+      out << "constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
+      out << "constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
+      out << "inline uint gpga_sched_index(uint gid, uint pid) {\n";
+      out << "  return (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
+      out << "}\n";
+      out << "constant uint gpga_proc_parent[GPGA_SCHED_PROC_COUNT] = {";
+      for (size_t i = 0; i < procs.size(); ++i) {
+        uint32_t parent =
+            proc_parent[i] < 0 ? 0xFFFFFFFFu
+                               : static_cast<uint32_t>(proc_parent[i]);
+        if (i > 0) {
+          out << ", ";
+        }
+        out << parent << "u";
+      }
+      out << "};\n";
+      out << "constant uint gpga_proc_join_tag[GPGA_SCHED_PROC_COUNT] = {";
+      for (size_t i = 0; i < procs.size(); ++i) {
+        uint32_t tag = proc_join_tag[i] < 0
+                           ? 0xFFFFFFFFu
+                           : static_cast<uint32_t>(proc_join_tag[i]);
+        if (i > 0) {
+          out << ", ";
+        }
+        out << tag << "u";
+      }
+      out << "};\n";
+
+      out << "\n";
+      out << "kernel void gpga_" << module.name << "_sched_step(";
+      int buffer_index = 0;
+      bool first = true;
+      auto emit_param = [&](const std::string& text) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        out << text;
+      };
+      for (const auto& port : module.ports) {
+        std::string qualifier =
+            (port.dir == PortDir::kInput) ? "constant" : "device";
+        std::string type = TypeForWidth(port.width);
+        emit_param("  " + qualifier + " " + type + "* " + port.name +
+                   " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+      }
+      for (const auto& reg : sched_reg_names) {
+        std::string type = TypeForWidth(SignalWidth(module, reg));
+        emit_param("  device " + type + "* " + reg + " [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
+      for (const auto* net : array_nets) {
+        std::string type = TypeForWidth(net->width);
+        emit_param("  device " + type + "* " + net->name + " [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
+      for (const auto& target : nb_targets_sorted) {
+        std::string type = TypeForWidth(SignalWidth(module, target));
+        emit_param("  device " + type + "* nb_" + target + " [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
+      for (const auto* net : nb_array_nets) {
+        std::string type = TypeForWidth(net->width);
+        emit_param("  device " + type + "* " + net->name + "_next [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      };
+      emit_param("  device uint* sched_pc [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_state [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_wait_kind [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_wait_id [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_wait_event [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device ulong* sched_wait_time [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_join_count [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_parent [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_join_tag [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device ulong* sched_time [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_phase [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_initialized [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_event_pending [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_error [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  device uint* sched_status [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  constant GpgaSchedParams& sched [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  constant GpgaParams& params [[buffer(" +
+                 std::to_string(buffer_index++) + ")]]");
+      emit_param("  uint gid [[thread_position_in_grid]]) {\n");
+      out << "  if (gid >= params.count) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  ulong __gpga_time = sched_time[gid];\n";
+      out << "  if (sched_initialized[gid] == 0u) {\n";
+      out << "    sched_time[gid] = 0ul;\n";
+      out << "    __gpga_time = 0ul;\n";
+      out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+      out << "    sched_error[gid] = 0u;\n";
+      out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+      out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+      out << "    }\n";
+      out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "      uint idx = gpga_sched_index(gid, pid);\n";
+      out << "      sched_pc[idx] = 0u;\n";
+      out << "      sched_state[idx] = (pid < GPGA_SCHED_ROOT_COUNT)\n";
+      out << "          ? GPGA_SCHED_PROC_READY : GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "      sched_wait_id[idx] = 0u;\n";
+      out << "      sched_wait_event[idx] = 0u;\n";
+      out << "      sched_wait_time[idx] = 0ul;\n";
+      out << "      sched_join_count[idx] = 0u;\n";
+      out << "      sched_parent[idx] = gpga_proc_parent[pid];\n";
+      out << "      sched_join_tag[idx] = gpga_proc_join_tag[pid];\n";
+      out << "    }\n";
+      out << "    sched_initialized[gid] = 1u;\n";
+      out << "  }\n";
+      out << "  if (sched_error[gid] != 0u) {\n";
+      out << "    sched_status[gid] = GPGA_SCHED_STATUS_ERROR;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  sched_status[gid] = GPGA_SCHED_STATUS_RUNNING;\n";
+      out << "  bool finished = false;\n";
+      out << "  uint steps = sched.max_steps;\n";
+      out << "  while (steps > 0u) {\n";
+      out << "    bool did_work = false;\n";
+      out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
+      if (!nb_targets_sorted.empty()) {
+        out << "      // Initialize NBA buffers for this delta.\n";
+        for (const auto& target : nb_targets_sorted) {
+          out << "      nb_" << target << "[gid] = " << target << "[gid];\n";
+        }
+      }
+      if (!nb_array_nets.empty()) {
+        out << "      // Initialize array NBA buffers.\n";
+        for (const auto* net : nb_array_nets) {
+          out << "      for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
+          out << "        " << net->name << "_next[(gid * " << net->array_size
+              << "u) + i] = " << net->name << "[(gid * " << net->array_size
+              << "u) + i];\n";
+          out << "      }\n";
+        }
+      }
+      out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "        uint idx = gpga_sched_index(gid, pid);\n";
+      out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+      out << "          did_work = true;\n";
+      out << "          steps--;\n";
+      out << "          switch (pid) {\n";
+
+    auto emit_inline_assign =
+        [&](const SequentialAssign& assign, int indent,
+            const std::unordered_set<std::string>& locals_override) -> void {
+      if (!assign.rhs) {
+        return;
+      }
+      std::string pad(indent, ' ');
+      LvalueInfo lhs =
+          BuildLvalue(assign, module, locals_override, sched_regs, false);
+      if (!lhs.ok) {
+        return;
+      }
+      std::string sized = EmitExprSized(*assign.rhs, lhs.width, module,
+                                        locals_override, sched_regs);
+      if (assign.nonblocking) {
+        if (assign.lhs_index) {
+          LvalueInfo next =
+              BuildLvalue(assign, module, locals_override, sched_regs, true);
+          if (next.ok) {
+            if (!next.guard.empty()) {
+              out << pad << "if " << next.guard << " {\n";
+              out << pad << "  " << next.expr << " = " << sized << ";\n";
+              out << pad << "}\n";
+            } else {
+              out << pad << next.expr << " = " << sized << ";\n";
+            }
+          }
+          return;
+        }
+        if (lhs.is_bit_select) {
+          std::string target = lhs.expr;
+          if (IsOutputPort(module, assign.lhs) ||
+              sched_regs.count(assign.lhs) > 0) {
+            target = "nb_" + assign.lhs + "[gid]";
+          }
+          std::string update = EmitBitSelectUpdate(
+              target, lhs.bit_index, lhs.base_width, sized);
+          if (!lhs.guard.empty()) {
+            out << pad << "if " << lhs.guard << " {\n";
+            out << pad << "  " << target << " = " << update << ";\n";
+            out << pad << "}\n";
+          } else {
+            out << pad << target << " = " << update << ";\n";
+          }
+          return;
+        }
+        out << pad << "nb_" << assign.lhs << "[gid] = " << sized << ";\n";
+        return;
+      }
+      if (lhs.is_bit_select) {
+        std::string update = EmitBitSelectUpdate(
+            lhs.expr, lhs.bit_index, lhs.base_width, sized);
+        if (!lhs.guard.empty()) {
+          out << pad << "if " << lhs.guard << " {\n";
+          out << pad << "  " << lhs.expr << " = " << update << ";\n";
+          out << pad << "}\n";
+        } else {
+          out << pad << lhs.expr << " = " << update << ";\n";
+        }
+        return;
+      }
+      if (!lhs.guard.empty()) {
+        out << pad << "if " << lhs.guard << " {\n";
+        out << pad << "  " << lhs.expr << " = " << sized << ";\n";
+          out << pad << "}\n";
+        } else {
+          out << pad << lhs.expr << " = " << sized << ";\n";
+        }
+      };
+
+      auto emit_inline_stmt =
+          [&](const Statement& stmt, int indent,
+              const std::unordered_set<std::string>& locals_override,
+              const auto& self) -> void {
+        std::string pad(indent, ' ');
+        if (stmt.kind == StatementKind::kEventTrigger) {
+          auto it = event_ids.find(stmt.trigger_target);
+          if (it == event_ids.end()) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          out << pad << "sched_event_pending[(gid * "
+              << "GPGA_SCHED_EVENT_COUNT) + " << it->second << "u] = 1u;\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kAssign) {
+          if (stmt.assign.delay) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          emit_inline_assign(stmt.assign, indent, locals_override);
+          return;
+        }
+        if (StatementNeedsScheduler(stmt)) {
+          out << pad << "sched_error[gid] = 1u;\n";
+          out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          std::string cond = stmt.condition
+                                 ? EmitExpr(*stmt.condition, module,
+                                            locals_override, sched_regs)
+                                 : "0u";
+          out << pad << "if (" << cond << ") {\n";
+          for (const auto& inner : stmt.then_branch) {
+            self(inner, indent + 2, locals_override, self);
+          }
+          if (!stmt.else_branch.empty()) {
+            out << pad << "} else {\n";
+            for (const auto& inner : stmt.else_branch) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            out << pad << "}\n";
+          } else {
+            out << pad << "}\n";
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          if (!stmt.case_expr) {
+            return;
+          }
+          std::string case_value =
+              EmitExpr(*stmt.case_expr, module, locals_override, sched_regs);
+          int case_width = ExprWidth(*stmt.case_expr, module);
+          bool first = true;
+          for (const auto& item : stmt.case_items) {
+            std::string cond;
+            for (const auto& label : item.labels) {
+              int label_width = ExprWidth(*label, module);
+              int target = std::max(case_width, label_width);
+              std::string lhs = ExtendExpr(case_value, case_width, target);
+              std::string rhs = EmitExpr(*label, module, locals_override,
+                                         sched_regs);
+              std::string rhs_ext = ExtendExpr(rhs, label_width, target);
+              std::string piece = "(" + lhs + " == " + rhs_ext + ")";
+              if (!cond.empty()) {
+                cond += " || ";
+              }
+              cond += piece;
+            }
+            if (cond.empty()) {
+              continue;
+            }
+            if (first) {
+              out << pad << "if (" << cond << ") {\n";
+              first = false;
+            } else {
+              out << pad << "} else if (" << cond << ") {\n";
+            }
+            for (const auto& inner : item.body) {
+              self(inner, indent + 2, locals_override, self);
+            }
+          }
+          if (!stmt.default_branch.empty()) {
+            out << pad << "} else {\n";
+            for (const auto& inner : stmt.default_branch) {
+              self(inner, indent + 2, locals_override, self);
+            }
+            out << pad << "}\n";
+          } else if (!first) {
+            out << pad << "}\n";
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kFor) {
+          std::string init = stmt.for_init_rhs
+                                 ? EmitExprSized(*stmt.for_init_rhs,
+                                                 SignalWidth(module,
+                                                             stmt.for_init_lhs),
+                                                 module, locals_override,
+                                                 sched_regs)
+                                 : "0u";
+          out << pad << stmt.for_init_lhs << " = " << init << ";\n";
+          std::string cond = stmt.for_condition
+                                 ? EmitExpr(*stmt.for_condition, module,
+                                            locals_override, sched_regs)
+                                 : "0u";
+          out << pad << "while (" << cond << ") {\n";
+          for (const auto& inner : stmt.for_body) {
+            self(inner, indent + 2, locals_override, self);
+          }
+          std::string step = stmt.for_step_rhs
+                                 ? EmitExprSized(*stmt.for_step_rhs,
+                                                 SignalWidth(module,
+                                                             stmt.for_step_lhs),
+                                                 module, locals_override,
+                                                 sched_regs)
+                                 : "0u";
+          out << pad << "  " << stmt.for_step_lhs << " = " << step << ";\n";
+          out << pad << "}\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kWhile) {
+          std::string cond = stmt.while_condition
+                                 ? EmitExpr(*stmt.while_condition, module,
+                                            locals_override, sched_regs)
+                                 : "0u";
+          out << pad << "while (" << cond << ") {\n";
+          for (const auto& inner : stmt.while_body) {
+            self(inner, indent + 2, locals_override, self);
+          }
+          out << pad << "}\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kRepeat) {
+          std::string count =
+              stmt.repeat_count
+                  ? EmitExprSized(*stmt.repeat_count, 32, module,
+                                  locals_override, sched_regs)
+                  : "0u";
+          out << pad << "for (uint __gpga_rep = 0u; __gpga_rep < " << count
+              << "; ++__gpga_rep) {\n";
+          for (const auto& inner : stmt.repeat_body) {
+            self(inner, indent + 2, locals_override, self);
+          }
+          out << pad << "}\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          out << pad << "{\n";
+          for (const auto& inner : stmt.block) {
+            self(inner, indent + 2, locals_override, self);
+          }
+          out << pad << "}\n";
+          return;
+        }
+      };
+
+      auto emit_task_call =
+          [&](const Statement& stmt, int indent,
+              const auto& emit_inline_stmt_fn) -> void {
+        const Task* task = FindTask(module, stmt.task_name);
+        if (!task) {
+          out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+          out << std::string(indent, ' ') << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          return;
+        }
+        std::unordered_set<std::string> task_locals = sched_locals;
+        std::unordered_map<std::string, int> task_widths;
+        std::unordered_map<std::string, bool> task_signed;
+        struct TaskOutArg {
+          std::string name;
+          std::string target;
+          int target_width = 0;
+        };
+        std::vector<TaskOutArg> task_outs;
+        task_widths.reserve(task->args.size());
+        task_signed.reserve(task->args.size());
+        task_outs.reserve(task->args.size());
+
+        for (const auto& arg : task->args) {
+          task_widths[arg.name] = arg.width;
+          task_signed[arg.name] = arg.is_signed;
+        }
+
+        for (size_t i = 0; i < task->args.size(); ++i) {
+          const auto& arg = task->args[i];
+          const Expr* call_arg = nullptr;
+          if (i < stmt.task_args.size()) {
+            call_arg = stmt.task_args[i].get();
+          }
+          std::string type = TypeForWidth(arg.width);
+          if (arg.dir == TaskArgDir::kInput) {
+            std::string expr = call_arg
+                                   ? EmitExprSized(*call_arg, arg.width, module,
+                                                   sched_locals, sched_regs)
+                                   : "0u";
+            out << std::string(indent, ' ') << type << " " << arg.name
+                << " = " << expr << ";\n";
+            task_locals.insert(arg.name);
+            continue;
+          }
+          if (!call_arg || call_arg->kind != ExprKind::kIdentifier) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          std::string init = EmitExprSized(*call_arg, arg.width, module,
+                                           sched_locals, sched_regs);
+          out << std::string(indent, ' ') << type << " " << arg.name << " = "
+              << init << ";\n";
+          task_locals.insert(arg.name);
+          std::string target =
+              EmitExpr(*call_arg, module, sched_locals, sched_regs);
+          int target_width = ExprWidth(*call_arg, module);
+          task_outs.push_back(TaskOutArg{arg.name, target, target_width});
+        }
+
+        const auto* prev_widths = g_task_arg_widths;
+        const auto* prev_signed = g_task_arg_signed;
+        g_task_arg_widths = &task_widths;
+        g_task_arg_signed = &task_signed;
+        for (const auto& inner : task->body) {
+          emit_inline_stmt_fn(inner, indent, task_locals, emit_inline_stmt_fn);
+        }
+        for (const auto& out_arg : task_outs) {
+          Expr arg_expr;
+          arg_expr.kind = ExprKind::kIdentifier;
+          arg_expr.ident = out_arg.name;
+          std::string value = EmitExprSized(
+              arg_expr, out_arg.target_width, module, task_locals, sched_regs);
+          out << std::string(indent, ' ') << out_arg.target << " = " << value
+              << ";\n";
+        }
+        g_task_arg_widths = prev_widths;
+        g_task_arg_signed = prev_signed;
+      };
+
+      for (const auto& proc : procs) {
+        std::vector<const Statement*> stmts;
+        if (proc.body) {
+          for (const auto& stmt : *proc.body) {
+            stmts.push_back(&stmt);
+          }
+        } else if (proc.single) {
+          stmts.push_back(proc.single);
+        }
+        std::unordered_map<const Statement*, int> pc_for_stmt;
+        int pc_counter = 0;
+        for (const auto* stmt : stmts) {
+          pc_for_stmt[stmt] = pc_counter++;
+        }
+        const int pc_done = pc_counter++;
+        struct BodyCase {
+          int pc = 0;
+          const Statement* owner = nullptr;
+          std::vector<const Statement*> body;
+          int next_pc = 0;
+          int loop_pc = -1;
+          bool is_forever_body = false;
+          bool is_assign_delay = false;
+        };
+        std::vector<BodyCase> body_cases;
+
+        std::unordered_map<std::string, int> block_end_pc;
+        for (size_t i = 0; i < stmts.size(); ++i) {
+          const auto* stmt = stmts[i];
+          if (stmt->kind == StatementKind::kBlock &&
+              !stmt->block_label.empty()) {
+            int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
+                                                 : pc_done;
+            block_end_pc[stmt->block_label] = next_pc;
+          }
+        }
+
+        out << "            case " << proc.pid << ": {\n";
+        out << "              uint pc = sched_pc[idx];\n";
+        out << "              switch (pc) {\n";
+        for (size_t i = 0; i < stmts.size(); ++i) {
+          const Statement& stmt = *stmts[i];
+          int pc = pc_for_stmt[&stmt];
+          int next_pc =
+              (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]] : pc_done;
+          out << "                case " << pc << ": {\n";
+          if (stmt.kind == StatementKind::kAssign) {
+            if (!stmt.assign.rhs) {
+              out << "                  sched_pc[idx] = " << next_pc
+                  << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.assign.delay) {
+              int body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = next_pc;
+              body_case.is_assign_delay = true;
+              body_cases.push_back(std::move(body_case));
+              std::string delay =
+                  EmitExprSized(*stmt.assign.delay, 64, module, sched_locals,
+                                sched_regs);
+              out << "                  ulong __gpga_delay = " << delay
+                  << ";\n";
+              out << "                  sched_wait_kind[idx] = "
+                     "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                     "GPGA_SCHED_WAIT_TIME;\n";
+              out << "                  sched_wait_time[idx] = __gpga_time + "
+                     "__gpga_delay;\n";
+              out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kDelay) {
+            int body_pc = -1;
+            if (!stmt.delay_body.empty()) {
+              body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = next_pc;
+              for (const auto& inner : stmt.delay_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+            }
+            std::string delay =
+                stmt.delay
+                    ? EmitExprSized(*stmt.delay, 64, module, sched_locals,
+                                    sched_regs)
+                    : "0ul";
+            out << "                  ulong __gpga_delay = " << delay << ";\n";
+            out << "                  sched_wait_kind[idx] = "
+                   "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                   "GPGA_SCHED_WAIT_TIME;\n";
+            out << "                  sched_wait_time[idx] = __gpga_time + "
+                   "__gpga_delay;\n";
+            out << "                  sched_pc[idx] = "
+                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                 : std::to_string(next_pc) + "u")
+                << ";\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kEventControl) {
+            int body_pc = -1;
+            if (!stmt.event_body.empty()) {
+              body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = next_pc;
+              for (const auto& inner : stmt.event_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+            }
+            int event_id = -1;
+            if (stmt.event_expr &&
+                stmt.event_expr->kind == ExprKind::kIdentifier) {
+              auto it = event_ids.find(stmt.event_expr->ident);
+              if (it != event_ids.end()) {
+                event_id = it->second;
+              }
+            }
+            if (event_id < 0) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EVENT;\n";
+            out << "                  sched_wait_event[idx] = " << event_id
+                << "u;\n";
+            out << "                  sched_pc[idx] = "
+                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                 : std::to_string(next_pc) + "u")
+                << ";\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kWait) {
+            int body_pc = -1;
+            if (!stmt.wait_body.empty()) {
+              body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = next_pc;
+              for (const auto& inner : stmt.wait_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+            }
+            int wait_id = -1;
+            auto it = wait_ids.find(&stmt);
+            if (it != wait_ids.end()) {
+              wait_id = it->second;
+            }
+            if (!stmt.wait_condition || wait_id < 0) {
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            std::string cond =
+                EmitExpr(*stmt.wait_condition, module, sched_locals,
+                         sched_regs);
+            out << "                  if ((" << cond << ") != 0u) {\n";
+            if (body_pc >= 0) {
+              out << "                    sched_pc[idx] = " << body_pc << "u;\n";
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            } else {
+              out << "                    sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            }
+            out << "                    break;\n";
+            out << "                  }\n";
+            out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_COND;\n";
+            out << "                  sched_wait_id[idx] = " << wait_id << "u;\n";
+            out << "                  sched_pc[idx] = "
+                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                 : std::to_string(next_pc) + "u")
+                << ";\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kForever) {
+            if (stmt.forever_body.empty()) {
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            const Statement& body_stmt = stmt.forever_body.front();
+            if (body_stmt.kind != StatementKind::kDelay) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            int body_pc = pc_counter++;
+            BodyCase body_case;
+            body_case.pc = body_pc;
+            body_case.owner = &stmt;
+            body_case.next_pc = pc;
+            body_case.loop_pc = pc;
+            body_case.is_forever_body = true;
+            for (const auto& inner : body_stmt.delay_body) {
+              body_case.body.push_back(&inner);
+            }
+            body_cases.push_back(std::move(body_case));
+            std::string delay =
+                body_stmt.delay
+                    ? EmitExprSized(*body_stmt.delay, 64, module, sched_locals,
+                                    sched_regs)
+                    : "0ul";
+            out << "                  ulong __gpga_delay = " << delay << ";\n";
+            out << "                  sched_wait_kind[idx] = "
+                   "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                   "GPGA_SCHED_WAIT_TIME;\n";
+            out << "                  sched_wait_time[idx] = __gpga_time + "
+                   "__gpga_delay;\n";
+            out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kFork) {
+            auto it = fork_info.find(&stmt);
+            if (it == fork_info.end()) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            const ForkInfo& info = it->second;
+            for (int child : info.children) {
+              out << "                  {\n";
+              out << "                    uint cidx = gpga_sched_index(gid, "
+                  << child << "u);\n";
+              out << "                    sched_pc[cidx] = 0u;\n";
+              out << "                    sched_state[cidx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                    sched_wait_kind[cidx] = GPGA_SCHED_WAIT_NONE;\n";
+              out << "                    sched_wait_id[cidx] = 0u;\n";
+              out << "                    sched_wait_event[cidx] = 0u;\n";
+              out << "                    sched_wait_time[cidx] = 0ul;\n";
+              out << "                    sched_join_count[cidx] = 0u;\n";
+              out << "                  }\n";
+            }
+            out << "                  sched_join_count[idx] = "
+                << info.children.size() << "u;\n";
+            out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_JOIN;\n";
+            out << "                  sched_wait_id[idx] = " << info.tag << "u;\n";
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kDisable) {
+            auto it = block_end_pc.find(stmt.disable_target);
+            if (it == block_end_pc.end()) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            out << "                  sched_pc[idx] = " << it->second << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kEventTrigger) {
+            int event_id = -1;
+            auto it = event_ids.find(stmt.trigger_target);
+            if (it != event_ids.end()) {
+              event_id = it->second;
+            }
+            if (event_id < 0) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            out << "                  sched_event_pending[(gid * "
+                << "GPGA_SCHED_EVENT_COUNT) + " << event_id << "u] = 1u;\n";
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kTaskCall) {
+            emit_task_call(stmt, 18, emit_inline_stmt);
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
+          out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+          out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+          out << "                  break;\n";
+          out << "                }\n";
+        }
+        for (const auto& body_case : body_cases) {
+          out << "                case " << body_case.pc << ": {\n";
+          if (body_case.is_assign_delay && body_case.owner &&
+              body_case.owner->kind == StatementKind::kAssign) {
+            emit_inline_assign(body_case.owner->assign, 18, sched_locals);
+          } else {
+            for (const auto* inner : body_case.body) {
+              emit_inline_stmt(*inner, 18, sched_locals, emit_inline_stmt);
+            }
+          }
+          int next_pc = body_case.is_forever_body ? body_case.loop_pc
+                                                   : body_case.next_pc;
+          out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+          out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+          out << "                  break;\n";
+          out << "                }\n";
+        }
+        out << "                default: {\n";
+        out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "                  break;\n";
+        out << "                }\n";
+        out << "              }\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+
+      out << "            default: {\n";
+      out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "          }\n";
+      out << "          if (sched_state[idx] == GPGA_SCHED_PROC_DONE) {\n";
+      out << "            uint parent = sched_parent[idx];\n";
+      out << "            if (parent != GPGA_SCHED_NO_PARENT) {\n";
+      out << "              uint pidx = gpga_sched_index(gid, parent);\n";
+      out << "              if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+      out << "                  sched_wait_id[pidx] == sched_join_tag[idx]) {\n";
+      out << "                if (sched_join_count[pidx] > 0u) {\n";
+      out << "                  sched_join_count[pidx] -= 1u;\n";
+      out << "                }\n";
+      out << "                if (sched_join_count[pidx] == 0u) {\n";
+      out << "                  sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "                  sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+      out << "                }\n";
+      out << "              }\n";
+      out << "            }\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (!did_work) {\n";
+      out << "        sched_phase[gid] = GPGA_SCHED_PHASE_NBA;\n";
+      out << "      }\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_NBA) {\n";
+      if (!nb_targets_sorted.empty()) {
+        out << "      // Commit scalar NBAs.\n";
+        for (const auto& target : nb_targets_sorted) {
+          out << "      " << target << "[gid] = nb_" << target << "[gid];\n";
+        }
+      }
+      if (!nb_array_nets.empty()) {
+        out << "      // Commit array NBAs.\n";
+        for (const auto* net : nb_array_nets) {
+          out << "      for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
+          out << "        " << net->name << "[(gid * " << net->array_size
+              << "u) + i] = " << net->name << "_next[(gid * "
+              << net->array_size << "u) + i];\n";
+          out << "      }\n";
+        }
+      }
+      out << "      bool any_ready = false;\n";
+      out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "        uint idx = gpga_sched_index(gid, pid);\n";
+      out << "        if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
+      out << "          continue;\n";
+      out << "        }\n";
+      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_DELTA) {\n";
+      out << "          sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "          any_ready = true;\n";
+      out << "          continue;\n";
+      out << "        }\n";
+      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
+      out << "          uint ev = sched_wait_event[idx];\n";
+      out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
+      out << "          if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
+      out << "              sched_event_pending[eidx] != 0u) {\n";
+      out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "            any_ready = true;\n";
+      out << "          }\n";
+      out << "          continue;\n";
+      out << "        }\n";
+      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_COND) {\n";
+      out << "          bool ready = false;\n";
+      out << "          switch (sched_wait_id[idx]) {\n";
+      for (size_t i = 0; i < wait_exprs.size(); ++i) {
+        std::string cond =
+            EmitExpr(*wait_exprs[i], module, sched_locals, sched_regs);
+        out << "            case " << i << "u:\n";
+        out << "              ready = ((" << cond << ") != 0u);\n";
+        out << "              break;\n";
+      }
+      out << "            default:\n";
+      out << "              ready = false;\n";
+      out << "              break;\n";
+      out << "          }\n";
+      out << "          if (ready) {\n";
+      out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "            any_ready = true;\n";
+      out << "          }\n";
+      out << "          continue;\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+      out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+      out << "      }\n";
+      out << "      if (any_ready) {\n";
+      out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      // Advance time to next wakeup.\n";
+      out << "      bool have_time = false;\n";
+      out << "      ulong next_time = ~0ul;\n";
+      out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "        uint idx = gpga_sched_index(gid, pid);\n";
+      out << "        if (sched_wait_kind[idx] != GPGA_SCHED_WAIT_TIME) {\n";
+      out << "          continue;\n";
+      out << "        }\n";
+      out << "        ulong t = sched_wait_time[idx];\n";
+      out << "        if (!have_time || t < next_time) {\n";
+      out << "          have_time = true;\n";
+      out << "          next_time = t;\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (have_time) {\n";
+      out << "        sched_time[gid] = next_time;\n";
+      out << "        __gpga_time = next_time;\n";
+      out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "          uint idx = gpga_sched_index(gid, pid);\n";
+      out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_TIME &&\n";
+      out << "              sched_wait_time[idx] == next_time) {\n";
+      out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      finished = true;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  if (sched_error[gid] != 0u) {\n";
+      out << "    sched_status[gid] = GPGA_SCHED_STATUS_ERROR;\n";
+      out << "  } else if (finished) {\n";
+      out << "    sched_status[gid] = GPGA_SCHED_STATUS_FINISHED;\n";
+      out << "  } else {\n";
+      out << "    sched_status[gid] = GPGA_SCHED_STATUS_IDLE;\n";
+      out << "  }\n";
+      out << "}\n";
+    }
   }
   return out.str();
 }
