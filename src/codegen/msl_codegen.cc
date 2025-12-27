@@ -423,7 +423,8 @@ bool ExprSigned(const Expr& expr, const Module& module) {
         return false;
       }
       if (expr.unary_op == '&' || expr.unary_op == '|' ||
-          expr.unary_op == '^' || expr.unary_op == '!') {
+          expr.unary_op == '^' || expr.unary_op == '!' ||
+          expr.unary_op == 'B') {
         return false;
       }
       if (expr.unary_op == '-' && expr.operand &&
@@ -957,7 +958,9 @@ bool IsOutputPort(const Module& module, const std::string& name) {
 
 void CollectAssignedSignals(const Statement& stmt,
                             std::unordered_set<std::string>* out) {
-  if (stmt.kind == StatementKind::kAssign) {
+  if (stmt.kind == StatementKind::kAssign ||
+      stmt.kind == StatementKind::kForce ||
+      stmt.kind == StatementKind::kRelease) {
     out->insert(stmt.assign.lhs);
     return;
   }
@@ -1201,7 +1204,13 @@ void CollectReadSignals(const Statement& stmt,
     return;
   }
   if (stmt.kind == StatementKind::kEventControl) {
-    if (stmt.event_expr) {
+    if (!stmt.event_items.empty()) {
+      for (const auto& item : stmt.event_items) {
+        if (item.expr) {
+          CollectReadSignalsExpr(*item.expr, out);
+        }
+      }
+    } else if (stmt.event_expr) {
       CollectReadSignalsExpr(*stmt.event_expr, out);
     }
     for (const auto& inner : stmt.event_body) {
@@ -1287,7 +1296,9 @@ bool ExprUsesPower(const Expr& expr) {
 }
 
 bool StatementUsesPower(const Statement& stmt) {
-  if (stmt.kind == StatementKind::kAssign) {
+  if (stmt.kind == StatementKind::kAssign ||
+      stmt.kind == StatementKind::kForce ||
+      stmt.kind == StatementKind::kRelease) {
     if (stmt.assign.rhs && ExprUsesPower(*stmt.assign.rhs)) {
       return true;
     }
@@ -1408,7 +1419,13 @@ bool StatementUsesPower(const Statement& stmt) {
     return false;
   }
   if (stmt.kind == StatementKind::kEventControl) {
-    if (stmt.event_expr && ExprUsesPower(*stmt.event_expr)) {
+    if (!stmt.event_items.empty()) {
+      for (const auto& item : stmt.event_items) {
+        if (item.expr && ExprUsesPower(*item.expr)) {
+          return true;
+        }
+      }
+    } else if (stmt.event_expr && ExprUsesPower(*stmt.event_expr)) {
       return true;
     }
     for (const auto& inner : stmt.event_body) {
@@ -1669,6 +1686,10 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       if (expr.unary_op == '!') {
         std::string zero = ZeroForWidth(width);
         return "((" + operand + " == " + zero + ") ? 1u : 0u)";
+      }
+      if (expr.unary_op == 'B') {
+        std::string zero = ZeroForWidth(width);
+        return "((" + operand + " != " + zero + ") ? 1u : 0u)";
       }
       if (expr.unary_op == '+') {
         return operand;
@@ -2597,6 +2618,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 func + "(" + fs_make_expr(operand, width) + ", " +
                 std::to_string(width) + "u)";
             return fs_expr_from_base(base, drive_full(1), 1);
+          }
+          if (expr.unary_op == 'B') {
+            std::string zero = literal_for_width(0, width);
+            std::string val = "((" + operand.xz + " == " + zero + " && " +
+                              operand.val + " != " + zero + ") ? 1u : 0u)";
+            return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
           }
           if (expr.unary_op == '&' || expr.unary_op == '|' ||
               expr.unary_op == '^') {
@@ -4112,6 +4139,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << pad << "// event trigger ignored in MSL v0\n";
         return;
       }
+      if (stmt.kind == StatementKind::kForce ||
+          stmt.kind == StatementKind::kRelease) {
+        out << pad << "// force/release ignored in MSL v0\n";
+        return;
+      }
       if (stmt.kind == StatementKind::kTaskCall) {
         out << pad << "// task call ignored in MSL v0\n";
         return;
@@ -4539,6 +4571,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         if (stmt.kind == StatementKind::kEventTrigger) {
           out << pad << "// event trigger ignored in MSL v0\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kForce ||
+            stmt.kind == StatementKind::kRelease) {
+          out << pad << "// force/release ignored in MSL v0\n";
           return;
         }
         if (stmt.kind == StatementKind::kTaskCall) {
@@ -5016,6 +5053,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "// event trigger ignored in MSL v0\n";
           return;
         }
+        if (stmt.kind == StatementKind::kForce ||
+            stmt.kind == StatementKind::kRelease) {
+          out << pad << "// force/release ignored in MSL v0\n";
+          return;
+        }
         if (stmt.kind == StatementKind::kTaskCall) {
           out << pad << "// task call ignored in MSL v0\n";
           return;
@@ -5291,23 +5333,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
         }
 
+        struct EdgeWaitItem {
+          const Expr* expr = nullptr;
+          EventEdgeKind edge = EventEdgeKind::kAny;
+        };
         struct EdgeWaitInfo {
           const Statement* stmt = nullptr;
           const Expr* expr = nullptr;
+          std::vector<EdgeWaitItem> items;
           std::vector<std::string> star_signals;
           size_t star_offset = 0;
+          size_t item_offset = 0;
         };
         std::unordered_map<const Statement*, int> edge_wait_ids;
         std::vector<EdgeWaitInfo> edge_waits;
         size_t edge_star_count = 0;
+        size_t edge_item_count = 0;
         std::function<void(const Statement&)> collect_edge_waits;
         collect_edge_waits = [&](const Statement& stmt) -> void {
           if (stmt.kind == StatementKind::kEventControl) {
             bool named_event = false;
-            if (stmt.event_expr &&
-                stmt.event_edge == EventEdgeKind::kAny &&
-                stmt.event_expr->kind == ExprKind::kIdentifier) {
-              auto it = event_ids.find(stmt.event_expr->ident);
+            const Expr* named_expr = nullptr;
+            if (!stmt.event_items.empty()) {
+              if (stmt.event_items.size() == 1 &&
+                  stmt.event_items[0].edge == EventEdgeKind::kAny &&
+                  stmt.event_items[0].expr) {
+                named_expr = stmt.event_items[0].expr.get();
+              }
+            } else if (stmt.event_expr &&
+                       stmt.event_edge == EventEdgeKind::kAny) {
+              named_expr = stmt.event_expr.get();
+            }
+            if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+              auto it = event_ids.find(named_expr->ident);
               if (it != event_ids.end()) {
                 named_event = true;
               }
@@ -5316,8 +5374,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 edge_wait_ids.find(&stmt) == edge_wait_ids.end()) {
               EdgeWaitInfo info;
               info.stmt = &stmt;
-              info.expr = stmt.event_expr.get();
-              if (!stmt.event_expr) {
+              if (!stmt.event_items.empty()) {
+                for (const auto& item : stmt.event_items) {
+                  if (!item.expr) {
+                    continue;
+                  }
+                  info.items.push_back(
+                      EdgeWaitItem{item.expr.get(), item.edge});
+                }
+              } else {
+                info.expr = stmt.event_expr.get();
+              }
+              if (!info.items.empty()) {
+                info.item_offset = edge_item_count;
+                edge_item_count += info.items.size();
+              } else if (info.expr) {
+                info.item_offset = edge_item_count;
+                edge_item_count += 1;
+              } else {
                 std::unordered_set<std::string> signals;
                 for (const auto& inner : stmt.event_body) {
                   CollectReadSignals(inner, &signals);
@@ -5638,7 +5712,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << "u;\n";
         out << "constexpr uint GPGA_SCHED_EVENT_COUNT = "
             << module.events.size() << "u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_waits.size()
+        out << "constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
             << "u;\n";
         out << "constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = "
             << edge_star_count << "u;\n";
@@ -5658,6 +5732,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
         out << "constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
         out << "constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
+        out << "constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
         out << "constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
         out << "constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
         out << "constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
@@ -6804,10 +6879,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               int event_id = -1;
               bool named_event = false;
-              if (stmt.event_expr &&
-                  stmt.event_edge == EventEdgeKind::kAny &&
-                  stmt.event_expr->kind == ExprKind::kIdentifier) {
-                auto it = event_ids.find(stmt.event_expr->ident);
+              const Expr* named_expr = nullptr;
+              if (!stmt.event_items.empty()) {
+                if (stmt.event_items.size() == 1 &&
+                    stmt.event_items[0].edge == EventEdgeKind::kAny &&
+                    stmt.event_items[0].expr) {
+                  named_expr = stmt.event_items[0].expr.get();
+                }
+              } else if (stmt.event_expr &&
+                         stmt.event_edge == EventEdgeKind::kAny) {
+                named_expr = stmt.event_expr.get();
+              }
+              if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+                auto it = event_ids.find(named_expr->ident);
                 if (it != event_ids.end()) {
                   event_id = it->second;
                   named_event = true;
@@ -6832,7 +6916,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
                 const EdgeWaitInfo& info = edge_waits[edge_id];
                 const char* edge_kind = "GPGA_SCHED_EDGE_ANY";
-                if (stmt.event_edge == EventEdgeKind::kPosedge) {
+                if (!info.items.empty()) {
+                  edge_kind = "GPGA_SCHED_EDGE_LIST";
+                } else if (stmt.event_edge == EventEdgeKind::kPosedge) {
                   edge_kind = "GPGA_SCHED_EDGE_POSEDGE";
                 } else if (stmt.event_edge == EventEdgeKind::kNegedge) {
                   edge_kind = "GPGA_SCHED_EDGE_NEGEDGE";
@@ -6842,12 +6928,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     << "u;\n";
                 out << "                  sched_wait_edge_kind[idx] = " << edge_kind
                     << ";\n";
-                if (info.expr) {
-                  FsExpr edge_expr = emit_expr4(*stmt.event_expr);
+                if (!info.items.empty()) {
+                  out << "                  uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                      << info.item_offset << "u;\n";
+                  for (size_t i = 0; i < info.items.size(); ++i) {
+                    FsExpr edge_expr = emit_expr4(*info.items[i].expr);
+                    std::string mask =
+                        literal_for_width(MaskForWidth64(edge_expr.width), 64);
+                    out << "                  ulong __gpga_edge_val = ((ulong)("
+                        << edge_expr.val << ")) & " << mask << ";\n";
+                    out << "                  ulong __gpga_edge_xz = ((ulong)("
+                        << edge_expr.xz << ")) & " << mask << ";\n";
+                    out << "                  sched_edge_prev_val[__gpga_edge_base + "
+                        << i << "u] = __gpga_edge_val;\n";
+                    out << "                  sched_edge_prev_xz[__gpga_edge_base + "
+                        << i << "u] = __gpga_edge_xz;\n";
+                  }
+                } else if (info.expr) {
+                  FsExpr edge_expr = emit_expr4(*info.expr);
                   std::string mask =
                       literal_for_width(MaskForWidth64(edge_expr.width), 64);
                   out << "                  uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                      << edge_id << "u;\n";
+                      << info.item_offset << "u;\n";
                   out << "                  ulong __gpga_edge_val = ((ulong)("
                       << edge_expr.val << ")) & " << mask << ";\n";
                   out << "                  ulong __gpga_edge_xz = ((ulong)("
@@ -7235,12 +7337,61 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         for (size_t i = 0; i < edge_waits.size(); ++i) {
           const EdgeWaitInfo& info = edge_waits[i];
           out << "            case " << i << "u: {\n";
-          if (info.expr) {
+          if (!info.items.empty()) {
+            out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                << info.item_offset << "u;\n";
+            out << "              bool __gpga_any = false;\n";
+            for (size_t j = 0; j < info.items.size(); ++j) {
+              FsExpr curr = emit_expr4(*info.items[j].expr);
+              std::string mask =
+                  literal_for_width(MaskForWidth64(curr.width), 64);
+              out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
+                  << j << "u];\n";
+              out << "              ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + "
+                  << j << "u];\n";
+              out << "              ulong __gpga_curr_val = ((ulong)(" << curr.val
+                  << ")) & " << mask << ";\n";
+              out << "              ulong __gpga_curr_xz = ((ulong)(" << curr.xz
+                  << ")) & " << mask << ";\n";
+              if (info.items[j].edge == EventEdgeKind::kAny) {
+                out << "              if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
+                out << "                __gpga_any = true;\n";
+                out << "              }\n";
+              } else {
+                out << "              {\n";
+                out << "                ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & "
+                    << mask << ";\n";
+                out << "                ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & "
+                    << mask << ";\n";
+                out << "                ulong __gpga_prev_unk = __gpga_prev_xz & " << mask
+                    << ";\n";
+                out << "                ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & "
+                    << mask << ";\n";
+                out << "                ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & "
+                    << mask << ";\n";
+                out << "                ulong __gpga_curr_unk = __gpga_curr_xz & " << mask
+                    << ";\n";
+                if (info.items[j].edge == EventEdgeKind::kPosedge) {
+                  out << "                ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
+                  out << "                if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
+                } else {
+                  out << "                ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
+                  out << "                if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
+                }
+                out << "              }\n";
+              }
+              out << "              sched_edge_prev_val[__gpga_edge_base + " << j
+                  << "u] = __gpga_curr_val;\n";
+              out << "              sched_edge_prev_xz[__gpga_edge_base + " << j
+                  << "u] = __gpga_curr_xz;\n";
+            }
+            out << "              ready = __gpga_any;\n";
+          } else if (info.expr) {
             FsExpr curr = emit_expr4(*info.expr);
             std::string mask =
                 literal_for_width(MaskForWidth64(curr.width), 64);
             out << "              uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                << i << "u;\n";
+                << info.item_offset << "u;\n";
             out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_idx];\n";
             out << "              ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_idx];\n";
             out << "              ulong __gpga_curr_val = ((ulong)(" << curr.val
@@ -8601,23 +8752,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       }
 
+      struct EdgeWaitItem {
+        const Expr* expr = nullptr;
+        EventEdgeKind edge = EventEdgeKind::kAny;
+      };
       struct EdgeWaitInfo {
         const Statement* stmt = nullptr;
         const Expr* expr = nullptr;
+        std::vector<EdgeWaitItem> items;
         std::vector<std::string> star_signals;
         size_t star_offset = 0;
+        size_t item_offset = 0;
       };
       std::unordered_map<const Statement*, int> edge_wait_ids;
       std::vector<EdgeWaitInfo> edge_waits;
       size_t edge_star_count = 0;
+      size_t edge_item_count = 0;
       std::function<void(const Statement&)> collect_edge_waits;
       collect_edge_waits = [&](const Statement& stmt) -> void {
         if (stmt.kind == StatementKind::kEventControl) {
           bool named_event = false;
-          if (stmt.event_expr &&
-              stmt.event_edge == EventEdgeKind::kAny &&
-              stmt.event_expr->kind == ExprKind::kIdentifier) {
-            auto it = event_ids.find(stmt.event_expr->ident);
+          const Expr* named_expr = nullptr;
+          if (!stmt.event_items.empty()) {
+            if (stmt.event_items.size() == 1 &&
+                stmt.event_items[0].edge == EventEdgeKind::kAny &&
+                stmt.event_items[0].expr) {
+              named_expr = stmt.event_items[0].expr.get();
+            }
+          } else if (stmt.event_expr &&
+                     stmt.event_edge == EventEdgeKind::kAny) {
+            named_expr = stmt.event_expr.get();
+          }
+          if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+            auto it = event_ids.find(named_expr->ident);
             if (it != event_ids.end()) {
               named_event = true;
             }
@@ -8626,8 +8793,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               edge_wait_ids.find(&stmt) == edge_wait_ids.end()) {
             EdgeWaitInfo info;
             info.stmt = &stmt;
-            info.expr = stmt.event_expr.get();
-            if (!stmt.event_expr) {
+            if (!stmt.event_items.empty()) {
+              for (const auto& item : stmt.event_items) {
+                if (!item.expr) {
+                  continue;
+                }
+                info.items.push_back(
+                    EdgeWaitItem{item.expr.get(), item.edge});
+              }
+            } else {
+              info.expr = stmt.event_expr.get();
+            }
+            if (!info.items.empty()) {
+              info.item_offset = edge_item_count;
+              edge_item_count += info.items.size();
+            } else if (info.expr) {
+              info.item_offset = edge_item_count;
+              edge_item_count += 1;
+            } else {
               std::unordered_set<std::string> signals;
               for (const auto& inner : stmt.event_body) {
                 CollectReadSignals(inner, &signals);
@@ -8952,7 +9135,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           << "u;\n";
       out << "constexpr uint GPGA_SCHED_EVENT_COUNT = "
           << module.events.size() << "u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_waits.size()
+      out << "constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
           << "u;\n";
       out << "constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = " << edge_star_count
           << "u;\n";
@@ -8971,6 +9154,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
       out << "constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
       out << "constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
+      out << "constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
       out << "constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
       out << "constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
       out << "constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
@@ -10045,10 +10229,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             int event_id = -1;
             bool named_event = false;
-            if (stmt.event_expr &&
-                stmt.event_edge == EventEdgeKind::kAny &&
-                stmt.event_expr->kind == ExprKind::kIdentifier) {
-              auto it = event_ids.find(stmt.event_expr->ident);
+            const Expr* named_expr = nullptr;
+            if (!stmt.event_items.empty()) {
+              if (stmt.event_items.size() == 1 &&
+                  stmt.event_items[0].edge == EventEdgeKind::kAny &&
+                  stmt.event_items[0].expr) {
+                named_expr = stmt.event_items[0].expr.get();
+              }
+            } else if (stmt.event_expr &&
+                       stmt.event_edge == EventEdgeKind::kAny) {
+              named_expr = stmt.event_expr.get();
+            }
+            if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+              auto it = event_ids.find(named_expr->ident);
               if (it != event_ids.end()) {
                 event_id = it->second;
                 named_event = true;
@@ -10073,7 +10266,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               const EdgeWaitInfo& info = edge_waits[edge_id];
               const char* edge_kind = "GPGA_SCHED_EDGE_ANY";
-              if (stmt.event_edge == EventEdgeKind::kPosedge) {
+              if (!info.items.empty()) {
+                edge_kind = "GPGA_SCHED_EDGE_LIST";
+              } else if (stmt.event_edge == EventEdgeKind::kPosedge) {
                 edge_kind = "GPGA_SCHED_EDGE_POSEDGE";
               } else if (stmt.event_edge == EventEdgeKind::kNegedge) {
                 edge_kind = "GPGA_SCHED_EDGE_NEGEDGE";
@@ -10082,15 +10277,30 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << "                  sched_wait_id[idx] = " << edge_id << "u;\n";
               out << "                  sched_wait_edge_kind[idx] = " << edge_kind
                   << ";\n";
-              if (info.expr) {
-                int width = ExprWidth(*stmt.event_expr, module);
+              if (!info.items.empty()) {
+                out << "                  uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                    << info.item_offset << "u;\n";
+                for (size_t i = 0; i < info.items.size(); ++i) {
+                  int width = ExprWidth(*info.items[i].expr, module);
+                  std::string curr =
+                      EmitExprSized(*info.items[i].expr, width, module,
+                                    sched_locals, sched_regs);
+                  std::string mask =
+                      std::to_string(MaskForWidth64(width)) + "ul";
+                  out << "                  ulong __gpga_edge_val = ((ulong)("
+                      << curr << ")) & " << mask << ";\n";
+                  out << "                  sched_edge_prev_val[__gpga_edge_base + "
+                      << i << "u] = __gpga_edge_val;\n";
+                }
+              } else if (info.expr) {
+                int width = ExprWidth(*info.expr, module);
                 std::string curr =
-                    EmitExprSized(*stmt.event_expr, width, module, sched_locals,
+                    EmitExprSized(*info.expr, width, module, sched_locals,
                                   sched_regs);
                 std::string mask =
                     std::to_string(MaskForWidth64(width)) + "ul";
                 out << "                  uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                    << edge_id << "u;\n";
+                    << info.item_offset << "u;\n";
                 out << "                  ulong __gpga_edge_val = ((ulong)(" << curr
                     << ")) & " << mask << ";\n";
                 out << "                  sched_edge_prev_val[__gpga_edge_idx] = __gpga_edge_val;\n";
@@ -10458,13 +10668,50 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       for (size_t i = 0; i < edge_waits.size(); ++i) {
         const EdgeWaitInfo& info = edge_waits[i];
         out << "            case " << i << "u: {\n";
-        if (info.expr) {
+        if (!info.items.empty()) {
+          out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
+              << info.item_offset << "u;\n";
+          out << "              bool __gpga_any = false;\n";
+          for (size_t j = 0; j < info.items.size(); ++j) {
+            int width = ExprWidth(*info.items[j].expr, module);
+            std::string curr =
+                EmitExprSized(*info.items[j].expr, width, module, sched_locals,
+                              sched_regs);
+            std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
+            out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
+                << j << "u];\n";
+            out << "              ulong __gpga_curr_val = ((ulong)(" << curr
+                << ")) & " << mask << ";\n";
+            if (info.items[j].edge == EventEdgeKind::kAny) {
+              out << "              if (__gpga_curr_val != __gpga_prev_val) { __gpga_any = true; }\n";
+            } else {
+              out << "              {\n";
+              out << "                ulong __gpga_prev_zero = (~__gpga_prev_val) & "
+                  << mask << ";\n";
+              out << "                ulong __gpga_prev_one = __gpga_prev_val & " << mask
+                  << ";\n";
+              out << "                ulong __gpga_curr_zero = (~__gpga_curr_val) & "
+                  << mask << ";\n";
+              out << "                ulong __gpga_curr_one = __gpga_curr_val & " << mask
+                  << ";\n";
+              if (info.items[j].edge == EventEdgeKind::kPosedge) {
+                out << "                if ((__gpga_prev_zero & __gpga_curr_one) != 0ul) { __gpga_any = true; }\n";
+              } else {
+                out << "                if ((__gpga_prev_one & __gpga_curr_zero) != 0ul) { __gpga_any = true; }\n";
+              }
+              out << "              }\n";
+            }
+            out << "              sched_edge_prev_val[__gpga_edge_base + " << j
+                << "u] = __gpga_curr_val;\n";
+          }
+          out << "              ready = __gpga_any;\n";
+        } else if (info.expr) {
           int width = ExprWidth(*info.expr, module);
           std::string curr =
               EmitExprSized(*info.expr, width, module, sched_locals, sched_regs);
           std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
           out << "              uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-              << i << "u;\n";
+              << info.item_offset << "u;\n";
           out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_idx];\n";
           out << "              ulong __gpga_curr_val = ((ulong)(" << curr
               << ")) & " << mask << ";\n";

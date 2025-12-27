@@ -2,6 +2,8 @@
 
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -97,6 +99,36 @@ std::vector<Token> Tokenize(const std::string& text) {
         continue;
       }
     }
+    if (c == '(' && i + 1 < text.size() && text[i + 1] == '*') {
+      size_t lookahead = i + 2;
+      while (lookahead < text.size() &&
+             std::isspace(static_cast<unsigned char>(text[lookahead]))) {
+        if (text[lookahead] == '\n') {
+          break;
+        }
+        ++lookahead;
+      }
+      if (lookahead < text.size() && text[lookahead] != ')') {
+        i += 2;
+        column += 2;
+        while (i + 1 < text.size()) {
+          if (text[i] == '*' && text[i + 1] == ')') {
+            i += 2;
+            column += 2;
+            break;
+          }
+          if (text[i] == '\n') {
+            ++line;
+            column = 1;
+            ++i;
+            continue;
+          }
+          ++i;
+          ++column;
+        }
+        continue;
+      }
+    }
     if (c == '"') {
       int token_line = line;
       int token_column = column;
@@ -162,16 +194,52 @@ std::vector<Token> Tokenize(const std::string& text) {
            token_column);
       continue;
     }
-    if (std::isdigit(static_cast<unsigned char>(c))) {
+    if (std::isdigit(static_cast<unsigned char>(c)) ||
+        (c == '.' && i + 1 < text.size() &&
+         std::isdigit(static_cast<unsigned char>(text[i + 1])))) {
       int token_line = line;
       int token_column = column;
       size_t start = i;
-      ++i;
-      ++column;
-      while (i < text.size() &&
-             std::isdigit(static_cast<unsigned char>(text[i]))) {
+      bool has_dot = false;
+      bool has_exp = false;
+      if (c == '.') {
+        has_dot = true;
         ++i;
         ++column;
+      } else {
+        ++i;
+        ++column;
+        while (i < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[i]))) {
+          ++i;
+          ++column;
+        }
+        if (i < text.size() && text[i] == '.') {
+          has_dot = true;
+          ++i;
+          ++column;
+        }
+      }
+      if (has_dot) {
+        while (i < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[i]))) {
+          ++i;
+          ++column;
+        }
+      }
+      if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+        has_exp = true;
+        ++i;
+        ++column;
+        if (i < text.size() && (text[i] == '+' || text[i] == '-')) {
+          ++i;
+          ++column;
+        }
+        while (i < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[i]))) {
+          ++i;
+          ++column;
+        }
       }
       push(TokenKind::kNumber, text.substr(start, i - start), token_line,
            token_column);
@@ -262,10 +330,25 @@ struct IfdefState {
   bool active = true;
 };
 
+enum class DirectiveKind {
+  kDefaultNettype,
+  kUnconnectedDrive,
+  kNoUnconnectedDrive,
+  kResetAll,
+};
+
+struct DirectiveEvent {
+  DirectiveKind kind = DirectiveKind::kDefaultNettype;
+  std::string arg;
+  int line = 1;
+  int column = 1;
+};
+
 bool PreprocessVerilogInternal(
     const std::string& input, const std::string& path, Diagnostics* diagnostics,
     std::unordered_map<std::string, std::string>* defines,
-    std::string* out_text, int depth) {
+    std::string* out_text, int depth,
+    std::vector<DirectiveEvent>* directives) {
   if (!out_text || !defines) {
     return false;
   }
@@ -459,7 +542,7 @@ bool PreprocessVerilogInternal(
         std::string included_out;
         if (!PreprocessVerilogInternal(include_text, include_path.string(),
                                        diagnostics, defines, &included_out,
-                                       depth + 1)) {
+                                       depth + 1, directives)) {
           return false;
         }
         output << included_out;
@@ -482,15 +565,74 @@ bool PreprocessVerilogInternal(
         ++line_number;
         continue;
       }
-      if (directive == "default_nettype" ||
-          directive == "unconnected_drive" ||
-          directive == "nounconnected_drive" ||
-          directive == "resetall") {
-        diagnostics->Add(Severity::kError,
-                         "unsupported compiler directive `" + directive + "'",
-                         SourceLocation{path, line_number,
-                                        static_cast<int>(first + 1)});
-        return false;
+      auto parse_directive_arg = [&](std::string* out) -> bool {
+        size_t arg_pos = line.find_first_not_of(" \t", pos);
+        if (arg_pos == std::string::npos ||
+            !IsIdentStart(line[arg_pos])) {
+          diagnostics->Add(Severity::kError,
+                           "expected argument after `" + directive + "'",
+                           SourceLocation{path, line_number,
+                                          static_cast<int>(pos + 1)});
+          return false;
+        }
+        size_t arg_end = arg_pos + 1;
+        while (arg_end < line.size() && IsIdentChar(line[arg_end])) {
+          ++arg_end;
+        }
+        *out = line.substr(arg_pos, arg_end - arg_pos);
+        return true;
+      };
+      if (directive == "default_nettype") {
+        if (active) {
+          std::string arg;
+          if (!parse_directive_arg(&arg)) {
+            return false;
+          }
+          if (directives) {
+            directives->push_back(DirectiveEvent{
+                DirectiveKind::kDefaultNettype, arg, line_number,
+                static_cast<int>(first + 1)});
+          }
+        }
+        output << "\n";
+        ++line_number;
+        continue;
+      }
+      if (directive == "unconnected_drive") {
+        if (active) {
+          std::string arg;
+          if (!parse_directive_arg(&arg)) {
+            return false;
+          }
+          if (directives) {
+            directives->push_back(DirectiveEvent{
+                DirectiveKind::kUnconnectedDrive, arg, line_number,
+                static_cast<int>(first + 1)});
+          }
+        }
+        output << "\n";
+        ++line_number;
+        continue;
+      }
+      if (directive == "nounconnected_drive") {
+        if (active && directives) {
+          directives->push_back(DirectiveEvent{DirectiveKind::kNoUnconnectedDrive,
+                                               "", line_number,
+                                               static_cast<int>(first + 1)});
+        }
+        output << "\n";
+        ++line_number;
+        continue;
+      }
+      if (directive == "resetall") {
+        if (active && directives) {
+          directives->push_back(
+              DirectiveEvent{DirectiveKind::kResetAll, "", line_number,
+                             static_cast<int>(first + 1)});
+        }
+        output << "\n";
+        ++line_number;
+        continue;
       }
       if (!directive.empty()) {
         diagnostics->Add(Severity::kError,
@@ -553,25 +695,37 @@ bool PreprocessVerilogInternal(
 }
 
 bool PreprocessVerilog(const std::string& input, const std::string& path,
-                       Diagnostics* diagnostics, std::string* out_text) {
+                       Diagnostics* diagnostics, std::string* out_text,
+                       std::vector<DirectiveEvent>* directives) {
   std::unordered_map<std::string, std::string> defines;
   return PreprocessVerilogInternal(input, path, diagnostics, &defines,
-                                   out_text, 0);
+                                   out_text, 0, directives);
 }
 
 class Parser {
  public:
   Parser(std::string path, std::vector<Token> tokens, Diagnostics* diagnostics,
-         const ParseOptions& options)
+         const ParseOptions& options,
+         std::vector<DirectiveEvent> directives)
       : path_(std::move(path)),
         tokens_(std::move(tokens)),
         diagnostics_(diagnostics),
-        options_(options) {}
+        options_(options),
+        directives_(std::move(directives)) {}
 
   bool ParseProgram(Program* out_program) {
     while (!IsAtEnd()) {
+      if (!ApplyDirectivesUpTo(Peek().line)) {
+        return false;
+      }
       if (MatchKeyword("module")) {
         if (!ParseModule(out_program)) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("primitive")) {
+        if (!ParsePrimitive(out_program)) {
           return false;
         }
         continue;
@@ -671,6 +825,32 @@ class Parser {
     std::vector<GenerateItem> items;
   };
 
+  struct UdpPattern {
+    bool is_edge = false;
+    char value = '?';
+    char prev = '?';
+    char curr = '?';
+  };
+
+  struct UdpRow {
+    std::vector<UdpPattern> inputs;
+    bool has_current = false;
+    char current = '?';
+    char output = '?';
+  };
+
+  struct UdpInfo {
+    std::string name;
+    std::string output;
+    bool output_is_reg = false;
+    int output_width = 1;
+    std::vector<std::string> inputs;
+    std::vector<int> input_widths;
+    std::vector<bool> input_has_edge;
+    bool sequential = false;
+    std::vector<UdpRow> rows;
+  };
+
   const Token& Peek() const { return tokens_[pos_]; }
   const Token& Peek(size_t lookahead) const {
     size_t index = pos_ + lookahead;
@@ -749,6 +929,7 @@ class Parser {
     }
     Module module;
     module.name = module_name;
+    module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
     current_genvars_.clear();
     current_module_ = &module;
@@ -774,6 +955,9 @@ class Parser {
     }
 
     while (!IsAtEnd()) {
+      if (!ApplyDirectivesUpTo(Peek().line)) {
+        return false;
+      }
       if (MatchKeyword("endmodule")) {
         current_module_ = nullptr;
         if (!ApplyDefparams(&module)) {
@@ -833,6 +1017,12 @@ class Parser {
       }
       if (MatchKeyword("time")) {
         if (!ParseTimeDecl(&module)) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("real")) {
+        if (!ParseRealDecl(&module)) {
           return false;
         }
         continue;
@@ -955,6 +1145,107 @@ class Parser {
     return false;
   }
 
+  bool ParsePrimitive(Program* program) {
+    std::string prim_name;
+    if (!ConsumeIdentifier(&prim_name)) {
+      ErrorHere("expected primitive name after 'primitive'");
+      return false;
+    }
+    Module module;
+    module.name = prim_name;
+    module.unconnected_drive = unconnected_drive_;
+    current_params_.clear();
+    current_genvars_.clear();
+    current_module_ = &module;
+
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after primitive name");
+      return false;
+    }
+    if (!ParsePortList(&module)) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after primitive port list");
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after primitive header");
+      return false;
+    }
+    if (!MatchKeyword("table")) {
+      ErrorHere("expected 'table' in primitive body");
+      return false;
+    }
+
+    if (module.ports.empty()) {
+      ErrorHere("primitive requires at least one port");
+      return false;
+    }
+    if (module.ports.front().dir != PortDir::kOutput) {
+      ErrorHere("primitive output must be first port");
+      return false;
+    }
+
+    UdpInfo info;
+    info.name = prim_name;
+    info.output = module.ports.front().name;
+    info.output_width = module.ports.front().width;
+    info.output_is_reg = false;
+    for (const auto& net : module.nets) {
+      if (net.name == info.output && net.type == NetType::kReg) {
+        info.output_is_reg = true;
+        break;
+      }
+    }
+    for (size_t i = 1; i < module.ports.size(); ++i) {
+      const Port& port = module.ports[i];
+      if (port.dir != PortDir::kInput) {
+        ErrorHere("primitive ports must be output followed by input ports");
+        return false;
+      }
+      info.inputs.push_back(port.name);
+      info.input_widths.push_back(port.width);
+    }
+    info.input_has_edge.assign(info.inputs.size(), false);
+    if (info.output_width != 1) {
+      ErrorHere("primitive output must be 1-bit in v0");
+      return false;
+    }
+    for (size_t i = 0; i < info.input_widths.size(); ++i) {
+      if (info.input_widths[i] != 1) {
+        ErrorHere("primitive inputs must be 1-bit in v0");
+        return false;
+      }
+    }
+
+    while (true) {
+      if (MatchKeyword("endtable")) {
+        break;
+      }
+      if (Peek().kind == TokenKind::kEnd) {
+        ErrorHere("unexpected end of file in primitive table");
+        return false;
+      }
+      UdpRow row;
+      if (!ParseUdpRow(&info, &row)) {
+        return false;
+      }
+      info.rows.push_back(std::move(row));
+    }
+    if (!MatchKeyword("endprimitive")) {
+      ErrorHere("expected 'endprimitive' after primitive");
+      return false;
+    }
+
+    if (!LowerUdpToModule(info, &module)) {
+      return false;
+    }
+    current_module_ = nullptr;
+    program->modules.push_back(std::move(module));
+    return true;
+  }
+
   bool ParsePullPrimitive(Module* module, bool pull_up) {
     if (!MatchSymbol("(")) {
       ErrorHere("expected '(' after pullup/pulldown");
@@ -996,6 +1287,363 @@ class Parser {
       }
       module->assigns.push_back(std::move(assign));
     }
+    return true;
+  }
+
+  bool ParseUdpRow(UdpInfo* info, UdpRow* out) {
+    if (!info || !out) {
+      return false;
+    }
+    out->inputs.clear();
+    out->has_current = false;
+    out->current = '?';
+    out->output = '?';
+    out->inputs.reserve(info->inputs.size());
+    for (size_t i = 0; i < info->inputs.size(); ++i) {
+      UdpPattern pattern;
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == "(") {
+        if (!ParseUdpEdgePattern(&pattern)) {
+          return false;
+        }
+        if (i < info->input_has_edge.size()) {
+          info->input_has_edge[i] = true;
+        }
+      } else {
+        char value = '?';
+        if (!ParseUdpPatternChar(&value)) {
+          return false;
+        }
+        pattern.value = value;
+      }
+      out->inputs.push_back(pattern);
+    }
+    if (!MatchSymbol(":")) {
+      ErrorHere("expected ':' after UDP input patterns");
+      return false;
+    }
+    char mid = '?';
+    if (!ParseUdpPatternChar(&mid)) {
+      return false;
+    }
+    if (MatchSymbol(":")) {
+      out->has_current = true;
+      out->current = mid;
+      if (!ParseUdpPatternChar(&out->output)) {
+        return false;
+      }
+    } else {
+      out->output = mid;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after UDP table row");
+      return false;
+    }
+    if (out->has_current) {
+      info->sequential = true;
+    }
+    for (const auto& pattern : out->inputs) {
+      if (pattern.is_edge) {
+        info->sequential = true;
+        break;
+      }
+    }
+    return true;
+  }
+
+  bool ParseUdpPatternChar(char* out) {
+    if (!out) {
+      return false;
+    }
+    if (Peek().kind == TokenKind::kSymbol &&
+        (Peek().text == "?" || Peek().text == "-")) {
+      *out = Peek().text[0];
+      Advance();
+      return true;
+    }
+    if (Peek().kind == TokenKind::kNumber) {
+      if (Peek().text.size() != 1) {
+        ErrorHere("invalid UDP pattern");
+        return false;
+      }
+      *out = static_cast<char>(std::tolower(
+          static_cast<unsigned char>(Peek().text[0])));
+      Advance();
+      return true;
+    }
+    if (Peek().kind == TokenKind::kIdentifier) {
+      if (Peek().text.empty()) {
+        ErrorHere("invalid UDP pattern");
+        return false;
+      }
+      *out = static_cast<char>(std::tolower(
+          static_cast<unsigned char>(Peek().text[0])));
+      Advance();
+      return true;
+    }
+    ErrorHere("expected UDP pattern");
+    return false;
+  }
+
+  bool ParseUdpEdgePattern(UdpPattern* out) {
+    if (!out) {
+      return false;
+    }
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' in UDP edge pattern");
+      return false;
+    }
+    std::string chars;
+    while (chars.size() < 2) {
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == ")") {
+        break;
+      }
+      if (Peek().kind == TokenKind::kSymbol &&
+          (Peek().text == "?" || Peek().text == "-")) {
+        chars.push_back(Peek().text[0]);
+        Advance();
+        continue;
+      }
+      if (Peek().kind == TokenKind::kNumber ||
+          Peek().kind == TokenKind::kIdentifier) {
+        const std::string text = Peek().text;
+        Advance();
+        if (text.size() > 2) {
+          ErrorHere("invalid UDP edge pattern");
+          return false;
+        }
+        for (char c : text) {
+          if (chars.size() >= 2) {
+            break;
+          }
+          chars.push_back(static_cast<char>(std::tolower(
+              static_cast<unsigned char>(c))));
+        }
+        continue;
+      }
+      ErrorHere("invalid UDP edge pattern");
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after UDP edge pattern");
+      return false;
+    }
+    if (chars.size() != 2) {
+      ErrorHere("invalid UDP edge pattern");
+      return false;
+    }
+    out->is_edge = true;
+    out->prev = chars[0];
+    out->curr = chars[1];
+    return true;
+  }
+
+  std::unique_ptr<Expr> MakeUdpLiteral(char symbol, int width) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = ExprKind::kNumber;
+    expr->has_width = true;
+    expr->number_width = width;
+    expr->has_base = true;
+    expr->base_char = 'b';
+    uint64_t mask = (width >= 64) ? 0xFFFFFFFFFFFFFFFFull
+                                  : ((width > 0) ? ((1ull << width) - 1ull)
+                                                 : 0ull);
+    switch (symbol) {
+      case '0':
+        expr->number = 0;
+        expr->value_bits = 0;
+        expr->x_bits = 0;
+        expr->z_bits = 0;
+        break;
+      case '1':
+        expr->number = 1;
+        expr->value_bits = 1;
+        expr->x_bits = 0;
+        expr->z_bits = 0;
+        break;
+      case 'z':
+        expr->number = 0;
+        expr->value_bits = 0;
+        expr->x_bits = 0;
+        expr->z_bits = mask;
+        break;
+      case 'x':
+      default:
+        expr->number = 0;
+        expr->value_bits = 0;
+        expr->x_bits = mask;
+        expr->z_bits = 0;
+        break;
+    }
+    return expr;
+  }
+
+  std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = ExprKind::kIdentifier;
+    expr->ident = name;
+    return expr;
+  }
+
+  std::unique_ptr<Expr> BuildUdpMatchExpr(const std::string& signal,
+                                          const UdpPattern& pattern,
+                                          const std::string& prev_signal) {
+    auto build_simple =
+        [&](const std::string& name, char value) -> std::unique_ptr<Expr> {
+      if (value == '?' || value == '-') {
+        return nullptr;
+      }
+      auto lhs = MakeIdentifierExpr(name);
+      auto rhs = MakeUdpLiteral(value, 1);
+      return MakeBinary('C', std::move(lhs), std::move(rhs));
+    };
+    if (!pattern.is_edge) {
+      return build_simple(signal, pattern.value);
+    }
+    std::unique_ptr<Expr> prev_cond = build_simple(prev_signal, pattern.prev);
+    std::unique_ptr<Expr> curr_cond = build_simple(signal, pattern.curr);
+    if (!prev_cond) {
+      return curr_cond;
+    }
+    if (!curr_cond) {
+      return prev_cond;
+    }
+    return MakeBinary('A', std::move(prev_cond), std::move(curr_cond));
+  }
+
+  bool LowerUdpToModule(const UdpInfo& info, Module* module) {
+    if (!module) {
+      return false;
+    }
+    bool sequential = info.output_is_reg || info.sequential;
+    if (!info.output_is_reg) {
+      AddOrUpdateNet(module, info.output, NetType::kReg, info.output_width,
+                     false, std::shared_ptr<Expr>(), std::shared_ptr<Expr>(),
+                     {});
+    }
+
+    std::vector<std::string> prev_names(info.inputs.size());
+    bool needs_prev = false;
+    for (size_t i = 0; i < info.inputs.size(); ++i) {
+      if (i < info.input_has_edge.size() && info.input_has_edge[i]) {
+        prev_names[i] = "__udp_prev_" + info.inputs[i];
+        AddOrUpdateNet(module, prev_names[i], NetType::kReg, 1, false,
+                       std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
+        needs_prev = true;
+      }
+    }
+
+    if (sequential || needs_prev) {
+      AlwaysBlock init;
+      init.edge = EdgeKind::kInitial;
+      init.clock = "initial";
+      if (sequential) {
+        Statement init_out;
+        init_out.kind = StatementKind::kAssign;
+        init_out.assign.lhs = info.output;
+        init_out.assign.rhs = MakeUdpLiteral('x', 1);
+        init_out.assign.nonblocking = false;
+        init.statements.push_back(std::move(init_out));
+      }
+      for (const auto& prev_name : prev_names) {
+        if (prev_name.empty()) {
+          continue;
+        }
+        Statement init_prev;
+        init_prev.kind = StatementKind::kAssign;
+        init_prev.assign.lhs = prev_name;
+        init_prev.assign.rhs = MakeUdpLiteral('x', 1);
+        init_prev.assign.nonblocking = false;
+        init.statements.push_back(std::move(init_prev));
+      }
+      if (!init.statements.empty()) {
+        module->always_blocks.push_back(std::move(init));
+      }
+    }
+
+    AlwaysBlock block;
+    block.edge = EdgeKind::kCombinational;
+    block.sensitivity = "*";
+    if (!sequential) {
+      Statement init_assign;
+      init_assign.kind = StatementKind::kAssign;
+      init_assign.assign.lhs = info.output;
+      init_assign.assign.rhs = MakeUdpLiteral('x', 1);
+      init_assign.assign.nonblocking = false;
+      block.statements.push_back(std::move(init_assign));
+    }
+
+    Statement* last_if = nullptr;
+    for (const auto& row : info.rows) {
+      std::unique_ptr<Expr> cond;
+      for (size_t i = 0; i < info.inputs.size(); ++i) {
+        const std::string& input = info.inputs[i];
+        const UdpPattern& pattern = row.inputs[i];
+        const std::string& prev = prev_names[i];
+        auto part = BuildUdpMatchExpr(input, pattern, prev);
+        if (!part) {
+          continue;
+        }
+        if (cond) {
+          cond = MakeBinary('A', std::move(cond), std::move(part));
+        } else {
+          cond = std::move(part);
+        }
+      }
+      if (row.has_current) {
+        UdpPattern state_pattern;
+        state_pattern.value = row.current;
+        auto state_cond =
+            BuildUdpMatchExpr(info.output, state_pattern, std::string());
+        if (state_cond) {
+          if (cond) {
+            cond = MakeBinary('A', std::move(cond), std::move(state_cond));
+          } else {
+            cond = std::move(state_cond);
+          }
+        }
+      }
+
+      Statement row_stmt;
+      row_stmt.kind = StatementKind::kIf;
+      if (!cond) {
+        row_stmt.condition = MakeNumberExpr(1u);
+      } else {
+        row_stmt.condition = std::move(cond);
+      }
+      if (row.output != '-') {
+        Statement assign;
+        assign.kind = StatementKind::kAssign;
+        assign.assign.lhs = info.output;
+        assign.assign.rhs = MakeUdpLiteral(row.output, 1);
+        assign.assign.nonblocking = false;
+        row_stmt.then_branch.push_back(std::move(assign));
+      }
+
+      if (!last_if) {
+        block.statements.push_back(std::move(row_stmt));
+        last_if = &block.statements.back();
+      } else {
+        last_if->else_branch.push_back(std::move(row_stmt));
+        last_if = &last_if->else_branch.back();
+      }
+      if (!cond) {
+        break;
+      }
+    }
+
+    for (size_t i = 0; i < info.inputs.size(); ++i) {
+      if (prev_names[i].empty()) {
+        continue;
+      }
+      Statement update_prev;
+      update_prev.kind = StatementKind::kAssign;
+      update_prev.assign.lhs = prev_names[i];
+      update_prev.assign.rhs = MakeIdentifierExpr(info.inputs[i]);
+      update_prev.assign.nonblocking = false;
+      block.statements.push_back(std::move(update_prev));
+    }
+
+    module->always_blocks.push_back(std::move(block));
     return true;
   }
 
@@ -1577,64 +2225,62 @@ class Parser {
     func.msb_expr = msb_expr;
     func.lsb_expr = lsb_expr;
 
-    bool saw_body = false;
-    bool in_block = false;
+    bool saw_statement = false;
+    bool saw_endfunction = false;
     while (!IsAtEnd()) {
       if (MatchKeyword("endfunction")) {
+        saw_endfunction = true;
         break;
       }
-      if (MatchKeyword("input")) {
-        if (!ParseFunctionInput(&func)) {
-          return false;
+      if (!saw_statement) {
+        if (MatchKeyword("input")) {
+          if (!ParseFunctionInput(&func)) {
+            return false;
+          }
+          continue;
         }
-        continue;
+        if (MatchKeyword("integer")) {
+          if (!ParseFunctionIntegerDecl(&func)) {
+            return false;
+          }
+          continue;
+        }
+        if (MatchKeyword("time")) {
+          if (!ParseFunctionTimeDecl(&func)) {
+            return false;
+          }
+          continue;
+        }
+        if (MatchKeyword("reg")) {
+          if (!ParseFunctionRegDecl(&func)) {
+            return false;
+          }
+          continue;
+        }
+      } else if (Peek().kind == TokenKind::kIdentifier &&
+                 (Peek().text == "input" || Peek().text == "integer" ||
+                  Peek().text == "time" || Peek().text == "reg")) {
+        ErrorHere("function declarations must appear before statements");
+        return false;
       }
-      if (MatchKeyword("begin")) {
-        in_block = true;
-        continue;
+
+      Statement stmt;
+      if (!ParseFunctionStatement(&func, &stmt)) {
+        return false;
       }
-      if (MatchKeyword("end")) {
-        if (!in_block) {
-          ErrorHere("unexpected 'end' in function");
-          return false;
-        }
-        in_block = false;
-        continue;
-      }
-      if (Peek().kind == TokenKind::kIdentifier && Peek().text == func.name) {
-        Advance();
-        if (!MatchSymbol("=")) {
-          ErrorHere("expected '=' after function name");
-          return false;
-        }
-        auto rhs = ParseExpr();
-        if (!rhs) {
-          return false;
-        }
-        if (!MatchSymbol(";")) {
-          ErrorHere("expected ';' after function assignment");
-          return false;
-        }
-        if (saw_body) {
-          ErrorHere("multiple assignments to function name in v0");
-          return false;
-        }
-        func.body_expr = std::move(rhs);
-        saw_body = true;
-        continue;
-      }
-      ErrorHere("unsupported function item '" + Peek().text + "'");
-      return false;
+      saw_statement = true;
+      func.body.push_back(std::move(stmt));
     }
 
-    if (!func.body_expr) {
-      ErrorHere("function missing return assignment");
+    if (!saw_endfunction) {
+      ErrorHere("missing 'endfunction'");
       return false;
     }
-    if (in_block) {
-      ErrorHere("missing 'end' before endfunction");
+    if (func.body.empty()) {
+      ErrorHere("function missing body");
       return false;
     }
+    MaybeSetFunctionBodyExpr(&func);
     module->functions.push_back(std::move(func));
     return true;
   }
@@ -1677,6 +2323,170 @@ class Parser {
       ErrorHere("expected ';' after function input");
       return false;
     }
+    return true;
+  }
+
+  bool ParseFunctionIntegerDecl(Function* func) {
+    const int width = 32;
+    bool is_signed = true;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    } else if (MatchKeyword("unsigned")) {
+      is_signed = false;
+    }
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in integer declaration");
+        return false;
+      }
+      if (!AddFunctionLocal(func, name, width, is_signed)) {
+        return false;
+      }
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after integer declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseFunctionTimeDecl(Function* func) {
+    const int width = 64;
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    } else if (MatchKeyword("unsigned")) {
+      is_signed = false;
+    }
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in time declaration");
+        return false;
+      }
+      if (!AddFunctionLocal(func, name, width, is_signed)) {
+        return false;
+      }
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after time declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseFunctionRegDecl(Function* func) {
+    bool is_signed = false;
+    if (MatchKeyword("signed")) {
+      is_signed = true;
+    }
+    int width = 1;
+    std::shared_ptr<Expr> range_msb;
+    std::shared_ptr<Expr> range_lsb;
+    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
+      return false;
+    }
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in reg declaration");
+        return false;
+      }
+      if (MatchSymbol("[")) {
+        ErrorHere("arrayed reg locals not supported in functions");
+        return false;
+      }
+      if (!AddFunctionLocal(func, name, width, is_signed)) {
+        return false;
+      }
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after reg declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseFunctionStatement(Function* func, Statement* out_statement) {
+    if (!ParseStatement(out_statement)) {
+      return false;
+    }
+    switch (out_statement->kind) {
+      case StatementKind::kAssign:
+      case StatementKind::kIf:
+      case StatementKind::kBlock:
+      case StatementKind::kCase:
+      case StatementKind::kFor:
+      case StatementKind::kWhile:
+      case StatementKind::kRepeat:
+        break;
+      default:
+        ErrorHere("unsupported statement in function");
+        return false;
+    }
+    if (out_statement->kind == StatementKind::kAssign &&
+        out_statement->assign.nonblocking) {
+      ErrorHere("nonblocking assignment not allowed in function");
+      return false;
+    }
+    return true;
+  }
+
+  void MaybeSetFunctionBodyExpr(Function* func) {
+    if (!func || func->body.size() != 1) {
+      return;
+    }
+    const Statement& stmt = func->body.front();
+    if (stmt.kind != StatementKind::kAssign) {
+      return;
+    }
+    const auto& assign = stmt.assign;
+    if (assign.lhs != func->name || assign.lhs_index ||
+        !assign.lhs_indices.empty() || assign.lhs_has_range || !assign.rhs) {
+      return;
+    }
+    func->body_expr = CloneExpr(*assign.rhs);
+  }
+
+  bool AddFunctionLocal(Function* func, const std::string& name, int width,
+                        bool is_signed) {
+    if (!func) {
+      return false;
+    }
+    if (name == func->name) {
+      ErrorHere("function local '" + name + "' redeclares function name");
+      return false;
+    }
+    for (const auto& arg : func->args) {
+      if (arg.name == name) {
+        ErrorHere("function local '" + name + "' redeclares argument");
+        return false;
+      }
+    }
+    for (const auto& local : func->locals) {
+      if (local.name == name) {
+        ErrorHere("duplicate function local '" + name + "'");
+        return false;
+      }
+    }
+    LocalVar local;
+    local.name = name;
+    local.width = width;
+    local.is_signed = is_signed;
+    func->locals.push_back(std::move(local));
     return true;
   }
 
@@ -2241,17 +3051,19 @@ class Parser {
       ErrorHere("expected '=' in parameter assignment");
       return false;
     }
-    std::unique_ptr<Expr> expr;
-    int64_t value = 0;
-    if (!ParseConstExpr(&expr, &value, "parameter value")) {
+    std::unique_ptr<Expr> expr = ParseExpr();
+    if (!expr) {
       return false;
+    }
+    int64_t value = 0;
+    if (TryEvalConstExpr(*expr, &value)) {
+      current_params_[name] = value;
     }
     Parameter param;
     param.name = name;
     param.value = std::move(expr);
     param.is_local = is_local;
     module->parameters.push_back(std::move(param));
-    current_params_[name] = value;
     return true;
   }
 
@@ -2304,6 +3116,29 @@ class Parser {
       }
       if (!MatchSymbol(";")) {
         ErrorHere("expected ';' after time declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseRealDecl(Module* module) {
+    const int width = 64;
+    bool is_signed = true;
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in real declaration");
+        return false;
+      }
+      AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after real declaration");
         return false;
       }
       break;
@@ -2408,6 +3243,43 @@ class Parser {
       }
       if (!MatchSymbol(";")) {
         ErrorHere("expected ';' after time declaration");
+        return false;
+      }
+      break;
+    }
+    return true;
+  }
+
+  bool ParseLocalRealDecl() {
+    const int width = 64;
+    bool is_signed = true;
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in real declaration");
+        return false;
+      }
+      if (current_module_) {
+        for (const auto& port : current_module_->ports) {
+          if (port.name == name) {
+            ErrorHere("local real redeclares port '" + name + "'");
+            return false;
+          }
+        }
+        for (const auto& net : current_module_->nets) {
+          if (net.name == name) {
+            ErrorHere("local real redeclares net '" + name + "'");
+            return false;
+          }
+        }
+      }
+      AddOrUpdateNet(current_module_, name, NetType::kWire, width, is_signed,
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after real declaration");
         return false;
       }
       break;
@@ -3136,7 +4008,9 @@ class Parser {
                               Statement* out_statement) {
     out_statement->kind = statement.kind;
     out_statement->block_label = statement.block_label;
-    if (statement.kind == StatementKind::kAssign) {
+    if (statement.kind == StatementKind::kAssign ||
+        statement.kind == StatementKind::kForce ||
+        statement.kind == StatementKind::kRelease) {
       out_statement->assign.lhs =
           RenameIdent(statement.assign.lhs, ctx.renames);
       out_statement->assign.lhs_has_range = statement.assign.lhs_has_range;
@@ -3178,6 +4052,14 @@ class Parser {
             *statement.assign.lhs_lsb_expr, ctx.renames, ctx.consts);
       }
       out_statement->assign.nonblocking = statement.assign.nonblocking;
+      if (statement.kind == StatementKind::kForce) {
+        out_statement->force_target =
+            RenameIdent(statement.force_target, ctx.renames);
+      }
+      if (statement.kind == StatementKind::kRelease) {
+        out_statement->release_target =
+            RenameIdent(statement.release_target, ctx.renames);
+      }
       return true;
     }
     if (statement.kind == StatementKind::kIf) {
@@ -3309,6 +4191,15 @@ class Parser {
     }
     if (statement.kind == StatementKind::kEventControl) {
       out_statement->event_edge = statement.event_edge;
+      for (const auto& item : statement.event_items) {
+        EventItem cloned_item;
+        cloned_item.edge = item.edge;
+        if (item.expr) {
+          cloned_item.expr =
+              CloneExprGenerate(*item.expr, ctx.renames, ctx.consts);
+        }
+        out_statement->event_items.push_back(std::move(cloned_item));
+      }
       if (statement.event_expr) {
         out_statement->event_expr =
             CloneExprGenerate(*statement.event_expr, ctx.renames, ctx.consts);
@@ -4037,8 +4928,18 @@ class Parser {
     assign.rhs = std::move(rhs);
     if (assign.lhs.find('.') == std::string::npos &&
         LookupSignalWidth(assign.lhs) <= 0) {
-      AddOrUpdateNet(module, assign.lhs, NetType::kWire, 1, false, nullptr,
-                     nullptr, {});
+      if (default_nettype_none_) {
+        ErrorHere("implicit net not allowed with `default_nettype none`");
+        return false;
+      }
+      NetType net_type = default_nettype_;
+      if (NetTypeRequires4State(net_type) && !options_.enable_4state) {
+        ErrorHere("net type requires --4state");
+        return false;
+      }
+      AddOrUpdateNet(module, assign.lhs, net_type, 1, false, nullptr, nullptr,
+                     {});
+      AddImplicitNetDriver(module, assign.lhs, net_type);
     }
     module->assigns.push_back(std::move(assign));
     return true;
@@ -4083,104 +4984,80 @@ class Parser {
     EdgeKind edge = EdgeKind::kCombinational;
     std::string clock;
     std::string sensitivity;
-    bool has_edge = false;
+    bool has_event = false;
+    bool saw_star = false;
+    std::vector<EventItem> items;
     if (MatchSymbol("@")) {
-      if (MatchSymbol("*")) {
-        sensitivity = "*";
-      } else if (MatchSymbol("(")) {
-        if (MatchSymbol("*")) {
-          sensitivity = "*";
-          if (!MatchSymbol(")")) {
-            ErrorHere("expected ')' after sensitivity list");
-            return false;
-          }
-        } else {
-          bool first_item = true;
-          while (true) {
-            bool item_has_edge = false;
-            EdgeKind item_edge = EdgeKind::kCombinational;
-            if (MatchKeyword("posedge")) {
-              item_has_edge = true;
-              item_edge = EdgeKind::kPosedge;
-            } else if (MatchKeyword("negedge")) {
-              item_has_edge = true;
-              item_edge = EdgeKind::kNegedge;
-            }
-            std::string signal;
-            if (!ConsumeIdentifier(&signal)) {
-              ErrorHere("expected identifier in sensitivity list");
-              return false;
-            }
-            if (!first_item) {
-              sensitivity += ", ";
-            }
-            if (item_has_edge) {
-              sensitivity += (item_edge == EdgeKind::kPosedge) ? "posedge "
-                                                              : "negedge ";
-            }
-            sensitivity += signal;
-            if (item_has_edge && !has_edge) {
-              has_edge = true;
-              edge = item_edge;
-              clock = signal;
-            }
-            if (MatchSymbol(")")) {
-              break;
-            }
-            if (MatchSymbol(",") || MatchKeyword("or")) {
-              first_item = false;
-              continue;
-            }
-            ErrorHere("expected ')' after sensitivity list");
-            return false;
-          }
-          if (!has_edge) {
-            edge = EdgeKind::kCombinational;
-          }
-        }
-      } else {
-        bool item_has_edge = false;
-        EdgeKind item_edge = EdgeKind::kCombinational;
-        if (MatchKeyword("posedge")) {
-          item_has_edge = true;
-          item_edge = EdgeKind::kPosedge;
-        } else if (MatchKeyword("negedge")) {
-          item_has_edge = true;
-          item_edge = EdgeKind::kNegedge;
-        }
-        if (MatchSymbol("*")) {
-          sensitivity = "*";
-        } else {
-          std::string signal;
-          if (!ConsumeIdentifier(&signal)) {
-            ErrorHere("expected identifier in sensitivity list");
-            return false;
-          }
-          if (item_has_edge) {
-            sensitivity = (item_edge == EdgeKind::kPosedge) ? "posedge "
-                                                            : "negedge ";
-            sensitivity += signal;
-            has_edge = true;
-            edge = item_edge;
-            clock = signal;
-          } else {
-            sensitivity = signal;
-          }
-        }
+      has_event = true;
+      bool has_paren = MatchSymbol("(");
+      if (!ParseEventList(has_paren, &items, &saw_star, &sensitivity)) {
+        return false;
       }
     } else if (!(Peek().kind == TokenKind::kSymbol && Peek().text == "#")) {
       ErrorHere("expected '@' or delay control after 'always'");
       return false;
     }
 
+    std::vector<Statement> statements;
+    if (!ParseStatementBody(&statements)) {
+      return false;
+    }
+
+    bool complex_sensitivity = false;
+    if (has_event && !saw_star) {
+      if (items.size() > 1) {
+        complex_sensitivity = true;
+      } else if (items.size() == 1) {
+        if ((items[0].edge == EventEdgeKind::kPosedge ||
+             items[0].edge == EventEdgeKind::kNegedge) &&
+            items[0].expr &&
+            items[0].expr->kind != ExprKind::kIdentifier) {
+          complex_sensitivity = true;
+        }
+      }
+    }
+    if (!saw_star && !complex_sensitivity && items.size() == 1) {
+      if (items[0].edge == EventEdgeKind::kPosedge ||
+          items[0].edge == EventEdgeKind::kNegedge) {
+        if (items[0].expr && items[0].expr->kind == ExprKind::kIdentifier) {
+          edge = (items[0].edge == EventEdgeKind::kPosedge)
+                     ? EdgeKind::kPosedge
+                     : EdgeKind::kNegedge;
+          clock = items[0].expr->ident;
+        } else {
+          complex_sensitivity = true;
+        }
+      } else {
+        edge = EdgeKind::kCombinational;
+      }
+    }
+    if (complex_sensitivity) {
+      AlwaysBlock block;
+      block.edge = EdgeKind::kInitial;
+      block.clock = "initial";
+      block.sensitivity = std::move(sensitivity);
+      Statement event_stmt;
+      event_stmt.kind = StatementKind::kEventControl;
+      if (items.size() == 1) {
+        event_stmt.event_edge = items[0].edge;
+        event_stmt.event_expr = std::move(items[0].expr);
+      } else {
+        event_stmt.event_items = std::move(items);
+      }
+      event_stmt.event_body = std::move(statements);
+      Statement forever_stmt;
+      forever_stmt.kind = StatementKind::kForever;
+      forever_stmt.forever_body.push_back(std::move(event_stmt));
+      block.statements.push_back(std::move(forever_stmt));
+      *out_block = std::move(block);
+      return true;
+    }
+
     AlwaysBlock block;
     block.edge = edge;
     block.clock = std::move(clock);
     block.sensitivity = std::move(sensitivity);
-
-    if (!ParseStatementBody(&block.statements)) {
-      return false;
-    }
+    block.statements = std::move(statements);
 
     *out_block = std::move(block);
     return true;
@@ -4206,6 +5083,9 @@ class Parser {
     }
     if (MatchKeyword("time")) {
       return ParseLocalTimeDecl();
+    }
+    if (MatchKeyword("real")) {
+      return ParseLocalRealDecl();
     }
     if (MatchKeyword("reg")) {
       return ParseLocalRegDecl(current_module_);
@@ -4233,6 +5113,12 @@ class Parser {
          (Peek().text == "-" && Peek(1).kind == TokenKind::kSymbol &&
           Peek(1).text == ">"))) {
       return ParseEventTriggerStatement(out_statement);
+    }
+    if (MatchKeyword("force")) {
+      return ParseForceStatement(out_statement);
+    }
+    if (MatchKeyword("release")) {
+      return ParseReleaseStatement(out_statement);
     }
     if (MatchKeyword("assert")) {
       return ParseAssertStatement(out_statement);
@@ -4321,6 +5207,123 @@ class Parser {
     return ParseSequentialAssign(out_statement);
   }
 
+  bool ParseAssignTarget(SequentialAssign* out_assign,
+                         const std::string& context) {
+    if (!out_assign) {
+      return false;
+    }
+    std::string lhs;
+    if (!ConsumeHierIdentifier(&lhs)) {
+      ErrorHere("expected identifier in " + context);
+      return false;
+    }
+    std::unique_ptr<Expr> lhs_index;
+    std::vector<std::unique_ptr<Expr>> lhs_indices;
+    bool lhs_has_range = false;
+    bool lhs_indexed_range = false;
+    bool lhs_indexed_desc = false;
+    int lhs_indexed_width = 0;
+    int lhs_msb = 0;
+    int lhs_lsb = 0;
+    std::unique_ptr<Expr> lhs_msb_expr;
+    std::unique_ptr<Expr> lhs_lsb_expr;
+    while (MatchSymbol("[")) {
+      auto msb_expr = ParseExpr();
+      if (!msb_expr) {
+        return false;
+      }
+      if (MatchSymbol("+:") || MatchSymbol("-:")) {
+        bool indexed_desc = (Previous().text == "-:");
+        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
+          ErrorHere("indexed part select requires identifier");
+          return false;
+        }
+        std::unique_ptr<Expr> width_expr = ParseExpr();
+        if (!width_expr) {
+          return false;
+        }
+        int64_t width_value = 0;
+        if (!EvalConstExpr(*width_expr, &width_value) || width_value <= 0) {
+          ErrorHere("indexed part select width must be constant");
+          return false;
+        }
+        auto base_clone = CloneExprSimple(*msb_expr);
+        auto width_minus = MakeNumberExpr(
+            static_cast<uint64_t>(width_value - 1));
+        std::unique_ptr<Expr> lsb_expr;
+        std::unique_ptr<Expr> msb_out;
+        if (indexed_desc) {
+          msb_out = std::move(msb_expr);
+          lsb_expr = MakeBinary('-', std::move(base_clone),
+                                std::move(width_minus));
+        } else {
+          lsb_expr = std::move(msb_expr);
+          msb_out = MakeBinary('+', std::move(base_clone),
+                               std::move(width_minus));
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return false;
+        }
+        lhs_has_range = true;
+        lhs_indexed_range = true;
+        lhs_indexed_desc = indexed_desc;
+        lhs_indexed_width = static_cast<int>(width_value);
+        lhs_msb_expr = std::move(msb_out);
+        lhs_lsb_expr = std::move(lsb_expr);
+        break;
+      }
+      if (MatchSymbol(":")) {
+        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
+          ErrorHere("part select requires identifier");
+          return false;
+        }
+        std::unique_ptr<Expr> lsb_expr = ParseExpr();
+        if (!lsb_expr) {
+          return false;
+        }
+        if (!MatchSymbol("]")) {
+          ErrorHere("expected ']' after part select");
+          return false;
+        }
+        lhs_has_range = true;
+        lhs_msb_expr = std::move(msb_expr);
+        lhs_lsb_expr = std::move(lsb_expr);
+        int64_t msb = 0;
+        int64_t lsb = 0;
+        if (!TryEvalConstExpr(*lhs_msb_expr, &msb) ||
+            !TryEvalConstExpr(*lhs_lsb_expr, &lsb)) {
+          ErrorHere("part select indices must be constant in v0");
+          return false;
+        }
+        lhs_msb = static_cast<int>(msb);
+        lhs_lsb = static_cast<int>(lsb);
+        break;
+      }
+      if (!MatchSymbol("]")) {
+        ErrorHere("expected ']' after assignment target");
+        return false;
+      }
+      lhs_indices.push_back(std::move(msb_expr));
+    }
+    if (!lhs_has_range && lhs_indices.size() == 1) {
+      lhs_index = std::move(lhs_indices.front());
+      lhs_indices.clear();
+    }
+    out_assign->lhs = std::move(lhs);
+    out_assign->lhs_index = std::move(lhs_index);
+    out_assign->lhs_indices = std::move(lhs_indices);
+    out_assign->lhs_has_range = lhs_has_range;
+    out_assign->lhs_indexed_range = lhs_indexed_range;
+    out_assign->lhs_indexed_desc = lhs_indexed_desc;
+    out_assign->lhs_indexed_width = lhs_indexed_width;
+    out_assign->lhs_msb = lhs_msb;
+    out_assign->lhs_lsb = lhs_lsb;
+    out_assign->lhs_msb_expr = std::move(lhs_msb_expr);
+    out_assign->lhs_lsb_expr = std::move(lhs_lsb_expr);
+    return true;
+  }
+
   bool ParseDelayStatement(Statement* out_statement) {
     if (!MatchSymbol("#")) {
       return false;
@@ -4343,36 +5346,100 @@ class Parser {
     return true;
   }
 
+  bool ParseEventList(bool has_paren, std::vector<EventItem>* items,
+                      bool* saw_star, std::string* sensitivity_text) {
+    if (saw_star) {
+      *saw_star = false;
+    }
+    if (sensitivity_text) {
+      sensitivity_text->clear();
+    }
+    if (MatchSymbol("*")) {
+      if (saw_star) {
+        *saw_star = true;
+      }
+      if (sensitivity_text) {
+        *sensitivity_text = "*";
+      }
+      if (has_paren && !MatchSymbol(")")) {
+        ErrorHere("expected ')' after sensitivity list");
+        return false;
+      }
+      return true;
+    }
+    bool first_item = true;
+    while (true) {
+      bool item_has_edge = false;
+      EventEdgeKind item_edge = EventEdgeKind::kAny;
+      if (MatchKeyword("posedge")) {
+        item_has_edge = true;
+        item_edge = EventEdgeKind::kPosedge;
+      } else if (MatchKeyword("negedge")) {
+        item_has_edge = true;
+        item_edge = EventEdgeKind::kNegedge;
+      }
+      auto expr = ParseExpr();
+      if (!expr) {
+        return false;
+      }
+      std::string label = "expr";
+      if (expr->kind == ExprKind::kIdentifier) {
+        label = expr->ident;
+      }
+      if (sensitivity_text) {
+        if (!first_item) {
+          *sensitivity_text += ", ";
+        }
+        if (item_has_edge) {
+          *sensitivity_text +=
+              (item_edge == EventEdgeKind::kPosedge) ? "posedge " : "negedge ";
+        }
+        *sensitivity_text += label;
+      }
+      if (items) {
+        EventItem item;
+        item.edge = item_edge;
+        item.expr = std::move(expr);
+        items->push_back(std::move(item));
+      }
+      if (!has_paren) {
+        return true;
+      }
+      if (MatchSymbol(")")) {
+        return true;
+      }
+      if (MatchSymbol(",") || MatchKeyword("or")) {
+        first_item = false;
+        continue;
+      }
+      ErrorHere("expected ')' after sensitivity list");
+      return false;
+    }
+  }
+
   bool ParseEventControlStatement(Statement* out_statement) {
     if (!MatchSymbol("@")) {
       return false;
     }
-    std::unique_ptr<Expr> event_expr;
-    EventEdgeKind edge = EventEdgeKind::kAny;
     bool has_paren = MatchSymbol("(");
-    if (MatchSymbol("*")) {
-      // @* or @(*)
-    } else {
-      if (MatchKeyword("posedge")) {
-        edge = EventEdgeKind::kPosedge;
-      } else if (MatchKeyword("negedge")) {
-        edge = EventEdgeKind::kNegedge;
-      }
-      event_expr = ParseExpr();
-      if (!event_expr) {
-        return false;
-      }
-    }
-    if (has_paren) {
-      if (!MatchSymbol(")")) {
-        ErrorHere("expected ')' after event control");
-        return false;
-      }
+    bool saw_star = false;
+    std::vector<EventItem> items;
+    if (!ParseEventList(has_paren, &items, &saw_star, nullptr)) {
+      return false;
     }
     Statement stmt;
     stmt.kind = StatementKind::kEventControl;
-    stmt.event_edge = edge;
-    stmt.event_expr = std::move(event_expr);
+    if (!items.empty()) {
+      if (items.size() == 1) {
+        stmt.event_edge = items[0].edge;
+        stmt.event_expr = std::move(items[0].expr);
+      } else {
+        stmt.event_items = std::move(items);
+      }
+    } else {
+      stmt.event_edge = EventEdgeKind::kAny;
+      stmt.event_expr = nullptr;
+    }
     if (MatchSymbol(";")) {
       *out_statement = std::move(stmt);
       return true;
@@ -4866,103 +5933,9 @@ class Parser {
   }
 
   bool ParseSequentialAssign(Statement* out_statement) {
-    std::string lhs;
-    if (!ConsumeHierIdentifier(&lhs)) {
-      ErrorHere("expected identifier in sequential assignment");
+    SequentialAssign assign;
+    if (!ParseAssignTarget(&assign, "sequential assignment")) {
       return false;
-    }
-    std::unique_ptr<Expr> lhs_index;
-    std::vector<std::unique_ptr<Expr>> lhs_indices;
-    bool lhs_has_range = false;
-    bool lhs_indexed_range = false;
-    bool lhs_indexed_desc = false;
-    int lhs_indexed_width = 0;
-    int lhs_msb = 0;
-    int lhs_lsb = 0;
-    std::unique_ptr<Expr> lhs_msb_expr;
-    std::unique_ptr<Expr> lhs_lsb_expr;
-    while (MatchSymbol("[")) {
-      auto msb_expr = ParseExpr();
-      if (!msb_expr) {
-        return false;
-      }
-      if (MatchSymbol("+:") || MatchSymbol("-:")) {
-        bool indexed_desc = (Previous().text == "-:");
-        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
-          ErrorHere("indexed part select requires identifier");
-          return false;
-        }
-        std::unique_ptr<Expr> width_expr = ParseExpr();
-        if (!width_expr) {
-          return false;
-        }
-        int64_t width_value = 0;
-        if (!EvalConstExpr(*width_expr, &width_value) || width_value <= 0) {
-          ErrorHere("indexed part select width must be constant");
-          return false;
-        }
-        auto base_clone = CloneExprSimple(*msb_expr);
-        auto width_minus = MakeNumberExpr(
-            static_cast<uint64_t>(width_value - 1));
-        std::unique_ptr<Expr> lsb_expr;
-        std::unique_ptr<Expr> msb_out;
-        if (indexed_desc) {
-          msb_out = std::move(msb_expr);
-          lsb_expr = MakeBinary('-', std::move(base_clone),
-                                std::move(width_minus));
-        } else {
-          lsb_expr = std::move(msb_expr);
-          msb_out = MakeBinary('+', std::move(base_clone),
-                               std::move(width_minus));
-        }
-        if (!MatchSymbol("]")) {
-          ErrorHere("expected ']' after part select");
-          return false;
-        }
-        lhs_has_range = true;
-        lhs_indexed_range = true;
-        lhs_indexed_desc = indexed_desc;
-        lhs_indexed_width = static_cast<int>(width_value);
-        lhs_msb_expr = std::move(msb_out);
-        lhs_lsb_expr = std::move(lsb_expr);
-        break;
-      }
-      if (MatchSymbol(":")) {
-        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
-          ErrorHere("part select requires identifier");
-          return false;
-        }
-        std::unique_ptr<Expr> lsb_expr = ParseExpr();
-        if (!lsb_expr) {
-          return false;
-        }
-        if (!MatchSymbol("]")) {
-          ErrorHere("expected ']' after part select");
-          return false;
-        }
-        lhs_has_range = true;
-        lhs_msb_expr = std::move(msb_expr);
-        lhs_lsb_expr = std::move(lsb_expr);
-        int64_t msb = 0;
-        int64_t lsb = 0;
-        if (!TryEvalConstExpr(*lhs_msb_expr, &msb) ||
-            !TryEvalConstExpr(*lhs_lsb_expr, &lsb)) {
-          ErrorHere("part select indices must be constant in v0");
-          return false;
-        }
-        lhs_msb = static_cast<int>(msb);
-        lhs_lsb = static_cast<int>(lsb);
-        break;
-      }
-      if (!MatchSymbol("]")) {
-        ErrorHere("expected ']' after assignment target");
-        return false;
-      }
-      lhs_indices.push_back(std::move(msb_expr));
-    }
-    if (!lhs_has_range && lhs_indices.size() == 1) {
-      lhs_index = std::move(lhs_indices.front());
-      lhs_indices.clear();
     }
     bool nonblocking = false;
     if (MatchSymbol("<")) {
@@ -4994,20 +5967,77 @@ class Parser {
     }
     Statement stmt;
     stmt.kind = StatementKind::kAssign;
-    stmt.assign.lhs = lhs;
-    stmt.assign.lhs_index = std::move(lhs_index);
-    stmt.assign.lhs_indices = std::move(lhs_indices);
-    stmt.assign.lhs_has_range = lhs_has_range;
-    stmt.assign.lhs_indexed_range = lhs_indexed_range;
-    stmt.assign.lhs_indexed_desc = lhs_indexed_desc;
-    stmt.assign.lhs_indexed_width = lhs_indexed_width;
-    stmt.assign.lhs_msb = lhs_msb;
-    stmt.assign.lhs_lsb = lhs_lsb;
-    stmt.assign.lhs_msb_expr = std::move(lhs_msb_expr);
-    stmt.assign.lhs_lsb_expr = std::move(lhs_lsb_expr);
-    stmt.assign.rhs = std::move(rhs);
-    stmt.assign.delay = std::move(delay);
-    stmt.assign.nonblocking = nonblocking;
+    assign.rhs = std::move(rhs);
+    assign.delay = std::move(delay);
+    assign.nonblocking = nonblocking;
+    stmt.assign = std::move(assign);
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
+  bool ParseForceStatement(Statement* out_statement) {
+    SequentialAssign assign;
+    std::string target;
+    if (!ConsumeHierIdentifier(&target)) {
+      ErrorHere("expected identifier after 'force'");
+      return false;
+    }
+    if (target.empty()) {
+      ErrorHere("force target must be an identifier");
+      return false;
+    }
+    assign.lhs = target;
+    if (!MatchSymbol("=")) {
+      ErrorHere("expected '=' in force statement");
+      return false;
+    }
+    std::unique_ptr<Expr> delay;
+    if (MatchSymbol("#")) {
+      delay = ParseExpr();
+      if (!delay) {
+        return false;
+      }
+    }
+    std::unique_ptr<Expr> rhs = ParseExpr();
+    if (!rhs) {
+      return false;
+    }
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after force statement");
+      return false;
+    }
+    Statement stmt;
+    stmt.kind = StatementKind::kForce;
+    stmt.force_target = std::move(target);
+    assign.rhs = std::move(rhs);
+    assign.delay = std::move(delay);
+    assign.nonblocking = false;
+    stmt.assign = std::move(assign);
+    *out_statement = std::move(stmt);
+    return true;
+  }
+
+  bool ParseReleaseStatement(Statement* out_statement) {
+    SequentialAssign assign;
+    std::string target;
+    if (!ConsumeHierIdentifier(&target)) {
+      ErrorHere("expected identifier after 'release'");
+      return false;
+    }
+    if (target.empty()) {
+      ErrorHere("release target must be an identifier");
+      return false;
+    }
+    assign.lhs = target;
+    if (!MatchSymbol(";")) {
+      ErrorHere("expected ';' after release statement");
+      return false;
+    }
+    Statement stmt;
+    stmt.kind = StatementKind::kRelease;
+    stmt.release_target = std::move(target);
+    assign.nonblocking = false;
+    stmt.assign = std::move(assign);
     *out_statement = std::move(stmt);
     return true;
   }
@@ -5434,29 +6464,111 @@ class Parser {
   std::unique_ptr<Expr> ParsePrimary() {
     std::unique_ptr<Expr> expr;
     if (MatchSymbol("$")) {
-      char op = 0;
-      if (MatchKeyword("time")) {
+      auto parse_system_call = [&](const std::string& name,
+                                   bool allow_no_parens) -> std::unique_ptr<Expr> {
         auto call = std::make_unique<Expr>();
         call->kind = ExprKind::kCall;
-        call->ident = "$time";
+        call->ident = name;
         if (MatchSymbol("(")) {
+          bool prev_allow = allow_string_literals_;
+          allow_string_literals_ = true;
           if (!MatchSymbol(")")) {
-            ErrorHere("expected ')' after $time");
-            return nullptr;
+            while (true) {
+              auto arg = ParseExpr();
+              if (!arg) {
+                allow_string_literals_ = prev_allow;
+                return nullptr;
+              }
+              call->call_args.push_back(std::move(arg));
+              if (MatchSymbol(",")) {
+                continue;
+              }
+              break;
+            }
+            if (!MatchSymbol(")")) {
+              allow_string_literals_ = prev_allow;
+              ErrorHere("expected ')' after system function");
+              return nullptr;
+            }
           }
+          allow_string_literals_ = prev_allow;
+          return call;
         }
-        expr = std::move(call);
-      } else {
-        if (MatchKeyword("signed")) {
-          op = 'S';
-        } else if (MatchKeyword("unsigned")) {
-          op = 'U';
-        } else if (MatchKeyword("clog2")) {
-          op = 'C';
-        } else {
+        if (!allow_no_parens) {
+          ErrorHere("expected '(' after system function");
+          return nullptr;
+        }
+        return call;
+      };
+
+      char op = 0;
+      if (MatchKeyword("time")) {
+        expr = parse_system_call("$time", true);
+      } else if (MatchKeyword("random")) {
+        expr = parse_system_call("$random", true);
+      } else if (MatchKeyword("urandom_range")) {
+        expr = parse_system_call("$urandom_range", false);
+      } else if (MatchKeyword("urandom")) {
+        expr = parse_system_call("$urandom", true);
+      } else if (MatchKeyword("realtime")) {
+        expr = parse_system_call("$realtime", true);
+      } else if (MatchKeyword("realtobits")) {
+        expr = parse_system_call("$realtobits", false);
+      } else if (MatchKeyword("bitstoreal")) {
+        expr = parse_system_call("$bitstoreal", false);
+      } else if (MatchKeyword("rtoi")) {
+        expr = parse_system_call("$rtoi", false);
+      } else if (MatchKeyword("itor")) {
+        expr = parse_system_call("$itor", false);
+      } else if (MatchKeyword("bits")) {
+        expr = parse_system_call("$bits", false);
+      } else if (MatchKeyword("size")) {
+        expr = parse_system_call("$size", false);
+      } else if (MatchKeyword("dimensions")) {
+        expr = parse_system_call("$dimensions", false);
+      } else if (MatchKeyword("left")) {
+        expr = parse_system_call("$left", false);
+      } else if (MatchKeyword("right")) {
+        expr = parse_system_call("$right", false);
+      } else if (MatchKeyword("low")) {
+        expr = parse_system_call("$low", false);
+      } else if (MatchKeyword("high")) {
+        expr = parse_system_call("$high", false);
+      } else if (MatchKeyword("fopen")) {
+        expr = parse_system_call("$fopen", false);
+      } else if (MatchKeyword("fgetc")) {
+        expr = parse_system_call("$fgetc", false);
+      } else if (MatchKeyword("feof")) {
+        expr = parse_system_call("$feof", false);
+      } else if (MatchKeyword("fgets")) {
+        expr = parse_system_call("$fgets", false);
+      } else if (MatchKeyword("fscanf")) {
+        expr = parse_system_call("$fscanf", false);
+      } else if (MatchKeyword("sscanf")) {
+        expr = parse_system_call("$sscanf", false);
+      } else if (MatchKeyword("test")) {
+        if (!MatchSymbol("$") || !MatchKeyword("plusargs")) {
           ErrorHere("unsupported system function");
           return nullptr;
         }
+        expr = parse_system_call("$test$plusargs", false);
+      } else if (MatchKeyword("value")) {
+        if (!MatchSymbol("$") || !MatchKeyword("plusargs")) {
+          ErrorHere("unsupported system function");
+          return nullptr;
+        }
+        expr = parse_system_call("$value$plusargs", false);
+      } else if (MatchKeyword("signed")) {
+        op = 'S';
+      } else if (MatchKeyword("unsigned")) {
+        op = 'U';
+      } else if (MatchKeyword("clog2")) {
+        op = 'C';
+      } else {
+        ErrorHere("unsupported system function");
+        return nullptr;
+      }
+      if (!expr && (op == 'S' || op == 'U' || op == 'C')) {
         if (!MatchSymbol("(")) {
           ErrorHere("expected '(' after system function");
           return nullptr;
@@ -5485,10 +6597,6 @@ class Parser {
         }
       }
     } else if (Peek().kind == TokenKind::kString) {
-      if (!allow_string_literals_) {
-        ErrorHere("string literal not supported in v0 outside system tasks");
-        return nullptr;
-      }
       expr = std::make_unique<Expr>();
       expr->kind = ExprKind::kString;
       expr->string_value = Peek().text;
@@ -5504,16 +6612,38 @@ class Parser {
         return nullptr;
       }
     } else if (Peek().kind == TokenKind::kNumber) {
-      uint64_t size = std::stoull(Peek().text);
-      Advance();
-      if (MatchSymbol("'")) {
-        expr = ParseBasedLiteral(size);
+      const std::string token = Peek().text;
+      if (token.find_first_of(".eE") != std::string::npos) {
+        char* endptr = nullptr;
+        double real_value = std::strtod(token.c_str(), &endptr);
+        if (endptr == token.c_str()) {
+          ErrorHere("invalid real literal");
+          return nullptr;
+        }
+        uint64_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(real_value),
+                      "double size mismatch");
+        std::memcpy(&bits, &real_value, sizeof(bits));
+        auto lit = std::make_unique<Expr>();
+        lit->kind = ExprKind::kNumber;
+        lit->number = bits;
+        lit->value_bits = bits;
+        lit->has_width = true;
+        lit->number_width = 64;
+        expr = std::move(lit);
+        Advance();
       } else {
-        expr = std::make_unique<Expr>();
-        expr->kind = ExprKind::kNumber;
-        expr->number = size;
-        expr->value_bits = size;
-        expr->is_signed = true;
+        uint64_t size = std::stoull(token);
+        Advance();
+        if (MatchSymbol("'")) {
+          expr = ParseBasedLiteral(size);
+        } else {
+          expr = std::make_unique<Expr>();
+          expr->kind = ExprKind::kNumber;
+          expr->number = size;
+          expr->value_bits = size;
+          expr->is_signed = true;
+        }
       }
     } else if (Peek().kind == TokenKind::kIdentifier) {
       std::string name;
@@ -6109,6 +7239,116 @@ class Parser {
                       SourceLocation{path_, token.line, token.column});
   }
 
+  bool ParseNetTypeName(const std::string& name, NetType* out_type) const {
+    if (!out_type) {
+      return false;
+    }
+    if (name == "wire" || name == "tri") {
+      *out_type = NetType::kWire;
+      return true;
+    }
+    if (name == "wand") {
+      *out_type = NetType::kWand;
+      return true;
+    }
+    if (name == "wor") {
+      *out_type = NetType::kWor;
+      return true;
+    }
+    if (name == "tri0") {
+      *out_type = NetType::kTri0;
+      return true;
+    }
+    if (name == "tri1") {
+      *out_type = NetType::kTri1;
+      return true;
+    }
+    if (name == "triand") {
+      *out_type = NetType::kTriand;
+      return true;
+    }
+    if (name == "trior") {
+      *out_type = NetType::kTrior;
+      return true;
+    }
+    if (name == "trireg") {
+      *out_type = NetType::kTrireg;
+      return true;
+    }
+    if (name == "supply0") {
+      *out_type = NetType::kSupply0;
+      return true;
+    }
+    if (name == "supply1") {
+      *out_type = NetType::kSupply1;
+      return true;
+    }
+    return false;
+  }
+
+  bool ApplyDirective(const DirectiveEvent& directive) {
+    switch (directive.kind) {
+      case DirectiveKind::kDefaultNettype: {
+        if (directive.arg == "none") {
+          default_nettype_none_ = true;
+          return true;
+        }
+        NetType type = NetType::kWire;
+        if (!ParseNetTypeName(directive.arg, &type)) {
+          diagnostics_->Add(
+              Severity::kError,
+              "unknown net type '" + directive.arg + "' in `default_nettype",
+              SourceLocation{path_, directive.line, directive.column});
+          return false;
+        }
+        if (NetTypeRequires4State(type) && !options_.enable_4state) {
+          diagnostics_->Add(
+              Severity::kError, "net type requires --4state",
+              SourceLocation{path_, directive.line, directive.column});
+          return false;
+        }
+        default_nettype_ = type;
+        default_nettype_none_ = false;
+        return true;
+      }
+      case DirectiveKind::kUnconnectedDrive: {
+        if (directive.arg == "pull0") {
+          unconnected_drive_ = UnconnectedDrive::kPull0;
+          return true;
+        }
+        if (directive.arg == "pull1") {
+          unconnected_drive_ = UnconnectedDrive::kPull1;
+          return true;
+        }
+        diagnostics_->Add(
+            Severity::kError,
+            "unknown unconnected drive '" + directive.arg + "'",
+            SourceLocation{path_, directive.line, directive.column});
+        return false;
+      }
+      case DirectiveKind::kNoUnconnectedDrive:
+        unconnected_drive_ = UnconnectedDrive::kNone;
+        return true;
+      case DirectiveKind::kResetAll:
+        default_nettype_ = NetType::kWire;
+        default_nettype_none_ = false;
+        unconnected_drive_ = UnconnectedDrive::kNone;
+        return true;
+    }
+    return true;
+  }
+
+  bool ApplyDirectivesUpTo(int line) {
+    while (directive_pos_ < directives_.size() &&
+           directives_[directive_pos_].line <= line) {
+      if (!ApplyDirective(directives_[directive_pos_])) {
+        return false;
+      }
+      ++directive_pos_;
+    }
+    return true;
+  }
+
   std::string path_;
   std::vector<Token> tokens_;
   Diagnostics* diagnostics_ = nullptr;
@@ -6117,6 +7357,11 @@ class Parser {
   std::unordered_set<std::string> current_genvars_;
   Module* current_module_ = nullptr;
   ParseOptions options_;
+  std::vector<DirectiveEvent> directives_;
+  size_t directive_pos_ = 0;
+  NetType default_nettype_ = NetType::kWire;
+  bool default_nettype_none_ = false;
+  UnconnectedDrive unconnected_drive_ = UnconnectedDrive::kNone;
   bool allow_string_literals_ = false;
   int generate_id_ = 0;
 
@@ -6704,11 +7949,13 @@ bool ParseVerilogFile(const std::string& path, Program* out_program,
     return false;
   }
   std::string text;
-  if (!PreprocessVerilog(raw_text, path, diagnostics, &text)) {
+  std::vector<DirectiveEvent> directives;
+  if (!PreprocessVerilog(raw_text, path, diagnostics, &text, &directives)) {
     return false;
   }
 
-  Parser parser(path, Tokenize(text), diagnostics, options);
+  Parser parser(path, Tokenize(text), diagnostics, options,
+                std::move(directives));
   if (!parser.ParseProgram(out_program)) {
     return false;
   }

@@ -1,16 +1,18 @@
 # metalfpga
 
-A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Compiles a subset of Verilog HDL into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
+A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.4+ (in active development) - Event scheduling, system tasks, procedural tasks, and switch-level modeling added. Full generate/loop coverage, signed arithmetic, and 4-state logic support. **225 passing test cases** in `verilog/pass/`.
+**Current Status**: v0.5 — Compiler/codegen coverage includes match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), and procedural part-select assignment. Extensive support for generate/loops, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **228+ compiler tests** pass in `verilog/pass/`. **GPU runtime execution and validation are the next milestone.**
 
 ## What is this?
 
 metalfpga is a "GPGA" (GPU-based FPGA) compiler that:
-- Parses synthesizable Verilog RTL
+- Parses Verilog RTL and testbench constructs
 - Flattens module hierarchy through elaboration
 - Generates Metal compute shaders for GPU execution
-- Emits host-side stubs (runtime wiring is still TODO)
+- Emits host-side runtime scaffolding
+
+**Current phase:** MSL codegen is in place; GPU runtime dispatch/validation is in development.
 
 This allows FPGA designers to prototype and validate hardware designs on GPUs before synthesis to actual hardware, leveraging massive parallelism for fast simulation.
 
@@ -51,9 +53,17 @@ cmake --build build
 ./build/metalfpga_cli path/to/top.v --auto --top top
 ```
 
+## Output Artifacts
+
+The compiler produces:
+
+- **Metal shaders** (`--emit-msl`): Emits `.metal` source containing compute kernels for combinational logic, sequential blocks, and scheduler infrastructure (layout depends on design/top and codegen mode)
+- **Host runtime stub** (`--emit-host`): `.mm` file with buffer layout, service records, and Metal dispatch scaffolding (requires manual integration)
+- **Flattened netlist** (`--dump-flat`): Human-readable elaborated design showing hierarchy flattening, signal widths, drivers, and lowered constructs
+
 ## Supported Verilog Features
 
-### ✅ Working
+### ✅ Implemented (frontend/elaboration/codegen)
 - Module declarations with hierarchy and parameters
 - Port declarations: `input`, `output`, `inout`
 - Port connections (named and positional)
@@ -75,17 +85,20 @@ cmake --build build
 - Initial blocks
 - Functions (inputs + single return assignment, inlined during elaboration)
 - Operators:
-  - Arithmetic: `+`, `-`, `*`, `/`, `%`
+  - Arithmetic: `+`, `-`, `*`, `/`, `%`, `**` (power/exponentiation)
   - Bitwise: `&`, `|`, `^`, `~`
   - Reduction: `&`, `|`, `^`, `~&`, `~|`, `~^`
   - Logical: `&&`, `||`, `!`
   - Shifts: `<<`, `>>`, `<<<`, `>>>`
   - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+  - Case equality: `===`, `!==` (exact bit-for-bit match including X/Z, requires `--4state`)
+  - Wildcard match: `==?`, `!=?` (pattern matching with X/Z as don't-care, requires `--4state`)
   - Ternary: `? :`
 - Signed arithmetic with `signed` keyword
 - Arithmetic right shift (`>>>`) with sign extension
 - Type casting: `$signed(...)`, `$unsigned(...)`
 - Bit/part selects: `signal[3]`, `signal[7:0]`, `signal[i +: 4]`, `signal[i -: 4]`
+- Part-select assignment (procedural): `data[7:0] = value`, `data[idx +: 4] = value`, `data[idx -: 4] = value`
 - Concatenation: `{a, b, c}`
 - Replication: `{4{1'b0}}`
 - Memory arrays: `reg [7:0] mem [0:255]` (multi-dimensional supported)
@@ -96,15 +109,15 @@ cmake --build build
   - X/Z propagation in operations
   - See [4STATE.md](4STATE.md) for details
 - System tasks:
-  - `$display`, `$write` - Console output with format specifiers (%h, %d, %b, %o, %t)
-  - `$monitor`, `$strobe` - Monitored value printing
-  - `$finish`, `$stop` - Simulation control
-  - `$time`, `$stime`, `$realtime` - Time retrieval
-  - `$timeformat`, `$printtimescale` - Time formatting
-  - `$readmemh`, `$readmemb` - Memory initialization
-  - `$dumpfile`, `$dumpvars` - Waveform dumping
-  - `$sformat` - String formatting
-  - `$signed`, `$unsigned`, `$clog2` - Type/math functions
+  - Output: `$display`, `$write`, `$strobe` - Console output with format specifiers (%h, %d, %b, %o, %t, %s)
+  - Monitoring: `$monitor` - Continuous value watching
+  - Control: `$finish`, `$stop` - Simulation control
+  - Time: `$time`, `$stime`, `$realtime` - Time retrieval
+  - Formatting: `$timeformat`, `$printtimescale` - Time formatting
+  - Memory I/O: `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - Memory initialization and dump
+  - Waveform: `$dumpfile`, `$dumpvars`, `$dumpall`, `$dumpon`, `$dumpoff` - VCD waveform dumping (infrastructure)
+  - String: `$sformat` - String formatting
+  - Math/Type: `$signed`, `$unsigned`, `$clog2`, `$bits` - Type casting and utility functions
 - Tasks (procedural `task` blocks with inputs/outputs)
 - `time` data type and time system functions
 - Named events (`event` keyword and `->` trigger)
@@ -116,18 +129,43 @@ cmake --build build
 - Timing delays (`#` delay syntax)
 - `timescale` directive
 
+### 🧪 Implemented but awaiting GPU runtime verification
+
+These features are fully implemented in the compiler pipeline + MSL emission, but have not yet been validated by executing GPU kernels:
+
+- Event scheduling behavior (fork/join, wait, delays) under dispatch loop
+- System tasks requiring host services: `$readmemh`/`$readmemb` file I/O, `$display` formatting, VCD waveform dumping (`$dumpvars`)
+- Timing controls (`#delay`) in real-time execution
+- Switch-level resolution correctness under GPU scheduling / write ordering
+- Non-blocking assignment (`<=`) scheduling semantics
+
+**Status:** MSL emission is structurally sound and follows intended semantics. Bugs may surface during actual Metal dispatch and are expected to be addressed during runtime validation phase.
+
 ### ❌ Not Yet Implemented
 **High Priority**:
-- Event scheduling refinement (initial implementation complete, needs testing/validation)
+- Runtime kernel execution and validation (MSL code generation complete, GPU dispatch pending)
+- Event scheduling validation (infrastructure complete, needs runtime testing)
 - Full sensitivity list support beyond `@*` and `@(posedge/negedge clk)`
+- Hierarchical name references (`top.sub.signal`)
+- Real number arithmetic (floating-point)
 
 **Low Priority**:
 - SystemVerilog constructs
 
+**Non-goals** (for now):
+- Full SystemVerilog compliance (classes, interfaces, packages, assertions)
+- Full PLI/VPI compatibility
+- Cycle-accurate timing matching commercial simulators
+
 ## Test Suite
 
-**225 passing test cases** in `verilog/pass/`:
+**228+ passing compiler tests** in `verilog/pass/`:
+
+These tests currently validate parsing, elaboration, codegen output quality, and semantic lowering decisions. Full GPU runtime validation is in progress.
 - Arithmetic and logic operations
+- Match-3 operators (case equality `===`/`!==`, wildcard match `==?`/`!=?`)
+- Power operator (`**`) with signed/unsigned variants
+- Part-select assignment (fixed `[7:0]` and indexed `[idx +: 4]` ranges)
 - Reduction operators (all 6 variants: &, |, ^, ~&, ~|, ~^)
   - Comprehensive coverage: nested, slices, wide buses (64/128/256-bit)
   - In combinational and sequential contexts
@@ -158,13 +196,20 @@ cmake --build build
 
 Run all passing tests:
 ```sh
+set -e
 for f in verilog/pass/*.v; do
   ./build/metalfpga_cli "$f"
 done
 ```
 
+Run a design in 4-state mode (for X/Z propagation features):
+```sh
+./build/metalfpga_cli --4state path/to/design.v
+```
+
 Run all tests (including in-development):
 ```sh
+set -e
 for f in verilog/test_*.v; do
   ./build/metalfpga_cli "$f"
 done
@@ -202,7 +247,7 @@ src/
   runtime/        # Metal runtime wrapper
   utils/          # Diagnostics and utilities
 verilog/
-  pass/           # Passing test cases (225 files)
+  pass/           # Passing test cases (228+ files)
   systemverilog/  # SystemVerilog feature tests
   test_*.v        # Additional test coverage
 docs/
@@ -237,6 +282,4 @@ For proprietary/closed-source integration, commercial licenses are available. Co
 - Integrate into proprietary toolchains
 - Redistribute without copyleft restrictions
 
-**For commercial licensing inquiries:** support@tomsdata.no
-
-See [LICENSE.COMMERCIAL](LICENSE.COMMERCIAL) for terms.
+For commercial licensing inquiries, see [LICENSE.COMMERCIAL](LICENSE.COMMERCIAL) for contact information and terms.

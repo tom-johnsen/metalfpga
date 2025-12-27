@@ -31,6 +31,15 @@ const Net* FindNet(const Module& module, const std::string& name) {
   return nullptr;
 }
 
+const Port* FindPort(const Module& module, const std::string& name) {
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return &port;
+    }
+  }
+  return nullptr;
+}
+
 const Function* FindFunction(const Module& module, const std::string& name) {
   for (const auto& func : module.functions) {
     if (func.name == name) {
@@ -193,18 +202,36 @@ const std::unordered_map<std::string, std::string>* g_task_renames = nullptr;
 std::unique_ptr<Expr> SimplifyExpr(std::unique_ptr<Expr> expr,
                                    const Module& module);
 std::unique_ptr<Expr> MakeNumberExpr(uint64_t value);
+std::unique_ptr<Expr> MakeNumberExprWidth(uint64_t value, int width);
 std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width);
+uint64_t MaskForWidth64(int width);
+std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name);
+std::unique_ptr<Expr> MakeUnaryExpr(char op, std::unique_ptr<Expr> operand);
+std::unique_ptr<Expr> MakeBinaryExpr(char op, std::unique_ptr<Expr> lhs,
+                                     std::unique_ptr<Expr> rhs);
+std::unique_ptr<Expr> MakeTernaryExpr(std::unique_ptr<Expr> condition,
+                                      std::unique_ptr<Expr> then_expr,
+                                      std::unique_ptr<Expr> else_expr);
+std::unique_ptr<Expr> MakeAllXExpr(int width);
 using BindingMap = std::unordered_map<std::string, const Expr*>;
 std::unique_ptr<Expr> CloneExprWithParams(
     const Expr& expr,
     const std::function<std::string(const std::string&)>& rename,
     const ParamBindings& params, const Module* module,
     Diagnostics* diagnostics, const BindingMap* bindings);
+std::unique_ptr<Expr> CloneExprWithParamsImpl(
+    const Expr& expr,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module* module,
+    Diagnostics* diagnostics, const BindingMap* bindings, int inline_depth);
 void CollectIdentifiers(const Expr& expr,
                         std::unordered_set<std::string>* out);
 void CollectAssignedSignals(const Statement& statement,
                             std::unordered_set<std::string>* out);
 int SignalWidth(const Module& module, const std::string& name);
+int ExprWidth(const Expr& expr, const Module& module);
+bool ExprHasSystemCall(const Expr& expr);
+bool StatementHasSystemCall(const Statement& statement);
 bool CloneStatement(
     const Statement& statement,
     const std::function<std::string(const std::string&)>& rename,
@@ -238,10 +265,942 @@ bool TryEvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
   return true;
 }
 
+struct ConstVar {
+  int64_t value = 0;
+  int width = 32;
+  bool is_signed = false;
+  bool initialized = false;
+};
+
+struct ConstScope {
+  std::unordered_map<std::string, ConstVar> vars;
+};
+
+bool EvalConstExprInScope(const Expr& expr, const Module& module,
+                          const ParamBindings& params, const ConstScope& scope,
+                          int64_t* out_value, Diagnostics* diagnostics,
+                          std::unordered_set<std::string>* call_stack);
+
+bool EvalConstFunction(const Function& func, const Module& module,
+                       const ParamBindings& params,
+                       const std::vector<int64_t>& arg_values,
+                       int64_t* out_value, Diagnostics* diagnostics,
+                       std::unordered_set<std::string>* call_stack);
+
+void ReplaceExprWithNumber(Expr* expr, int64_t value, int width) {
+  if (!expr) {
+    return;
+  }
+  uint64_t bits = static_cast<uint64_t>(value);
+  if (width < 64) {
+    bits &= MaskForWidth64(width);
+  }
+  expr->kind = ExprKind::kNumber;
+  expr->number = bits;
+  expr->value_bits = bits;
+  expr->x_bits = 0;
+  expr->z_bits = 0;
+  expr->has_width = true;
+  expr->number_width = width;
+  expr->is_signed = false;
+  expr->ident.clear();
+  expr->call_args.clear();
+  expr->elements.clear();
+  expr->operand.reset();
+  expr->lhs.reset();
+  expr->rhs.reset();
+  expr->condition.reset();
+  expr->then_expr.reset();
+  expr->else_expr.reset();
+  expr->base.reset();
+  expr->msb_expr.reset();
+  expr->lsb_expr.reset();
+  expr->index.reset();
+  expr->repeat_expr.reset();
+}
+
+bool ResolveConstFunctionCalls(Expr* expr, const Module& module,
+                               const ParamBindings& params,
+                               const ConstScope& scope, Diagnostics* diagnostics,
+                               std::unordered_set<std::string>* call_stack) {
+  if (!expr) {
+    return true;
+  }
+  switch (expr->kind) {
+    case ExprKind::kCall: {
+      if (!expr->ident.empty() && expr->ident.front() == '$') {
+        diagnostics->Add(Severity::kError,
+                         "system function '" + expr->ident +
+                             "' not allowed in constant function");
+        return false;
+      }
+      const Function* func = FindFunction(module, expr->ident);
+      if (!func) {
+        diagnostics->Add(Severity::kError,
+                         "unknown function '" + expr->ident + "'");
+        return false;
+      }
+      std::vector<int64_t> arg_values;
+      arg_values.reserve(expr->call_args.size());
+      for (const auto& arg : expr->call_args) {
+        int64_t value = 0;
+        if (!arg || !EvalConstExprInScope(*arg, module, params, scope, &value,
+                                          diagnostics, call_stack)) {
+          return false;
+        }
+        arg_values.push_back(value);
+      }
+      int64_t result = 0;
+      if (!EvalConstFunction(*func, module, params, arg_values, &result,
+                             diagnostics, call_stack)) {
+        return false;
+      }
+      ReplaceExprWithNumber(expr, result, func->width);
+      return true;
+    }
+    case ExprKind::kUnary:
+      return ResolveConstFunctionCalls(expr->operand.get(), module, params,
+                                       scope, diagnostics, call_stack);
+    case ExprKind::kBinary:
+      return ResolveConstFunctionCalls(expr->lhs.get(), module, params, scope,
+                                       diagnostics, call_stack) &&
+             ResolveConstFunctionCalls(expr->rhs.get(), module, params, scope,
+                                       diagnostics, call_stack);
+    case ExprKind::kTernary:
+      return ResolveConstFunctionCalls(expr->condition.get(), module, params,
+                                       scope, diagnostics, call_stack) &&
+             ResolveConstFunctionCalls(expr->then_expr.get(), module, params,
+                                       scope, diagnostics, call_stack) &&
+             ResolveConstFunctionCalls(expr->else_expr.get(), module, params,
+                                       scope, diagnostics, call_stack);
+    case ExprKind::kSelect:
+      return ResolveConstFunctionCalls(expr->base.get(), module, params, scope,
+                                       diagnostics, call_stack) &&
+             ResolveConstFunctionCalls(expr->msb_expr.get(), module, params,
+                                       scope, diagnostics, call_stack) &&
+             ResolveConstFunctionCalls(expr->lsb_expr.get(), module, params,
+                                       scope, diagnostics, call_stack);
+    case ExprKind::kIndex:
+      return ResolveConstFunctionCalls(expr->base.get(), module, params, scope,
+                                       diagnostics, call_stack) &&
+             ResolveConstFunctionCalls(expr->index.get(), module, params, scope,
+                                       diagnostics, call_stack);
+    case ExprKind::kConcat:
+      for (const auto& element : expr->elements) {
+        if (!ResolveConstFunctionCalls(element.get(), module, params, scope,
+                                       diagnostics, call_stack)) {
+          return false;
+        }
+      }
+      return ResolveConstFunctionCalls(expr->repeat_expr.get(), module, params,
+                                       scope, diagnostics, call_stack);
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return true;
+  }
+  return true;
+}
+
+bool EvalConstExprInScope(const Expr& expr, const Module& module,
+                          const ParamBindings& params, const ConstScope& scope,
+                          int64_t* out_value, Diagnostics* diagnostics,
+                          std::unordered_set<std::string>* call_stack) {
+  std::unordered_set<std::string> idents;
+  CollectIdentifiers(expr, &idents);
+  for (const auto& name : idents) {
+    auto it = scope.vars.find(name);
+    if (it != scope.vars.end()) {
+      if (!it->second.initialized) {
+        diagnostics->Add(Severity::kError,
+                         "use of uninitialized variable '" + name +
+                             "' in constant function");
+        return false;
+      }
+      continue;
+    }
+    if (params.values.count(name) > 0) {
+      continue;
+    }
+    diagnostics->Add(Severity::kError,
+                     "unknown identifier '" + name +
+                         "' in constant function");
+    return false;
+  }
+
+  auto resolved = CloneExpr(expr);
+  if (!ResolveConstFunctionCalls(resolved.get(), module, params, scope,
+                                 diagnostics, call_stack)) {
+    return false;
+  }
+  std::unordered_map<std::string, int64_t> scope_values = params.values;
+  for (const auto& entry : scope.vars) {
+    if (entry.second.initialized) {
+      scope_values[entry.first] = entry.second.value;
+    }
+  }
+  std::string error;
+  if (!gpga::EvalConstExpr(*resolved, scope_values, out_value, &error)) {
+    diagnostics->Add(Severity::kError, error + " in constant function");
+    return false;
+  }
+  return true;
+}
+
+bool AssignConstVarValue(ConstScope* scope, const std::string& name,
+                         int64_t value, Diagnostics* diagnostics) {
+  if (!scope) {
+    return false;
+  }
+  auto it = scope->vars.find(name);
+  if (it == scope->vars.end()) {
+    diagnostics->Add(Severity::kError,
+                     "assignment to non-local '" + name +
+                         "' in constant function");
+    return false;
+  }
+  uint64_t bits = static_cast<uint64_t>(value);
+  if (it->second.width < 64) {
+    bits &= MaskForWidth64(it->second.width);
+  }
+  it->second.value = static_cast<int64_t>(bits);
+  it->second.initialized = true;
+  return true;
+}
+
+bool AssignConstVar(const SequentialAssign& assign, const Module& module,
+                    const ParamBindings& params, ConstScope* scope,
+                    Diagnostics* diagnostics,
+                    std::unordered_set<std::string>* call_stack) {
+  if (!scope || !assign.rhs) {
+    return false;
+  }
+  if (!assign.lhs_indices.empty() || assign.lhs_indexed_range) {
+    diagnostics->Add(Severity::kError,
+                     "array assignment not supported in constant function");
+    return false;
+  }
+  int64_t rhs_value = 0;
+  if (!EvalConstExprInScope(*assign.rhs, module, params, *scope, &rhs_value,
+                            diagnostics, call_stack)) {
+    return false;
+  }
+  auto it = scope->vars.find(assign.lhs);
+  if (it == scope->vars.end()) {
+    diagnostics->Add(Severity::kError,
+                     "assignment to non-local '" + assign.lhs +
+                         "' in constant function");
+    return false;
+  }
+  ConstVar& var = it->second;
+  uint64_t bits = static_cast<uint64_t>(var.value);
+  if (var.width < 64) {
+    bits &= MaskForWidth64(var.width);
+  }
+  if (assign.lhs_index) {
+    int64_t index = 0;
+    if (!EvalConstExprInScope(*assign.lhs_index, module, params, *scope, &index,
+                              diagnostics, call_stack)) {
+      return false;
+    }
+    if (index < 0 || index >= var.width) {
+      return true;
+    }
+    uint64_t mask = 1ull << static_cast<uint64_t>(index);
+    if ((rhs_value & 1ll) != 0) {
+      bits |= mask;
+    } else {
+      bits &= ~mask;
+    }
+    var.value = static_cast<int64_t>(bits);
+    var.initialized = true;
+    return true;
+  }
+  if (assign.lhs_has_range) {
+    int64_t msb = assign.lhs_msb;
+    int64_t lsb = assign.lhs_lsb;
+    if (assign.lhs_indexed_range) {
+      if (!assign.lhs_msb_expr || !assign.lhs_lsb_expr) {
+        diagnostics->Add(Severity::kError,
+                         "indexed part select missing bounds");
+        return false;
+      }
+      if (!EvalConstExprInScope(*assign.lhs_msb_expr, module, params, *scope,
+                                &msb, diagnostics, call_stack) ||
+          !EvalConstExprInScope(*assign.lhs_lsb_expr, module, params, *scope,
+                                &lsb, diagnostics, call_stack)) {
+        return false;
+      }
+    }
+    int64_t lo = std::min(msb, lsb);
+    int64_t hi = std::max(msb, lsb);
+    int width = static_cast<int>(hi - lo + 1);
+    if (lo < 0 || hi >= var.width) {
+      return true;
+    }
+    uint64_t mask = MaskForWidth64(width);
+    uint64_t insert = static_cast<uint64_t>(rhs_value) & mask;
+    bits &= ~(mask << static_cast<uint64_t>(lo));
+    bits |= (insert << static_cast<uint64_t>(lo));
+    var.value = static_cast<int64_t>(bits);
+    var.initialized = true;
+    return true;
+  }
+  return AssignConstVarValue(scope, assign.lhs, rhs_value, diagnostics);
+}
+
+bool EvalConstStatements(const std::vector<Statement>& statements,
+                         const Module& module, const ParamBindings& params,
+                         ConstScope* scope, Diagnostics* diagnostics,
+                         std::unordered_set<std::string>* call_stack);
+
+bool EvalConstStatement(const Statement& stmt, const Module& module,
+                        const ParamBindings& params, ConstScope* scope,
+                        Diagnostics* diagnostics,
+                        std::unordered_set<std::string>* call_stack) {
+  const int kMaxIterations = 1 << 20;
+  switch (stmt.kind) {
+    case StatementKind::kAssign:
+      if (stmt.assign.nonblocking) {
+        diagnostics->Add(Severity::kError,
+                         "nonblocking assignment not allowed in constant "
+                         "function");
+        return false;
+      }
+      return AssignConstVar(stmt.assign, module, params, scope, diagnostics,
+                            call_stack);
+    case StatementKind::kIf: {
+      int64_t cond = 0;
+      if (stmt.condition &&
+          !EvalConstExprInScope(*stmt.condition, module, params, *scope, &cond,
+                                diagnostics, call_stack)) {
+        return false;
+      }
+      const auto& branch = (cond != 0) ? stmt.then_branch : stmt.else_branch;
+      return EvalConstStatements(branch, module, params, scope, diagnostics,
+                                 call_stack);
+    }
+    case StatementKind::kBlock:
+      return EvalConstStatements(stmt.block, module, params, scope, diagnostics,
+                                 call_stack);
+    case StatementKind::kFor: {
+      if (!stmt.for_init_rhs) {
+        diagnostics->Add(Severity::kError,
+                         "missing for init in constant function");
+        return false;
+      }
+      int64_t init_value = 0;
+      if (!EvalConstExprInScope(*stmt.for_init_rhs, module, params, *scope,
+                                &init_value, diagnostics, call_stack)) {
+        return false;
+      }
+      if (!AssignConstVarValue(scope, stmt.for_init_lhs, init_value,
+                               diagnostics)) {
+        return false;
+      }
+      int iterations = 0;
+      while (true) {
+        int64_t cond = 0;
+        if (stmt.for_condition &&
+            !EvalConstExprInScope(*stmt.for_condition, module, params, *scope,
+                                  &cond, diagnostics, call_stack)) {
+          return false;
+        }
+        if (cond == 0) {
+          break;
+        }
+        if (!EvalConstStatements(stmt.for_body, module, params, scope,
+                                 diagnostics, call_stack)) {
+          return false;
+        }
+        if (!stmt.for_step_rhs) {
+          diagnostics->Add(Severity::kError,
+                           "missing for step in constant function");
+          return false;
+        }
+        int64_t step_value = 0;
+        if (!EvalConstExprInScope(*stmt.for_step_rhs, module, params, *scope,
+                                  &step_value, diagnostics, call_stack)) {
+          return false;
+        }
+        if (!AssignConstVarValue(scope, stmt.for_step_lhs, step_value,
+                                 diagnostics)) {
+          return false;
+        }
+        if (++iterations > kMaxIterations) {
+          diagnostics->Add(Severity::kError,
+                           "for loop exceeded iteration limit in constant "
+                           "function");
+          return false;
+        }
+      }
+      return true;
+    }
+    case StatementKind::kWhile: {
+      int iterations = 0;
+      while (true) {
+        int64_t cond = 0;
+        if (stmt.while_condition &&
+            !EvalConstExprInScope(*stmt.while_condition, module, params, *scope,
+                                  &cond, diagnostics, call_stack)) {
+          return false;
+        }
+        if (cond == 0) {
+          break;
+        }
+        if (!EvalConstStatements(stmt.while_body, module, params, scope,
+                                 diagnostics, call_stack)) {
+          return false;
+        }
+        if (++iterations > kMaxIterations) {
+          diagnostics->Add(Severity::kError,
+                           "while loop exceeded iteration limit in constant "
+                           "function");
+          return false;
+        }
+      }
+      return true;
+    }
+    case StatementKind::kRepeat: {
+      if (!stmt.repeat_count) {
+        diagnostics->Add(Severity::kError,
+                         "missing repeat count in constant function");
+        return false;
+      }
+      int64_t count = 0;
+      if (!EvalConstExprInScope(*stmt.repeat_count, module, params, *scope,
+                                &count, diagnostics, call_stack)) {
+        return false;
+      }
+      if (count < 0) {
+        count = 0;
+      }
+      for (int64_t i = 0; i < count; ++i) {
+        if (!EvalConstStatements(stmt.repeat_body, module, params, scope,
+                                 diagnostics, call_stack)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    case StatementKind::kCase:
+    default:
+      diagnostics->Add(Severity::kError,
+                       "unsupported statement in constant function");
+      return false;
+  }
+}
+
+bool EvalConstStatements(const std::vector<Statement>& statements,
+                         const Module& module, const ParamBindings& params,
+                         ConstScope* scope, Diagnostics* diagnostics,
+                         std::unordered_set<std::string>* call_stack) {
+  for (const auto& stmt : statements) {
+    if (!EvalConstStatement(stmt, module, params, scope, diagnostics,
+                            call_stack)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool EvalConstFunction(const Function& func, const Module& module,
+                       const ParamBindings& params,
+                       const std::vector<int64_t>& arg_values,
+                       int64_t* out_value, Diagnostics* diagnostics,
+                       std::unordered_set<std::string>* call_stack) {
+  if (!call_stack) {
+    return false;
+  }
+  std::string key = func.name;
+  key.push_back('(');
+  for (size_t i = 0; i < arg_values.size(); ++i) {
+    if (i != 0) {
+      key.push_back(',');
+    }
+    key += std::to_string(arg_values[i]);
+  }
+  key.push_back(')');
+  if (call_stack->count(key) > 0) {
+    diagnostics->Add(Severity::kError,
+                     "recursive function '" + func.name +
+                         "' not supported in constant evaluation");
+    return false;
+  }
+  if (call_stack->size() > 1024) {
+    diagnostics->Add(Severity::kError,
+                     "function recursion too deep in constant evaluation");
+    return false;
+  }
+  call_stack->insert(key);
+  ConstScope scope;
+  ConstVar out_var;
+  out_var.width = func.width;
+  out_var.is_signed = func.is_signed;
+  out_var.initialized = false;
+  scope.vars[func.name] = out_var;
+  if (func.args.size() != arg_values.size()) {
+    diagnostics->Add(Severity::kError,
+                     "function '" + func.name + "' expects " +
+                         std::to_string(func.args.size()) + " argument(s)");
+    call_stack->erase(key);
+    return false;
+  }
+  for (size_t i = 0; i < func.args.size(); ++i) {
+    ConstVar arg;
+    arg.width = func.args[i].width;
+    arg.is_signed = func.args[i].is_signed;
+    arg.value = arg_values[i];
+    if (arg.width < 64) {
+      arg.value =
+          static_cast<int64_t>(static_cast<uint64_t>(arg.value) &
+                               MaskForWidth64(arg.width));
+    }
+    arg.initialized = true;
+    scope.vars[func.args[i].name] = arg;
+  }
+  for (const auto& local : func.locals) {
+    ConstVar local_var;
+    local_var.width = local.width;
+    local_var.is_signed = local.is_signed;
+    local_var.initialized = false;
+    scope.vars[local.name] = local_var;
+  }
+  if (!EvalConstStatements(func.body, module, params, &scope, diagnostics,
+                           call_stack)) {
+    call_stack->erase(key);
+    return false;
+  }
+  auto it = scope.vars.find(func.name);
+  if (it == scope.vars.end() || !it->second.initialized) {
+    diagnostics->Add(Severity::kError,
+                     "function '" + func.name +
+                         "' missing return assignment");
+    call_stack->erase(key);
+    return false;
+  }
+  if (out_value) {
+    *out_value = it->second.value;
+  }
+  call_stack->erase(key);
+  return true;
+}
+
+struct SymbolicVar {
+  std::unique_ptr<Expr> expr;
+  int width = 0;
+  bool is_signed = false;
+};
+
+using SymbolicEnv = std::unordered_map<std::string, SymbolicVar>;
+
+SymbolicEnv CloneSymbolicEnv(const SymbolicEnv& env) {
+  SymbolicEnv out;
+  out.reserve(env.size());
+  for (const auto& entry : env) {
+    SymbolicVar var;
+    var.width = entry.second.width;
+    var.is_signed = entry.second.is_signed;
+    if (entry.second.expr) {
+      var.expr = gpga::CloneExpr(*entry.second.expr);
+    }
+    out.emplace(entry.first, std::move(var));
+  }
+  return out;
+}
+
+std::unique_ptr<Expr> CloneExprWithParamsImpl(
+    const Expr& expr,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module* module,
+    Diagnostics* diagnostics, const BindingMap* bindings, int inline_depth);
+
+std::unique_ptr<Expr> CloneExprWithEnv(
+    const Expr& expr,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module& module, const SymbolicEnv& env,
+    Diagnostics* diagnostics, int inline_depth) {
+  BindingMap bindings;
+  bindings.reserve(env.size());
+  for (const auto& entry : env) {
+    if (entry.second.expr) {
+      bindings[entry.first] = entry.second.expr.get();
+    }
+  }
+  return CloneExprWithParamsImpl(expr, rename, params, &module, diagnostics,
+                                 &bindings, inline_depth);
+}
+
+std::unique_ptr<Expr> MakeBoolExpr(std::unique_ptr<Expr> expr) {
+  return MakeUnaryExpr('B', std::move(expr));
+}
+
+std::unique_ptr<Expr> MakeMaskExpr(int width, int target_width) {
+  uint64_t mask = MaskForWidth64(width);
+  return MakeNumberExprWidth(mask, target_width);
+}
+
+std::unique_ptr<Expr> BuildRangeAssignExpr(
+    const Expr& base_expr, std::unique_ptr<Expr> rhs_expr,
+    std::unique_ptr<Expr> lsb_expr, int slice_width, int base_width) {
+  if (!rhs_expr || !lsb_expr) {
+    return nullptr;
+  }
+  auto mask = MakeMaskExpr(slice_width, base_width);
+  auto mask_shifted = MakeBinaryExpr('l', gpga::CloneExpr(*mask),
+                                     gpga::CloneExpr(*lsb_expr));
+  auto cleared = MakeBinaryExpr('&', gpga::CloneExpr(base_expr),
+                                MakeUnaryExpr('~', std::move(mask_shifted)));
+  auto rhs_masked = MakeBinaryExpr('&', std::move(rhs_expr), std::move(mask));
+  auto shifted = MakeBinaryExpr('l', std::move(rhs_masked), std::move(lsb_expr));
+  return MakeBinaryExpr('|', std::move(cleared), std::move(shifted));
+}
+
+bool TryEvalConstExprWithEnv(const Expr& expr, const ParamBindings& params,
+                             const Module& module, const SymbolicEnv& env,
+                             int64_t* out_value, Diagnostics* diagnostics,
+                             int inline_depth) {
+  auto resolved = CloneExprWithEnv(expr, [](const std::string& ident) { return ident; },
+                                   params, module, env, diagnostics, inline_depth);
+  if (!resolved) {
+    return false;
+  }
+  std::string error;
+  if (!gpga::EvalConstExpr(*resolved, params.values, out_value, &error)) {
+    return false;
+  }
+  return true;
+}
+
+bool AssignSymbolic(const SequentialAssign& assign, const Module& module,
+                    const ParamBindings& params,
+                    const std::function<std::string(const std::string&)>& rename,
+                    SymbolicEnv* env, Diagnostics* diagnostics,
+                    int inline_depth) {
+  if (!env) {
+    return false;
+  }
+  auto it = env->find(assign.lhs);
+  if (it == env->end()) {
+    diagnostics->Add(Severity::kError,
+                     "assignment to non-local '" + assign.lhs +
+                         "' in function body");
+    return false;
+  }
+  if (!assign.rhs) {
+    it->second.expr = MakeAllXExpr(it->second.width);
+    return true;
+  }
+  auto rhs = CloneExprWithEnv(*assign.rhs, rename, params, module, *env,
+                              diagnostics, inline_depth);
+  if (!rhs) {
+    return false;
+  }
+  if (!assign.lhs_indices.empty() || assign.lhs_indexed_range) {
+    diagnostics->Add(Severity::kError,
+                     "array assignment not supported in function body");
+    return false;
+  }
+  if (assign.lhs_index) {
+    auto idx = CloneExprWithEnv(*assign.lhs_index, rename, params, module, *env,
+                                diagnostics, inline_depth);
+    if (!idx) {
+      return false;
+    }
+    auto updated = BuildRangeAssignExpr(*it->second.expr, std::move(rhs),
+                                        std::move(idx), 1, it->second.width);
+    if (!updated) {
+      return false;
+    }
+    it->second.expr = std::move(updated);
+    return true;
+  }
+  if (assign.lhs_has_range) {
+    int64_t msb = assign.lhs_msb;
+    int64_t lsb = assign.lhs_lsb;
+    std::unique_ptr<Expr> lsb_expr;
+    int width = 0;
+    if (assign.lhs_indexed_range) {
+      if (!assign.lhs_lsb_expr) {
+        diagnostics->Add(Severity::kError,
+                         "indexed part select missing lsb");
+        return false;
+      }
+      lsb_expr = CloneExprWithEnv(*assign.lhs_lsb_expr, rename, params, module,
+                                  *env, diagnostics, inline_depth);
+      width = assign.lhs_indexed_width;
+    } else {
+      int lo = std::min(msb, lsb);
+      int hi = std::max(msb, lsb);
+      width = hi - lo + 1;
+      lsb_expr = MakeNumberExpr(static_cast<uint64_t>(lo));
+    }
+    auto updated = BuildRangeAssignExpr(*it->second.expr, std::move(rhs),
+                                        std::move(lsb_expr), width,
+                                        it->second.width);
+    if (!updated) {
+      return false;
+    }
+    it->second.expr = std::move(updated);
+    return true;
+  }
+  it->second.expr = std::move(rhs);
+  return true;
+}
+
+bool EvalSymbolicStatements(const std::vector<Statement>& statements,
+                            const Module& module, const ParamBindings& params,
+                            const std::function<std::string(const std::string&)>& rename,
+                            SymbolicEnv* env, Diagnostics* diagnostics,
+                            int inline_depth);
+
+bool EvalSymbolicStatement(const Statement& stmt, const Module& module,
+                           const ParamBindings& params,
+                           const std::function<std::string(const std::string&)>& rename,
+                           SymbolicEnv* env, Diagnostics* diagnostics,
+                           int inline_depth) {
+  const int kMaxIterations = 1 << 20;
+  switch (stmt.kind) {
+    case StatementKind::kAssign:
+      if (stmt.assign.nonblocking) {
+        diagnostics->Add(Severity::kError,
+                         "nonblocking assignment not allowed in function body");
+        return false;
+      }
+      return AssignSymbolic(stmt.assign, module, params, rename, env,
+                            diagnostics, inline_depth);
+    case StatementKind::kIf: {
+      std::unique_ptr<Expr> cond_expr;
+      if (stmt.condition) {
+        cond_expr = CloneExprWithEnv(*stmt.condition, rename, params, module,
+                                     *env, diagnostics, inline_depth);
+      } else {
+        cond_expr = MakeNumberExpr(0u);
+      }
+      if (!cond_expr) {
+        return false;
+      }
+      SymbolicEnv then_env = CloneSymbolicEnv(*env);
+      SymbolicEnv else_env = CloneSymbolicEnv(*env);
+      if (!EvalSymbolicStatements(stmt.then_branch, module, params, rename,
+                                  &then_env, diagnostics, inline_depth)) {
+        return false;
+      }
+      if (!EvalSymbolicStatements(stmt.else_branch, module, params, rename,
+                                  &else_env, diagnostics, inline_depth)) {
+        return false;
+      }
+      auto cond_bool = MakeBoolExpr(std::move(cond_expr));
+      for (auto& entry : *env) {
+        auto then_it = then_env.find(entry.first);
+        auto else_it = else_env.find(entry.first);
+        if (then_it == then_env.end() || else_it == else_env.end()) {
+          continue;
+        }
+        if (!then_it->second.expr || !else_it->second.expr) {
+          continue;
+        }
+        auto cond_clone = gpga::CloneExpr(*cond_bool);
+        entry.second.expr = MakeTernaryExpr(
+            std::move(cond_clone), gpga::CloneExpr(*then_it->second.expr),
+            gpga::CloneExpr(*else_it->second.expr));
+      }
+      return true;
+    }
+    case StatementKind::kBlock:
+      return EvalSymbolicStatements(stmt.block, module, params, rename, env,
+                                    diagnostics, inline_depth);
+    case StatementKind::kFor: {
+      if (!stmt.for_init_rhs || !stmt.for_step_rhs || !stmt.for_condition) {
+        diagnostics->Add(Severity::kError,
+                         "incomplete for loop in function body");
+        return false;
+      }
+      int64_t init_value = 0;
+      if (!TryEvalConstExprWithEnv(*stmt.for_init_rhs, params, module, *env,
+                                   &init_value, diagnostics, inline_depth)) {
+        diagnostics->Add(Severity::kError,
+                         "for init must be constant in function body");
+        return false;
+      }
+      SequentialAssign init_assign;
+      init_assign.lhs = stmt.for_init_lhs;
+      init_assign.rhs = MakeNumberExprSignedWidth(init_value, 32);
+      if (!AssignSymbolic(init_assign, module, params, rename, env, diagnostics,
+                          inline_depth)) {
+        return false;
+      }
+      int iterations = 0;
+      while (true) {
+        int64_t cond_value = 0;
+        if (!TryEvalConstExprWithEnv(*stmt.for_condition, params, module, *env,
+                                     &cond_value, diagnostics, inline_depth)) {
+          diagnostics->Add(Severity::kError,
+                           "for condition must be constant in function body");
+          return false;
+        }
+        if (cond_value == 0) {
+          break;
+        }
+        if (!EvalSymbolicStatements(stmt.for_body, module, params, rename, env,
+                                    diagnostics, inline_depth)) {
+          return false;
+        }
+        int64_t step_value = 0;
+        if (!TryEvalConstExprWithEnv(*stmt.for_step_rhs, params, module, *env,
+                                     &step_value, diagnostics, inline_depth)) {
+          diagnostics->Add(Severity::kError,
+                           "for step must be constant in function body");
+          return false;
+        }
+        SequentialAssign step_assign;
+        step_assign.lhs = stmt.for_step_lhs;
+        step_assign.rhs = MakeNumberExprSignedWidth(step_value, 32);
+        if (!AssignSymbolic(step_assign, module, params, rename, env,
+                            diagnostics, inline_depth)) {
+          return false;
+        }
+        if (++iterations > kMaxIterations) {
+          diagnostics->Add(Severity::kError,
+                           "for loop exceeded iteration limit in function body");
+          return false;
+        }
+      }
+      return true;
+    }
+    case StatementKind::kWhile: {
+      int iterations = 0;
+      while (true) {
+        if (!stmt.while_condition) {
+          diagnostics->Add(Severity::kError,
+                           "missing while condition in function body");
+          return false;
+        }
+        int64_t cond_value = 0;
+        if (!TryEvalConstExprWithEnv(*stmt.while_condition, params, module,
+                                     *env, &cond_value, diagnostics,
+                                     inline_depth)) {
+          diagnostics->Add(Severity::kError,
+                           "while condition must be constant in function body");
+          return false;
+        }
+        if (cond_value == 0) {
+          break;
+        }
+        if (!EvalSymbolicStatements(stmt.while_body, module, params, rename,
+                                    env, diagnostics, inline_depth)) {
+          return false;
+        }
+        if (++iterations > kMaxIterations) {
+          diagnostics->Add(Severity::kError,
+                           "while loop exceeded iteration limit in function body");
+          return false;
+        }
+      }
+      return true;
+    }
+    case StatementKind::kRepeat: {
+      if (!stmt.repeat_count) {
+        diagnostics->Add(Severity::kError,
+                         "missing repeat count in function body");
+        return false;
+      }
+      int64_t count = 0;
+      if (!TryEvalConstExprWithEnv(*stmt.repeat_count, params, module, *env,
+                                   &count, diagnostics, inline_depth)) {
+        diagnostics->Add(Severity::kError,
+                         "repeat count must be constant in function body");
+        return false;
+      }
+      if (count < 0) {
+        count = 0;
+      }
+      for (int64_t i = 0; i < count; ++i) {
+        if (!EvalSymbolicStatements(stmt.repeat_body, module, params, rename,
+                                    env, diagnostics, inline_depth)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    case StatementKind::kCase:
+    default:
+      diagnostics->Add(Severity::kError,
+                       "unsupported statement in function body");
+      return false;
+  }
+}
+
+bool EvalSymbolicStatements(const std::vector<Statement>& statements,
+                            const Module& module, const ParamBindings& params,
+                            const std::function<std::string(const std::string&)>& rename,
+                            SymbolicEnv* env, Diagnostics* diagnostics,
+                            int inline_depth) {
+  for (const auto& stmt : statements) {
+    if (!EvalSymbolicStatement(stmt, module, params, rename, env, diagnostics,
+                               inline_depth)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::unique_ptr<Expr> InlineFunctionExpr(
+    const Function& func, std::vector<std::unique_ptr<Expr>> arg_exprs,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module& module,
+    Diagnostics* diagnostics, int inline_depth) {
+  const int kMaxInlineDepth = 32;
+  if (inline_depth > kMaxInlineDepth) {
+    diagnostics->Add(Severity::kError,
+                     "function call nesting too deep in '" + func.name + "'");
+    return nullptr;
+  }
+  if (func.args.size() != arg_exprs.size()) {
+    diagnostics->Add(Severity::kError,
+                     "function '" + func.name + "' expects " +
+                         std::to_string(func.args.size()) + " argument(s)");
+    return nullptr;
+  }
+  SymbolicEnv env;
+  env.reserve(func.args.size() + func.locals.size() + 1);
+  for (size_t i = 0; i < func.args.size(); ++i) {
+    SymbolicVar arg;
+    arg.width = func.args[i].width;
+    arg.is_signed = func.args[i].is_signed;
+    arg.expr = std::move(arg_exprs[i]);
+    env.emplace(func.args[i].name, std::move(arg));
+  }
+  for (const auto& local : func.locals) {
+    SymbolicVar var;
+    var.width = local.width;
+    var.is_signed = local.is_signed;
+    var.expr = MakeAllXExpr(local.width);
+    env.emplace(local.name, std::move(var));
+  }
+  SymbolicVar ret;
+  ret.width = func.width;
+  ret.is_signed = func.is_signed;
+  ret.expr = MakeAllXExpr(func.width);
+  env.emplace(func.name, std::move(ret));
+
+  if (!EvalSymbolicStatements(func.body, module, params, rename, &env,
+                              diagnostics, inline_depth)) {
+    return nullptr;
+  }
+  auto it = env.find(func.name);
+  if (it == env.end() || !it->second.expr) {
+    return MakeAllXExpr(func.width);
+  }
+  return gpga::CloneExpr(*it->second.expr);
+}
+
 void UpdateBindingsFromStatement(const Statement& statement,
                                  const Module& flat_module,
                                  ParamBindings* params) {
-  if (statement.kind == StatementKind::kAssign) {
+  if (statement.kind == StatementKind::kAssign ||
+      statement.kind == StatementKind::kForce ||
+      statement.kind == StatementKind::kRelease) {
     const auto& assign = statement.assign;
     if (assign.nonblocking || assign.lhs_index ||
         !assign.lhs_indices.empty() || assign.lhs_has_range || !assign.rhs) {
@@ -306,6 +1265,21 @@ bool EvalConstExprValue(const Expr& expr, const ParamBindings& params,
   return true;
 }
 
+bool EvalConstExprValueWithFunctions(const Expr& expr,
+                                     const ParamBindings& params,
+                                     const Module& module, int64_t* out_value,
+                                     Diagnostics* diagnostics,
+                                     const std::string& context) {
+  ConstScope scope;
+  std::unordered_set<std::string> call_stack;
+  if (!EvalConstExprInScope(expr, module, params, scope, out_value, diagnostics,
+                            &call_stack)) {
+    diagnostics->Add(Severity::kError, "failed to evaluate " + context);
+    return false;
+  }
+  return true;
+}
+
 bool EvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
                              int64_t* out_value, Diagnostics* diagnostics,
                              const std::string& context) {
@@ -326,7 +1300,9 @@ bool EvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
 
 bool ContainsAssignToVar(const Statement& statement,
                           const std::string& name) {
-  if (statement.kind == StatementKind::kAssign) {
+  if (statement.kind == StatementKind::kAssign ||
+      statement.kind == StatementKind::kForce ||
+      statement.kind == StatementKind::kRelease) {
     return statement.assign.lhs == name;
   }
   if (statement.kind == StatementKind::kIf) {
@@ -504,6 +1480,78 @@ bool ResolveArrayDims(const Net& net, const ParamBindings& params,
   return true;
 }
 
+bool ResolveRangeBounds(const std::shared_ptr<Expr>& msb_expr,
+                        const std::shared_ptr<Expr>& lsb_expr, int width,
+                        const ParamBindings& params, const Module& module,
+                        int* msb_out, int* lsb_out, Diagnostics* diagnostics,
+                        const std::string& context) {
+  if (msb_expr && lsb_expr) {
+    int64_t msb = 0;
+    int64_t lsb = 0;
+    if (!EvalConstExprValueWithFunctions(*msb_expr, params, module, &msb,
+                                         diagnostics, context + " msb")) {
+      return false;
+    }
+    if (!EvalConstExprValueWithFunctions(*lsb_expr, params, module, &lsb,
+                                         diagnostics, context + " lsb")) {
+      return false;
+    }
+    *msb_out = static_cast<int>(msb);
+    *lsb_out = static_cast<int>(lsb);
+    return true;
+  }
+  if (width > 0) {
+    *msb_out = width - 1;
+    *lsb_out = 0;
+    return true;
+  }
+  diagnostics->Add(Severity::kError,
+                   "invalid range bounds in " + context);
+  return false;
+}
+
+bool ResolvePackedBounds(const Module& module, const ParamBindings& params,
+                         const std::string& name, int* msb_out, int* lsb_out,
+                         Diagnostics* diagnostics, const std::string& context) {
+  if (const Net* net = FindNet(module, name)) {
+    return ResolveRangeBounds(net->msb_expr, net->lsb_expr, net->width, params,
+                              module, msb_out, lsb_out, diagnostics, context);
+  }
+  if (const Port* port = FindPort(module, name)) {
+    return ResolveRangeBounds(port->msb_expr, port->lsb_expr, port->width,
+                              params, module, msb_out, lsb_out, diagnostics,
+                              context);
+  }
+  diagnostics->Add(Severity::kError,
+                   "unknown signal '" + name + "' in " + context);
+  return false;
+}
+
+bool ResolveArrayBounds(const Module& module, const ParamBindings& params,
+                        const std::string& name, int* msb_out, int* lsb_out,
+                        Diagnostics* diagnostics, const std::string& context) {
+  const Net* net = FindNet(module, name);
+  if (!net || net->array_dims.empty()) {
+    return false;
+  }
+  const ArrayDim& dim = net->array_dims.front();
+  std::shared_ptr<Expr> msb_expr = dim.msb_expr;
+  std::shared_ptr<Expr> lsb_expr = dim.lsb_expr;
+  int size = dim.size;
+  if (msb_expr && lsb_expr) {
+    return ResolveRangeBounds(msb_expr, lsb_expr, size, params, module, msb_out,
+                              lsb_out, diagnostics, context);
+  }
+  if (size > 0) {
+    *msb_out = size - 1;
+    *lsb_out = 0;
+    return true;
+  }
+  diagnostics->Add(Severity::kError,
+                   "invalid array bounds in " + context);
+  return false;
+}
+
 bool ResolveArraySize(const Net& net, const ParamBindings& params,
                       int* size_out, Diagnostics* diagnostics,
                       const std::string& context) {
@@ -533,14 +1581,169 @@ bool ResolveArraySize(const Net& net, const ParamBindings& params,
   return true;
 }
 
-std::unique_ptr<Expr> MakeBinaryExpr(char op, std::unique_ptr<Expr> lhs,
-                                     std::unique_ptr<Expr> rhs) {
-  auto expr = std::make_unique<Expr>();
-  expr->kind = ExprKind::kBinary;
-  expr->op = op;
-  expr->lhs = std::move(lhs);
-  expr->rhs = std::move(rhs);
-  return expr;
+std::unique_ptr<Expr> LowerSystemFunctionCall(
+    const Expr& expr,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module& module,
+    Diagnostics* diagnostics, const BindingMap* bindings, int inline_depth) {
+  auto make_u32 = [&](uint64_t value) -> std::unique_ptr<Expr> {
+    return MakeNumberExprWidth(value, 32);
+  };
+  auto make_u64 = [&](uint64_t value) -> std::unique_ptr<Expr> {
+    return MakeNumberExprWidth(value, 64);
+  };
+  auto make_zero = [&]() -> std::unique_ptr<Expr> { return make_u32(0u); };
+
+  std::vector<std::unique_ptr<Expr>> arg_clones;
+  arg_clones.reserve(expr.call_args.size());
+  for (const auto& arg : expr.call_args) {
+    auto cloned = CloneExprWithParamsImpl(*arg, rename, params, &module,
+                                          diagnostics, bindings, inline_depth);
+    if (!cloned) {
+      return nullptr;
+    }
+    arg_clones.push_back(std::move(cloned));
+  }
+
+  auto get_identity_arg = [&](size_t index) -> std::unique_ptr<Expr> {
+    if (index >= expr.call_args.size()) {
+      return nullptr;
+    }
+    return CloneExprWithParamsImpl(*expr.call_args[index],
+                                   [](const std::string& ident) { return ident; },
+                                   params, &module, diagnostics, nullptr,
+                                   inline_depth);
+  };
+
+  if (expr.ident == "$bits") {
+    if (expr.call_args.size() != 1) {
+      diagnostics->Add(Severity::kError,
+                       "$bits expects 1 argument");
+      return nullptr;
+    }
+    auto resolved = get_identity_arg(0);
+    if (!resolved) {
+      return nullptr;
+    }
+    int width = ExprWidth(*resolved, module);
+    return make_u32(static_cast<uint64_t>(width));
+  }
+  if (expr.ident == "$size") {
+    if (expr.call_args.size() != 1) {
+      diagnostics->Add(Severity::kError,
+                       "$size expects 1 argument");
+      return nullptr;
+    }
+    const Expr* arg = expr.call_args[0].get();
+    if (arg && arg->kind == ExprKind::kIdentifier) {
+      const Net* net = FindNet(module, arg->ident);
+      if (net && !net->array_dims.empty()) {
+        std::vector<int> dims;
+        if (!ResolveArrayDims(*net, params, &dims, diagnostics,
+                              "$size")) {
+          return nullptr;
+        }
+        if (!dims.empty()) {
+          return make_u32(static_cast<uint64_t>(dims.front()));
+        }
+      }
+    }
+    return make_u32(1u);
+  }
+  if (expr.ident == "$dimensions") {
+    if (expr.call_args.size() != 1) {
+      diagnostics->Add(Severity::kError,
+                       "$dimensions expects 1 argument");
+      return nullptr;
+    }
+    const Expr* arg = expr.call_args[0].get();
+    if (arg && arg->kind == ExprKind::kIdentifier) {
+      const Net* net = FindNet(module, arg->ident);
+      if (net && !net->array_dims.empty()) {
+        return make_u32(static_cast<uint64_t>(net->array_dims.size()));
+      }
+    }
+    return make_u32(1u);
+  }
+  if (expr.ident == "$left" || expr.ident == "$right" ||
+      expr.ident == "$low" || expr.ident == "$high") {
+    if (expr.call_args.size() != 1) {
+      diagnostics->Add(Severity::kError,
+                       expr.ident + " expects 1 argument");
+      return nullptr;
+    }
+    const Expr* arg = expr.call_args[0].get();
+    int msb = 0;
+    int lsb = 0;
+    bool ok = false;
+    if (arg && arg->kind == ExprKind::kIdentifier) {
+      if (ResolveArrayBounds(module, params, arg->ident, &msb, &lsb,
+                             diagnostics, expr.ident)) {
+        ok = true;
+      } else if (ResolvePackedBounds(module, params, arg->ident, &msb, &lsb,
+                                     diagnostics, expr.ident)) {
+        ok = true;
+      }
+    }
+    if (!ok) {
+      return make_u32(0u);
+    }
+    int low = std::min(msb, lsb);
+    int high = std::max(msb, lsb);
+    if (expr.ident == "$left") {
+      return make_u32(static_cast<uint64_t>(msb));
+    }
+    if (expr.ident == "$right") {
+      return make_u32(static_cast<uint64_t>(lsb));
+    }
+    if (expr.ident == "$low") {
+      return make_u32(static_cast<uint64_t>(low));
+    }
+    return make_u32(static_cast<uint64_t>(high));
+  }
+  if (expr.ident == "$random") {
+    if (arg_clones.empty()) {
+      return make_u32(0u);
+    }
+    auto mul = MakeBinaryExpr(
+        '*', std::move(arg_clones[0]), MakeNumberExprWidth(1103515245u, 32));
+    auto add =
+        MakeBinaryExpr('+', std::move(mul), MakeNumberExprWidth(12345u, 32));
+    return add;
+  }
+  if (expr.ident == "$urandom") {
+    if (arg_clones.empty()) {
+      return make_u32(0u);
+    }
+    auto mul = MakeBinaryExpr(
+        '*', std::move(arg_clones[0]), MakeNumberExprWidth(1664525u, 32));
+    auto add =
+        MakeBinaryExpr('+', std::move(mul), MakeNumberExprWidth(1013904223u, 32));
+    return add;
+  }
+  if (expr.ident == "$urandom_range") {
+    if (arg_clones.size() >= 1) {
+      return std::move(arg_clones[0]);
+    }
+    return make_u32(0u);
+  }
+  if (expr.ident == "$realtime") {
+    return make_u64(0u);
+  }
+  if (expr.ident == "$realtobits" || expr.ident == "$bitstoreal" ||
+      expr.ident == "$rtoi" || expr.ident == "$itor") {
+    if (!arg_clones.empty()) {
+      return std::move(arg_clones[0]);
+    }
+    return make_u32(0u);
+  }
+  if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
+      expr.ident == "$feof" || expr.ident == "$fgets" ||
+      expr.ident == "$fscanf" || expr.ident == "$sscanf" ||
+      expr.ident == "$test$plusargs" || expr.ident == "$value$plusargs") {
+    return make_u32(0u);
+  }
+  return make_zero();
 }
 
 bool CollectIndexChain(const Expr& expr, std::string* base_name,
@@ -628,6 +1831,15 @@ std::unique_ptr<Expr> CloneExprWithParams(
     const std::function<std::string(const std::string&)>& rename,
     const ParamBindings& params, const Module* module,
     Diagnostics* diagnostics, const BindingMap* bindings) {
+  return CloneExprWithParamsImpl(expr, rename, params, module, diagnostics,
+                                 bindings, 0);
+}
+
+std::unique_ptr<Expr> CloneExprWithParamsImpl(
+    const Expr& expr,
+    const std::function<std::string(const std::string&)>& rename,
+    const ParamBindings& params, const Module* module,
+    Diagnostics* diagnostics, const BindingMap* bindings, int inline_depth) {
   if (expr.kind == ExprKind::kIdentifier) {
     if (bindings) {
       auto it = bindings->find(expr.ident);
@@ -651,14 +1863,22 @@ std::unique_ptr<Expr> CloneExprWithParams(
       out->ident = expr.ident;
       out->call_args.reserve(expr.call_args.size());
       for (const auto& arg : expr.call_args) {
-        auto cloned = CloneExprWithParams(*arg, rename, params, module,
-                                          diagnostics, bindings);
+        auto cloned = CloneExprWithParamsImpl(*arg, rename, params, module,
+                                              diagnostics, bindings,
+                                              inline_depth);
         if (!cloned) {
           return nullptr;
         }
         out->call_args.push_back(std::move(cloned));
       }
       return out;
+    }
+    if (!expr.ident.empty() && expr.ident.front() == '$') {
+      if (!module) {
+        return MakeNumberExprWidth(0u, 32);
+      }
+      return LowerSystemFunctionCall(expr, rename, params, *module, diagnostics,
+                                     bindings, inline_depth);
     }
     if (!module) {
       diagnostics->Add(Severity::kError,
@@ -682,8 +1902,9 @@ std::unique_ptr<Expr> CloneExprWithParams(
     BindingMap arg_bindings;
     arg_clones.reserve(expr.call_args.size());
     for (size_t i = 0; i < expr.call_args.size(); ++i) {
-      auto cloned = CloneExprWithParams(*expr.call_args[i], rename, params,
-                                        module, diagnostics, bindings);
+      auto cloned = CloneExprWithParamsImpl(*expr.call_args[i], rename, params,
+                                            module, diagnostics, bindings,
+                                            inline_depth);
       if (!cloned) {
         return nullptr;
       }
@@ -691,13 +1912,41 @@ std::unique_ptr<Expr> CloneExprWithParams(
       arg_bindings[arg_name] = cloned.get();
       arg_clones.push_back(std::move(cloned));
     }
-    if (!func->body_expr) {
-      diagnostics->Add(Severity::kError,
-                       "function '" + expr.ident + "' has no body");
+    if (func->body_expr) {
+      return CloneExprWithParamsImpl(*func->body_expr, rename, params, module,
+                                     diagnostics, &arg_bindings,
+                                     inline_depth);
+    }
+    std::vector<int64_t> arg_values;
+    bool all_const = true;
+    arg_values.reserve(arg_clones.size());
+    for (const auto& arg : arg_clones) {
+      int64_t value = 0;
+      if (!TryEvalConstExprWithParams(*arg, params, &value)) {
+        all_const = false;
+        break;
+      }
+      arg_values.push_back(value);
+    }
+    if (all_const) {
+      int64_t result = 0;
+      std::unordered_set<std::string> call_stack;
+      if (EvalConstFunction(*func, *module, params, arg_values, &result,
+                            diagnostics, &call_stack)) {
+        if (func->is_signed) {
+          return MakeNumberExprSignedWidth(result, func->width);
+        }
+        return MakeNumberExprWidth(static_cast<uint64_t>(result), func->width);
+      }
       return nullptr;
     }
-    return CloneExprWithParams(*func->body_expr, rename, params, module,
-                               diagnostics, &arg_bindings);
+    auto inlined = InlineFunctionExpr(*func, std::move(arg_clones), rename,
+                                      params, *module, diagnostics,
+                                      inline_depth + 1);
+    if (!inlined) {
+      return nullptr;
+    }
+    return inlined;
   }
 
   auto out = std::make_unique<Expr>();
@@ -720,18 +1969,19 @@ std::unique_ptr<Expr> CloneExprWithParams(
     return out;
   }
   if (expr.kind == ExprKind::kUnary) {
-    out->operand = CloneExprWithParams(*expr.operand, rename, params, module,
-                                       diagnostics, bindings);
+    out->operand = CloneExprWithParamsImpl(*expr.operand, rename, params,
+                                           module, diagnostics, bindings,
+                                           inline_depth);
     if (!out->operand) {
       return nullptr;
     }
     return out;
   }
   if (expr.kind == ExprKind::kBinary) {
-    out->lhs = CloneExprWithParams(*expr.lhs, rename, params, module,
-                                   diagnostics, bindings);
-    out->rhs = CloneExprWithParams(*expr.rhs, rename, params, module,
-                                   diagnostics, bindings);
+    out->lhs = CloneExprWithParamsImpl(*expr.lhs, rename, params, module,
+                                       diagnostics, bindings, inline_depth);
+    out->rhs = CloneExprWithParamsImpl(*expr.rhs, rename, params, module,
+                                       diagnostics, bindings, inline_depth);
     if (!out->lhs || !out->rhs) {
       return nullptr;
     }
@@ -739,22 +1989,22 @@ std::unique_ptr<Expr> CloneExprWithParams(
   }
   if (expr.kind == ExprKind::kTernary) {
     out->condition =
-        CloneExprWithParams(*expr.condition, rename, params, module,
-                            diagnostics, bindings);
+        CloneExprWithParamsImpl(*expr.condition, rename, params, module,
+                                diagnostics, bindings, inline_depth);
     out->then_expr =
-        CloneExprWithParams(*expr.then_expr, rename, params, module,
-                            diagnostics, bindings);
+        CloneExprWithParamsImpl(*expr.then_expr, rename, params, module,
+                                diagnostics, bindings, inline_depth);
     out->else_expr =
-        CloneExprWithParams(*expr.else_expr, rename, params, module,
-                            diagnostics, bindings);
+        CloneExprWithParamsImpl(*expr.else_expr, rename, params, module,
+                                diagnostics, bindings, inline_depth);
     if (!out->condition || !out->then_expr || !out->else_expr) {
       return nullptr;
     }
     return out;
   }
   if (expr.kind == ExprKind::kSelect) {
-    out->base = CloneExprWithParams(*expr.base, rename, params, module,
-                                    diagnostics, bindings);
+    out->base = CloneExprWithParamsImpl(*expr.base, rename, params, module,
+                                        diagnostics, bindings, inline_depth);
     if (!out->base) {
       return nullptr;
     }
@@ -763,15 +2013,17 @@ std::unique_ptr<Expr> CloneExprWithParams(
     out->indexed_desc = expr.indexed_desc;
     out->indexed_width = expr.indexed_width;
     if (expr.msb_expr) {
-      out->msb_expr = CloneExprWithParams(*expr.msb_expr, rename, params,
-                                          module, diagnostics, bindings);
+      out->msb_expr = CloneExprWithParamsImpl(*expr.msb_expr, rename, params,
+                                              module, diagnostics, bindings,
+                                              inline_depth);
       if (!out->msb_expr) {
         return nullptr;
       }
     }
     if (expr.lsb_expr) {
-      out->lsb_expr = CloneExprWithParams(*expr.lsb_expr, rename, params,
-                                          module, diagnostics, bindings);
+      out->lsb_expr = CloneExprWithParamsImpl(*expr.lsb_expr, rename, params,
+                                              module, diagnostics, bindings,
+                                              inline_depth);
       if (!out->lsb_expr) {
         return nullptr;
       }
@@ -820,8 +2072,8 @@ std::unique_ptr<Expr> CloneExprWithParams(
           cloned_indices.reserve(indices.size());
           for (const auto* index_expr : indices) {
             auto cloned =
-                CloneExprWithParams(*index_expr, rename, params, module,
-                                    diagnostics, bindings);
+                CloneExprWithParamsImpl(*index_expr, rename, params, module,
+                                        diagnostics, bindings, inline_depth);
             if (!cloned) {
               return nullptr;
             }
@@ -837,10 +2089,10 @@ std::unique_ptr<Expr> CloneExprWithParams(
         }
       }
     }
-    out->base = CloneExprWithParams(*expr.base, rename, params, module,
-                                    diagnostics, bindings);
-    out->index = CloneExprWithParams(*expr.index, rename, params, module,
-                                     diagnostics, bindings);
+    out->base = CloneExprWithParamsImpl(*expr.base, rename, params, module,
+                                        diagnostics, bindings, inline_depth);
+    out->index = CloneExprWithParamsImpl(*expr.index, rename, params, module,
+                                         diagnostics, bindings, inline_depth);
     if (!out->base || !out->index) {
       return nullptr;
     }
@@ -854,8 +2106,8 @@ std::unique_ptr<Expr> CloneExprWithParams(
     out->repeat = repeat;
     for (const auto& element : expr.elements) {
       auto cloned =
-          CloneExprWithParams(*element, rename, params, module, diagnostics,
-                              bindings);
+          CloneExprWithParamsImpl(*element, rename, params, module, diagnostics,
+                                  bindings, inline_depth);
       if (!cloned) {
         return nullptr;
       }
@@ -873,7 +2125,9 @@ bool CloneStatement(
     const Module& flat_module, Statement* out, Diagnostics* diagnostics) {
   out->kind = statement.kind;
   out->block_label = statement.block_label;
-  if (statement.kind == StatementKind::kAssign) {
+  if (statement.kind == StatementKind::kAssign ||
+      statement.kind == StatementKind::kForce ||
+      statement.kind == StatementKind::kRelease) {
     out->assign.lhs = rename(statement.assign.lhs);
     out->assign.lhs_has_range = statement.assign.lhs_has_range;
     out->assign.lhs_indexed_range = statement.assign.lhs_indexed_range;
@@ -980,6 +2234,12 @@ bool CloneStatement(
       out->assign.delay = nullptr;
     }
     out->assign.nonblocking = statement.assign.nonblocking;
+    if (statement.kind == StatementKind::kForce) {
+      out->force_target = rename(statement.force_target);
+    }
+    if (statement.kind == StatementKind::kRelease) {
+      out->release_target = rename(statement.release_target);
+    }
     return true;
   }
   if (statement.kind == StatementKind::kIf) {
@@ -1111,6 +2371,37 @@ bool CloneStatement(
     return false;
   }
   if (statement.kind == StatementKind::kWhile) {
+    bool has_system_call = false;
+    if (statement.while_condition &&
+        ExprHasSystemCall(*statement.while_condition)) {
+      has_system_call = true;
+    } else {
+      for (const auto& stmt : statement.while_body) {
+        if (StatementHasSystemCall(stmt)) {
+          has_system_call = true;
+          break;
+        }
+      }
+    }
+    if (has_system_call) {
+      if (statement.while_condition) {
+        out->while_condition =
+            CloneExprWithParams(*statement.while_condition, rename, params,
+                                &source_module, diagnostics, nullptr);
+        if (!out->while_condition) {
+          return false;
+        }
+      }
+      for (const auto& body_stmt : statement.while_body) {
+        Statement cloned;
+        if (!CloneStatement(body_stmt, rename, params, source_module,
+                            flat_module, &cloned, diagnostics)) {
+          return false;
+        }
+        out->while_body.push_back(std::move(cloned));
+      }
+      return true;
+    }
     out->kind = StatementKind::kBlock;
     if (!statement.while_condition) {
       diagnostics->Add(Severity::kError, "malformed while-loop in v0");
@@ -1253,6 +2544,21 @@ bool CloneStatement(
   if (statement.kind == StatementKind::kEventControl) {
     out->kind = StatementKind::kEventControl;
     out->event_edge = statement.event_edge;
+    for (const auto& item : statement.event_items) {
+      EventItem cloned_item;
+      cloned_item.edge = item.edge;
+      if (item.expr) {
+        cloned_item.expr =
+            CloneExprWithParams(*item.expr, rename, params, &source_module,
+                                diagnostics, nullptr);
+        if (!cloned_item.expr) {
+          return false;
+        }
+        cloned_item.expr =
+            SimplifyExpr(std::move(cloned_item.expr), flat_module);
+      }
+      out->event_items.push_back(std::move(cloned_item));
+    }
     if (statement.event_expr) {
       out->event_expr =
           CloneExprWithParams(*statement.event_expr, rename, params,
@@ -1413,6 +2719,21 @@ std::unique_ptr<Expr> MakeNumberExpr(uint64_t value) {
   return expr;
 }
 
+std::unique_ptr<Expr> MakeNumberExprWidth(uint64_t value, int width) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kNumber;
+  expr->number = value;
+  expr->value_bits = value;
+  expr->has_width = true;
+  expr->number_width = width;
+  if (width >= 0 && width < 64) {
+    uint64_t mask = MaskForWidth64(width);
+    expr->number &= mask;
+    expr->value_bits &= mask;
+  }
+  return expr;
+}
+
 std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width) {
   auto expr = std::make_unique<Expr>();
   expr->kind = ExprKind::kNumber;
@@ -1426,6 +2747,42 @@ std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width) {
   }
   expr->number = bits;
   expr->value_bits = bits;
+  return expr;
+}
+
+std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kIdentifier;
+  expr->ident = name;
+  return expr;
+}
+
+std::unique_ptr<Expr> MakeUnaryExpr(char op, std::unique_ptr<Expr> operand) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kUnary;
+  expr->unary_op = op;
+  expr->operand = std::move(operand);
+  return expr;
+}
+
+std::unique_ptr<Expr> MakeBinaryExpr(char op, std::unique_ptr<Expr> lhs,
+                                     std::unique_ptr<Expr> rhs) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kBinary;
+  expr->op = op;
+  expr->lhs = std::move(lhs);
+  expr->rhs = std::move(rhs);
+  return expr;
+}
+
+std::unique_ptr<Expr> MakeTernaryExpr(std::unique_ptr<Expr> condition,
+                                      std::unique_ptr<Expr> then_expr,
+                                      std::unique_ptr<Expr> else_expr) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kTernary;
+  expr->condition = std::move(condition);
+  expr->then_expr = std::move(then_expr);
+  expr->else_expr = std::move(else_expr);
   return expr;
 }
 
@@ -1494,7 +2851,8 @@ int ExprWidth(const Expr& expr, const Module& module) {
       return 0;
     case ExprKind::kUnary:
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
-          expr.unary_op == '|' || expr.unary_op == '^') {
+          expr.unary_op == '|' || expr.unary_op == '^' ||
+          expr.unary_op == 'B') {
         return 1;
       }
       if (expr.unary_op == 'C') {
@@ -1760,16 +3118,15 @@ bool BuildParamBindings(const Module& module, const Instance* instance,
     }
     int64_t value = 0;
     if (eval_params == &bindings) {
-      if (!EvalConstExprValue(*expr, bindings, &value, diagnostics,
-                              "parameter '" + param.name + "'")) {
+      if (!EvalConstExprValueWithFunctions(*expr, bindings, module, &value,
+                                           diagnostics,
+                                           "parameter '" + param.name + "'")) {
         return false;
       }
     } else {
-      std::unordered_map<std::string, int64_t> scope = eval_params->values;
-      std::string error;
-      if (!gpga::EvalConstExpr(*expr, scope, &value, &error)) {
-        diagnostics->Add(Severity::kError,
-                         error + " in parameter '" + param.name + "'");
+      if (!EvalConstExprValueWithFunctions(*expr, *eval_params, module, &value,
+                                           diagnostics,
+                                           "parameter '" + param.name + "'")) {
         return false;
       }
     }
@@ -1780,6 +3137,12 @@ bool BuildParamBindings(const Module& module, const Instance* instance,
         *expr, [](const std::string& ident) { return ident; }, *expr_params,
         &module, diagnostics, nullptr);
     if (!resolved) {
+      return false;
+    }
+    ConstScope empty_scope;
+    std::unordered_set<std::string> call_stack;
+    if (!ResolveConstFunctionCalls(resolved.get(), module, *expr_params,
+                                   empty_scope, diagnostics, &call_stack)) {
       return false;
     }
     bindings.exprs[param.name] = std::move(resolved);
@@ -1868,8 +3231,489 @@ void CollectAssignedSignals(const Statement& statement,
     case StatementKind::kDisable:
     case StatementKind::kTaskCall:
     case StatementKind::kEventTrigger:
+    case StatementKind::kForce:
+    case StatementKind::kRelease:
       break;
   }
+}
+
+bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
+  if (expr.kind == ExprKind::kCall) {
+    if (expr.ident != "$time") {
+      if (name_out) {
+        *name_out = expr.ident;
+      }
+      return true;
+    }
+    return false;
+  }
+  switch (expr.kind) {
+    case ExprKind::kUnary:
+      return expr.operand && ExprHasUnsupportedCall(*expr.operand, name_out);
+    case ExprKind::kBinary:
+      return (expr.lhs && ExprHasUnsupportedCall(*expr.lhs, name_out)) ||
+             (expr.rhs && ExprHasUnsupportedCall(*expr.rhs, name_out));
+    case ExprKind::kTernary:
+      return (expr.condition &&
+              ExprHasUnsupportedCall(*expr.condition, name_out)) ||
+             (expr.then_expr &&
+              ExprHasUnsupportedCall(*expr.then_expr, name_out)) ||
+             (expr.else_expr &&
+              ExprHasUnsupportedCall(*expr.else_expr, name_out));
+    case ExprKind::kSelect:
+      return (expr.base && ExprHasUnsupportedCall(*expr.base, name_out)) ||
+             (expr.msb_expr &&
+              ExprHasUnsupportedCall(*expr.msb_expr, name_out)) ||
+             (expr.lsb_expr &&
+              ExprHasUnsupportedCall(*expr.lsb_expr, name_out));
+    case ExprKind::kIndex:
+      return (expr.base && ExprHasUnsupportedCall(*expr.base, name_out)) ||
+             (expr.index && ExprHasUnsupportedCall(*expr.index, name_out));
+    case ExprKind::kConcat:
+      if (expr.repeat_expr &&
+          ExprHasUnsupportedCall(*expr.repeat_expr, name_out)) {
+        return true;
+      }
+      for (const auto& element : expr.elements) {
+        if (element && ExprHasUnsupportedCall(*element, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return false;
+    case ExprKind::kCall:
+      break;
+  }
+  return false;
+}
+
+bool ExprHasSystemCall(const Expr& expr) {
+  if (expr.kind == ExprKind::kCall) {
+    return !expr.ident.empty() && expr.ident.front() == '$' &&
+           expr.ident != "$time";
+  }
+  switch (expr.kind) {
+    case ExprKind::kUnary:
+      return expr.operand && ExprHasSystemCall(*expr.operand);
+    case ExprKind::kBinary:
+      return (expr.lhs && ExprHasSystemCall(*expr.lhs)) ||
+             (expr.rhs && ExprHasSystemCall(*expr.rhs));
+    case ExprKind::kTernary:
+      return (expr.condition && ExprHasSystemCall(*expr.condition)) ||
+             (expr.then_expr && ExprHasSystemCall(*expr.then_expr)) ||
+             (expr.else_expr && ExprHasSystemCall(*expr.else_expr));
+    case ExprKind::kSelect:
+      return (expr.base && ExprHasSystemCall(*expr.base)) ||
+             (expr.msb_expr && ExprHasSystemCall(*expr.msb_expr)) ||
+             (expr.lsb_expr && ExprHasSystemCall(*expr.lsb_expr));
+    case ExprKind::kIndex:
+      return (expr.base && ExprHasSystemCall(*expr.base)) ||
+             (expr.index && ExprHasSystemCall(*expr.index));
+    case ExprKind::kConcat:
+      if (expr.repeat_expr && ExprHasSystemCall(*expr.repeat_expr)) {
+        return true;
+      }
+      for (const auto& element : expr.elements) {
+        if (element && ExprHasSystemCall(*element)) {
+          return true;
+        }
+      }
+      return false;
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return false;
+    case ExprKind::kCall:
+      return !expr.ident.empty() && expr.ident.front() == '$' &&
+             expr.ident != "$time";
+  }
+  return false;
+}
+
+bool StatementHasSystemCall(const Statement& statement) {
+  if (statement.kind == StatementKind::kAssign ||
+      statement.kind == StatementKind::kForce ||
+      statement.kind == StatementKind::kRelease) {
+    if (statement.assign.rhs && ExprHasSystemCall(*statement.assign.rhs)) {
+      return true;
+    }
+    if (statement.assign.lhs_index &&
+        ExprHasSystemCall(*statement.assign.lhs_index)) {
+      return true;
+    }
+    for (const auto& idx : statement.assign.lhs_indices) {
+      if (idx && ExprHasSystemCall(*idx)) {
+        return true;
+      }
+    }
+    if (statement.assign.lhs_msb_expr &&
+        ExprHasSystemCall(*statement.assign.lhs_msb_expr)) {
+      return true;
+    }
+    if (statement.assign.lhs_lsb_expr &&
+        ExprHasSystemCall(*statement.assign.lhs_lsb_expr)) {
+      return true;
+    }
+    if (statement.assign.delay &&
+        ExprHasSystemCall(*statement.assign.delay)) {
+      return true;
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kIf) {
+    if (statement.condition &&
+        ExprHasSystemCall(*statement.condition)) {
+      return true;
+    }
+    for (const auto& stmt : statement.then_branch) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    for (const auto& stmt : statement.else_branch) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kBlock) {
+    for (const auto& stmt : statement.block) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kCase) {
+    if (statement.case_expr &&
+        ExprHasSystemCall(*statement.case_expr)) {
+      return true;
+    }
+    for (const auto& item : statement.case_items) {
+      for (const auto& stmt : item.body) {
+        if (StatementHasSystemCall(stmt)) {
+          return true;
+        }
+      }
+    }
+    for (const auto& stmt : statement.default_branch) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kFor) {
+    if (statement.for_init_rhs &&
+        ExprHasSystemCall(*statement.for_init_rhs)) {
+      return true;
+    }
+    if (statement.for_condition &&
+        ExprHasSystemCall(*statement.for_condition)) {
+      return true;
+    }
+    if (statement.for_step_rhs &&
+        ExprHasSystemCall(*statement.for_step_rhs)) {
+      return true;
+    }
+    for (const auto& stmt : statement.for_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kWhile) {
+    if (statement.while_condition &&
+        ExprHasSystemCall(*statement.while_condition)) {
+      return true;
+    }
+    for (const auto& stmt : statement.while_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kRepeat) {
+    if (statement.repeat_count &&
+        ExprHasSystemCall(*statement.repeat_count)) {
+      return true;
+    }
+    for (const auto& stmt : statement.repeat_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kDelay) {
+    if (statement.delay && ExprHasSystemCall(*statement.delay)) {
+      return true;
+    }
+    for (const auto& stmt : statement.delay_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kEventControl) {
+    if (!statement.event_items.empty()) {
+      for (const auto& item : statement.event_items) {
+        if (item.expr && ExprHasSystemCall(*item.expr)) {
+          return true;
+        }
+      }
+    } else if (statement.event_expr &&
+               ExprHasSystemCall(*statement.event_expr)) {
+      return true;
+    }
+    for (const auto& stmt : statement.event_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kWait) {
+    if (statement.wait_condition &&
+        ExprHasSystemCall(*statement.wait_condition)) {
+      return true;
+    }
+    for (const auto& stmt : statement.wait_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kForever) {
+    for (const auto& stmt : statement.forever_body) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (statement.kind == StatementKind::kFork) {
+    for (const auto& stmt : statement.fork_branches) {
+      if (StatementHasSystemCall(stmt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
+bool StatementHasUnsupportedCall(const Statement& statement,
+                                 std::string* name_out) {
+  switch (statement.kind) {
+    case StatementKind::kAssign: {
+      const auto& assign = statement.assign;
+      if (assign.lhs_index && ExprHasUnsupportedCall(*assign.lhs_index, name_out)) {
+        return true;
+      }
+      for (const auto& idx : assign.lhs_indices) {
+        if (idx && ExprHasUnsupportedCall(*idx, name_out)) {
+          return true;
+        }
+      }
+      if (assign.lhs_msb_expr &&
+          ExprHasUnsupportedCall(*assign.lhs_msb_expr, name_out)) {
+        return true;
+      }
+      if (assign.lhs_lsb_expr &&
+          ExprHasUnsupportedCall(*assign.lhs_lsb_expr, name_out)) {
+        return true;
+      }
+      if (assign.rhs && ExprHasUnsupportedCall(*assign.rhs, name_out)) {
+        return true;
+      }
+      if (assign.delay && ExprHasUnsupportedCall(*assign.delay, name_out)) {
+        return true;
+      }
+      return false;
+    }
+    case StatementKind::kIf:
+      if (statement.condition &&
+          ExprHasUnsupportedCall(*statement.condition, name_out)) {
+        return true;
+      }
+      for (const auto& stmt : statement.then_branch) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      for (const auto& stmt : statement.else_branch) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kBlock:
+      for (const auto& stmt : statement.block) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kCase:
+      if (statement.case_expr &&
+          ExprHasUnsupportedCall(*statement.case_expr, name_out)) {
+        return true;
+      }
+      for (const auto& item : statement.case_items) {
+        for (const auto& label : item.labels) {
+          if (label && ExprHasUnsupportedCall(*label, name_out)) {
+            return true;
+          }
+        }
+        for (const auto& stmt : item.body) {
+          if (StatementHasUnsupportedCall(stmt, name_out)) {
+            return true;
+          }
+        }
+      }
+      for (const auto& stmt : statement.default_branch) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kFor:
+      if (statement.for_init_rhs &&
+          ExprHasUnsupportedCall(*statement.for_init_rhs, name_out)) {
+        return true;
+      }
+      if (statement.for_condition &&
+          ExprHasUnsupportedCall(*statement.for_condition, name_out)) {
+        return true;
+      }
+      if (statement.for_step_rhs &&
+          ExprHasUnsupportedCall(*statement.for_step_rhs, name_out)) {
+        return true;
+      }
+      for (const auto& stmt : statement.for_body) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kWhile:
+      if (statement.while_condition &&
+          ExprHasUnsupportedCall(*statement.while_condition, name_out)) {
+        return true;
+      }
+      for (const auto& stmt : statement.while_body) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kRepeat:
+      if (statement.repeat_count &&
+          ExprHasUnsupportedCall(*statement.repeat_count, name_out)) {
+        return true;
+      }
+      for (const auto& stmt : statement.repeat_body) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kDelay:
+      if (statement.delay &&
+          ExprHasUnsupportedCall(*statement.delay, name_out)) {
+        return true;
+      }
+      for (const auto& stmt : statement.delay_body) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kEventControl:
+      if (!statement.event_items.empty()) {
+        for (const auto& item : statement.event_items) {
+          if (item.expr &&
+              ExprHasUnsupportedCall(*item.expr, name_out)) {
+            return true;
+          }
+        }
+      } else if (statement.event_expr &&
+                 ExprHasUnsupportedCall(*statement.event_expr, name_out)) {
+        return true;
+      }
+      for (const auto& stmt : statement.event_body) {
+        if (StatementHasUnsupportedCall(stmt, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case StatementKind::kEventTrigger:
+    case StatementKind::kWait:
+    case StatementKind::kForever:
+    case StatementKind::kFork:
+    case StatementKind::kDisable:
+    case StatementKind::kTaskCall:
+    case StatementKind::kForce:
+    case StatementKind::kRelease:
+      return false;
+  }
+  return false;
+}
+
+bool ValidateNoFunctionCalls(const Module& module, Diagnostics* diagnostics) {
+  std::string call_name;
+  for (const auto& assign : module.assigns) {
+    if (assign.rhs && ExprHasUnsupportedCall(*assign.rhs, &call_name)) {
+      diagnostics->Add(Severity::kError,
+                       "function call '" + call_name +
+                           "' not supported in runtime expressions");
+      return false;
+    }
+  }
+  for (const auto& sw : module.switches) {
+    if (sw.control && ExprHasUnsupportedCall(*sw.control, &call_name)) {
+      diagnostics->Add(Severity::kError,
+                       "function call '" + call_name +
+                           "' not supported in runtime expressions");
+      return false;
+    }
+    if (sw.control_n && ExprHasUnsupportedCall(*sw.control_n, &call_name)) {
+      diagnostics->Add(Severity::kError,
+                       "function call '" + call_name +
+                           "' not supported in runtime expressions");
+      return false;
+    }
+  }
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      if (StatementHasUnsupportedCall(stmt, &call_name)) {
+        diagnostics->Add(Severity::kError,
+                         "function call '" + call_name +
+                             "' not supported in runtime expressions");
+        return false;
+      }
+    }
+  }
+  for (const auto& task : module.tasks) {
+    for (const auto& stmt : task.body) {
+      if (StatementHasUnsupportedCall(stmt, &call_name)) {
+        diagnostics->Add(Severity::kError,
+                         "function call '" + call_name +
+                             "' not supported in runtime expressions");
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 void CollectAssignedSignalsNoIndex(const Statement& statement,
@@ -1948,6 +3792,8 @@ void CollectAssignedSignalsNoIndex(const Statement& statement,
     case StatementKind::kDisable:
     case StatementKind::kTaskCall:
     case StatementKind::kEventTrigger:
+    case StatementKind::kForce:
+    case StatementKind::kRelease:
       break;
   }
 }
@@ -2191,6 +4037,13 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics,
     ranges.push_back(Range{lo, hi});
   }
 
+  auto is_reg = [&](const std::string& name) -> bool {
+    const Net* net = FindNet(flat, name);
+    if (!net) {
+      return false;
+    }
+    return net->type == NetType::kReg;
+  };
   for (const auto& block : flat.always_blocks) {
     std::unordered_set<std::string> block_drives;
     for (const auto& stmt : block.statements) {
@@ -2198,9 +4051,18 @@ bool ValidateSingleDrivers(const Module& flat, Diagnostics* diagnostics,
     }
     for (const auto& name : block_drives) {
       if (drivers.count(name) > 0 || partial_ranges.count(name) > 0) {
-        diagnostics->Add(Severity::kError,
-                         "multiple drivers for signal '" + name + "'");
-        return false;
+        auto driver_it = drivers.find(name);
+        if ((driver_it != drivers.end() && driver_it->second == "assign") ||
+            partial_ranges.count(name) > 0) {
+          diagnostics->Add(Severity::kError,
+                           "multiple drivers for signal '" + name + "'");
+          return false;
+        }
+        if (!is_reg(name)) {
+          diagnostics->Add(Severity::kError,
+                           "multiple drivers for signal '" + name + "'");
+          return false;
+        }
       }
       drivers[name] = "always";
     }
@@ -2619,6 +4481,7 @@ bool InlineModule(const Program& program, const Module& module,
 
   if (prefix.empty()) {
     out->name = module.name;
+    out->unconnected_drive = module.unconnected_drive;
     out->parameters.clear();
     for (const auto& param : module.parameters) {
       Parameter flat_param;
@@ -2932,7 +4795,9 @@ bool InlineModule(const Program& program, const Module& module,
       std::string base_name;
       int msb = 0;
       int lsb = 0;
-      if (resolved_expr->kind == ExprKind::kSelect &&
+      if (resolved_expr->kind == ExprKind::kIdentifier) {
+        base_name = resolved_expr->ident;
+      } else if (resolved_expr->kind == ExprKind::kSelect &&
           resolved_expr->base &&
           resolved_expr->base->kind == ExprKind::kIdentifier) {
         base_name = resolved_expr->base->ident;
@@ -2960,9 +4825,11 @@ bool InlineModule(const Program& program, const Module& module,
       }
       Assign out_assign;
       out_assign.lhs = base_name;
-      out_assign.lhs_has_range = true;
-      out_assign.lhs_msb = msb;
-      out_assign.lhs_lsb = lsb;
+      if (resolved_expr->kind != ExprKind::kIdentifier) {
+        out_assign.lhs_has_range = true;
+        out_assign.lhs_msb = msb;
+        out_assign.lhs_lsb = lsb;
+      }
       auto rhs = std::make_unique<Expr>();
       rhs->kind = ExprKind::kIdentifier;
       rhs->ident = port_signal;
@@ -2982,16 +4849,36 @@ bool InlineModule(const Program& program, const Module& module,
       }
       if (connected_ports.count(port_name) == 0) {
         if (port.dir == PortDir::kInput) {
+          std::string default_label;
+          Assign default_assign;
+          default_assign.lhs = port_net;
+          switch (module.unconnected_drive) {
+            case UnconnectedDrive::kPull0:
+              default_label = "pull0";
+              default_assign.rhs = MakeNumberExpr(0u);
+              default_assign.has_strength = true;
+              default_assign.strength0 = Strength::kPull;
+              default_assign.strength1 = Strength::kHighZ;
+              break;
+            case UnconnectedDrive::kPull1:
+              default_label = "pull1";
+              default_assign.rhs = MakeNumberExpr(1u);
+              default_assign.has_strength = true;
+              default_assign.strength0 = Strength::kHighZ;
+              default_assign.strength1 = Strength::kPull;
+              break;
+            case UnconnectedDrive::kNone:
+              default_label = enable_4state ? "X" : "0";
+              default_assign.rhs =
+                  enable_4state
+                      ? MakeAllXExpr(child_port_widths[port_name])
+                      : MakeNumberExpr(0u);
+              break;
+          }
           diagnostics->Add(Severity::kWarning,
                            "unconnected input '" + port.name +
                                "' in instance '" + instance.name +
-                               "' (defaulting to " +
-                               std::string(enable_4state ? "X" : "0") + ")");
-          Assign default_assign;
-          default_assign.lhs = port_net;
-          default_assign.rhs = enable_4state
-                                   ? MakeAllXExpr(child_port_widths[port_name])
-                                   : MakeNumberExpr(0);
+                               "' (defaulting to " + default_label + ")");
           out->assigns.push_back(std::move(default_assign));
         } else {
           diagnostics->Add(Severity::kWarning,
@@ -3069,6 +4956,9 @@ bool Elaborate(const Program& program, const std::string& top_name,
     return false;
   }
   if (!ValidateSingleDrivers(flat, diagnostics, enable_4state)) {
+    return false;
+  }
+  if (!ValidateNoFunctionCalls(flat, diagnostics)) {
     return false;
   }
   if (!ValidateCombinationalAcyclic(flat, diagnostics)) {

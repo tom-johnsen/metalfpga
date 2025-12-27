@@ -461,6 +461,18 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
         if (expr.op == 'N') {
           return "(" + lhs + " != " + rhs + ")";
         }
+        if (expr.op == 'C') {
+          return "(" + lhs + " === " + rhs + ")";
+        }
+        if (expr.op == 'c') {
+          return "(" + lhs + " !== " + rhs + ")";
+        }
+        if (expr.op == 'W') {
+          return "(" + lhs + " ==? " + rhs + ")";
+        }
+        if (expr.op == 'w') {
+          return "(" + lhs + " !=? " + rhs + ")";
+        }
         if (expr.op == 'L') {
           return "(" + lhs + " <= " + rhs + ")";
         }
@@ -658,7 +670,25 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     return;
   }
   if (stmt.kind == gpga::StatementKind::kEventControl) {
-    if (!stmt.event_expr) {
+    if (!stmt.event_items.empty()) {
+      os << pad << "@(";
+      for (size_t i = 0; i < stmt.event_items.size(); ++i) {
+        if (i > 0) {
+          os << ", ";
+        }
+        if (stmt.event_items[i].edge == gpga::EventEdgeKind::kPosedge) {
+          os << "posedge ";
+        } else if (stmt.event_items[i].edge == gpga::EventEdgeKind::kNegedge) {
+          os << "negedge ";
+        }
+        if (stmt.event_items[i].expr) {
+          os << ExprToString(*stmt.event_items[i].expr, module);
+        } else {
+          os << "/*missing*/";
+        }
+      }
+      os << ")";
+    } else if (!stmt.event_expr) {
       os << pad << "@*";
     } else {
       std::string expr = ExprToString(*stmt.event_expr, module);
@@ -730,6 +760,27 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
       os << ExprToString(*stmt.task_args[i], module);
     }
     os << ");\n";
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kForce) {
+    if (stmt.assign.rhs) {
+      std::string lhs =
+          stmt.force_target.empty() ? stmt.assign.lhs : stmt.force_target;
+      if (stmt.assign.lhs_index) {
+        lhs += "[" + ExprToString(*stmt.assign.lhs_index, module) + "]";
+      }
+      os << pad << "force " << lhs << " = "
+         << ExprToString(*stmt.assign.rhs, module) << ";\n";
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kRelease) {
+    std::string lhs =
+        stmt.release_target.empty() ? stmt.assign.lhs : stmt.release_target;
+    if (stmt.assign.lhs_index) {
+      lhs += "[" + ExprToString(*stmt.assign.lhs_index, module) + "]";
+    }
+    os << pad << "release " << lhs << ";\n";
     return;
   }
 }

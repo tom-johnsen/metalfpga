@@ -308,6 +308,14 @@ bool EvalConstExpr4State(const Expr& expr,
           *out_value = MakeKnown(result, 32);
           return true;
         }
+        case 'B': {
+          if (normalized.HasXorZ()) {
+            *out_value = MakeKnown(0, 1);
+            return true;
+          }
+          *out_value = MakeKnown(normalized.value_bits != 0 ? 1u : 0u, 1);
+          return true;
+        }
         case '&':
           {
             uint64_t mask = MaskForWidth(width);

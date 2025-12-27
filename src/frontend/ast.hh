@@ -49,6 +49,12 @@ enum class Strength {
   kSupply,
 };
 
+enum class UnconnectedDrive {
+  kNone,
+  kPull0,
+  kPull1,
+};
+
 enum class SwitchKind {
   kTran,
   kTranif1,
@@ -144,12 +150,20 @@ struct Parameter {
   bool is_local = false;
 };
 
+struct Statement;
+
 struct FunctionArg {
   std::string name;
   int width = 1;
   bool is_signed = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
+};
+
+struct LocalVar {
+  std::string name;
+  int width = 1;
+  bool is_signed = false;
 };
 
 struct Function {
@@ -159,6 +173,8 @@ struct Function {
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
   std::vector<FunctionArg> args;
+  std::vector<LocalVar> locals;
+  std::vector<Statement> body;
   std::unique_ptr<Expr> body_expr;
 };
 
@@ -206,6 +222,8 @@ enum class StatementKind {
   kFork,
   kDisable,
   kTaskCall,
+  kForce,
+  kRelease,
 };
 
 enum class CaseKind {
@@ -218,6 +236,11 @@ enum class EventEdgeKind {
   kAny,
   kPosedge,
   kNegedge,
+};
+
+struct EventItem {
+  EventEdgeKind edge = EventEdgeKind::kAny;
+  std::unique_ptr<Expr> expr;
 };
 
 struct Statement;
@@ -245,6 +268,7 @@ struct Statement {
   std::vector<Statement> delay_body;
   EventEdgeKind event_edge = EventEdgeKind::kAny;
   std::unique_ptr<Expr> event_expr;
+  std::vector<EventItem> event_items;
   std::vector<Statement> event_body;
   std::unique_ptr<Expr> wait_condition;
   std::vector<Statement> wait_body;
@@ -254,6 +278,8 @@ struct Statement {
   std::string task_name;
   std::vector<std::unique_ptr<Expr>> task_args;
   std::string trigger_target;
+  std::string force_target;
+  std::string release_target;
   std::unique_ptr<Expr> condition;
   std::vector<Statement> then_branch;
   std::vector<Statement> else_branch;
@@ -341,6 +367,7 @@ struct Module {
   std::vector<Task> tasks;
   std::vector<EventDecl> events;
   std::vector<DefParam> defparams;
+  UnconnectedDrive unconnected_drive = UnconnectedDrive::kNone;
 };
 
 struct Program {
