@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: define directive
 // Feature: Compiler directives (preprocessor)
 // Expected: Should fail - define not yet implemented

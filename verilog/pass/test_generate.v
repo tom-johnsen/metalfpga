@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module gen_test;
   generate
     genvar i;

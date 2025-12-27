@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Parameter override in instantiation
 // Feature: #() parameter passing syntax
 // Expected: May fail - parameter override not yet tested

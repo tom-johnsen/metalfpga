@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module repeat_always;
   reg clk;
   integer i;

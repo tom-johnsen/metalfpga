@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Generate loop tests - basic iteration
 
 // Simple generate loop with assigns

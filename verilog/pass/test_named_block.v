@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Named blocks and disable with multiple levels
 // Feature: Named begin/end blocks with nested disable
 // Expected: May fail - complex named block handling

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Match-3 operators on >32-bit widths
 // Feature: ===, !==, ==?, !=? with 64-bit path
 // Expected: Should pass with --4state

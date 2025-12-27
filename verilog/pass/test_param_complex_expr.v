@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module param_math #(
   parameter W = 8,
   parameter D = (1 << W) - 1  // complex expr

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test unary operations with signed values
 module test_signed_unary(
     input signed [7:0] val,

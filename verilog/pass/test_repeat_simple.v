@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module repeat_simple;
   integer i;
   reg [7:0] arr [0:7];

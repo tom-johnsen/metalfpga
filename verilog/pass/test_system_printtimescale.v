@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $printtimescale system task
 // Feature: Display timescale of module
 // Expected: Should fail - $printtimescale not yet implemented

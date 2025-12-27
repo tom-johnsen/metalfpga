@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test parentheses with signed operations
 module test_parentheses_signed(
     input signed [7:0] a,

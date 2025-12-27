@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module while_always;
   reg clk;
   integer i;

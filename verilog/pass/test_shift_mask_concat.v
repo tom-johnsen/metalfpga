@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module shift_concat(
   input  wire [15:0] a,
   input  wire [3:0]  s,

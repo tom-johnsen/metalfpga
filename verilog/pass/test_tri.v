@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: tri (tristate) net type
 // Feature: Multi-driver nets with resolution
 // Expected: Should fail - tri nets not yet implemented

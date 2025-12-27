@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Case statement with X and Z values
 // Feature: casex and casez with explicit X/Z testing
 // Expected: Should pass - testing case X/Z handling

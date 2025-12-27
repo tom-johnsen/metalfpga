@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test inout (bidirectional) ports
 module inout_test(
     input en,

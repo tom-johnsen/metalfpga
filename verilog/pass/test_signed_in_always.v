@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed arithmetic in procedural blocks
 module test_signed_in_always(
     input clk,

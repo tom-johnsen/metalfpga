@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: wor net type (wired-OR)
 // Feature: Net types with implicit logic
 // Expected: Should fail - wor not yet implemented

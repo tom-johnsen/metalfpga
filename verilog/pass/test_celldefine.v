@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: `celldefine and `endcelldefine directives
 // Feature: Mark module as a cell for library purposes
 // Expected: May pass - directives might be ignored

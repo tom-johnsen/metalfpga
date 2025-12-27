@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test multi-dimensional arrays (if supported)
 module multi_dim_array(
     input clk,

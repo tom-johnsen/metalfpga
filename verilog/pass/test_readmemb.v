@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $readmemb system task
 // Feature: System tasks for memory initialization
 // Expected: Should fail - $readmemb not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test constant propagation and folding
 module constant_prop(
     input [7:0] x,

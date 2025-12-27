@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module mix(input clk, input [7:0] in, output reg [7:0] out);
   reg [7:0] temp;
   always @(posedge clk) begin

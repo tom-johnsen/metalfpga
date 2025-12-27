@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module while_step2;
   integer i;
   reg [7:0] arr [0:3];

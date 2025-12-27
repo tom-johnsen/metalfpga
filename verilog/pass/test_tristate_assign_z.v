@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Tristate using assign with Z
 // Feature: High-impedance assignment
 // Expected: Should fail - tristate resolution not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $strobe system task
 // Feature: Display at end of current time step (after NBA)
 // Expected: Should fail - $strobe not yet implemented

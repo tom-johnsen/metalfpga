@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // 5D array test - batched video processing
 // Dimensions: [batch][frame][channel][row][col]
 module array_5d_video(

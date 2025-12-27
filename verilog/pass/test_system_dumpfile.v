@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $dumpfile and $dumpvars system tasks
 // Feature: VCD waveform generation
 // Expected: Should fail - dump tasks not yet implemented

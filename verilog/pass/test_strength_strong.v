@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Strong drive strength
 // Feature: Explicit drive strength specification
 // Expected: Should fail - drive strength not yet implemented

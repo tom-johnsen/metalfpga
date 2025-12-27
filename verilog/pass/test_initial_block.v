@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test initial blocks for initialization
 module initial_test(
     output reg [7:0] initialized_value

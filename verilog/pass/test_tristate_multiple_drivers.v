@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Multiple tristate drivers on same bus
 // Feature: Net resolution with multiple drivers
 // Expected: Should fail - multi-driver resolution not yet implemented

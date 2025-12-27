@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $monitor system task
 // Feature: Continuous monitoring and display on change
 // Expected: Should fail - $monitor not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test case: Unconnected instance input should default to X in 4-state simulation
 // This demonstrates that unconnected inputs propagate X through the logic
 

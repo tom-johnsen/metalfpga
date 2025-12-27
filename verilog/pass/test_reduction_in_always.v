@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators in procedural blocks
 module test_reduction_in_always(
     input clk,

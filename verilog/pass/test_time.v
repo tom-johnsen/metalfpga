@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: time data type
 // Feature: 64-bit time values
 // Expected: Should fail - time type not yet implemented

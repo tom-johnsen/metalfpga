@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Case statement edge cases
 // Feature: Multiple defaults, overlapping cases
 // Expected: May fail - illegal but tests error handling

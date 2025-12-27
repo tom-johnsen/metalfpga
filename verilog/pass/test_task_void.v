@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Task with no return value (void task)
 // Feature: tasks
 // Expected: Should fail - tasks not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Deeply nested ternary with mixed types
 // Feature: Complex nested ternary operator expressions
 // Expected: Should pass - stress test for ternary handling

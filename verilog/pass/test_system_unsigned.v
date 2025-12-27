@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $unsigned system function
 // Feature: Cast to unsigned interpretation
 // Expected: Should fail - $unsigned not yet implemented

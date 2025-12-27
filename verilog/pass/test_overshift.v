@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module shr_overshift(
   input  wire [31:0] a,
   input  wire [31:0] s,   // intentionally wide

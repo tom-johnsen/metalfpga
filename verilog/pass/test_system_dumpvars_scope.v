@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $dumpvars with depth control
 // Feature: Selective variable dumping by hierarchy depth
 // Expected: Should fail - $dumpvars not yet implemented

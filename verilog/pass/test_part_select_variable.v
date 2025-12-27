@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Variable part select (indexed part select)
 // Feature: +: and -: part select operators
 // Expected: Should pass - indexed part select

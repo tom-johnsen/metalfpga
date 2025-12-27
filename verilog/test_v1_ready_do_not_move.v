@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // test_v1_ready_do_not_move.v
 //
 // The official v1.0 readiness test for metalfpga.

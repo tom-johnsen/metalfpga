@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators on very wide buses
 module test_reduction_wide_buses(
     input [63:0] data64,

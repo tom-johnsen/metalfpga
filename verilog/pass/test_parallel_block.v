@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Fork/join with timing differences
 // Feature: Parallel execution blocks with delays
 // Expected: May fail - complex fork/join timing

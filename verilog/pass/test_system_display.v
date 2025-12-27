@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $display system task
 // Feature: Console output with formatting
 // Expected: Should fail - $display not yet implemented

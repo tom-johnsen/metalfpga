@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module leaf(
   input  wire a,
   input  wire b,

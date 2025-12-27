@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module for_always_test;
   reg clk;
   integer i;

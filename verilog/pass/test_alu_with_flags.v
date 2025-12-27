@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module add_with_flags #(
     parameter WIDTH = 32
 )(

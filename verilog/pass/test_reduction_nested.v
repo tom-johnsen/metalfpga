@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators in complex expressions
 module test_reduction_nested(
     input [7:0] a,

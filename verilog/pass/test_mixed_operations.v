@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module boss(
   input  wire [31:0] a,
   input  wire [7:0]  b,

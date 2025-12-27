@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: triand net type
 // Feature: Tristate with wired-AND resolution
 // Expected: Should fail - triand not yet implemented

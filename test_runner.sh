@@ -8,10 +8,12 @@ set +e  # Don't exit on error - we want to test everything
 # Script options
 FORCE_4STATE=0
 FORCE_AUTO=0
+FULL_SUITE=0
 for arg in "$@"; do
     case "$arg" in
         --4state) FORCE_4STATE=1 ;;
         --auto) FORCE_AUTO=1 ;;
+        --full) FULL_SUITE=1 ;;
     esac
 done
 
@@ -28,16 +30,27 @@ PASSED=0
 FAILED=0
 MISSING=0
 BUGS=0
+DISCARDED=0
+REJECTED=0
 
 # Arrays to track results
 declare -a FAILED_FILES
 declare -a MISSING_FILES
 declare -a BUG_FILES
+declare -a DISCARDED_FILES
+declare -a REJECTED_FILES
 
 # Create output directories
-MSL_DIR="./msl"
-HOST_DIR="./host"
-RESULTS_DIR="./test_results"
+ARTIFACTS_ROOT="./artifacts"
+if command -v uuidgen >/dev/null 2>&1; then
+    RUN_ID="$(uuidgen | tr -d '-' | cut -c1-8)"
+else
+    RUN_ID="$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')"
+fi
+ARTIFACT_DIR="$ARTIFACTS_ROOT/$RUN_ID"
+MSL_DIR="$ARTIFACT_DIR/msl"
+HOST_DIR="$ARTIFACT_DIR/host"
+RESULTS_DIR="$ARTIFACT_DIR/test_results"
 mkdir -p "$MSL_DIR" "$HOST_DIR" "$RESULTS_DIR"
 
 # Log file
@@ -45,8 +58,17 @@ LOG_FILE="$RESULTS_DIR/test_run_$(date +%Y%m%d_%H%M%S).log"
 
 echo "MetalFPGA Smart Test Suite" | tee "$LOG_FILE"
 echo "===========================" | tee -a "$LOG_FILE"
+echo "Run ID: $RUN_ID" | tee -a "$LOG_FILE"
+echo "Artifacts: $ARTIFACT_DIR" | tee -a "$LOG_FILE"
 echo "Started at $(date)" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
+
+# Ensure latest build before running tests
+echo "Building metalfpga_cli..." | tee -a "$LOG_FILE"
+if ! cmake --build build --target metalfpga_cli >>"$LOG_FILE" 2>&1; then
+    echo -e "${RED}Build failed. Check log for details.${NC}" | tee -a "$LOG_FILE"
+    exit 1
+fi
 
 # Prefer rg when available
 HAS_RG=0
@@ -117,6 +139,23 @@ is_missing_error() {
     else
         grep -E -i -q "$pattern" "$log"
     fi
+}
+
+is_rejected_error() {
+    local log="$1"
+    local pattern="syntax error|unexpected token|expected identifier|expected assignment operator|expected ';'|invalid token|invalid character"
+    if [ "$HAS_RG" -eq 1 ]; then
+        rg -n --no-messages -i -e "$pattern" "$log" >/dev/null
+    else
+        grep -E -i -q "$pattern" "$log"
+    fi
+}
+
+read_expectation() {
+    local file="$1"
+    local header
+    header=$(head -n 20 "$file" | sed -n 's/^\/\/[[:space:]]*EXPECT=\(PASS\|FAIL\|DISCARDED\|REJECTED\).*/\1/p' | head -n 1)
+    echo "$header"
 }
 
 get_module_names() {
@@ -237,7 +276,13 @@ echo -e "${BLUE}Discovering Verilog test files...${NC}" | tee -a "$LOG_FILE"
 if [ -n "${VERILOG_FILES_OVERRIDE:-}" ]; then
     VERILOG_FILES="$VERILOG_FILES_OVERRIDE"
 else
-    VERILOG_FILES=$(find verilog -name "*.v" -type f | sort)
+    if [ "$FULL_SUITE" -eq 1 ]; then
+        VERILOG_FILES=$(find verilog -name "*.v" -type f | sort)
+    else
+        echo "Skipping verilog/pass (use --full to include)" | tee -a "$LOG_FILE"
+        VERILOG_FILES=$(find verilog -path "verilog/pass" -prune -o \
+            -name "*.v" -type f -print | sort)
+    fi
 fi
 TOTAL=$(echo "$VERILOG_FILES" | wc -l | tr -d ' ')
 echo -e "${BLUE}Found $TOTAL Verilog files${NC}" | tee -a "$LOG_FILE"
@@ -256,9 +301,133 @@ for vfile in $VERILOG_FILES; do
     fi
     use_auto=$FORCE_AUTO
 
+    EXPECT_HEADER=$(read_expectation "$vfile")
+
+    if [ -n "$EXPECT_HEADER" ] && [ "$EXPECT_HEADER" != "PASS" ]; then
+        echo -e "${YELLOW}Testing: $vfile (EXPECT=$EXPECT_HEADER)${NC}" | tee -a "$LOG_FILE"
+
+        if [ "$use_4state" -eq 1 ]; then
+            echo "  Using --4state flag" | tee -a "$LOG_FILE"
+        fi
+        if [ "$use_auto" -eq 1 ]; then
+            echo "  Using --auto flag" | tee -a "$LOG_FILE"
+        fi
+
+        flat_out="$RESULTS_DIR/${filename}_flat.txt"
+        cli=(./build/metalfpga_cli "$vfile")
+        if [ "$use_auto" -eq 1 ]; then
+            cli+=("--auto")
+        fi
+        flags=()
+        if [ "$use_4state" -eq 1 ]; then
+            flags+=(--4state)
+        fi
+
+        echo "  [1/1] Expecting $EXPECT_HEADER..." | tee -a "$LOG_FILE"
+        if "${cli[@]}" --dump-flat "${flags[@]}" > "$flat_out" 2>&1; then
+            echo -e "  ${RED}✗ BUG: Expected $EXPECT_HEADER but succeeded${NC}" | tee -a "$LOG_FILE"
+            BUGS=$((BUGS + 1))
+            BUG_FILES+=("$vfile (expected $EXPECT_HEADER)")
+        else
+            if is_multi_top_error "$flat_out"; then
+                echo "  Detected multiple top-level modules, retrying per module..." | tee -a "$LOG_FILE"
+                module_names=$(get_module_names "$vfile")
+                if [ -z "$module_names" ]; then
+                    echo -e "  ${RED}✗ BUG: Unable to discover module names${NC}" | tee -a "$LOG_FILE"
+                    BUGS=$((BUGS + 1))
+                    BUG_FILES+=("$vfile (expected $EXPECT_HEADER multi-top)")
+                else
+                    any_pass=0
+                    any_mismatch=0
+                    for top in $module_names; do
+                        cli_top=(./build/metalfpga_cli "$vfile" --top "$top")
+                        if [ "$use_auto" -eq 1 ]; then
+                            cli_top+=("--auto")
+                        fi
+                        if "${cli_top[@]}" --dump-flat "${flags[@]}" > "$flat_out" 2>&1; then
+                            any_pass=1
+                            break
+                        fi
+                        if [ "$EXPECT_HEADER" = "DISCARDED" ]; then
+                            if ! is_missing_error "$flat_out"; then
+                                any_mismatch=1
+                            fi
+                        elif [ "$EXPECT_HEADER" = "REJECTED" ]; then
+                            if ! is_rejected_error "$flat_out"; then
+                                any_mismatch=1
+                            fi
+                        fi
+                    done
+                    if [ "$any_pass" -eq 1 ]; then
+                        echo -e "  ${RED}✗ BUG: Expected $EXPECT_HEADER but succeeded${NC}" | tee -a "$LOG_FILE"
+                        BUGS=$((BUGS + 1))
+                        BUG_FILES+=("$vfile (expected $EXPECT_HEADER)")
+                    elif [ "$any_mismatch" -eq 1 ]; then
+                        echo -e "  ${RED}✗ BUG: Expected $EXPECT_HEADER but saw different error${NC}" | tee -a "$LOG_FILE"
+                        BUGS=$((BUGS + 1))
+                        BUG_FILES+=("$vfile (expected $EXPECT_HEADER mismatch)")
+                    else
+                        if [ "$EXPECT_HEADER" = "FAIL" ]; then
+                            echo -e "  ${GREEN}✓ EXPECTED FAIL${NC}" | tee -a "$LOG_FILE"
+                            FAILED=$((FAILED + 1))
+                            FAILED_FILES+=("$vfile (expected fail)")
+                        elif [ "$EXPECT_HEADER" = "DISCARDED" ]; then
+                            echo -e "  ${GREEN}✓ EXPECTED DISCARDED${NC}" | tee -a "$LOG_FILE"
+                            DISCARDED=$((DISCARDED + 1))
+                            DISCARDED_FILES+=("$vfile")
+                        else
+                            echo -e "  ${GREEN}✓ EXPECTED REJECTED${NC}" | tee -a "$LOG_FILE"
+                            REJECTED=$((REJECTED + 1))
+                            REJECTED_FILES+=("$vfile")
+                        fi
+                        head -3 "$flat_out" | tee -a "$LOG_FILE"
+                    fi
+                fi
+            else
+                if [ "$EXPECT_HEADER" = "DISCARDED" ]; then
+                    if ! is_missing_error "$flat_out"; then
+                        echo -e "  ${RED}✗ BUG: Expected DISCARDED but saw different error${NC}" | tee -a "$LOG_FILE"
+                        BUGS=$((BUGS + 1))
+                        BUG_FILES+=("$vfile (expected discarded)")
+                    else
+                        echo -e "  ${GREEN}✓ EXPECTED DISCARDED${NC}" | tee -a "$LOG_FILE"
+                        DISCARDED=$((DISCARDED + 1))
+                        DISCARDED_FILES+=("$vfile")
+                        head -3 "$flat_out" | tee -a "$LOG_FILE"
+                    fi
+                elif [ "$EXPECT_HEADER" = "REJECTED" ]; then
+                    if ! is_rejected_error "$flat_out"; then
+                        echo -e "  ${RED}✗ BUG: Expected REJECTED but saw different error${NC}" | tee -a "$LOG_FILE"
+                        BUGS=$((BUGS + 1))
+                        BUG_FILES+=("$vfile (expected rejected)")
+                    else
+                        echo -e "  ${GREEN}✓ EXPECTED REJECTED${NC}" | tee -a "$LOG_FILE"
+                        REJECTED=$((REJECTED + 1))
+                        REJECTED_FILES+=("$vfile")
+                        head -3 "$flat_out" | tee -a "$LOG_FILE"
+                    fi
+                else
+                    echo -e "  ${GREEN}✓ EXPECTED FAIL${NC}" | tee -a "$LOG_FILE"
+                    FAILED=$((FAILED + 1))
+                    FAILED_FILES+=("$vfile (expected fail)")
+                    head -3 "$flat_out" | tee -a "$LOG_FILE"
+                fi
+            fi
+        fi
+        echo "" | tee -a "$LOG_FILE"
+        continue
+    fi
+
     # Expected-failure tests count as fail when they fail
-    EXPECT_REASON=$(should_expect_fail "$vfile" "$use_4state")
-    if [ $? -eq 0 ]; then
+    EXPECT_REASON=""
+    EXPECT_AUTO_FAIL=0
+    if [ -z "$EXPECT_HEADER" ]; then
+        EXPECT_REASON=$(should_expect_fail "$vfile" "$use_4state")
+        if [ $? -eq 0 ]; then
+            EXPECT_AUTO_FAIL=1
+        fi
+    fi
+    if [ "$EXPECT_AUTO_FAIL" -eq 1 ]; then
         echo -e "${YELLOW}Testing: $vfile ($EXPECT_REASON)${NC}" | tee -a "$LOG_FILE"
 
         if [ "$use_4state" -eq 1 ]; then
@@ -325,7 +494,11 @@ for vfile in $VERILOG_FILES; do
         continue
     fi
 
-    echo -e "${YELLOW}Testing: $vfile${NC}" | tee -a "$LOG_FILE"
+    if [ -n "$EXPECT_HEADER" ]; then
+        echo -e "${YELLOW}Testing: $vfile (EXPECT=PASS)${NC}" | tee -a "$LOG_FILE"
+    else
+        echo -e "${YELLOW}Testing: $vfile${NC}" | tee -a "$LOG_FILE"
+    fi
 
     if [ "$use_4state" -eq 1 ]; then
         echo "  Using --4state flag" | tee -a "$LOG_FILE"
@@ -364,6 +537,10 @@ for vfile in $VERILOG_FILES; do
                 any_bug=1
             fi
         done
+        if [ -n "$EXPECT_HEADER" ] && [ "$EXPECT_HEADER" = "PASS" ] && [ "$any_missing" -eq 1 ]; then
+            any_bug=1
+            any_missing=0
+        fi
         if [ "$any_bug" -eq 1 ]; then
             BUGS=$((BUGS + 1))
             BUG_FILES+=("$vfile (multi-top)")
@@ -383,7 +560,10 @@ for vfile in $VERILOG_FILES; do
         BUGS=$((BUGS + 1))
         BUG_FILES+=("$vfile (no kernel)")
     else
-        if [ -n "${LAST_FAIL_LOG:-}" ] && is_missing_error "$LAST_FAIL_LOG"; then
+        if [ -n "$EXPECT_HEADER" ] && [ "$EXPECT_HEADER" = "PASS" ]; then
+            BUGS=$((BUGS + 1))
+            BUG_FILES+=("$vfile (expected pass)")
+        elif [ -n "${LAST_FAIL_LOG:-}" ] && is_missing_error "$LAST_FAIL_LOG"; then
             MISSING=$((MISSING + 1))
             MISSING_FILES+=("$vfile")
         else
@@ -403,6 +583,8 @@ echo "===============================================" | tee -a "$LOG_FILE"
 echo "Total files:   $TOTAL" | tee -a "$LOG_FILE"
 echo -e "${GREEN}Passed:        $PASSED${NC}" | tee -a "$LOG_FILE"
 echo -e "${BLUE}Expected fail: $FAILED${NC}" | tee -a "$LOG_FILE"
+echo -e "${GREEN}Discarded:     $DISCARDED${NC}" | tee -a "$LOG_FILE"
+echo -e "${GREEN}Rejected:      $REJECTED${NC}" | tee -a "$LOG_FILE"
 echo -e "${YELLOW}Missing:       $MISSING${NC}" | tee -a "$LOG_FILE"
 echo -e "${RED}Bugs:          $BUGS${NC}" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
@@ -434,11 +616,27 @@ if [ $FAILED -gt 0 ]; then
     echo "" | tee -a "$LOG_FILE"
 fi
 
+if [ $DISCARDED -gt 0 ]; then
+    echo -e "${GREEN}Discarded files:${NC}" | tee -a "$LOG_FILE"
+    for file in "${DISCARDED_FILES[@]}"; do
+        echo "  - $file" | tee -a "$LOG_FILE"
+    done
+    echo "" | tee -a "$LOG_FILE"
+fi
+
+if [ $REJECTED -gt 0 ]; then
+    echo -e "${GREEN}Rejected files:${NC}" | tee -a "$LOG_FILE"
+    for file in "${REJECTED_FILES[@]}"; do
+        echo "  - $file" | tee -a "$LOG_FILE"
+    done
+    echo "" | tee -a "$LOG_FILE"
+fi
+
 # Pass rate
 if [ $TOTAL -gt 0 ]; then
     TESTABLE=$((TOTAL - MISSING))
     if [ $TESTABLE -gt 0 ]; then
-        PASS_COUNT=$((PASSED + FAILED))
+        PASS_COUNT=$((PASSED + FAILED + DISCARDED + REJECTED))
         PASS_RATE=$((PASS_COUNT * 100 / TESTABLE))
         echo "Pass rate: ${PASS_RATE}% ($PASS_COUNT/$TESTABLE testable files)" | tee -a "$LOG_FILE"
     fi

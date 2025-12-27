@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: buf gate primitive with delay
 // Feature: Gate-level primitives with delays
 // Expected: Should fail - gate primitives not yet implemented

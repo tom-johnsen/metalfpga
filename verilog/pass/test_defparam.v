@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: defparam statement
 // Feature: Hierarchical parameter override
 // Expected: Should fail - defparam not yet implemented

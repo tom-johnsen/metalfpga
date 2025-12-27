@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators in case statements
 module test_reduction_case(
     input [7:0] data,

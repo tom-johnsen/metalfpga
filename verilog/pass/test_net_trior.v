@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: trior net type
 // Feature: Tristate with wired-OR resolution
 // Expected: Should fail - trior not yet implemented

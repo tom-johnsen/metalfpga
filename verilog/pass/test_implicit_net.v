@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Implicit net declarations
 // Feature: Undeclared wires get implicit wire type
 // Expected: May fail - implicit net handling

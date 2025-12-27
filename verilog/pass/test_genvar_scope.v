@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Genvar scoping rules
 // Feature: Multiple genvars with same name in different scopes
 // Expected: May fail - genvar scoping

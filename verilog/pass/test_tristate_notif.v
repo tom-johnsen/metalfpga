@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: notif tristate gates
 // Feature: Inverting tristate buffers
 // Expected: Should fail - tristate not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test case: Empty port connection syntax .port()
 // This is valid Verilog-2001 syntax for explicitly unconnected ports
 // Currently fails with: "expected expression"

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module param_leaf #(
   parameter W = 8
 )(

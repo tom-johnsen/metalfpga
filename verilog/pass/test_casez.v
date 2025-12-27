@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test casez statement - treats only Z and ? as don't-care (X must match exactly)
 
 module casez_priority(

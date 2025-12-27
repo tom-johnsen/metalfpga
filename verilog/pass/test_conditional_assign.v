@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test complex conditional assignments
 module conditional_assign(
     input [7:0] a,

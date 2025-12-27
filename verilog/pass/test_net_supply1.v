@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: supply1 net type (constant 1)
 // Feature: Power/ground nets
 // Expected: Should fail - supply nets not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Memory-style tristate bus
 // Feature: Realistic tristate bus with address decode
 // Expected: Should fail - tristate resolution not yet implemented

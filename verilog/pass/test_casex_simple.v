@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test casex with X values (no wildcard syntax yet)
 
 module casex_simple(

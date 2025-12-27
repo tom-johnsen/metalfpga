@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // File A: defines a module
 
 module adder_mod(

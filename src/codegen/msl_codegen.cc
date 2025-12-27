@@ -45,6 +45,7 @@ const Task* FindTask(const Module& module, const std::string& name) {
 
 const std::unordered_map<std::string, int>* g_task_arg_widths = nullptr;
 const std::unordered_map<std::string, bool>* g_task_arg_signed = nullptr;
+const std::unordered_map<std::string, bool>* g_task_arg_real = nullptr;
 
 int SignalWidth(const Module& module, const std::string& name) {
   if (g_task_arg_widths) {
@@ -109,6 +110,94 @@ bool SignalSigned(const Module& module, const std::string& name) {
     if (net.name == name) {
       return net.is_signed;
     }
+  }
+  return false;
+}
+
+bool SignalIsReal(const Module& module, const std::string& name) {
+  if (g_task_arg_real) {
+    auto it = g_task_arg_real->find(name);
+    if (it != g_task_arg_real->end()) {
+      return it->second;
+    }
+  }
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return net.is_real;
+    }
+  }
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return port.is_real;
+    }
+  }
+  return false;
+}
+
+bool IsRealLiteralExpr(const Expr& expr) {
+  if (expr.kind != ExprKind::kNumber) {
+    return false;
+  }
+  if (expr.is_real_literal) {
+    return true;
+  }
+  if (!expr.has_width || expr.number_width != 64) {
+    return false;
+  }
+  if (expr.has_base || expr.is_signed) {
+    return false;
+  }
+  if (expr.x_bits != 0 || expr.z_bits != 0) {
+    return false;
+  }
+  return true;
+}
+
+bool IsArrayNet(const Module& module, const std::string& name,
+                int* element_width, int* array_size);
+
+bool ExprIsRealValue(const Expr& expr, const Module& module) {
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+      return SignalIsReal(module, expr.ident);
+    case ExprKind::kNumber:
+      return IsRealLiteralExpr(expr);
+    case ExprKind::kString:
+      return false;
+    case ExprKind::kUnary:
+      if (expr.unary_op == '+' || expr.unary_op == '-') {
+        return expr.operand ? ExprIsRealValue(*expr.operand, module) : false;
+      }
+      return false;
+    case ExprKind::kBinary:
+      if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
+          expr.op == '/' || expr.op == 'p') {
+        return (expr.lhs && ExprIsRealValue(*expr.lhs, module)) ||
+               (expr.rhs && ExprIsRealValue(*expr.rhs, module));
+      }
+      return false;
+    case ExprKind::kTernary:
+      return (expr.then_expr && ExprIsRealValue(*expr.then_expr, module)) ||
+             (expr.else_expr && ExprIsRealValue(*expr.else_expr, module));
+    case ExprKind::kIndex: {
+      const Expr* base = expr.base.get();
+      while (base && base->kind == ExprKind::kIndex) {
+        base = base->base.get();
+      }
+      if (!base || base->kind != ExprKind::kIdentifier) {
+        return false;
+      }
+      if (!SignalIsReal(module, base->ident)) {
+        return false;
+      }
+      return IsArrayNet(module, base->ident, nullptr, nullptr);
+    }
+    case ExprKind::kSelect:
+    case ExprKind::kConcat:
+      return false;
+    case ExprKind::kCall:
+      return expr.ident == "$realtime" || expr.ident == "$itor" ||
+             expr.ident == "$bitstoreal";
   }
   return false;
 }
@@ -405,6 +494,9 @@ std::string SignExtendExpr(const std::string& expr, int expr_width,
 }
 
 bool ExprSigned(const Expr& expr, const Module& module) {
+  if (ExprIsRealValue(expr, module)) {
+    return true;
+  }
   switch (expr.kind) {
     case ExprKind::kIdentifier:
       return SignalSigned(module, expr.ident);
@@ -779,6 +871,9 @@ int MinimalWidth(uint64_t value) {
 }
 
 int ExprWidth(const Expr& expr, const Module& module) {
+  if (ExprIsRealValue(expr, module)) {
+    return 64;
+  }
   switch (expr.kind) {
     case ExprKind::kIdentifier:
       return SignalWidth(module, expr.ident);
@@ -786,7 +881,7 @@ int ExprWidth(const Expr& expr, const Module& module) {
       if (expr.has_width && expr.number_width > 0) {
         return expr.number_width;
       }
-      return MinimalWidth(expr.number);
+      return std::max(32, MinimalWidth(expr.number));
     case ExprKind::kString:
       return 0;
     case ExprKind::kUnary:
@@ -841,6 +936,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
       if (expr.ident == "$time") {
         return 64;
       }
+      if (expr.ident == "$realtobits") {
+        return 64;
+      }
       const Function* func = FindFunction(module, expr.ident);
       return func ? func->width : 32;
     }
@@ -887,6 +985,19 @@ std::string BinaryOpString(char op) {
 std::string EmitExpr(const Expr& expr, const Module& module,
                      const std::unordered_set<std::string>& locals,
                      const std::unordered_set<std::string>& regs);
+std::string EmitRealValueExpr(const Expr& expr, const Module& module,
+                              const std::unordered_set<std::string>& locals,
+                              const std::unordered_set<std::string>& regs);
+std::string EmitRealBitsExpr(const Expr& expr, const Module& module,
+                             const std::unordered_set<std::string>& locals,
+                             const std::unordered_set<std::string>& regs);
+std::string EmitRealToIntExpr(const Expr& expr, int target_width,
+                              bool signed_target, const Module& module,
+                              const std::unordered_set<std::string>& locals,
+                              const std::unordered_set<std::string>& regs);
+std::string EmitCondExpr(const Expr& expr, const Module& module,
+                         const std::unordered_set<std::string>& locals,
+                         const std::unordered_set<std::string>& regs);
 
 std::string EmitExprSized(const Expr& expr, int target_width,
                           const Module& module,
@@ -905,6 +1016,182 @@ std::string EmitExprSized(const Expr& expr, int target_width,
     return ExtendExpr(raw, expr_width, target_width);
   }
   return MaskForWidthExpr(raw, target_width);
+}
+
+std::string EmitRealValueExpr(const Expr& expr, const Module& module,
+                              const std::unordered_set<std::string>& locals,
+                              const std::unordered_set<std::string>& regs) {
+  auto emit_int_as_real = [&](const Expr& value_expr) -> std::string {
+    int width = ExprWidth(value_expr, module);
+    bool signed_expr = ExprSigned(value_expr, module);
+    std::string raw = EmitExpr(value_expr, module, locals, regs);
+    std::string cast;
+    if (width > 32) {
+      cast = signed_expr ? "(double)(long)" : "(double)(ulong)";
+    } else {
+      cast = signed_expr ? "(double)(int)" : "(double)(uint)";
+    }
+    return cast + "(" + raw + ")";
+  };
+
+  switch (expr.kind) {
+    case ExprKind::kIdentifier: {
+      const Port* port = FindPort(module, expr.ident);
+      if (SignalIsReal(module, expr.ident)) {
+        if (port) {
+          return "gpga_bits_to_real(" + port->name + "[gid])";
+        }
+        if (regs.count(expr.ident) > 0) {
+          return "gpga_bits_to_real(" + expr.ident + "[gid])";
+        }
+        if (locals.count(expr.ident) > 0) {
+          return "gpga_bits_to_real(" + expr.ident + ")";
+        }
+        return "gpga_bits_to_real(" + expr.ident + ")";
+      }
+      return emit_int_as_real(expr);
+    }
+    case ExprKind::kNumber:
+      if (IsRealLiteralExpr(expr)) {
+        return "gpga_bits_to_real(" + std::to_string(expr.value_bits) + "ul)";
+      }
+      return emit_int_as_real(expr);
+    case ExprKind::kString:
+      return "0.0";
+    case ExprKind::kUnary: {
+      std::string operand = expr.operand
+                                ? EmitRealValueExpr(*expr.operand, module,
+                                                    locals, regs)
+                                : "0.0";
+      if (expr.unary_op == '+') {
+        return operand;
+      }
+      if (expr.unary_op == '-') {
+        return "(-" + operand + ")";
+      }
+      return "0.0";
+    }
+    case ExprKind::kBinary: {
+      std::string lhs = expr.lhs ? EmitRealValueExpr(*expr.lhs, module, locals,
+                                                     regs)
+                                 : "0.0";
+      std::string rhs = expr.rhs ? EmitRealValueExpr(*expr.rhs, module, locals,
+                                                     regs)
+                                 : "0.0";
+      if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
+          expr.op == '/') {
+        return "(" + lhs + " " + std::string(1, expr.op) + " " + rhs + ")";
+      }
+      if (expr.op == 'p') {
+        return "pow(" + lhs + ", " + rhs + ")";
+      }
+      return "0.0";
+    }
+    case ExprKind::kTernary: {
+      std::string cond = expr.condition
+                             ? EmitCondExpr(*expr.condition, module, locals,
+                                            regs)
+                             : "false";
+      std::string then_expr =
+          expr.then_expr
+              ? EmitRealValueExpr(*expr.then_expr, module, locals, regs)
+              : "0.0";
+      std::string else_expr =
+          expr.else_expr
+              ? EmitRealValueExpr(*expr.else_expr, module, locals, regs)
+              : "0.0";
+      return "((" + cond + ") ? (" + then_expr + ") : (" + else_expr + "))";
+    }
+    case ExprKind::kIndex: {
+      if (!expr.base || !expr.index) {
+        return "0.0";
+      }
+      if (expr.base->kind == ExprKind::kIdentifier) {
+        int element_width = 0;
+        int array_size = 0;
+        if (IsArrayNet(module, expr.base->ident, &element_width, &array_size)) {
+          std::string index =
+              EmitExpr(*expr.index, module, locals, regs);
+          std::string idx = "uint(" + index + ")";
+          std::string base =
+              "((gid * " + std::to_string(array_size) + "u) + " + idx + ")";
+          std::string bounds =
+              "(" + idx + " < " + std::to_string(array_size) + "u)";
+          if (SignalIsReal(module, expr.base->ident)) {
+            return "((" + bounds + ") ? gpga_bits_to_real(" +
+                   expr.base->ident + "[" + base + "]) : 0.0)";
+          }
+        }
+      }
+      return emit_int_as_real(expr);
+    }
+    case ExprKind::kCall:
+      if (expr.ident == "$realtime") {
+        return "(double)__gpga_time";
+      }
+      if (expr.ident == "$itor") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          return emit_int_as_real(*expr.call_args.front());
+        }
+        return "0.0";
+      }
+      if (expr.ident == "$bitstoreal") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          std::string bits =
+              EmitExprSized(*expr.call_args.front(), 64, module, locals, regs);
+          return "gpga_bits_to_real(" + bits + ")";
+        }
+        return "0.0";
+      }
+      return "0.0";
+    case ExprKind::kSelect:
+    case ExprKind::kConcat:
+      return "0.0";
+  }
+  return "0.0";
+}
+
+std::string EmitRealBitsExpr(const Expr& expr, const Module& module,
+                             const std::unordered_set<std::string>& locals,
+                             const std::unordered_set<std::string>& regs) {
+  if (IsRealLiteralExpr(expr)) {
+    return std::to_string(expr.value_bits) + "ul";
+  }
+  if (expr.kind == ExprKind::kNumber && expr.value_bits == 0 &&
+      expr.x_bits == 0 && expr.z_bits == 0) {
+    return "0ul";
+  }
+  return "gpga_real_to_bits(" +
+         EmitRealValueExpr(expr, module, locals, regs) + ")";
+}
+
+std::string EmitRealToIntExpr(const Expr& expr, int target_width,
+                              bool signed_target, const Module& module,
+                              const std::unordered_set<std::string>& locals,
+                              const std::unordered_set<std::string>& regs) {
+  std::string real_value = EmitRealValueExpr(expr, module, locals, regs);
+  std::string cast;
+  if (target_width > 32) {
+    cast = signed_target ? "(long)" : "(ulong)";
+  } else {
+    cast = signed_target ? "(int)" : "(uint)";
+  }
+  std::string raw = cast + "(" + real_value + ")";
+  return MaskForWidthExpr(raw, target_width);
+}
+
+std::string EmitCondExpr(const Expr& expr, const Module& module,
+                         const std::unordered_set<std::string>& locals,
+                         const std::unordered_set<std::string>& regs) {
+  if (ExprIsRealValue(expr, module)) {
+    std::string real_val = EmitRealValueExpr(expr, module, locals, regs);
+    return "(" + real_val + " != 0.0)";
+  }
+  std::string raw = EmitExpr(expr, module, locals, regs);
+  int width = ExprWidth(expr, module);
+  std::string masked = MaskForWidthExpr(raw, width);
+  std::string zero = ZeroForWidth(width);
+  return "(" + masked + " != " + zero + ")";
 }
 
 std::string EmitConcatExpr(const Expr& expr, const Module& module,
@@ -1473,6 +1760,281 @@ bool StatementUsesPower(const Statement& stmt) {
   return false;
 }
 
+bool ExprUsesReal(const Expr& expr, const Module& module) {
+  if (ExprIsRealValue(expr, module)) {
+    return true;
+  }
+  switch (expr.kind) {
+    case ExprKind::kUnary:
+      return expr.operand && ExprUsesReal(*expr.operand, module);
+    case ExprKind::kBinary:
+      return (expr.lhs && ExprUsesReal(*expr.lhs, module)) ||
+             (expr.rhs && ExprUsesReal(*expr.rhs, module));
+    case ExprKind::kTernary:
+      return (expr.condition && ExprUsesReal(*expr.condition, module)) ||
+             (expr.then_expr && ExprUsesReal(*expr.then_expr, module)) ||
+             (expr.else_expr && ExprUsesReal(*expr.else_expr, module));
+    case ExprKind::kSelect:
+      return (expr.base && ExprUsesReal(*expr.base, module)) ||
+             (expr.msb_expr && ExprUsesReal(*expr.msb_expr, module)) ||
+             (expr.lsb_expr && ExprUsesReal(*expr.lsb_expr, module));
+    case ExprKind::kIndex:
+      return (expr.base && ExprUsesReal(*expr.base, module)) ||
+             (expr.index && ExprUsesReal(*expr.index, module));
+    case ExprKind::kCall:
+      if (expr.ident == "$realtime" || expr.ident == "$itor" ||
+          expr.ident == "$bitstoreal" || expr.ident == "$rtoi" ||
+          expr.ident == "$realtobits") {
+        return true;
+      }
+      for (const auto& arg : expr.call_args) {
+        if (arg && ExprUsesReal(*arg, module)) {
+          return true;
+        }
+      }
+      return false;
+    case ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        if (element && ExprUsesReal(*element, module)) {
+          return true;
+        }
+      }
+      if (expr.repeat_expr && ExprUsesReal(*expr.repeat_expr, module)) {
+        return true;
+      }
+      return false;
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return false;
+  }
+  return false;
+}
+
+bool ExprHasSystemCall(const Expr& expr) {
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return false;
+    case ExprKind::kUnary:
+      return expr.operand && ExprHasSystemCall(*expr.operand);
+    case ExprKind::kBinary:
+      return (expr.lhs && ExprHasSystemCall(*expr.lhs)) ||
+             (expr.rhs && ExprHasSystemCall(*expr.rhs));
+    case ExprKind::kTernary:
+      return (expr.condition && ExprHasSystemCall(*expr.condition)) ||
+             (expr.then_expr && ExprHasSystemCall(*expr.then_expr)) ||
+             (expr.else_expr && ExprHasSystemCall(*expr.else_expr));
+    case ExprKind::kSelect:
+      return (expr.base && ExprHasSystemCall(*expr.base)) ||
+             (expr.msb_expr && ExprHasSystemCall(*expr.msb_expr)) ||
+             (expr.lsb_expr && ExprHasSystemCall(*expr.lsb_expr));
+    case ExprKind::kIndex:
+      return (expr.base && ExprHasSystemCall(*expr.base)) ||
+             (expr.index && ExprHasSystemCall(*expr.index));
+    case ExprKind::kCall:
+      if (!expr.ident.empty() && expr.ident.front() == '$') {
+        return true;
+      }
+      for (const auto& arg : expr.call_args) {
+        if (arg && ExprHasSystemCall(*arg)) {
+          return true;
+        }
+      }
+      return false;
+    case ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        if (element && ExprHasSystemCall(*element)) {
+          return true;
+        }
+      }
+      if (expr.repeat_expr && ExprHasSystemCall(*expr.repeat_expr)) {
+        return true;
+      }
+      return false;
+  }
+  return false;
+}
+
+bool StatementUsesReal(const Statement& stmt, const Module& module) {
+  if (stmt.kind == StatementKind::kAssign ||
+      stmt.kind == StatementKind::kForce ||
+      stmt.kind == StatementKind::kRelease) {
+    if (stmt.assign.rhs && ExprUsesReal(*stmt.assign.rhs, module)) {
+      return true;
+    }
+    if (stmt.assign.lhs_index &&
+        ExprUsesReal(*stmt.assign.lhs_index, module)) {
+      return true;
+    }
+    for (const auto& index : stmt.assign.lhs_indices) {
+      if (index && ExprUsesReal(*index, module)) {
+        return true;
+      }
+    }
+    if (stmt.assign.lhs_msb_expr &&
+        ExprUsesReal(*stmt.assign.lhs_msb_expr, module)) {
+      return true;
+    }
+    if (stmt.assign.lhs_lsb_expr &&
+        ExprUsesReal(*stmt.assign.lhs_lsb_expr, module)) {
+      return true;
+    }
+    if (stmt.assign.delay && ExprUsesReal(*stmt.assign.delay, module)) {
+      return true;
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    if (stmt.condition && ExprUsesReal(*stmt.condition, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.then_branch) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    for (const auto& inner : stmt.else_branch) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    if (stmt.case_expr && ExprUsesReal(*stmt.case_expr, module)) {
+      return true;
+    }
+    for (const auto& item : stmt.case_items) {
+      for (const auto& label : item.labels) {
+        if (label && ExprUsesReal(*label, module)) {
+          return true;
+        }
+      }
+      for (const auto& inner : item.body) {
+        if (StatementUsesReal(inner, module)) {
+          return true;
+        }
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    if (stmt.for_init_rhs &&
+        ExprUsesReal(*stmt.for_init_rhs, module)) {
+      return true;
+    }
+    if (stmt.for_condition &&
+        ExprUsesReal(*stmt.for_condition, module)) {
+      return true;
+    }
+    if (stmt.for_step_rhs &&
+        ExprUsesReal(*stmt.for_step_rhs, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.for_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    if (stmt.while_condition &&
+        ExprUsesReal(*stmt.while_condition, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.while_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    if (stmt.repeat_count && ExprUsesReal(*stmt.repeat_count, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.repeat_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    if (stmt.delay && ExprUsesReal(*stmt.delay, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.delay_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    if (!stmt.event_items.empty()) {
+      for (const auto& item : stmt.event_items) {
+        if (item.expr && ExprUsesReal(*item.expr, module)) {
+          return true;
+        }
+      }
+    } else if (stmt.event_expr && ExprUsesReal(*stmt.event_expr, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.event_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    if (stmt.wait_condition &&
+        ExprUsesReal(*stmt.wait_condition, module)) {
+      return true;
+    }
+    for (const auto& inner : stmt.wait_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
+      if (StatementUsesReal(inner, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kTaskCall) {
+    for (const auto& arg : stmt.task_args) {
+      if (arg && ExprUsesReal(*arg, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
 bool ModuleUsesPower(const Module& module) {
   for (const auto& assign : module.assigns) {
     if (assign.rhs && ExprUsesPower(*assign.rhs)) {
@@ -1513,6 +2075,60 @@ bool ModuleUsesPower(const Module& module) {
   }
   for (const auto& defparam : module.defparams) {
     if (defparam.expr && ExprUsesPower(*defparam.expr)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ModuleUsesReal(const Module& module) {
+  for (const auto& net : module.nets) {
+    if (net.is_real) {
+      return true;
+    }
+  }
+  for (const auto& assign : module.assigns) {
+    if (assign.rhs && ExprUsesReal(*assign.rhs, module)) {
+      return true;
+    }
+  }
+  for (const auto& sw : module.switches) {
+    if (sw.control && ExprUsesReal(*sw.control, module)) {
+      return true;
+    }
+    if (sw.control_n && ExprUsesReal(*sw.control_n, module)) {
+      return true;
+    }
+  }
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      if (StatementUsesReal(stmt, module)) {
+        return true;
+      }
+    }
+  }
+  for (const auto& func : module.functions) {
+    if (func.body_expr && ExprUsesReal(*func.body_expr, module)) {
+      return true;
+    }
+  }
+  for (const auto& task : module.tasks) {
+    for (const auto& stmt : task.body) {
+      if (StatementUsesReal(stmt, module)) {
+        return true;
+      }
+    }
+  }
+  for (const auto& param : module.parameters) {
+    if (param.is_real) {
+      return true;
+    }
+    if (param.value && ExprUsesReal(*param.value, module)) {
+      return true;
+    }
+  }
+  for (const auto& defparam : module.defparams) {
+    if (defparam.expr && ExprUsesReal(*defparam.expr, module)) {
       return true;
     }
   }
@@ -1626,6 +2242,10 @@ std::unordered_set<std::string> CollectDrivenSignals(const Module& module) {
 std::string EmitExpr(const Expr& expr, const Module& module,
                      const std::unordered_set<std::string>& locals,
                      const std::unordered_set<std::string>& regs) {
+  if (ExprIsRealValue(expr, module)) {
+    return EmitRealToIntExpr(expr, ExprWidth(expr, module), true, module,
+                             locals, regs);
+  }
   switch (expr.kind) {
     case ExprKind::kIdentifier: {
       const Port* port = FindPort(module, expr.ident);
@@ -1684,12 +2304,16 @@ std::string EmitExpr(const Expr& expr, const Module& module,
         return "(popcount(uint(" + operand + ")) & 1u)";
       }
       if (expr.unary_op == '!') {
-        std::string zero = ZeroForWidth(width);
-        return "((" + operand + " == " + zero + ") ? 1u : 0u)";
+        std::string cond =
+            expr.operand ? EmitCondExpr(*expr.operand, module, locals, regs)
+                         : "false";
+        return "((" + cond + ") ? 0u : 1u)";
       }
       if (expr.unary_op == 'B') {
-        std::string zero = ZeroForWidth(width);
-        return "((" + operand + " != " + zero + ") ? 1u : 0u)";
+        std::string cond =
+            expr.operand ? EmitCondExpr(*expr.operand, module, locals, regs)
+                         : "false";
+        return "((" + cond + ") ? 1u : 0u)";
       }
       if (expr.unary_op == '+') {
         return operand;
@@ -1707,12 +2331,10 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       bool rhs_signed = expr.rhs ? ExprSigned(*expr.rhs, module) : false;
       bool signed_op = lhs_signed && rhs_signed;
       if (expr.op == 'A' || expr.op == 'O') {
-        std::string lhs_masked = MaskForWidthExpr(lhs, lhs_width);
-        std::string rhs_masked = MaskForWidthExpr(rhs, rhs_width);
-        std::string lhs_zero = ZeroForWidth(lhs_width);
-        std::string rhs_zero = ZeroForWidth(rhs_width);
-        std::string lhs_bool = "(" + lhs_masked + " != " + lhs_zero + ")";
-        std::string rhs_bool = "(" + rhs_masked + " != " + rhs_zero + ")";
+        std::string lhs_bool =
+            expr.lhs ? EmitCondExpr(*expr.lhs, module, locals, regs) : "false";
+        std::string rhs_bool =
+            expr.rhs ? EmitCondExpr(*expr.rhs, module, locals, regs) : "false";
         std::string op = (expr.op == 'A') ? "&&" : "||";
         return "((" + lhs_bool + " " + op + " " + rhs_bool + ") ? 1u : 0u)";
       }
@@ -1764,6 +2386,17 @@ std::string EmitExpr(const Expr& expr, const Module& module,
           expr.op == 'c' || expr.op == 'W' || expr.op == 'w' ||
           expr.op == '<' || expr.op == '>' || expr.op == 'L' ||
           expr.op == 'G') {
+        if ((expr.lhs && ExprIsRealValue(*expr.lhs, module)) ||
+            (expr.rhs && ExprIsRealValue(*expr.rhs, module))) {
+          std::string lhs_real =
+              expr.lhs ? EmitRealValueExpr(*expr.lhs, module, locals, regs)
+                       : "0.0";
+          std::string rhs_real =
+              expr.rhs ? EmitRealValueExpr(*expr.rhs, module, locals, regs)
+                       : "0.0";
+          std::string op = BinaryOpString(expr.op);
+          return "((" + lhs_real + " " + op + " " + rhs_real + ") ? 1u : 0u)";
+        }
         std::string lhs_ext = signed_op
                                   ? SignExtendExpr(lhs, lhs_width, target_width)
                                   : ExtendExpr(lhs, lhs_width, target_width);
@@ -1785,8 +2418,9 @@ std::string EmitExpr(const Expr& expr, const Module& module,
     }
     case ExprKind::kTernary: {
       std::string cond = expr.condition
-                             ? EmitExpr(*expr.condition, module, locals, regs)
-                             : "0u";
+                             ? EmitCondExpr(*expr.condition, module, locals,
+                                            regs)
+                             : "false";
       std::string then_expr =
           expr.then_expr ? EmitExpr(*expr.then_expr, module, locals, regs) : "0u";
       std::string else_expr =
@@ -1857,6 +2491,20 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       if (expr.ident == "$time") {
         return "__gpga_time";
       }
+      if (expr.ident == "$rtoi") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          return EmitRealToIntExpr(*expr.call_args.front(), 32, true, module,
+                                   locals, regs);
+        }
+        return "0u";
+      }
+      if (expr.ident == "$realtobits") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          return EmitRealBitsExpr(*expr.call_args.front(), module, locals,
+                                  regs);
+        }
+        return "0ul";
+      }
       return "/*function_call*/0u";
     case ExprKind::kConcat:
       return EmitConcatExpr(expr, module, locals, regs);
@@ -1884,6 +2532,15 @@ LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
                        const std::unordered_set<std::string>& regs,
                        bool use_next) {
   LvalueInfo out;
+  if (SignalIsReal(module, assign.lhs)) {
+    if (assign.lhs_has_range) {
+      return out;
+    }
+    if ((assign.lhs_index || !assign.lhs_indices.empty()) &&
+        !IsArrayNet(module, assign.lhs, nullptr, nullptr)) {
+      return out;
+    }
+  }
   if (assign.lhs_has_range) {
     if (IsArrayNet(module, assign.lhs, nullptr, nullptr)) {
       return out;
@@ -2022,6 +2679,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "#include \"gpga_4state.h\"\n\n";
   }
   const bool uses_power = ModuleUsesPower(module);
+  const bool uses_real = ModuleUsesReal(module);
   if (!four_state && uses_power) {
     out << "inline uint gpga_pow_u32(uint base, uint exp) {\n";
     out << "  uint result = 1u;\n";
@@ -2058,6 +2716,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  return gpga_pow_u64(ulong(base), ulong(exp));\n";
     out << "}\n\n";
   }
+  if (uses_real) {
+    out << "inline double gpga_bits_to_real(ulong bits) {\n";
+    out << "  return as_type<double>(bits);\n";
+    out << "}\n";
+    out << "inline ulong gpga_real_to_bits(double value) {\n";
+    out << "  return as_type<ulong>(value);\n";
+    out << "}\n\n";
+  }
   out << "struct GpgaParams { uint count; };\n\n";
   out << "constexpr ulong __gpga_time = 0ul;\n\n";
   out << "// Placeholder MSL emitted by GPGA.\n\n";
@@ -2083,6 +2749,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     auto val_name = [](const std::string& name) { return name + "_val"; };
     auto xz_name = [](const std::string& name) { return name + "_xz"; };
 
+    std::unordered_set<std::string> sequential_regs;
+    std::unordered_set<std::string> initial_regs;
+    bool has_initial = false;
+    for (const auto& block : module.always_blocks) {
+      if (block.edge == EdgeKind::kCombinational ||
+          block.edge == EdgeKind::kInitial) {
+        continue;
+      }
+      for (const auto& stmt : block.statements) {
+        CollectAssignedSignals(stmt, &sequential_regs);
+      }
+    }
+    for (const auto& block : module.always_blocks) {
+      if (block.edge != EdgeKind::kInitial) {
+        continue;
+      }
+      has_initial = true;
+      for (const auto& stmt : block.statements) {
+        CollectAssignedSignals(stmt, &initial_regs);
+      }
+    }
+    std::unordered_set<std::string> buffered_regs;
+    for (const auto& net : module.nets) {
+      if (net.array_size > 0) {
+        continue;
+      }
+      if (IsTriregNet(net.type)) {
+        buffered_regs.insert(net.name);
+        continue;
+      }
+      if (net.type == NetType::kReg &&
+          (sequential_regs.count(net.name) > 0 ||
+           initial_regs.count(net.name) > 0)) {
+        buffered_regs.insert(net.name);
+      }
+    }
+
     struct FsExpr {
       std::string val;
       std::string xz;
@@ -2093,6 +2796,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       uint64_t const_val = 0;
       uint64_t const_xz = 0;
       uint64_t const_drive = 0;
+      bool is_real = false;
     };
 
     auto fs_expr_from_base = [&](const std::string& base,
@@ -2189,6 +2893,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     auto fs_resize_expr = [&](const FsExpr& expr, int width) -> FsExpr {
+      if (expr.is_real) {
+        return expr;
+      }
       if (expr.width == width) {
         return expr;
       }
@@ -2219,6 +2926,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     auto fs_extend_expr = [&](const FsExpr& expr, int width,
                               bool signed_op) -> FsExpr {
+      if (expr.is_real) {
+        return expr;
+      }
       return signed_op ? fs_sext_expr(expr, width) : fs_resize_expr(expr, width);
     };
 
@@ -2496,9 +3206,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     std::function<FsExpr(const Expr&)> emit_expr4;
     std::function<FsExpr(const Expr&)> emit_expr4_impl;
     std::function<FsExpr(const Expr&)> emit_concat4;
+    std::function<std::string(const Expr&)> emit_real_value4;
     std::function<FsExpr(const FsExpr&, int, bool, bool)> maybe_hoist_full;
 
     emit_expr4 = [&](const Expr& expr) -> FsExpr {
+      if (ExprIsRealValue(expr, module)) {
+        return emit_expr4_impl(expr);
+      }
       if (!active_cse) {
         return emit_expr4_impl(expr);
       }
@@ -2546,9 +3260,166 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return FsExpr{acc_val, acc_xz, acc_drive, total_width};
     };
 
+    auto emit_real_bits4 = [&](const Expr& expr) -> std::string {
+      if (IsRealLiteralExpr(expr)) {
+        return std::to_string(expr.value_bits) + "ul";
+      }
+      if (expr.kind == ExprKind::kNumber && expr.value_bits == 0 &&
+          expr.x_bits == 0 && expr.z_bits == 0) {
+        return "0ul";
+      }
+      return "gpga_real_to_bits(" + emit_real_value4(expr) + ")";
+    };
+
+    auto emit_real_expr4 = [&](const Expr& expr) -> FsExpr {
+      FsExpr out;
+      out.width = 64;
+      out.val = emit_real_bits4(expr);
+      out.xz = literal_for_width(0, 64);
+      out.drive = drive_full(64);
+      out.is_real = true;
+      return out;
+    };
+
+    emit_real_value4 = [&](const Expr& expr) -> std::string {
+      if (!ExprIsRealValue(expr, module)) {
+        FsExpr int_expr = emit_expr4(expr);
+        std::string mask =
+            literal_for_width(MaskForWidth64(int_expr.width), 64);
+        std::string known_val =
+            "((" + int_expr.val + " & ~" + int_expr.xz + ") & " + mask + ")";
+        bool signed_expr = ExprSigned(expr, module);
+        std::string cast;
+        if (int_expr.width > 32) {
+          cast = signed_expr ? "(long)" : "(ulong)";
+        } else {
+          cast = signed_expr ? "(int)" : "(uint)";
+        }
+        return "double(" + cast + "(" + known_val + "))";
+      }
+      switch (expr.kind) {
+        case ExprKind::kIdentifier: {
+          const Port* port = FindPort(module, expr.ident);
+          std::string ref;
+          if (port) {
+            ref = val_name(port->name) + "[gid]";
+          } else if (buffered_regs.count(expr.ident) > 0) {
+            ref = val_name(expr.ident) + "[gid]";
+          } else {
+            ref = val_name(expr.ident);
+          }
+          return "gpga_bits_to_real(" + ref + ")";
+        }
+        case ExprKind::kNumber:
+          if (IsRealLiteralExpr(expr)) {
+            return "gpga_bits_to_real(" + std::to_string(expr.value_bits) +
+                   "ul)";
+          }
+          return "0.0";
+        case ExprKind::kString:
+          return "0.0";
+        case ExprKind::kUnary: {
+          std::string operand =
+              expr.operand ? emit_real_value4(*expr.operand) : "0.0";
+          if (expr.unary_op == '+') {
+            return operand;
+          }
+          if (expr.unary_op == '-') {
+            return "(-" + operand + ")";
+          }
+          return "0.0";
+        }
+        case ExprKind::kBinary: {
+          std::string lhs =
+              expr.lhs ? emit_real_value4(*expr.lhs) : "0.0";
+          std::string rhs =
+              expr.rhs ? emit_real_value4(*expr.rhs) : "0.0";
+          if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
+              expr.op == '/') {
+            return "(" + lhs + " " + std::string(1, expr.op) + " " + rhs + ")";
+          }
+          if (expr.op == 'p') {
+            return "pow(" + lhs + ", " + rhs + ")";
+          }
+          return "0.0";
+        }
+        case ExprKind::kTernary: {
+          std::string cond = expr.condition
+                                 ? "(" + emit_real_value4(*expr.condition) +
+                                       " != 0.0)"
+                                 : "false";
+          std::string then_expr =
+              expr.then_expr ? emit_real_value4(*expr.then_expr) : "0.0";
+          std::string else_expr =
+              expr.else_expr ? emit_real_value4(*expr.else_expr) : "0.0";
+          return "((" + cond + ") ? (" + then_expr + ") : (" + else_expr + "))";
+        }
+        case ExprKind::kCall:
+          if (expr.ident == "$realtime") {
+            return "(double)__gpga_time";
+          }
+          if (expr.ident == "$itor") {
+            if (!expr.call_args.empty() && expr.call_args.front()) {
+              return emit_real_value4(*expr.call_args.front());
+            }
+            return "0.0";
+          }
+          if (expr.ident == "$bitstoreal") {
+            if (!expr.call_args.empty() && expr.call_args.front()) {
+              FsExpr bits_expr = emit_expr4(*expr.call_args.front());
+              std::string mask =
+                  literal_for_width(MaskForWidth64(bits_expr.width), 64);
+              std::string bits = "((" + bits_expr.val + ") & " + mask + ")";
+              return "gpga_bits_to_real(" + bits + ")";
+            }
+            return "0.0";
+          }
+          return "0.0";
+        case ExprKind::kSelect:
+          return "0.0";
+        case ExprKind::kIndex: {
+          if (!expr.base || !expr.index) {
+            return "0.0";
+          }
+          if (expr.base->kind == ExprKind::kIdentifier) {
+            int element_width = 0;
+            int array_size = 0;
+            if (IsArrayNet(module, expr.base->ident, &element_width,
+                           &array_size) &&
+                SignalIsReal(module, expr.base->ident)) {
+              FsExpr idx = emit_expr4(*expr.index);
+              if (active_cse) {
+                idx = maybe_hoist_full(idx, active_cse->indent, false, false);
+              }
+              std::string idx_val = idx.val;
+              std::string idx_xz = idx.xz;
+              std::string bounds = "(" + idx_val + " < " +
+                                   std::to_string(array_size) + "u)";
+              std::string xguard =
+                  "(" + idx_xz + " == " +
+                  literal_for_width(0, idx.width) + ")";
+              std::string base =
+                  "(gid * " + std::to_string(array_size) + "u) + uint(" +
+                  idx_val + ")";
+              return "((" + xguard + ") ? ((" + bounds + ") ? " +
+                     "gpga_bits_to_real(" + val_name(expr.base->ident) + "[" +
+                     base + "]) : 0.0) : 0.0)";
+            }
+          }
+          return "0.0";
+        }
+        case ExprKind::kConcat:
+          return "0.0";
+      }
+      return "0.0";
+    };
+
     const std::unordered_map<std::string, int64_t> kEmptyParams;
     auto try_eval_const_expr4 = [&](const Expr& expr, FsExpr* out) -> bool {
       if (!out) {
+        return false;
+      }
+      if (ExprUsesReal(expr, module)) {
         return false;
       }
       FourStateValue value;
@@ -2571,6 +3442,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (try_eval_const_expr4(expr, &const_expr)) {
         return const_expr;
       }
+      if (ExprIsRealValue(expr, module)) {
+        return emit_real_expr4(expr);
+      }
       switch (expr.kind) {
         case ExprKind::kIdentifier: {
           const Port* port = FindPort(module, expr.ident);
@@ -2578,6 +3452,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return FsExpr{val_name(port->name) + "[gid]",
                           xz_name(port->name) + "[gid]",
                           drive_full(port->width), port->width};
+          }
+          if (buffered_regs.count(expr.ident) > 0) {
+            int width = SignalWidth(module, expr.ident);
+            return FsExpr{val_name(expr.ident) + "[gid]",
+                          xz_name(expr.ident) + "[gid]",
+                          drive_full(width), width};
           }
           return FsExpr{val_name(expr.ident), xz_name(expr.ident),
                         drive_full(SignalWidth(module, expr.ident)),
@@ -2613,6 +3493,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return fs_unary("not", operand, width);
           }
           if (expr.unary_op == '!') {
+            if (expr.operand && ExprIsRealValue(*expr.operand, module)) {
+              std::string real_val = emit_real_value4(*expr.operand);
+              std::string pred = "(" + real_val + " == 0.0)";
+              std::string val = "(" + pred + " ? 1u : 0u)";
+              return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
+            }
             std::string func = (width > 32) ? "fs_log_not64" : "fs_log_not32";
             std::string base =
                 func + "(" + fs_make_expr(operand, width) + ", " +
@@ -2620,6 +3506,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return fs_expr_from_base(base, drive_full(1), 1);
           }
           if (expr.unary_op == 'B') {
+            if (expr.operand && ExprIsRealValue(*expr.operand, module)) {
+              std::string real_val = emit_real_value4(*expr.operand);
+              std::string pred = "(" + real_val + " != 0.0)";
+              std::string val = "(" + pred + " ? 1u : 0u)";
+              return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
+            }
             std::string zero = literal_for_width(0, width);
             std::string val = "((" + operand.xz + " == " + zero + " && " +
                               operand.val + " != " + zero + ") ? 1u : 0u)";
@@ -2655,6 +3547,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (expr.op == 'A' || expr.op == 'O') {
             FsExpr lhs = emit_expr4(*expr.lhs);
             FsExpr rhs = emit_expr4(*expr.rhs);
+            auto bool_expr = [&](const FsExpr& value) -> std::string {
+              if (value.is_real) {
+                return "(gpga_bits_to_real(" + value.val + ") != 0.0)";
+              }
+              return "(" + value.xz + " == " +
+                     literal_for_width(0, value.width) + " && " + value.val +
+                     " != " + literal_for_width(0, value.width) + ")";
+            };
+            if (lhs.is_real || rhs.is_real) {
+              std::string lhs_bool = bool_expr(lhs);
+              std::string rhs_bool = bool_expr(rhs);
+              std::string op = (expr.op == 'A') ? "&&" : "||";
+              std::string val =
+                  "((" + lhs_bool + " " + op + " " + rhs_bool +
+                  ") ? 1u : 0u)";
+              return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
+            }
             int width = std::max(lhs.width, rhs.width);
             lhs = fs_resize_expr(lhs, width);
             rhs = fs_resize_expr(rhs, width);
@@ -2670,6 +3579,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           if (expr.op == 'C' || expr.op == 'c' || expr.op == 'W' ||
               expr.op == 'w') {
+            if ((expr.lhs && ExprIsRealValue(*expr.lhs, module)) ||
+                (expr.rhs && ExprIsRealValue(*expr.rhs, module))) {
+              std::string lhs_real =
+                  expr.lhs ? emit_real_value4(*expr.lhs) : "0.0";
+              std::string rhs_real =
+                  expr.rhs ? emit_real_value4(*expr.rhs) : "0.0";
+              std::string op = (expr.op == 'c' || expr.op == 'w') ? "!="
+                                                                 : "==";
+              std::string pred = "(" + lhs_real + " " + op + " " + rhs_real +
+                                 ")";
+              std::string val = "(" + pred + " ? 1u : 0u)";
+              return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
+            }
             FsExpr lhs = emit_expr4(*expr.lhs);
             FsExpr rhs = emit_expr4(*expr.rhs);
             int width = std::max(lhs.width, rhs.width);
@@ -2699,6 +3621,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           if (expr.op == 'E' || expr.op == 'N' || expr.op == '<' ||
               expr.op == '>' || expr.op == 'L' || expr.op == 'G') {
+            if ((expr.lhs && ExprIsRealValue(*expr.lhs, module)) ||
+                (expr.rhs && ExprIsRealValue(*expr.rhs, module))) {
+              std::string lhs_real =
+                  expr.lhs ? emit_real_value4(*expr.lhs) : "0.0";
+              std::string rhs_real =
+                  expr.rhs ? emit_real_value4(*expr.rhs) : "0.0";
+              std::string op = BinaryOpString(expr.op);
+              std::string pred = "(" + lhs_real + " " + op + " " + rhs_real +
+                                 ")";
+              std::string val = "(" + pred + " ? 1u : 0u)";
+              return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
+            }
             FsExpr lhs = emit_expr4(*expr.lhs);
             FsExpr rhs = emit_expr4(*expr.rhs);
             int width = std::max(lhs.width, rhs.width);
@@ -2945,6 +3879,27 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return FsExpr{"__gpga_time", literal_for_width(0, width),
                           drive_full(width), width};
           }
+          if (expr.ident == "$rtoi") {
+            int width = ExprWidth(expr, module);
+            std::string real_val =
+                (!expr.call_args.empty() && expr.call_args.front())
+                    ? emit_real_value4(*expr.call_args.front())
+                    : "0.0";
+            std::string cast = (width > 32) ? "(long)" : "(int)";
+            std::string raw = cast + "(" + real_val + ")";
+            std::string val = MaskForWidthExpr(raw, width);
+            return FsExpr{val, literal_for_width(0, width), drive_full(width),
+                          width};
+          }
+          if (expr.ident == "$realtobits") {
+            std::string bits =
+                (!expr.call_args.empty() && expr.call_args.front())
+                    ? emit_real_bits4(*expr.call_args.front())
+                    : "0ul";
+            int width = 64;
+            return FsExpr{bits, literal_for_width(0, width),
+                          drive_full(width), width};
+          }
           return fs_allx_expr(1);
         case ExprKind::kConcat:
           return emit_concat4(expr);
@@ -2988,6 +3943,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     auto emit_expr4_sized = [&](const Expr& expr, int target_width) -> FsExpr {
+      if (ExprIsRealValue(expr, module)) {
+        if (target_width == 64) {
+          return emit_real_expr4(expr);
+        }
+        bool signed_expr = ExprSigned(expr, module);
+        std::string real_val = emit_real_value4(expr);
+        std::string cast;
+        if (target_width > 32) {
+          cast = signed_expr ? "(long)" : "(ulong)";
+        } else {
+          cast = signed_expr ? "(int)" : "(uint)";
+        }
+        std::string raw = cast + "(" + real_val + ")";
+        FsExpr out;
+        out.width = target_width;
+        out.val = MaskForWidthExpr(raw, target_width);
+        out.xz = literal_for_width(0, target_width);
+        out.drive = drive_full(target_width);
+        return out;
+      }
       FsExpr out_expr = emit_expr4(expr);
       bool signed_expr = ExprSigned(expr, module);
       return fs_extend_expr(out_expr, target_width, signed_expr);
@@ -3005,6 +3980,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     auto emit_expr4_sized_with_cse = [&](const Expr& expr, int target_width,
                                          int indent) -> FsExpr {
+      if (ExprIsRealValue(expr, module)) {
+        return emit_expr4_sized(expr, target_width);
+      }
       CseState cse;
       cse.indent = indent;
       collect_expr_uses(expr, collect_expr_uses, &cse);
@@ -3017,6 +3995,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     maybe_hoist_full = [&](const FsExpr& expr, int indent,
                            bool need_drive, bool force_small) -> FsExpr {
+      if (expr.is_real) {
+        return expr;
+      }
       if (expr.full.empty() || expr.width <= 0) {
         return expr;
       }
@@ -3149,6 +4130,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                              const std::unordered_set<std::string>& regs,
                              bool use_next, int indent) -> Lvalue4 {
       Lvalue4 out;
+      if (SignalIsReal(module, assign.lhs)) {
+        if (assign.lhs_has_range) {
+          return out;
+        }
+        if ((assign.lhs_index || !assign.lhs_indices.empty()) &&
+            !IsArrayNet(module, assign.lhs, nullptr, nullptr)) {
+          return out;
+        }
+      }
       if (assign.lhs_has_range) {
         if (IsArrayNet(module, assign.lhs, nullptr, nullptr)) {
           return out;
@@ -3290,28 +4280,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out.ok = true;
       return out;
     };
-
-    std::unordered_set<std::string> sequential_regs;
-    std::unordered_set<std::string> initial_regs;
-    bool has_initial = false;
-    for (const auto& block : module.always_blocks) {
-      if (block.edge == EdgeKind::kCombinational ||
-          block.edge == EdgeKind::kInitial) {
-        continue;
-      }
-      for (const auto& stmt : block.statements) {
-        CollectAssignedSignals(stmt, &sequential_regs);
-      }
-    }
-    for (const auto& block : module.always_blocks) {
-      if (block.edge != EdgeKind::kInitial) {
-        continue;
-      }
-      has_initial = true;
-      for (const auto& stmt : block.statements) {
-        CollectAssignedSignals(stmt, &initial_regs);
-      }
-    }
 
     std::vector<std::string> reg_names;
     for (const auto& net : module.nets) {
@@ -3504,9 +4472,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (!assign.rhs) {
         return;
       }
+      bool lhs_real = SignalIsReal(module, assign.lhs);
       int lhs_width = SignalWidth(module, assign.lhs);
       std::string type = TypeForWidth(lhs_width);
       if (assign.lhs_has_range) {
+        if (lhs_real) {
+          out << "  // Unsupported real range driver: " << assign.lhs << "\n";
+          return;
+        }
         int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
         int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
         int slice_width = hi - lo + 1;
@@ -3523,7 +4496,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << "u);\n";
         return;
       }
-      FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, lhs_width, 2);
+      FsExpr rhs = lhs_real ? emit_real_expr4(*assign.rhs)
+                            : emit_expr4_sized_with_cse(*assign.rhs, lhs_width,
+                                                        2);
       rhs = maybe_hoist_full(rhs, 2, true, true);
       out << "  " << type << " " << info.val << " = " << rhs.val << ";\n";
       out << "  " << type << " " << info.xz << " = " << rhs.xz << ";\n";
@@ -3674,6 +4649,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               partial_assigns;
           for (const auto& assign : module.assigns) {
             if (assign.lhs_has_range && multi_driver.count(assign.lhs) == 0) {
+              if (SignalIsReal(module, assign.lhs)) {
+                continue;
+              }
               partial_assigns[assign.lhs].push_back(&assign);
             }
           }
@@ -3706,7 +4684,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!lhs.ok) {
               continue;
             }
-            FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, lhs.width, 2);
+            bool lhs_real = SignalIsReal(module, assign.lhs);
+            FsExpr rhs = lhs_real
+                             ? emit_real_expr4(*assign.rhs)
+                             : emit_expr4_sized_with_cse(*assign.rhs, lhs.width,
+                                                         2);
             rhs = maybe_hoist_full(rhs, 2, false, true);
             if (IsOutputPort(module, assign.lhs) ||
                 regs_ctx.count(assign.lhs) > 0) {
@@ -3820,6 +4802,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
 
     auto cond_bool = [&](const FsExpr& expr) -> std::string {
+      if (expr.is_real) {
+        return "(gpga_bits_to_real(" + expr.val + ") != 0.0)";
+      }
       return "(" + expr.xz + " == " + literal_for_width(0, expr.width) +
              " && " + expr.val + " != " + literal_for_width(0, expr.width) +
              ")";
@@ -3940,8 +4925,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (!lhs.ok) {
           return;
         }
-        FsExpr rhs =
-            emit_expr4_cached(*stmt.assign.rhs, lhs.width, indent, cache);
+        bool lhs_real = SignalIsReal(module, stmt.assign.lhs);
+        FsExpr rhs = lhs_real
+                         ? emit_real_expr4(*stmt.assign.rhs)
+                         : emit_expr4_cached(*stmt.assign.rhs, lhs.width,
+                                             indent, cache);
         if (lhs.is_bit_select) {
           emit_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
           if (cache) {
@@ -4391,8 +5379,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (!lhs.ok) {
             return;
           }
-          FsExpr rhs =
-              emit_expr4_cached(*stmt.assign.rhs, lhs.width, indent, cache);
+          bool lhs_real = SignalIsReal(module, stmt.assign.lhs);
+          FsExpr rhs = lhs_real
+                           ? emit_real_expr4(*stmt.assign.rhs)
+                           : emit_expr4_cached(*stmt.assign.rhs, lhs.width,
+                                               indent, cache);
           if (lhs.is_bit_select) {
             emit_init_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
             if (cache) {
@@ -4587,6 +5578,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                             int indent, ExprCache* cache) {
         std::unordered_map<std::string, size_t> last_assign;
         std::vector<char> drop(statements.size(), 0);
+        std::vector<char> has_syscall(statements.size(), 0);
         for (size_t i = 0; i < statements.size(); ++i) {
           std::unordered_set<std::string> reads;
           CollectReadSignals(statements[i], &reads);
@@ -4600,9 +5592,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                !stmt.assign.lhs_has_range;
           if (simple_assign) {
             const std::string& lhs = stmt.assign.lhs;
+            if (stmt.assign.rhs && ExprHasSystemCall(*stmt.assign.rhs)) {
+              has_syscall[i] = 1;
+            }
             auto it = last_assign.find(lhs);
             if (it != last_assign.end()) {
-              drop[it->second] = 1;
+              if (!has_syscall[it->second]) {
+                drop[it->second] = 1;
+              }
             }
             last_assign[lhs] = i;
           }
@@ -4786,8 +5783,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (!lhs.ok) {
             return;
           }
-          FsExpr rhs =
-              emit_expr4_cached(*stmt.assign.rhs, lhs.width, indent, cache);
+          bool lhs_real = SignalIsReal(module, stmt.assign.lhs);
+          FsExpr rhs = lhs_real
+                           ? emit_real_expr4(*stmt.assign.rhs)
+                           : emit_expr4_cached(*stmt.assign.rhs, lhs.width,
+                                               indent, cache);
           if (lhs.is_array) {
             if (stmt.assign.nonblocking) {
               Lvalue4 next =
@@ -6046,8 +7046,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (!lhs.ok) {
             return;
           }
-          FsExpr rhs =
-              emit_expr4_sized_with_cse(*assign.rhs, lhs.width, indent);
+          bool lhs_real = SignalIsReal(module, assign.lhs);
+          FsExpr rhs = lhs_real
+                           ? emit_real_expr4(*assign.rhs)
+                           : emit_expr4_sized_with_cse(*assign.rhs, lhs.width,
+                                                       indent);
           rhs = maybe_hoist_full(rhs, indent, false, true);
           if (assign.nonblocking) {
             if (assign.lhs_index) {
@@ -6068,12 +7071,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               return;
             }
             if (lhs.is_bit_select) {
+              if (lhs_real) {
+                return;
+              }
               std::string target_val = "nb_" + val_name(assign.lhs) + "[gid]";
               std::string target_xz = "nb_" + xz_name(assign.lhs) + "[gid]";
               emit_bit_select4(lhs, rhs, target_val, target_xz, indent);
               return;
             }
             if (lhs.is_range) {
+              if (lhs_real) {
+                return;
+              }
               std::string target_val = "nb_" + val_name(assign.lhs) + "[gid]";
               std::string target_xz = "nb_" + xz_name(assign.lhs) + "[gid]";
               emit_range_select4(lhs, rhs, target_val, target_xz, indent);
@@ -6649,6 +7658,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::unordered_set<std::string> task_locals = sched_locals;
           std::unordered_map<std::string, int> task_widths;
           std::unordered_map<std::string, bool> task_signed;
+          std::unordered_map<std::string, bool> task_real;
           struct TaskOutArg {
             std::string name;
             Lvalue4 target;
@@ -6657,11 +7667,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::vector<TaskOutArg> task_outs;
           task_widths.reserve(task->args.size());
           task_signed.reserve(task->args.size());
+          task_real.reserve(task->args.size());
           task_outs.reserve(task->args.size());
 
           for (const auto& arg : task->args) {
             task_widths[arg.name] = arg.width;
             task_signed[arg.name] = arg.is_signed;
+            task_real[arg.name] = arg.is_real;
           }
 
           for (size_t i = 0; i < task->args.size(); ++i) {
@@ -6708,8 +7720,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
           const auto* prev_widths = g_task_arg_widths;
           const auto* prev_signed = g_task_arg_signed;
+          const auto* prev_real = g_task_arg_real;
           g_task_arg_widths = &task_widths;
           g_task_arg_signed = &task_signed;
+          g_task_arg_real = &task_real;
           for (const auto& inner : task->body) {
             emit_inline_stmt_fn(inner, indent, task_locals,
                                 emit_inline_stmt_fn);
@@ -6743,6 +7757,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           g_task_arg_widths = prev_widths;
           g_task_arg_signed = prev_signed;
+          g_task_arg_real = prev_real;
         };
 
         for (const auto& proc : procs) {
@@ -7687,7 +8702,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     std::string expr = EmitExpr(*assign.rhs, module, locals, regs);
     int lhs_width = SignalWidth(module, assign.lhs);
-    std::string sized = EmitExprSized(*assign.rhs, lhs_width, module, locals, regs);
+    bool lhs_real = SignalIsReal(module, assign.lhs);
+    std::string sized = lhs_real
+                            ? EmitRealBitsExpr(*assign.rhs, module, locals,
+                                               regs)
+                            : EmitExprSized(*assign.rhs, lhs_width, module,
+                                            locals, regs);
     if (IsOutputPort(module, assign.lhs)) {
       out << "  " << assign.lhs << "[gid] = " << sized << ";\n";
     } else if (regs.count(assign.lhs) > 0) {
@@ -7706,6 +8726,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
   for (const auto& entry : partial_assigns) {
     const std::string& name = entry.first;
+    if (SignalIsReal(module, name)) {
+      out << "  // Unsupported real partial assign: " << name << "\n";
+      continue;
+    }
     int lhs_width = SignalWidth(module, name);
     std::string type = TypeForWidth(lhs_width);
     bool target_is_local =
@@ -7797,9 +8821,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << " = " << expr << ";\n";
         return;
       }
-      std::string sized =
-          EmitExprSized(*stmt.assign.rhs, lvalue.width, module, locals, regs);
+      bool lhs_real = SignalIsReal(module, stmt.assign.lhs);
+      std::string sized = lhs_real
+                              ? EmitRealBitsExpr(*stmt.assign.rhs, module,
+                                                 locals, regs)
+                              : EmitExprSized(*stmt.assign.rhs, lvalue.width,
+                                              module, locals, regs);
       if (lvalue.is_bit_select) {
+        if (lhs_real) {
+          out << pad << "// Unsupported real bit-select assign: "
+              << stmt.assign.lhs << "\n";
+          return;
+        }
         std::string update = EmitBitSelectUpdate(
             lvalue.expr, lvalue.bit_index, lvalue.base_width, sized);
         if (!lvalue.guard.empty()) {
@@ -7812,6 +8845,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return;
       }
       if (lvalue.is_range) {
+        if (lhs_real) {
+          out << pad << "// Unsupported real range assign: " << stmt.assign.lhs
+              << "\n";
+          return;
+        }
         std::string update = EmitRangeSelectUpdate(
             lvalue.expr,
             lvalue.is_indexed_range ? lvalue.range_index
@@ -7837,8 +8875,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     if (stmt.kind == StatementKind::kIf) {
       std::string cond = stmt.condition
-                             ? EmitExpr(*stmt.condition, module, locals, regs)
-                             : "0u";
+                             ? EmitCondExpr(*stmt.condition, module, locals,
+                                            regs)
+                             : "false";
       out << pad << "if (" << cond << ") {\n";
       for (const auto& inner : stmt.then_branch) {
         emit_comb_stmt(inner, indent + 2);
@@ -8028,10 +9067,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << " = " << expr << ";\n";
           return;
         }
-        std::string sized =
-            EmitExprSized(*stmt.assign.rhs, lvalue.width, module, init_locals,
-                          init_regs);
+        bool lhs_real = SignalIsReal(module, stmt.assign.lhs);
+        std::string sized = lhs_real
+                                ? EmitRealBitsExpr(*stmt.assign.rhs, module,
+                                                   init_locals, init_regs)
+                                : EmitExprSized(*stmt.assign.rhs, lvalue.width,
+                                                module, init_locals, init_regs);
         if (lvalue.is_bit_select) {
+          if (lhs_real) {
+            out << pad << "// Unsupported real bit-select assign: "
+                << stmt.assign.lhs << "\n";
+            return;
+          }
           std::string update = EmitBitSelectUpdate(
               lvalue.expr, lvalue.bit_index, lvalue.base_width, sized);
           if (!lvalue.guard.empty()) {
@@ -8044,6 +9091,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         if (lvalue.is_range) {
+          if (lhs_real) {
+            out << pad << "// Unsupported real range assign: "
+                << stmt.assign.lhs << "\n";
+            return;
+          }
           std::string update = EmitRangeSelectUpdate(
               lvalue.expr,
               lvalue.is_indexed_range ? lvalue.range_index
@@ -8069,9 +9121,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       if (stmt.kind == StatementKind::kIf) {
         std::string cond = stmt.condition
-                               ? EmitExpr(*stmt.condition, module, init_locals,
-                                          init_regs)
-                               : "0u";
+                               ? EmitCondExpr(*stmt.condition, module,
+                                              init_locals, init_regs)
+                               : "false";
         out << pad << "if (" << cond << ") {\n";
         for (const auto& inner : stmt.then_branch) {
           emit_init_stmt(inner, indent + 2);
@@ -8277,10 +9329,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << " = " << expr << ";\n";
           return;
         }
-        std::string sized =
-            EmitExprSized(*stmt.assign.rhs, lvalue.width, module, tick_locals,
-                          tick_regs);
+        bool lhs_real = SignalIsReal(module, stmt.assign.lhs);
+        std::string sized = lhs_real
+                                ? EmitRealBitsExpr(*stmt.assign.rhs, module,
+                                                   tick_locals, tick_regs)
+                                : EmitExprSized(*stmt.assign.rhs, lvalue.width,
+                                                module, tick_locals, tick_regs);
         if (lvalue.is_array) {
+          if (lhs_real) {
+            out << pad << "// Unsupported real array assign: "
+                << stmt.assign.lhs << "\n";
+            return;
+          }
           if (stmt.assign.nonblocking) {
             LvalueInfo next =
                 BuildLvalue(stmt.assign, module, tick_locals, tick_regs, true);
@@ -8320,6 +9380,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         if (lvalue.is_bit_select) {
+          if (lhs_real) {
+            out << pad << "// Unsupported real bit-select assign: "
+                << stmt.assign.lhs << "\n";
+            return;
+          }
           std::string target = lvalue.expr;
           if (stmt.assign.nonblocking) {
             auto it = nb_map.find(stmt.assign.lhs);
@@ -8339,6 +9404,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         if (lvalue.is_range) {
+          if (lhs_real) {
+            out << pad << "// Unsupported real range assign: "
+                << stmt.assign.lhs << "\n";
+            return;
+          }
           std::string target = lvalue.expr;
           if (stmt.assign.nonblocking) {
             auto it = nb_map.find(stmt.assign.lhs);
@@ -8379,9 +9449,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       if (stmt.kind == StatementKind::kIf) {
         std::string cond = stmt.condition
-                               ? EmitExpr(*stmt.condition, module, tick_locals,
-                                          tick_regs)
-                               : "0u";
+                               ? EmitCondExpr(*stmt.condition, module,
+                                              tick_locals, tick_regs)
+                               : "false";
         out << pad << "if (" << cond << ") {\n";
         for (const auto& inner : stmt.then_branch) {
           emit_stmt(inner, indent + 2, nb_map);
@@ -9881,9 +10951,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         if (stmt.kind == StatementKind::kIf) {
           std::string cond = stmt.condition
-                                 ? EmitExpr(*stmt.condition, module,
-                                            locals_override, sched_regs)
-                                 : "0u";
+                                 ? EmitCondExpr(*stmt.condition, module,
+                                                locals_override, sched_regs)
+                                 : "false";
           out << pad << "if (" << cond << ") {\n";
           for (const auto& inner : stmt.then_branch) {
             self(inner, indent + 2, locals_override, self);
@@ -9956,9 +11026,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  : "0u";
           out << pad << stmt.for_init_lhs << " = " << init << ";\n";
           std::string cond = stmt.for_condition
-                                 ? EmitExpr(*stmt.for_condition, module,
-                                            locals_override, sched_regs)
-                                 : "0u";
+                                 ? EmitCondExpr(*stmt.for_condition, module,
+                                                locals_override, sched_regs)
+                                 : "false";
           out << pad << "while (" << cond << ") {\n";
           for (const auto& inner : stmt.for_body) {
             self(inner, indent + 2, locals_override, self);
@@ -9976,9 +11046,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         if (stmt.kind == StatementKind::kWhile) {
           std::string cond = stmt.while_condition
-                                 ? EmitExpr(*stmt.while_condition, module,
-                                            locals_override, sched_regs)
-                                 : "0u";
+                                 ? EmitCondExpr(*stmt.while_condition, module,
+                                                locals_override, sched_regs)
+                                 : "false";
           out << pad << "while (" << cond << ") {\n";
           for (const auto& inner : stmt.while_body) {
             self(inner, indent + 2, locals_override, self);
@@ -10026,19 +11096,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::unordered_set<std::string> task_locals = sched_locals;
         std::unordered_map<std::string, int> task_widths;
         std::unordered_map<std::string, bool> task_signed;
+        std::unordered_map<std::string, bool> task_real;
         struct TaskOutArg {
           std::string name;
           std::string target;
           int target_width = 0;
+          bool target_real = false;
         };
         std::vector<TaskOutArg> task_outs;
         task_widths.reserve(task->args.size());
         task_signed.reserve(task->args.size());
+        task_real.reserve(task->args.size());
         task_outs.reserve(task->args.size());
 
         for (const auto& arg : task->args) {
           task_widths[arg.name] = arg.width;
           task_signed[arg.name] = arg.is_signed;
+          task_real[arg.name] = arg.is_real;
         }
 
         for (size_t i = 0; i < task->args.size(); ++i) {
@@ -10050,8 +11124,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::string type = TypeForWidth(arg.width);
           if (arg.dir == TaskArgDir::kInput) {
             std::string expr = call_arg
-                                   ? EmitExprSized(*call_arg, arg.width, module,
-                                                   sched_locals, sched_regs)
+                                   ? (arg.is_real
+                                          ? EmitRealBitsExpr(*call_arg, module,
+                                                             sched_locals,
+                                                             sched_regs)
+                                          : EmitExprSized(*call_arg, arg.width,
+                                                          module, sched_locals,
+                                                          sched_regs))
                                    : "0u";
             out << std::string(indent, ' ') << type << " " << arg.name
                 << " = " << expr << ";\n";
@@ -10064,21 +11143,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             return;
           }
-          std::string init = EmitExprSized(*call_arg, arg.width, module,
-                                           sched_locals, sched_regs);
+          std::string init = arg.is_real
+                                 ? EmitRealBitsExpr(*call_arg, module,
+                                                    sched_locals, sched_regs)
+                                 : EmitExprSized(*call_arg, arg.width, module,
+                                                 sched_locals, sched_regs);
           out << std::string(indent, ' ') << type << " " << arg.name << " = "
               << init << ";\n";
           task_locals.insert(arg.name);
           std::string target =
               EmitExpr(*call_arg, module, sched_locals, sched_regs);
           int target_width = ExprWidth(*call_arg, module);
-          task_outs.push_back(TaskOutArg{arg.name, target, target_width});
+          bool target_real = SignalIsReal(module, call_arg->ident);
+          task_outs.push_back(
+              TaskOutArg{arg.name, target, target_width, target_real});
         }
 
         const auto* prev_widths = g_task_arg_widths;
         const auto* prev_signed = g_task_arg_signed;
+        const auto* prev_real = g_task_arg_real;
         g_task_arg_widths = &task_widths;
         g_task_arg_signed = &task_signed;
+        g_task_arg_real = &task_real;
         for (const auto& inner : task->body) {
           emit_inline_stmt_fn(inner, indent, task_locals, emit_inline_stmt_fn);
         }
@@ -10086,13 +11172,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           Expr arg_expr;
           arg_expr.kind = ExprKind::kIdentifier;
           arg_expr.ident = out_arg.name;
-          std::string value = EmitExprSized(
-              arg_expr, out_arg.target_width, module, task_locals, sched_regs);
+          std::string value =
+              out_arg.target_real
+                  ? EmitRealBitsExpr(arg_expr, module, task_locals, sched_regs)
+                  : EmitExprSized(arg_expr, out_arg.target_width, module,
+                                  task_locals, sched_regs);
           out << std::string(indent, ' ') << out_arg.target << " = " << value
               << ";\n";
         }
         g_task_arg_widths = prev_widths;
         g_task_arg_signed = prev_signed;
+        g_task_arg_real = prev_real;
       };
 
       for (const auto& proc : procs) {
@@ -10358,8 +11448,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             std::string cond =
-                EmitExpr(*stmt.wait_condition, module, sched_locals,
-                         sched_regs);
+                EmitCondExpr(*stmt.wait_condition, module, sched_locals,
+                             sched_regs);
             out << "                  if ((" << cond << ") != 0u) {\n";
             if (body_pc >= 0) {
               out << "                    sched_pc[idx] = " << body_pc << "u;\n";

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: ifdef/ifndef/else/endif directives
 // Feature: Conditional compilation
 // Expected: Should fail - conditional compilation not yet implemented

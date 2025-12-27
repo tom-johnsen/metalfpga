@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Multiple continuous assignments to same wire
 // Feature: Multiple assign statements for wire resolution
 // Expected: May fail - multi-driver continuous assigns

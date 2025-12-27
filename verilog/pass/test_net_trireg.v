@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: trireg net type (capacitive)
 // Feature: Tristate with charge storage
 // Expected: Should fail - trireg not yet implemented

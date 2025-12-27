@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Generate with parameters - creating parameterized hardware
 
 // Ripple carry adder using generate

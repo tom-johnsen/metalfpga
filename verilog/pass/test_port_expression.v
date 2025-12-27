@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Expressions in port connections
 // Feature: Complex expressions and concatenations in port maps
 // Expected: May fail - complex port expressions

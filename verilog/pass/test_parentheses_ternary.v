@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test parentheses with ternary operators
 module test_parentheses_ternary(
     input [7:0] a,

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Continuous assignment with delays
 // Feature: Delay on assign statements
 // Expected: Should fail - continuous assign delays not yet implemented

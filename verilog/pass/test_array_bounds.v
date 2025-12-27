@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Array indexing edge cases
 // Feature: Out of bounds, negative indices, variable indices
 // Expected: May fail - bounds checking behavior

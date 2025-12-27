@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test multiple always blocks with different clock edges
 module mixed_edge(
     input clk,

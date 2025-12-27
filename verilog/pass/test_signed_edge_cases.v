@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed arithmetic edge cases
 module test_signed_edge_cases(
     input signed [7:0] val,

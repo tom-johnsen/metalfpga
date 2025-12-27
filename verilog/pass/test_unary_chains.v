@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module unary_chain(
   input  wire [7:0] a,
   output wire [7:0] y0,

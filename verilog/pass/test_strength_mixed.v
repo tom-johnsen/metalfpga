@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Mixed strength levels on same net
 // Feature: Complex strength resolution
 // Expected: Should fail - strength resolution not yet implemented

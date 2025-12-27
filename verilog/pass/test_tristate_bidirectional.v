@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Bidirectional port with tristate
 // Feature: inout ports with tristate control
 // Expected: Should fail - inout tristate not yet implemented

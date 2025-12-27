@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: bufif0 tristate buffer
 // Feature: Tristate logic with active-low enable
 // Expected: Should fail - tristate not yet implemented

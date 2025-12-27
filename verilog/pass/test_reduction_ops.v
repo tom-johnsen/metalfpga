@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators: &, |, ^, ~&, ~|, ~^
 module reduction_ops(
     input [7:0] data,

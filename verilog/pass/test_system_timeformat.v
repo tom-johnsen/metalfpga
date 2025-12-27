@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $timeformat system task
 // Feature: Set time display format
 // Expected: Should fail - $timeformat not yet implemented

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // 3D array test - tensor/cube storage
 module array_3d_basic(
     input [2:0] z,

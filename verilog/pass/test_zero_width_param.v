@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module zero_param #(
   parameter W = 1
 )(

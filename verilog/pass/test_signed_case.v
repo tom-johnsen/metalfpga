@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed values in case statements
 module test_signed_case(
     input signed [7:0] val,

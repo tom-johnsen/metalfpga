@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Conditional path delays in specify
 // Feature: if() conditional path specifications
 // Expected: May fail - conditional specify paths

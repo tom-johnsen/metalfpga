@@ -931,6 +931,7 @@ class Parser {
     module.name = module_name;
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
+    current_real_params_.clear();
     current_genvars_.clear();
     current_module_ = &module;
 
@@ -1155,6 +1156,7 @@ class Parser {
     module.name = prim_name;
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
+    current_real_params_.clear();
     current_genvars_.clear();
     current_module_ = &module;
 
@@ -2195,17 +2197,34 @@ class Parser {
       // automatic functions are treated like static in v0.
     }
     bool is_signed = false;
+    bool is_real = false;
+    if (MatchKeyword("real")) {
+      is_real = true;
+      is_signed = true;
+    }
     if (MatchKeyword("signed")) {
       is_signed = true;
     }
-    int width = 1;
+    if (!is_real && MatchKeyword("real")) {
+      is_real = true;
+      is_signed = true;
+    }
+    int width = is_real ? 64 : 1;
     std::shared_ptr<Expr> msb_expr;
     std::shared_ptr<Expr> lsb_expr;
     bool had_range = false;
     if (!ParseRange(&width, &msb_expr, &lsb_expr, &had_range)) {
       return false;
     }
-    if (!had_range) {
+    if (is_real) {
+      if (had_range) {
+        ErrorHere("real function return cannot use packed ranges");
+        return false;
+      }
+      width = 64;
+      msb_expr.reset();
+      lsb_expr.reset();
+    } else if (!had_range) {
       msb_expr.reset();
       lsb_expr.reset();
     }
@@ -2222,6 +2241,7 @@ class Parser {
     func.name = name;
     func.width = width;
     func.is_signed = is_signed;
+    func.is_real = is_real;
     func.msb_expr = msb_expr;
     func.lsb_expr = lsb_expr;
 
@@ -2235,6 +2255,12 @@ class Parser {
       if (!saw_statement) {
         if (MatchKeyword("input")) {
           if (!ParseFunctionInput(&func)) {
+            return false;
+          }
+          continue;
+        }
+        if (MatchKeyword("real")) {
+          if (!ParseFunctionRealDecl(&func)) {
             return false;
           }
           continue;
@@ -2258,8 +2284,9 @@ class Parser {
           continue;
         }
       } else if (Peek().kind == TokenKind::kIdentifier &&
-                 (Peek().text == "input" || Peek().text == "integer" ||
-                  Peek().text == "time" || Peek().text == "reg")) {
+                 (Peek().text == "input" || Peek().text == "real" ||
+                  Peek().text == "integer" || Peek().text == "time" ||
+                  Peek().text == "reg")) {
         ErrorHere("function declarations must appear before statements");
         return false;
       }
@@ -2287,17 +2314,34 @@ class Parser {
 
   bool ParseFunctionInput(Function* func) {
     bool is_signed = false;
+    bool is_real = false;
+    if (MatchKeyword("real")) {
+      is_real = true;
+      is_signed = true;
+    }
     if (MatchKeyword("signed")) {
       is_signed = true;
     }
-    int width = 1;
+    if (!is_real && MatchKeyword("real")) {
+      is_real = true;
+      is_signed = true;
+    }
+    int width = is_real ? 64 : 1;
     std::shared_ptr<Expr> msb_expr;
     std::shared_ptr<Expr> lsb_expr;
     bool had_range = false;
     if (!ParseRange(&width, &msb_expr, &lsb_expr, &had_range)) {
       return false;
     }
-    if (!had_range) {
+    if (is_real) {
+      if (had_range) {
+        ErrorHere("real function input cannot use packed ranges");
+        return false;
+      }
+      width = 64;
+      msb_expr.reset();
+      lsb_expr.reset();
+    } else if (!had_range) {
       msb_expr.reset();
       lsb_expr.reset();
     }
@@ -2311,6 +2355,7 @@ class Parser {
       arg.name = name;
       arg.width = width;
       arg.is_signed = is_signed;
+      arg.is_real = is_real;
       arg.msb_expr = msb_expr;
       arg.lsb_expr = lsb_expr;
       func->args.push_back(std::move(arg));
@@ -2340,7 +2385,7 @@ class Parser {
         ErrorHere("expected identifier in integer declaration");
         return false;
       }
-      if (!AddFunctionLocal(func, name, width, is_signed)) {
+      if (!AddFunctionLocal(func, name, width, is_signed, false)) {
         return false;
       }
       if (MatchSymbol(",")) {
@@ -2369,7 +2414,7 @@ class Parser {
         ErrorHere("expected identifier in time declaration");
         return false;
       }
-      if (!AddFunctionLocal(func, name, width, is_signed)) {
+      if (!AddFunctionLocal(func, name, width, is_signed, false)) {
         return false;
       }
       if (MatchSymbol(",")) {
@@ -2405,7 +2450,7 @@ class Parser {
         ErrorHere("arrayed reg locals not supported in functions");
         return false;
       }
-      if (!AddFunctionLocal(func, name, width, is_signed)) {
+      if (!AddFunctionLocal(func, name, width, is_signed, false)) {
         return false;
       }
       if (MatchSymbol(",")) {
@@ -2462,7 +2507,7 @@ class Parser {
   }
 
   bool AddFunctionLocal(Function* func, const std::string& name, int width,
-                        bool is_signed) {
+                        bool is_signed, bool is_real) {
     if (!func) {
       return false;
     }
@@ -2486,26 +2531,72 @@ class Parser {
     local.name = name;
     local.width = width;
     local.is_signed = is_signed;
+    local.is_real = is_real;
     func->locals.push_back(std::move(local));
+    return true;
+  }
+
+  bool ParseFunctionRealDecl(Function* func) {
+    const int width = 64;
+    const bool is_signed = true;
+    while (true) {
+      std::string name;
+      if (!ConsumeIdentifier(&name)) {
+        ErrorHere("expected identifier in real declaration");
+        return false;
+      }
+      if (MatchSymbol("[")) {
+        ErrorHere("arrayed real locals not supported in functions");
+        return false;
+      }
+      if (!AddFunctionLocal(func, name, width, is_signed, true)) {
+        return false;
+      }
+      if (MatchSymbol(",")) {
+        continue;
+      }
+      if (!MatchSymbol(";")) {
+        ErrorHere("expected ';' after real declaration");
+        return false;
+      }
+      break;
+    }
     return true;
   }
 
   bool ParseTaskArgDecl(TaskArgDir dir, Task* task) {
     bool is_signed = false;
+    bool is_real = false;
     if (MatchKeyword("reg")) {
       // Tasks allow "output reg" syntax; treat as output.
+    }
+    if (MatchKeyword("real")) {
+      is_real = true;
+      is_signed = true;
     }
     if (MatchKeyword("signed")) {
       is_signed = true;
     }
-    int width = 1;
+    if (!is_real && MatchKeyword("real")) {
+      is_real = true;
+      is_signed = true;
+    }
+    int width = is_real ? 64 : 1;
     std::shared_ptr<Expr> msb_expr;
     std::shared_ptr<Expr> lsb_expr;
     bool had_range = false;
     if (!ParseRange(&width, &msb_expr, &lsb_expr, &had_range)) {
       return false;
     }
-    if (!had_range) {
+    if (is_real) {
+      if (had_range) {
+        ErrorHere("real task args cannot use packed ranges");
+        return false;
+      }
+      width = 64;
+      msb_expr.reset();
+      lsb_expr.reset();
+    } else if (!had_range) {
       msb_expr.reset();
       lsb_expr.reset();
     }
@@ -2520,6 +2611,7 @@ class Parser {
       arg.name = name;
       arg.width = width;
       arg.is_signed = is_signed;
+      arg.is_real = is_real;
       arg.msb_expr = msb_expr;
       arg.lsb_expr = lsb_expr;
       task->args.push_back(std::move(arg));
@@ -2574,6 +2666,12 @@ class Parser {
       }
       if (MatchKeyword("integer")) {
         if (!ParseLocalIntegerDecl()) {
+          return false;
+        }
+        continue;
+      }
+      if (MatchKeyword("real")) {
+        if (!ParseLocalRealDecl()) {
           return false;
         }
         continue;
@@ -2647,6 +2745,7 @@ class Parser {
     int current_width = 1;
     bool current_is_reg = false;
     bool current_is_signed = false;
+    bool current_is_real = false;
     NetType current_net_type = NetType::kWire;
     bool current_has_net_type = false;
     std::shared_ptr<Expr> current_msb;
@@ -2656,6 +2755,7 @@ class Parser {
       int width = current_width;
       bool is_reg = current_is_reg;
       bool is_signed = current_is_signed;
+      bool is_real = current_is_real;
       NetType net_type = current_net_type;
       bool has_net_type = current_has_net_type;
       std::shared_ptr<Expr> range_msb = current_msb;
@@ -2665,8 +2765,13 @@ class Parser {
         width = 1;
         is_reg = false;
         is_signed = false;
+        is_real = false;
         net_type = NetType::kWire;
         has_net_type = false;
+        if (MatchKeyword("real")) {
+          is_real = true;
+          is_signed = true;
+        }
         if (MatchKeyword("signed")) {
           is_signed = true;
         }
@@ -2675,6 +2780,14 @@ class Parser {
         }
         if (MatchKeyword("signed")) {
           is_signed = true;
+        }
+        if (!is_real && MatchKeyword("real")) {
+          is_real = true;
+          is_signed = true;
+        }
+        if (is_real && has_net_type) {
+          ErrorHere("real declarations cannot use net types");
+          return false;
         }
         if (has_net_type && NetTypeRequires4State(net_type) &&
             !options_.enable_4state) {
@@ -2685,7 +2798,15 @@ class Parser {
         if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
-        if (!had_range) {
+        if (is_real) {
+          if (had_range) {
+            ErrorHere("real declarations cannot use packed ranges");
+            return false;
+          }
+          width = 64;
+          range_msb.reset();
+          range_lsb.reset();
+        } else if (!had_range) {
           range_msb.reset();
           range_lsb.reset();
         }
@@ -2693,6 +2814,7 @@ class Parser {
         current_width = width;
         current_is_reg = is_reg;
         current_is_signed = is_signed;
+        current_is_real = is_real;
         current_net_type = net_type;
         current_has_net_type = has_net_type;
         current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
@@ -2702,8 +2824,14 @@ class Parser {
         width = 1;
         is_reg = false;
         is_signed = false;
+        is_real = false;
         net_type = NetType::kWire;
         has_net_type = false;
+        if (MatchKeyword("real")) {
+          is_real = true;
+          is_signed = true;
+          is_reg = true;
+        }
         if (MatchKeyword("signed")) {
           is_signed = true;
         }
@@ -2715,6 +2843,15 @@ class Parser {
         if (MatchKeyword("signed")) {
           is_signed = true;
         }
+        if (!is_real && MatchKeyword("real")) {
+          is_real = true;
+          is_signed = true;
+          is_reg = true;
+        }
+        if (is_real && has_net_type) {
+          ErrorHere("real declarations cannot use net types");
+          return false;
+        }
         if (has_net_type && NetTypeRequires4State(net_type) &&
             !options_.enable_4state) {
           ErrorHere("net type requires --4state");
@@ -2724,7 +2861,15 @@ class Parser {
         if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
-        if (!had_range) {
+        if (is_real) {
+          if (had_range) {
+            ErrorHere("real declarations cannot use packed ranges");
+            return false;
+          }
+          width = 64;
+          range_msb.reset();
+          range_lsb.reset();
+        } else if (!had_range) {
           range_msb.reset();
           range_lsb.reset();
         }
@@ -2732,6 +2877,7 @@ class Parser {
         current_width = width;
         current_is_reg = is_reg;
         current_is_signed = is_signed;
+        current_is_real = is_real;
         current_net_type = net_type;
         current_has_net_type = has_net_type;
         current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
@@ -2741,8 +2887,13 @@ class Parser {
         width = 1;
         is_reg = false;
         is_signed = false;
+        is_real = false;
         net_type = NetType::kWire;
         has_net_type = false;
+        if (MatchKeyword("real")) {
+          is_real = true;
+          is_signed = true;
+        }
         if (MatchKeyword("signed")) {
           is_signed = true;
         }
@@ -2751,6 +2902,14 @@ class Parser {
         }
         if (MatchKeyword("signed")) {
           is_signed = true;
+        }
+        if (!is_real && MatchKeyword("real")) {
+          is_real = true;
+          is_signed = true;
+        }
+        if (is_real && has_net_type) {
+          ErrorHere("real declarations cannot use net types");
+          return false;
         }
         if (has_net_type && NetTypeRequires4State(net_type) &&
             !options_.enable_4state) {
@@ -2761,7 +2920,15 @@ class Parser {
         if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
           return false;
         }
-        if (!had_range) {
+        if (is_real) {
+          if (had_range) {
+            ErrorHere("real declarations cannot use packed ranges");
+            return false;
+          }
+          width = 64;
+          range_msb.reset();
+          range_lsb.reset();
+        } else if (!had_range) {
           range_msb.reset();
           range_lsb.reset();
         }
@@ -2769,6 +2936,7 @@ class Parser {
         current_width = width;
         current_is_reg = is_reg;
         current_is_signed = is_signed;
+        current_is_real = is_real;
         current_net_type = net_type;
         current_has_net_type = has_net_type;
         current_msb = had_range ? range_msb : std::shared_ptr<Expr>();
@@ -2788,17 +2956,24 @@ class Parser {
         ErrorHere("expected port name");
         return false;
       }
-      AddOrUpdatePort(module, name, dir, width, is_signed, range_msb,
+      AddOrUpdatePort(module, name, dir, width, is_signed, is_real, range_msb,
                       range_lsb);
-      if ((dir == PortDir::kOutput || dir == PortDir::kInout) && !is_reg &&
-          net_type != NetType::kWire) {
-        AddOrUpdateNet(module, name, net_type, width, is_signed, range_msb,
-                       range_lsb, {});
-        AddImplicitNetDriver(module, name, net_type);
-      }
-      if (dir == PortDir::kOutput && is_reg) {
-        AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                       range_msb, range_lsb, {});
+      if (is_real) {
+        NetType real_type =
+            (dir == PortDir::kOutput) ? NetType::kReg : NetType::kWire;
+        AddOrUpdateNet(module, name, real_type, width, is_signed, range_msb,
+                       range_lsb, {}, true);
+      } else {
+        if ((dir == PortDir::kOutput || dir == PortDir::kInout) && !is_reg &&
+            net_type != NetType::kWire) {
+          AddOrUpdateNet(module, name, net_type, width, is_signed, range_msb,
+                         range_lsb, {});
+          AddImplicitNetDriver(module, name, net_type);
+        }
+        if (dir == PortDir::kOutput && is_reg) {
+          AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
+                         range_msb, range_lsb, {});
+        }
       }
       if (MatchSymbol(",")) {
         continue;
@@ -2811,6 +2986,7 @@ class Parser {
   bool ParseDecl(Module* module, PortDir dir) {
     bool is_reg = false;
     bool is_signed = false;
+    bool is_real = false;
     NetType net_type = NetType::kWire;
     bool has_net_type = false;
     if (MatchKeyword("signed")) {
@@ -2819,27 +2995,52 @@ class Parser {
     if (dir == PortDir::kOutput) {
       if (MatchKeyword("reg")) {
         is_reg = true;
+      } else if (MatchKeyword("real")) {
+        is_real = true;
+        is_reg = true;
       } else if (MatchNetType(&net_type)) {
         has_net_type = true;
       }
     } else {
-      if (MatchNetType(&net_type)) {
+      if (MatchKeyword("real")) {
+        is_real = true;
+      } else if (MatchNetType(&net_type)) {
         has_net_type = true;
       }
     }
     if (MatchKeyword("signed")) {
       is_signed = true;
     }
+    if (!is_real && MatchKeyword("real")) {
+      is_real = true;
+    }
+    if (is_real) {
+      is_signed = true;
+      if (has_net_type) {
+        ErrorHere("real declarations cannot use net types");
+        return false;
+      }
+    }
     if (has_net_type && NetTypeRequires4State(net_type) &&
         !options_.enable_4state) {
       ErrorHere("net type requires --4state");
       return false;
     }
-    int width = 1;
+    int width = is_real ? 64 : 1;
     std::shared_ptr<Expr> range_msb;
     std::shared_ptr<Expr> range_lsb;
-    if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
+    bool had_range = false;
+    if (!ParseRange(&width, &range_msb, &range_lsb, &had_range)) {
       return false;
+    }
+    if (is_real) {
+      if (had_range) {
+        ErrorHere("real declarations cannot use packed ranges");
+        return false;
+      }
+      width = 64;
+      range_msb.reset();
+      range_lsb.reset();
     }
     while (true) {
       std::string name;
@@ -2847,17 +3048,24 @@ class Parser {
         ErrorHere("expected identifier in declaration");
         return false;
       }
-      AddOrUpdatePort(module, name, dir, width, is_signed, range_msb,
+      AddOrUpdatePort(module, name, dir, width, is_signed, is_real, range_msb,
                       range_lsb);
-      if ((dir == PortDir::kOutput || dir == PortDir::kInout) && !is_reg &&
-          net_type != NetType::kWire) {
-        AddOrUpdateNet(module, name, net_type, width, is_signed, range_msb,
-                       range_lsb, {});
-        AddImplicitNetDriver(module, name, net_type);
-      }
-      if (dir == PortDir::kOutput && is_reg) {
-        AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                       range_msb, range_lsb, {});
+      if (is_real) {
+        NetType real_type =
+            (dir == PortDir::kOutput) ? NetType::kReg : NetType::kWire;
+        AddOrUpdateNet(module, name, real_type, width, is_signed, range_msb,
+                       range_lsb, {}, true);
+      } else {
+        if ((dir == PortDir::kOutput || dir == PortDir::kInout) && !is_reg &&
+            net_type != NetType::kWire) {
+          AddOrUpdateNet(module, name, net_type, width, is_signed, range_msb,
+                         range_lsb, {});
+          AddImplicitNetDriver(module, name, net_type);
+        }
+        if (dir == PortDir::kOutput && is_reg) {
+          AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
+                         range_msb, range_lsb, {});
+        }
       }
       if (MatchSymbol(",")) {
         continue;
@@ -3037,9 +3245,13 @@ class Parser {
   }
 
   bool ParseParameterItem(Module* module, bool is_local) {
+    bool param_is_real = false;
     if (Peek().kind == TokenKind::kIdentifier &&
         Peek(1).kind == TokenKind::kIdentifier &&
         Peek(2).kind == TokenKind::kSymbol && Peek(2).text == "=") {
+      if (Peek().text == "real") {
+        param_is_real = true;
+      }
       Advance();
     }
     std::string name;
@@ -3055,14 +3267,21 @@ class Parser {
     if (!expr) {
       return false;
     }
-    int64_t value = 0;
-    if (TryEvalConstExpr(*expr, &value)) {
-      current_params_[name] = value;
+    if (!param_is_real && ExprIsRealParamExpr(*expr)) {
+      param_is_real = true;
     }
+    if (!param_is_real) {
+      int64_t value = 0;
+      if (TryEvalConstExpr(*expr, &value)) {
+        current_params_[name] = value;
+      }
+    }
+    current_real_params_[name] = param_is_real;
     Parameter param;
     param.name = name;
     param.value = std::move(expr);
     param.is_local = is_local;
+    param.is_real = param_is_real;
     module->parameters.push_back(std::move(param));
     return true;
   }
@@ -3132,8 +3351,23 @@ class Parser {
         ErrorHere("expected identifier in real declaration");
         return false;
       }
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+      }
       AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(),
+                     array_dims, true);
       if (MatchSymbol(",")) {
         continue;
       }
@@ -3259,6 +3493,20 @@ class Parser {
         ErrorHere("expected identifier in real declaration");
         return false;
       }
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+      }
       if (current_module_) {
         for (const auto& port : current_module_->ports) {
           if (port.name == name) {
@@ -3274,7 +3522,8 @@ class Parser {
         }
       }
       AddOrUpdateNet(current_module_, name, NetType::kWire, width, is_signed,
-                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(), {});
+                     std::shared_ptr<Expr>(), std::shared_ptr<Expr>(),
+                     array_dims, true);
       if (MatchSymbol(",")) {
         continue;
       }
@@ -6630,6 +6879,7 @@ class Parser {
         lit->value_bits = bits;
         lit->has_width = true;
         lit->number_width = 64;
+        lit->is_real_literal = true;
         expr = std::move(lit);
         Advance();
       } else {
@@ -7122,7 +7372,7 @@ class Parser {
   }
 
   void AddOrUpdatePort(Module* module, const std::string& name, PortDir dir,
-                       int width, bool is_signed,
+                       int width, bool is_signed, bool is_real,
                        const std::shared_ptr<Expr>& msb_expr,
                        const std::shared_ptr<Expr>& lsb_expr) {
     for (auto& port : module->ports) {
@@ -7130,20 +7380,22 @@ class Parser {
         port.dir = dir;
         port.width = width;
         port.is_signed = is_signed;
+        port.is_real = is_real;
         port.msb_expr = msb_expr;
         port.lsb_expr = lsb_expr;
         return;
       }
     }
     module->ports.push_back(
-        Port{dir, name, width, is_signed, msb_expr, lsb_expr});
+        Port{dir, name, width, is_signed, is_real, msb_expr, lsb_expr});
   }
 
   void AddOrUpdateNet(Module* module, const std::string& name, NetType type,
                       int width, bool is_signed,
                       const std::shared_ptr<Expr>& msb_expr,
                       const std::shared_ptr<Expr>& lsb_expr,
-                      const std::vector<ArrayDim>& array_dims) {
+                      const std::vector<ArrayDim>& array_dims,
+                      bool is_real = false) {
     int array_size = 0;
     if (array_dims.size() == 1) {
       array_size = array_dims.front().size;
@@ -7153,6 +7405,7 @@ class Parser {
         net.type = type;
         net.width = width;
         net.is_signed = is_signed;
+        net.is_real = is_real;
         net.msb_expr = msb_expr;
         net.lsb_expr = lsb_expr;
         net.array_size = array_size;
@@ -7165,6 +7418,7 @@ class Parser {
     net.name = name;
     net.width = width;
     net.is_signed = is_signed;
+    net.is_real = is_real;
     net.msb_expr = msb_expr;
     net.lsb_expr = lsb_expr;
     net.array_size = array_size;
@@ -7354,6 +7608,7 @@ class Parser {
   Diagnostics* diagnostics_ = nullptr;
   size_t pos_ = 0;
   std::unordered_map<std::string, int64_t> current_params_;
+  std::unordered_map<std::string, bool> current_real_params_;
   std::unordered_set<std::string> current_genvars_;
   Module* current_module_ = nullptr;
   ParseOptions options_;
@@ -7364,6 +7619,41 @@ class Parser {
   UnconnectedDrive unconnected_drive_ = UnconnectedDrive::kNone;
   bool allow_string_literals_ = false;
   int generate_id_ = 0;
+
+  bool ExprIsRealParamExpr(const Expr& expr) const {
+    switch (expr.kind) {
+      case ExprKind::kIdentifier: {
+        auto it = current_real_params_.find(expr.ident);
+        return it != current_real_params_.end() && it->second;
+      }
+      case ExprKind::kNumber:
+        return expr.is_real_literal;
+      case ExprKind::kUnary:
+        if (expr.unary_op == '+' || expr.unary_op == '-') {
+          return expr.operand ? ExprIsRealParamExpr(*expr.operand) : false;
+        }
+        return false;
+      case ExprKind::kBinary:
+        if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
+            expr.op == '/' || expr.op == 'p') {
+          return (expr.lhs && ExprIsRealParamExpr(*expr.lhs)) ||
+                 (expr.rhs && ExprIsRealParamExpr(*expr.rhs));
+        }
+        return false;
+      case ExprKind::kTernary:
+        return (expr.then_expr && ExprIsRealParamExpr(*expr.then_expr)) ||
+               (expr.else_expr && ExprIsRealParamExpr(*expr.else_expr));
+      case ExprKind::kCall:
+        return expr.ident == "$realtime" || expr.ident == "$itor" ||
+               expr.ident == "$bitstoreal";
+      case ExprKind::kString:
+      case ExprKind::kSelect:
+      case ExprKind::kIndex:
+      case ExprKind::kConcat:
+        return false;
+    }
+    return false;
+  }
 
   bool EvalConstExpr(const Expr& expr, int64_t* out_value) {
     switch (expr.kind) {

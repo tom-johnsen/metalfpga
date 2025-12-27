@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test casex statement - treats X and Z as don't-care in both case expr and items
 
 module casex_decoder(

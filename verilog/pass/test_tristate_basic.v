@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Basic tristate buffer
 // Feature: Tristate logic with bufif primitives
 // Expected: Should fail - tristate not yet implemented

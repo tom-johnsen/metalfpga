@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test mixing case/casex/casez with various features
 
 module case_mixed(

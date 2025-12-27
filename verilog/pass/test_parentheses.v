@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module parens(
   input  wire [31:0] a,
   input  wire [4:0]  s,

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Signed comparisons with edge cases
 // Feature: Signed vs unsigned comparison behavior
 // Expected: Should pass - testing signed comparison semantics

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // 2D convolution - 3x3 box blur filter
 module convolution_box_blur(
     input [3:0] y,

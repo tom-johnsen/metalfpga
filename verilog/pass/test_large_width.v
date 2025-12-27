@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test large bit widths (beyond 32, 64, etc.)
 module large_width(
     input [127:0] big_a,

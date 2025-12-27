@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test parentheses with concatenation and replication
 module test_parentheses_concat(
     input [7:0] a,

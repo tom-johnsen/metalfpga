@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Comprehensive test for reduction operators with various bit widths and edge cases
 module test_reduction_comprehensive(
     input [15:0] wide_data,

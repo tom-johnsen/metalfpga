@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module while_dual_countdown;
   integer i, j;
   reg [7:0] arr [0:7];

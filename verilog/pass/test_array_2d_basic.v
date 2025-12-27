@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Basic 2D array test - simple read/write
 module array_2d_basic(
     input [3:0] row,

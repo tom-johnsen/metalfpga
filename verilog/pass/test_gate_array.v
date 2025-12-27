@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Gate array instantiation
 // Feature: Gate-level primitives
 // Expected: Should fail - gate primitives not yet implemented

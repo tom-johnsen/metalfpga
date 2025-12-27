@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Generate conditional tests - if/else blocks
 
 // Simple generate if based on parameter

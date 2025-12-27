@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: forever loop
 // Feature: Infinite loops
 // Expected: Should fail - forever not yet implemented

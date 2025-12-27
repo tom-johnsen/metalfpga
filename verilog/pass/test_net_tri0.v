@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: tri0 net type
 // Feature: Tristate with pull to 0
 // Expected: Should fail - tri0 not yet implemented

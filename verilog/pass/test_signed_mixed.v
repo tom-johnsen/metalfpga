@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test mixed signed/unsigned operations
 module test_signed_mixed(
     input signed [7:0] signed_val,

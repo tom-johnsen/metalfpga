@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module multi_driver(
   input  wire a,
   input  wire b,

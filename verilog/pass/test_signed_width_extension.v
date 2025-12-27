@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed width extension and truncation
 module test_signed_width_extension(
     input signed [7:0] narrow,

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test shift operations with signed values
 module test_signed_shift(
     input signed [7:0] val,

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $stop system task
 // Feature: Pause simulation (interactive mode)
 // Expected: Should fail - $stop not yet implemented

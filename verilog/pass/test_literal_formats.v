@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module lit_matrix(
   output wire [31:0] y0,
   output wire [31:0] y1,

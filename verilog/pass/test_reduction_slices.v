@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators on slices and concatenations
 module test_reduction_slices(
     input [15:0] data,

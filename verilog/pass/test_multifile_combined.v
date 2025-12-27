@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Multiple modules in one file (works)
 
 module adder_mod(

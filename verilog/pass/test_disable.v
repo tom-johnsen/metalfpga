@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: disable statement
 // Feature: Named block control
 // Expected: Should fail - disable not yet implemented

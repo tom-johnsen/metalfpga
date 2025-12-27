@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Time literal delays (#)
 // Feature: General timing controls (# delays)
 // Expected: Should fail - timing controls not yet implemented

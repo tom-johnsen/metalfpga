@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module mem_write_test(
     input clk,
     input [7:0] wr_addr,

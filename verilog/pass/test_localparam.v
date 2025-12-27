@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Local parameters
 // Feature: localparam declarations (cannot be overridden)
 // Expected: Should fail - localparam not yet implemented

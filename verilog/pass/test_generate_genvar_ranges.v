@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Genvar usage in bit ranges and indices
 
 // Genvar in bit select

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test parentheses for expression grouping and precedence
 module test_expression_grouping(
     input [7:0] a,

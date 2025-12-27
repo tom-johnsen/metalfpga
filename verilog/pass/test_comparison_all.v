@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module cmp(input [7:0] a, b, output eq, ne, lt, gt, le, ge);
   assign eq = (a == b);
   assign ne = (a != b);

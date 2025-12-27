@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module unsized_vs_sized(
   input  wire [31:0] a,
   output wire [31:0] y0,

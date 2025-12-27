@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Match-3 operators (===, !==, ==?, !=?)
 // Feature: Case equality and wildcard equality
 // Expected: Should pass with --4state

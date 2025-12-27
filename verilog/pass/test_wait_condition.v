@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Wait statement with complex conditions
 // Feature: wait() with combinational expressions
 // Expected: May fail - complex wait conditions

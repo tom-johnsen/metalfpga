@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed division and modulo operations
 module test_signed_division(
     input signed [7:0] dividend,

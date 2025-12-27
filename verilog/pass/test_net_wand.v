@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: wand net type (wired-AND)
 // Feature: Net types with implicit logic
 // Expected: Should fail - wand not yet implemented

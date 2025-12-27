@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstring>
 #include <functional>
 #include <queue>
 #include <string>
@@ -194,6 +196,7 @@ struct PortBinding {
 
 struct ParamBindings {
   std::unordered_map<std::string, int64_t> values;
+  std::unordered_map<std::string, uint64_t> real_values;
   std::unordered_map<std::string, std::unique_ptr<Expr>> exprs;
 };
 
@@ -204,6 +207,8 @@ std::unique_ptr<Expr> SimplifyExpr(std::unique_ptr<Expr> expr,
 std::unique_ptr<Expr> MakeNumberExpr(uint64_t value);
 std::unique_ptr<Expr> MakeNumberExprWidth(uint64_t value, int width);
 std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width);
+double BitsToDouble(uint64_t bits);
+uint64_t DoubleToBits(double value);
 uint64_t MaskForWidth64(int width);
 std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name);
 std::unique_ptr<Expr> MakeUnaryExpr(char op, std::unique_ptr<Expr> operand);
@@ -213,6 +218,7 @@ std::unique_ptr<Expr> MakeTernaryExpr(std::unique_ptr<Expr> condition,
                                       std::unique_ptr<Expr> then_expr,
                                       std::unique_ptr<Expr> else_expr);
 std::unique_ptr<Expr> MakeAllXExpr(int width);
+std::unique_ptr<Expr> MakeRealLiteralExpr(double value);
 using BindingMap = std::unordered_map<std::string, const Expr*>;
 std::unique_ptr<Expr> CloneExprWithParams(
     const Expr& expr,
@@ -229,6 +235,7 @@ void CollectIdentifiers(const Expr& expr,
 void CollectAssignedSignals(const Statement& statement,
                             std::unordered_set<std::string>* out);
 int SignalWidth(const Module& module, const std::string& name);
+bool SignalIsReal(const Module& module, const std::string& name);
 int ExprWidth(const Expr& expr, const Module& module);
 bool ExprHasSystemCall(const Expr& expr);
 bool StatementHasSystemCall(const Statement& statement);
@@ -237,10 +244,16 @@ bool CloneStatement(
     const std::function<std::string(const std::string&)>& rename,
     const ParamBindings& params, const Module& source_module,
     const Module& flat_module, Statement* out, Diagnostics* diagnostics);
+bool EvalConstExprValueWithFunctions(const Expr& expr,
+                                     const ParamBindings& params,
+                                     const Module& module, int64_t* out_value,
+                                     Diagnostics* diagnostics,
+                                     const std::string& context);
 
 ParamBindings CloneParamBindings(const ParamBindings& params) {
   ParamBindings out;
   out.values = params.values;
+  out.real_values = params.real_values;
   out.exprs.reserve(params.exprs.size());
   for (const auto& entry : params.exprs) {
     out.exprs[entry.first] = gpga::CloneExpr(*entry.second);
@@ -263,6 +276,264 @@ bool TryEvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
     return false;
   }
   return true;
+}
+
+bool ExprUsesRealConst(const Expr& expr, const ParamBindings& params) {
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+      return params.real_values.count(expr.ident) > 0;
+    case ExprKind::kNumber:
+      return expr.is_real_literal;
+    case ExprKind::kUnary:
+      if (expr.unary_op == '+' || expr.unary_op == '-' ||
+          expr.unary_op == '!' || expr.unary_op == 'B') {
+        return expr.operand ? ExprUsesRealConst(*expr.operand, params) : false;
+      }
+      return false;
+    case ExprKind::kBinary:
+      if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
+          expr.op == '/' || expr.op == 'p' || expr.op == 'E' ||
+          expr.op == 'N' || expr.op == 'C' || expr.op == 'c' ||
+          expr.op == 'W' || expr.op == 'w' || expr.op == '<' ||
+          expr.op == '>' || expr.op == 'L' || expr.op == 'G' ||
+          expr.op == 'A' || expr.op == 'O') {
+        return (expr.lhs && ExprUsesRealConst(*expr.lhs, params)) ||
+               (expr.rhs && ExprUsesRealConst(*expr.rhs, params));
+      }
+      return false;
+    case ExprKind::kTernary:
+      return (expr.then_expr && ExprUsesRealConst(*expr.then_expr, params)) ||
+             (expr.else_expr && ExprUsesRealConst(*expr.else_expr, params));
+    case ExprKind::kCall:
+      return expr.ident == "$realtime" || expr.ident == "$itor" ||
+             expr.ident == "$bitstoreal";
+    case ExprKind::kString:
+    case ExprKind::kSelect:
+    case ExprKind::kIndex:
+    case ExprKind::kConcat:
+      return false;
+  }
+  return false;
+}
+
+bool EvalConstExprRealValue(const Expr& expr, const ParamBindings& params,
+                            const Module& module, double* out_value,
+                            Diagnostics* diagnostics) {
+  (void)module;
+  if (!out_value) {
+    return false;
+  }
+  if (!ExprUsesRealConst(expr, params)) {
+    int64_t value = 0;
+    if (!EvalConstExprValueWithFunctions(expr, params, module, &value,
+                                         diagnostics,
+                                         "real constant expression")) {
+      return false;
+    }
+    *out_value = static_cast<double>(value);
+    return true;
+  }
+  switch (expr.kind) {
+    case ExprKind::kNumber: {
+      if (expr.is_real_literal) {
+        *out_value = BitsToDouble(expr.value_bits);
+        return true;
+      }
+      if (expr.x_bits != 0 || expr.z_bits != 0) {
+        diagnostics->Add(Severity::kError,
+                         "x/z not allowed in real constant expression");
+        return false;
+      }
+      *out_value = static_cast<double>(expr.number);
+      return true;
+    }
+    case ExprKind::kIdentifier: {
+      auto it = params.real_values.find(expr.ident);
+      if (it != params.real_values.end()) {
+        *out_value = BitsToDouble(it->second);
+        return true;
+      }
+      auto int_it = params.values.find(expr.ident);
+      if (int_it != params.values.end()) {
+        *out_value = static_cast<double>(int_it->second);
+        return true;
+      }
+      diagnostics->Add(Severity::kError,
+                       "unknown parameter '" + expr.ident + "'");
+      return false;
+    }
+    case ExprKind::kString:
+      diagnostics->Add(Severity::kError,
+                       "string literal not allowed in real constant expression");
+      return false;
+    case ExprKind::kUnary: {
+      if (!expr.operand) {
+        diagnostics->Add(Severity::kError,
+                         "missing operand in real constant expression");
+        return false;
+      }
+      double value = 0.0;
+      if (!EvalConstExprRealValue(*expr.operand, params, module, &value,
+                                  diagnostics)) {
+        return false;
+      }
+      if (expr.unary_op == '+') {
+        *out_value = value;
+        return true;
+      }
+      if (expr.unary_op == '-') {
+        *out_value = -value;
+        return true;
+      }
+      if (expr.unary_op == '!' || expr.unary_op == 'B') {
+        *out_value = (value == 0.0) ? 1.0 : 0.0;
+        return true;
+      }
+      diagnostics->Add(Severity::kError,
+                       "unsupported unary operator in real constant expression");
+      return false;
+    }
+    case ExprKind::kBinary: {
+      if (!expr.lhs || !expr.rhs) {
+        diagnostics->Add(Severity::kError,
+                         "missing operand in real constant expression");
+        return false;
+      }
+      double lhs = 0.0;
+      double rhs = 0.0;
+      if (!EvalConstExprRealValue(*expr.lhs, params, module, &lhs,
+                                  diagnostics) ||
+          !EvalConstExprRealValue(*expr.rhs, params, module, &rhs,
+                                  diagnostics)) {
+        return false;
+      }
+      if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
+          expr.op == '/') {
+        switch (expr.op) {
+          case '+':
+            *out_value = lhs + rhs;
+            break;
+          case '-':
+            *out_value = lhs - rhs;
+            break;
+          case '*':
+            *out_value = lhs * rhs;
+            break;
+          case '/':
+            *out_value = lhs / rhs;
+            break;
+        }
+        return true;
+      }
+      if (expr.op == 'p') {
+        *out_value = std::pow(lhs, rhs);
+        return true;
+      }
+      if (expr.op == 'E' || expr.op == 'C' || expr.op == 'W') {
+        *out_value = (lhs == rhs) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == 'N' || expr.op == 'c' || expr.op == 'w') {
+        *out_value = (lhs != rhs) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == '<') {
+        *out_value = (lhs < rhs) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == '>') {
+        *out_value = (lhs > rhs) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == 'L') {
+        *out_value = (lhs <= rhs) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == 'G') {
+        *out_value = (lhs >= rhs) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == 'A') {
+        *out_value = ((lhs != 0.0) && (rhs != 0.0)) ? 1.0 : 0.0;
+        return true;
+      }
+      if (expr.op == 'O') {
+        *out_value = ((lhs != 0.0) || (rhs != 0.0)) ? 1.0 : 0.0;
+        return true;
+      }
+      diagnostics->Add(Severity::kError,
+                       "unsupported binary operator in real constant expression");
+      return false;
+    }
+    case ExprKind::kTernary: {
+      double cond_value = 0.0;
+      if (expr.condition &&
+          !EvalConstExprRealValue(*expr.condition, params, module, &cond_value,
+                                  diagnostics)) {
+        return false;
+      }
+      bool cond = cond_value != 0.0;
+      if (cond) {
+        if (!expr.then_expr) {
+          diagnostics->Add(
+              Severity::kError,
+              "missing then branch in real constant expression");
+          return false;
+        }
+        return EvalConstExprRealValue(*expr.then_expr, params, module,
+                                      out_value, diagnostics);
+      }
+      if (!expr.else_expr) {
+        diagnostics->Add(Severity::kError,
+                         "missing else branch in real constant expression");
+        return false;
+      }
+      return EvalConstExprRealValue(*expr.else_expr, params, module, out_value,
+                                    diagnostics);
+    }
+    case ExprKind::kCall: {
+      if (expr.ident == "$realtime") {
+        diagnostics->Add(Severity::kError,
+                         "$realtime not allowed in real constant expression");
+        return false;
+      }
+      if (expr.ident == "$itor") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          return EvalConstExprRealValue(*expr.call_args.front(), params, module,
+                                        out_value, diagnostics);
+        }
+        *out_value = 0.0;
+        return true;
+      }
+      if (expr.ident == "$bitstoreal") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          int64_t bits = 0;
+          if (!TryEvalConstExprWithParams(*expr.call_args.front(), params,
+                                          &bits)) {
+            diagnostics->Add(
+                Severity::kError,
+                "$bitstoreal requires integer constant in real expression");
+            return false;
+          }
+          *out_value = BitsToDouble(static_cast<uint64_t>(bits));
+          return true;
+        }
+        *out_value = 0.0;
+        return true;
+      }
+      diagnostics->Add(Severity::kError,
+                       "unsupported function '" + expr.ident +
+                           "' in real constant expression");
+      return false;
+    }
+    case ExprKind::kSelect:
+    case ExprKind::kIndex:
+    case ExprKind::kConcat:
+      diagnostics->Add(Severity::kError,
+                       "unsupported expression in real constant expression");
+      return false;
+  }
+  return false;
 }
 
 struct ConstVar {
@@ -790,6 +1061,7 @@ struct SymbolicVar {
   std::unique_ptr<Expr> expr;
   int width = 0;
   bool is_signed = false;
+  bool is_real = false;
 };
 
 using SymbolicEnv = std::unordered_map<std::string, SymbolicVar>;
@@ -801,6 +1073,7 @@ SymbolicEnv CloneSymbolicEnv(const SymbolicEnv& env) {
     SymbolicVar var;
     var.width = entry.second.width;
     var.is_signed = entry.second.is_signed;
+    var.is_real = entry.second.is_real;
     if (entry.second.expr) {
       var.expr = gpga::CloneExpr(*entry.second.expr);
     }
@@ -888,7 +1161,8 @@ bool AssignSymbolic(const SequentialAssign& assign, const Module& module,
     return false;
   }
   if (!assign.rhs) {
-    it->second.expr = MakeAllXExpr(it->second.width);
+    it->second.expr = it->second.is_real ? MakeRealLiteralExpr(0.0)
+                                         : MakeAllXExpr(it->second.width);
     return true;
   }
   auto rhs = CloneExprWithEnv(*assign.rhs, rename, params, module, *env,
@@ -899,6 +1173,12 @@ bool AssignSymbolic(const SequentialAssign& assign, const Module& module,
   if (!assign.lhs_indices.empty() || assign.lhs_indexed_range) {
     diagnostics->Add(Severity::kError,
                      "array assignment not supported in function body");
+    return false;
+  }
+  if (it->second.is_real &&
+      (assign.lhs_index || assign.lhs_has_range)) {
+    diagnostics->Add(Severity::kError,
+                     "bit/part select not allowed on real in function body");
     return false;
   }
   if (assign.lhs_index) {
@@ -1168,6 +1448,7 @@ std::unique_ptr<Expr> InlineFunctionExpr(
     SymbolicVar arg;
     arg.width = func.args[i].width;
     arg.is_signed = func.args[i].is_signed;
+    arg.is_real = func.args[i].is_real;
     arg.expr = std::move(arg_exprs[i]);
     env.emplace(func.args[i].name, std::move(arg));
   }
@@ -1175,13 +1456,17 @@ std::unique_ptr<Expr> InlineFunctionExpr(
     SymbolicVar var;
     var.width = local.width;
     var.is_signed = local.is_signed;
-    var.expr = MakeAllXExpr(local.width);
+    var.is_real = local.is_real;
+    var.expr =
+        local.is_real ? MakeRealLiteralExpr(0.0) : MakeAllXExpr(local.width);
     env.emplace(local.name, std::move(var));
   }
   SymbolicVar ret;
   ret.width = func.width;
   ret.is_signed = func.is_signed;
-  ret.expr = MakeAllXExpr(func.width);
+  ret.is_real = func.is_real;
+  ret.expr = func.is_real ? MakeRealLiteralExpr(0.0)
+                          : MakeAllXExpr(func.width);
   env.emplace(func.name, std::move(ret));
 
   if (!EvalSymbolicStatements(func.body, module, params, rename, &env,
@@ -1190,7 +1475,8 @@ std::unique_ptr<Expr> InlineFunctionExpr(
   }
   auto it = env.find(func.name);
   if (it == env.end() || !it->second.expr) {
-    return MakeAllXExpr(func.width);
+    return func.is_real ? MakeRealLiteralExpr(0.0)
+                        : MakeAllXExpr(func.width);
   }
   return gpga::CloneExpr(*it->second.expr);
 }
@@ -1202,14 +1488,49 @@ void UpdateBindingsFromStatement(const Statement& statement,
       statement.kind == StatementKind::kForce ||
       statement.kind == StatementKind::kRelease) {
     const auto& assign = statement.assign;
+    if (params->values.count(assign.lhs) == 0 &&
+        params->real_values.count(assign.lhs) == 0 &&
+        params->exprs.count(assign.lhs) == 0) {
+      return;
+    }
+    bool lhs_real = SignalIsReal(flat_module, assign.lhs);
     if (assign.nonblocking || assign.lhs_index ||
         !assign.lhs_indices.empty() || assign.lhs_has_range || !assign.rhs) {
       params->values.erase(assign.lhs);
+      params->real_values.erase(assign.lhs);
       params->exprs.erase(assign.lhs);
       return;
     }
+    if (lhs_real) {
+      Diagnostics scratch;
+      double value = 0.0;
+      if (EvalConstExprRealValue(*assign.rhs, *params, flat_module, &value,
+                                 &scratch)) {
+        params->real_values[assign.lhs] = DoubleToBits(value);
+        params->exprs[assign.lhs] = MakeRealLiteralExpr(value);
+      } else {
+        params->real_values.erase(assign.lhs);
+        params->exprs.erase(assign.lhs);
+      }
+      params->values.erase(assign.lhs);
+      return;
+    }
     int64_t value = 0;
-    if (TryEvalConstExprWithParams(*assign.rhs, *params, &value)) {
+    bool rhs_real = ExprUsesRealConst(*assign.rhs, *params);
+    if (rhs_real) {
+      Diagnostics scratch;
+      double real_value = 0.0;
+      if (EvalConstExprRealValue(*assign.rhs, *params, flat_module,
+                                 &real_value, &scratch)) {
+        value = static_cast<int64_t>(real_value);
+        params->values[assign.lhs] = value;
+        int width = SignalWidth(flat_module, assign.lhs);
+        params->exprs[assign.lhs] = MakeNumberExprSignedWidth(value, width);
+      } else {
+        params->values.erase(assign.lhs);
+        params->exprs.erase(assign.lhs);
+      }
+    } else if (TryEvalConstExprWithParams(*assign.rhs, *params, &value)) {
       params->values[assign.lhs] = value;
       int width = SignalWidth(flat_module, assign.lhs);
       params->exprs[assign.lhs] = MakeNumberExprSignedWidth(value, width);
@@ -1217,6 +1538,7 @@ void UpdateBindingsFromStatement(const Statement& statement,
       params->values.erase(assign.lhs);
       params->exprs.erase(assign.lhs);
     }
+    params->real_values.erase(assign.lhs);
     return;
   }
   if (statement.kind == StatementKind::kBlock) {
@@ -1229,6 +1551,7 @@ void UpdateBindingsFromStatement(const Statement& statement,
   CollectAssignedSignals(statement, &assigned);
   for (const auto& name : assigned) {
     params->values.erase(name);
+    params->real_values.erase(name);
     params->exprs.erase(name);
   }
 }
@@ -1274,6 +1597,16 @@ bool EvalConstExprValueWithFunctions(const Expr& expr,
   std::unordered_set<std::string> call_stack;
   if (!EvalConstExprInScope(expr, module, params, scope, out_value, diagnostics,
                             &call_stack)) {
+    diagnostics->Add(Severity::kError, "failed to evaluate " + context);
+    return false;
+  }
+  return true;
+}
+
+bool EvalConstExprRealValueWithFunctions(
+    const Expr& expr, const ParamBindings& params, const Module& module,
+    double* out_value, Diagnostics* diagnostics, const std::string& context) {
+  if (!EvalConstExprRealValue(expr, params, module, out_value, diagnostics)) {
     diagnostics->Add(Severity::kError, "failed to evaluate " + context);
     return false;
   }
@@ -1727,15 +2060,14 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
     }
     return make_u32(0u);
   }
-  if (expr.ident == "$realtime") {
-    return make_u64(0u);
-  }
-  if (expr.ident == "$realtobits" || expr.ident == "$bitstoreal" ||
-      expr.ident == "$rtoi" || expr.ident == "$itor") {
-    if (!arg_clones.empty()) {
-      return std::move(arg_clones[0]);
-    }
-    return make_u32(0u);
+  if (expr.ident == "$realtime" || expr.ident == "$realtobits" ||
+      expr.ident == "$bitstoreal" || expr.ident == "$rtoi" ||
+      expr.ident == "$itor") {
+    auto call = std::make_unique<Expr>();
+    call->kind = ExprKind::kCall;
+    call->ident = expr.ident;
+    call->call_args = std::move(arg_clones);
+    return call;
   }
   if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
       expr.ident == "$feof" || expr.ident == "$fgets" ||
@@ -1778,6 +2110,8 @@ std::unique_ptr<Expr> BuildFlatIndexExpr(
         '+', MakeBinaryExpr('*', std::move(acc), std::move(dim_expr)),
         std::move(indices[i]));
   }
+  // Ensure unsized literals don't collapse index math to tiny widths.
+  ForceUnsizedWidth(acc.get(), 32);
   return acc;
 }
 
@@ -2659,7 +2993,7 @@ bool CloneStatement(
 }
 
 bool AddFlatNet(const std::string& name, int width, bool is_signed,
-                NetType type, const std::vector<int>& array_dims,
+                NetType type, const std::vector<int>& array_dims, bool is_real,
                 const std::string& hier_path, Module* out,
                 std::unordered_set<std::string>* net_names,
                 std::unordered_map<std::string, std::string>* flat_to_hier,
@@ -2678,6 +3012,7 @@ bool AddFlatNet(const std::string& name, int width, bool is_signed,
   net.name = name;
   net.width = width;
   net.is_signed = is_signed;
+  net.is_real = is_real;
   int total = 0;
   if (!array_dims.empty()) {
     int64_t product = 1;
@@ -2747,6 +3082,32 @@ std::unique_ptr<Expr> MakeNumberExprSignedWidth(int64_t value, int width) {
   }
   expr->number = bits;
   expr->value_bits = bits;
+  return expr;
+}
+
+double BitsToDouble(uint64_t bits) {
+  double value = 0.0;
+  static_assert(sizeof(bits) == sizeof(value), "double size mismatch");
+  std::memcpy(&value, &bits, sizeof(bits));
+  return value;
+}
+
+uint64_t DoubleToBits(double value) {
+  uint64_t bits = 0;
+  static_assert(sizeof(bits) == sizeof(value), "double size mismatch");
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+std::unique_ptr<Expr> MakeRealLiteralExpr(double value) {
+  uint64_t bits = DoubleToBits(value);
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kNumber;
+  expr->number = bits;
+  expr->value_bits = bits;
+  expr->has_width = true;
+  expr->number_width = 64;
+  expr->is_real_literal = true;
   return expr;
 }
 
@@ -2826,6 +3187,20 @@ int SignalWidth(const Module& module, const std::string& name) {
   return 32;
 }
 
+bool SignalIsReal(const Module& module, const std::string& name) {
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return port.is_real;
+    }
+  }
+  for (const auto& net : module.nets) {
+    if (net.name == name) {
+      return net.is_real;
+    }
+  }
+  return false;
+}
+
 int MinimalWidth(uint64_t value) {
   if (value == 0) {
     return 1;
@@ -2846,7 +3221,7 @@ int ExprWidth(const Expr& expr, const Module& module) {
       if (expr.has_width && expr.number_width > 0) {
         return expr.number_width;
       }
-      return MinimalWidth(expr.number);
+      return std::max(32, MinimalWidth(expr.number));
     case ExprKind::kString:
       return 0;
     case ExprKind::kUnary:
@@ -2900,6 +3275,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
     }
     case ExprKind::kCall: {
       if (expr.ident == "$time") {
+        return 64;
+      }
+      if (expr.ident == "$realtobits") {
         return 64;
       }
       const Function* func = FindFunction(module, expr.ident);
@@ -3116,21 +3494,39 @@ bool BuildParamBindings(const Module& module, const Instance* instance,
                        "missing value for parameter '" + param.name + "'");
       return false;
     }
-    int64_t value = 0;
-    if (eval_params == &bindings) {
-      if (!EvalConstExprValueWithFunctions(*expr, bindings, module, &value,
-                                           diagnostics,
-                                           "parameter '" + param.name + "'")) {
-        return false;
+    double real_value = 0.0;
+    if (param.is_real) {
+      if (eval_params == &bindings) {
+        if (!EvalConstExprRealValueWithFunctions(
+                *expr, bindings, module, &real_value, diagnostics,
+                "parameter '" + param.name + "'")) {
+          return false;
+        }
+      } else {
+        if (!EvalConstExprRealValueWithFunctions(
+                *expr, *eval_params, module, &real_value, diagnostics,
+                "parameter '" + param.name + "'")) {
+          return false;
+        }
       }
+      bindings.real_values[param.name] = DoubleToBits(real_value);
     } else {
-      if (!EvalConstExprValueWithFunctions(*expr, *eval_params, module, &value,
-                                           diagnostics,
-                                           "parameter '" + param.name + "'")) {
-        return false;
+      int64_t value = 0;
+      if (eval_params == &bindings) {
+        if (!EvalConstExprValueWithFunctions(
+                *expr, bindings, module, &value, diagnostics,
+                "parameter '" + param.name + "'")) {
+          return false;
+        }
+      } else {
+        if (!EvalConstExprValueWithFunctions(
+                *expr, *eval_params, module, &value, diagnostics,
+                "parameter '" + param.name + "'")) {
+          return false;
+        }
       }
+      bindings.values[param.name] = value;
     }
-    bindings.values[param.name] = value;
     const ParamBindings* expr_params =
         eval_params == &bindings ? &bindings : eval_params;
     auto resolved = CloneExprWithParams(
@@ -3141,9 +3537,13 @@ bool BuildParamBindings(const Module& module, const Instance* instance,
     }
     ConstScope empty_scope;
     std::unordered_set<std::string> call_stack;
-    if (!ResolveConstFunctionCalls(resolved.get(), module, *expr_params,
-                                   empty_scope, diagnostics, &call_stack)) {
-      return false;
+    if (param.is_real) {
+      resolved = MakeRealLiteralExpr(real_value);
+    } else {
+      if (!ResolveConstFunctionCalls(resolved.get(), module, *expr_params,
+                                     empty_scope, diagnostics, &call_stack)) {
+        return false;
+      }
     }
     bindings.exprs[param.name] = std::move(resolved);
   }
@@ -3239,7 +3639,9 @@ void CollectAssignedSignals(const Statement& statement,
 
 bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
   if (expr.kind == ExprKind::kCall) {
-    if (expr.ident != "$time") {
+    if (expr.ident != "$time" && expr.ident != "$realtime" &&
+        expr.ident != "$realtobits" && expr.ident != "$bitstoreal" &&
+        expr.ident != "$rtoi" && expr.ident != "$itor") {
       if (name_out) {
         *name_out = expr.ident;
       }
@@ -4286,6 +4688,241 @@ bool IsDeclaredSignal(const Module& module, const std::string& name) {
   return false;
 }
 
+bool IsDeclaredEvent(const Module& module, const std::string& name) {
+  for (const auto& event_decl : module.events) {
+    if (event_decl.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsDeclaredSignalOrEvent(const Module& module, const std::string& name) {
+  return IsDeclaredSignal(module, name) || IsDeclaredEvent(module, name);
+}
+
+bool ValidateExprIdentifiers(const Expr* expr, const Module& module,
+                             Diagnostics* diagnostics) {
+  if (!expr) {
+    return true;
+  }
+  bool ok = true;
+  switch (expr->kind) {
+    case ExprKind::kIdentifier:
+      if (!IsDeclaredSignalOrEvent(module, expr->ident)) {
+        diagnostics->Add(Severity::kError,
+                         "unknown signal '" + expr->ident + "'");
+        ok = false;
+      }
+      break;
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      break;
+    case ExprKind::kUnary:
+      ok &= ValidateExprIdentifiers(expr->operand.get(), module, diagnostics);
+      break;
+    case ExprKind::kBinary:
+      ok &= ValidateExprIdentifiers(expr->lhs.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->rhs.get(), module, diagnostics);
+      break;
+    case ExprKind::kTernary:
+      ok &=
+          ValidateExprIdentifiers(expr->condition.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->then_expr.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->else_expr.get(), module, diagnostics);
+      break;
+    case ExprKind::kSelect:
+      ok &= ValidateExprIdentifiers(expr->base.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->msb_expr.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->lsb_expr.get(), module, diagnostics);
+      break;
+    case ExprKind::kIndex:
+      ok &= ValidateExprIdentifiers(expr->base.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->index.get(), module, diagnostics);
+      break;
+    case ExprKind::kCall:
+      for (const auto& arg : expr->call_args) {
+        ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics);
+      }
+      break;
+    case ExprKind::kConcat:
+      ok &= ValidateExprIdentifiers(expr->repeat_expr.get(), module,
+                                    diagnostics);
+      for (const auto& element : expr->elements) {
+        ok &= ValidateExprIdentifiers(element.get(), module, diagnostics);
+      }
+      break;
+  }
+  return ok;
+}
+
+bool ValidateAssignTarget(const Module& module, const std::string& name,
+                          Diagnostics* diagnostics) {
+  if (!IsDeclaredSignal(module, name)) {
+    diagnostics->Add(Severity::kError,
+                     "assignment target '" + name + "' is not declared");
+    return false;
+  }
+  return true;
+}
+
+bool ValidateStatementIdentifiers(const Statement& stmt, const Module& module,
+                                  Diagnostics* diagnostics) {
+  bool ok = true;
+  switch (stmt.kind) {
+    case StatementKind::kAssign:
+    case StatementKind::kForce:
+    case StatementKind::kRelease:
+      ok &= ValidateAssignTarget(module, stmt.assign.lhs, diagnostics);
+      for (const auto& index_expr : stmt.assign.lhs_indices) {
+        ok &= ValidateExprIdentifiers(index_expr.get(), module, diagnostics);
+      }
+      ok &= ValidateExprIdentifiers(stmt.assign.lhs_index.get(), module,
+                                    diagnostics);
+      ok &= ValidateExprIdentifiers(stmt.assign.lhs_msb_expr.get(), module,
+                                    diagnostics);
+      ok &= ValidateExprIdentifiers(stmt.assign.lhs_lsb_expr.get(), module,
+                                    diagnostics);
+      ok &= ValidateExprIdentifiers(stmt.assign.rhs.get(), module, diagnostics);
+      ok &=
+          ValidateExprIdentifiers(stmt.assign.delay.get(), module, diagnostics);
+      break;
+    case StatementKind::kIf:
+      ok &= ValidateExprIdentifiers(stmt.condition.get(), module, diagnostics);
+      for (const auto& inner : stmt.then_branch) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kBlock:
+      for (const auto& inner : stmt.block) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kCase:
+      ok &= ValidateExprIdentifiers(stmt.case_expr.get(), module, diagnostics);
+      for (const auto& item : stmt.case_items) {
+        for (const auto& label : item.labels) {
+          ok &= ValidateExprIdentifiers(label.get(), module, diagnostics);
+        }
+        for (const auto& inner : item.body) {
+          ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kFor:
+      if (!stmt.for_init_lhs.empty()) {
+        ok &= ValidateAssignTarget(module, stmt.for_init_lhs, diagnostics);
+      }
+      ok &= ValidateExprIdentifiers(stmt.for_init_rhs.get(), module,
+                                    diagnostics);
+      ok &= ValidateExprIdentifiers(stmt.for_condition.get(), module,
+                                    diagnostics);
+      if (!stmt.for_step_lhs.empty()) {
+        ok &= ValidateAssignTarget(module, stmt.for_step_lhs, diagnostics);
+      }
+      ok &=
+          ValidateExprIdentifiers(stmt.for_step_rhs.get(), module, diagnostics);
+      for (const auto& inner : stmt.for_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kWhile:
+      ok &= ValidateExprIdentifiers(stmt.while_condition.get(), module,
+                                    diagnostics);
+      for (const auto& inner : stmt.while_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kRepeat:
+      ok &= ValidateExprIdentifiers(stmt.repeat_count.get(), module,
+                                    diagnostics);
+      for (const auto& inner : stmt.repeat_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kDelay:
+      ok &= ValidateExprIdentifiers(stmt.delay.get(), module, diagnostics);
+      for (const auto& inner : stmt.delay_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kEventControl:
+      ok &= ValidateExprIdentifiers(stmt.event_expr.get(), module, diagnostics);
+      for (const auto& item : stmt.event_items) {
+        ok &= ValidateExprIdentifiers(item.expr.get(), module, diagnostics);
+      }
+      for (const auto& inner : stmt.event_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kEventTrigger:
+      if (!IsDeclaredEvent(module, stmt.trigger_target)) {
+        diagnostics->Add(
+            Severity::kError,
+            "event '" + stmt.trigger_target + "' is not declared");
+        ok = false;
+      }
+      break;
+    case StatementKind::kWait:
+      ok &= ValidateExprIdentifiers(stmt.wait_condition.get(), module,
+                                    diagnostics);
+      for (const auto& inner : stmt.wait_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kForever:
+      for (const auto& inner : stmt.forever_body) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kFork:
+      for (const auto& inner : stmt.fork_branches) {
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+      }
+      break;
+    case StatementKind::kDisable:
+      break;
+    case StatementKind::kTaskCall:
+      for (const auto& arg : stmt.task_args) {
+        ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics);
+      }
+      break;
+  }
+  return ok;
+}
+
+bool ValidateModuleIdentifiers(const Module& module,
+                               Diagnostics* diagnostics) {
+  bool ok = true;
+  for (const auto& assign : module.assigns) {
+    ok &= ValidateAssignTarget(module, assign.lhs, diagnostics);
+    ok &= ValidateExprIdentifiers(assign.rhs.get(), module, diagnostics);
+  }
+  for (const auto& sw : module.switches) {
+    ok &= ValidateAssignTarget(module, sw.a, diagnostics);
+    ok &= ValidateAssignTarget(module, sw.b, diagnostics);
+    ok &= ValidateExprIdentifiers(sw.control.get(), module, diagnostics);
+    ok &= ValidateExprIdentifiers(sw.control_n.get(), module, diagnostics);
+  }
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      ok &= ValidateStatementIdentifiers(stmt, module, diagnostics);
+    }
+  }
+  for (const auto& task : module.tasks) {
+    for (const auto& stmt : task.body) {
+      ok &= ValidateStatementIdentifiers(stmt, module, diagnostics);
+    }
+  }
+  return ok;
+}
+
 void WarnUndeclaredClocks(const Module& flat, Diagnostics* diagnostics) {
   for (const auto& block : flat.always_blocks) {
     if (block.edge == EdgeKind::kCombinational ||
@@ -4458,6 +5095,14 @@ bool InlineModule(const Program& program, const Module& module,
     }
     return NetType::kWire;
   };
+  auto lookup_real = [&](const std::string& ident) -> bool {
+    for (const auto& net : module.nets) {
+      if (net.name == ident) {
+        return net.is_real;
+      }
+    }
+    return false;
+  };
 
   auto register_event = [&](const std::string& name,
                             const std::string& hier_path) -> bool {
@@ -4487,6 +5132,7 @@ bool InlineModule(const Program& program, const Module& module,
       Parameter flat_param;
       flat_param.name = param.name;
       flat_param.is_local = param.is_local;
+      flat_param.is_real = param.is_real;
       auto it = params.exprs.find(param.name);
       if (it != params.exprs.end()) {
         flat_param.value = gpga::CloneExpr(*it->second);
@@ -4513,6 +5159,7 @@ bool InlineModule(const Program& program, const Module& module,
       flat_port.name = port.name;
       flat_port.width = width;
       flat_port.is_signed = port.is_signed;
+      flat_port.is_real = port.is_real;
       out->ports.push_back(std::move(flat_port));
       (*flat_to_hier)[port.name] = hier_prefix + "." + port.name;
     }
@@ -4529,7 +5176,7 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       if (!AddFlatNet(net.name, width, net.is_signed, net.type, array_dims,
-                      hier_prefix + "." + net.name, out, net_names,
+                      net.is_real, hier_prefix + "." + net.name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
       }
@@ -4559,6 +5206,7 @@ bool InlineModule(const Program& program, const Module& module,
         flat_arg.name = arg.name;
         flat_arg.width = width;
         flat_arg.is_signed = arg.is_signed;
+        flat_arg.is_real = arg.is_real;
         flat_task.args.push_back(std::move(flat_arg));
       }
       if (!CloneStatementList(task.body, rename, params, module, *out,
@@ -4580,8 +5228,8 @@ bool InlineModule(const Program& program, const Module& module,
       }
       NetType type = lookup_type(port.name);
       if (!AddFlatNet(prefix + port.name, width, port.is_signed, type, {},
-                      hier_prefix + "." + port.name, out, net_names,
-                      flat_to_hier, diagnostics)) {
+                      lookup_real(port.name), hier_prefix + "." + port.name,
+                      out, net_names, flat_to_hier, diagnostics)) {
         return false;
       }
     }
@@ -4598,9 +5246,8 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       if (!AddFlatNet(prefix + net.name, width, net.is_signed, net.type,
-                      array_dims,
-                      hier_prefix + "." + net.name, out, net_names,
-                      flat_to_hier, diagnostics)) {
+                      array_dims, net.is_real, hier_prefix + "." + net.name,
+                      out, net_names, flat_to_hier, diagnostics)) {
         return false;
       }
     }
@@ -4629,6 +5276,7 @@ bool InlineModule(const Program& program, const Module& module,
         flat_arg.name = arg.name;
         flat_arg.width = width;
         flat_arg.is_signed = arg.is_signed;
+        flat_arg.is_real = arg.is_real;
         flat_task.args.push_back(std::move(flat_arg));
       }
       if (!CloneStatementList(task.body, rename, params, module, *out,
@@ -4720,6 +5368,7 @@ bool InlineModule(const Program& program, const Module& module,
     std::unordered_map<std::string, PortDir> child_port_dirs;
     std::unordered_map<std::string, int> child_port_widths;
     std::unordered_map<std::string, bool> child_port_signed;
+    std::unordered_map<std::string, bool> child_port_real;
     std::unordered_map<std::string, NetType> child_port_types;
     for (const auto& port : child->ports) {
       int width = port.width;
@@ -4729,13 +5378,16 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       NetType port_type = NetType::kWire;
+      bool port_is_real = false;
       if (const Net* net = FindNet(*child, port.name)) {
         port_type = net->type;
+        port_is_real = net->is_real;
       }
       child_ports.insert(port.name);
       child_port_dirs[port.name] = port.dir;
       child_port_widths[port.name] = width;
       child_port_signed[port.name] = port.is_signed;
+      child_port_real[port.name] = port_is_real;
       child_port_types[port.name] = port_type;
       child_port_map[port.name] = PortBinding{child_prefix + port.name};
     }
@@ -4843,6 +5495,7 @@ bool InlineModule(const Program& program, const Module& module,
       NetType type = child_port_types[port_name];
       if (!AddFlatNet(port_net, child_port_widths[port_name],
                       child_port_signed[port_name], type, {},
+                      child_port_real[port_name],
                       child_hier + "." + port_name, out, net_names,
                       flat_to_hier, diagnostics)) {
         return false;
@@ -4962,6 +5615,9 @@ bool Elaborate(const Program& program, const std::string& top_name,
     return false;
   }
   if (!ValidateCombinationalAcyclic(flat, diagnostics)) {
+    return false;
+  }
+  if (!ValidateModuleIdentifiers(flat, diagnostics)) {
     return false;
   }
   WarnUndeclaredClocks(flat, diagnostics);

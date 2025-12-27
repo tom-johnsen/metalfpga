@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Controlled bidirectional switch
 // Feature: Resistive connection primitives with control
 // Expected: Should fail - tranif primitives not yet implemented

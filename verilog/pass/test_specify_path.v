@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Specify block with path delays
 // Feature: Path delay specifications
 // Expected: May fail - detailed specify semantics

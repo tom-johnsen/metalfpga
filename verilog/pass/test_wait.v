@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: wait statement
 // Feature: Level-sensitive wait
 // Expected: Should fail - wait not yet implemented

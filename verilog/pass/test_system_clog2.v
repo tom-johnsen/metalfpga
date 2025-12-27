@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $clog2 system function
 // Feature: Ceiling of log base 2
 // Expected: Should fail - $clog2 not yet implemented

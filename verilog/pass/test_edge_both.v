@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Both edge sensitivity
 // Feature: Sensitivity lists with posedge and negedge combined
 // Expected: Should fail - complex sensitivity lists not yet implemented

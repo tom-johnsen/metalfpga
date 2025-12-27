@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: event data type and triggers
 // Feature: Named events
 // Expected: Should fail - events not yet implemented

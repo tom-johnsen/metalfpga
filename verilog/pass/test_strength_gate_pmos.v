@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: PMOS transistor primitive
 // Feature: MOS switch-level primitives
 // Expected: Should fail - MOS primitives not yet implemented

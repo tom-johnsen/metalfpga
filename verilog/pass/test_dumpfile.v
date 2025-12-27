@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: VCD dump system tasks
 // Feature: Waveform dumping
 // Expected: Should fail - VCD tasks not yet implemented

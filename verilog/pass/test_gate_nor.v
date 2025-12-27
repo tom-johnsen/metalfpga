@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: nor gate primitive
 // Feature: Gate-level primitives
 // Expected: Should fail - gate primitives not yet implemented

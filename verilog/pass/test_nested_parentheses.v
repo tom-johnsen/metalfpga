@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test deeply nested parentheses
 module test_nested_parentheses(
     input [7:0] a,

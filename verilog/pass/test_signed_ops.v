@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed arithmetic
 module signed_ops(
     input signed [7:0] a,

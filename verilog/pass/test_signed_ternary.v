@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test signed arithmetic in ternary expressions
 module test_signed_ternary(
     input signed [7:0] a,

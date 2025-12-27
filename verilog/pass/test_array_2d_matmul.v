@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Matrix operations - multiply, transpose
 module matrix_multiply_4x4(
     input [1:0] out_row,

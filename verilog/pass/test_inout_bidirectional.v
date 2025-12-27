@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Bidirectional inout ports with tristate control
 // Feature: inout port with conditional drive
 // Expected: May fail - complex inout handling

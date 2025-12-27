@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test variable part selects and edge cases
 module part_select(
     input [15:0] data,

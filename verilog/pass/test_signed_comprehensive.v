@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Comprehensive signed arithmetic tests
 module test_signed_comprehensive(
     input signed [7:0] a,

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $sformat system task
 // Feature: Format string into variable
 // Expected: Should fail - $sformat not yet implemented

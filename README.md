@@ -107,7 +107,7 @@ The compiler produces:
 - 4-state logic (0/1/X/Z) with `--4state` flag:
   - X/Z literals (`8'bz`, `4'b10zx`, etc.)
   - X/Z propagation in operations
-  - See [4STATE.md](4STATE.md) for details
+  - See [4STATE.md](docs/4STATE.md) for details
 - System tasks:
   - Output: `$display`, `$write`, `$strobe` - Console output with format specifiers (%h, %d, %b, %o, %t, %s)
   - Monitoring: `$monitor` - Continuous value watching
@@ -146,7 +146,6 @@ These features are fully implemented in the compiler pipeline + MSL emission, bu
 - Runtime kernel execution and validation (MSL code generation complete, GPU dispatch pending)
 - Event scheduling validation (infrastructure complete, needs runtime testing)
 - Full sensitivity list support beyond `@*` and `@(posedge/negedge clk)`
-- Hierarchical name references (`top.sub.signal`)
 - Real number arithmetic (floating-point)
 
 **Low Priority**:
@@ -230,7 +229,7 @@ The compiler detects and reports:
 - [Verilog Coverage](docs/gpga/verilog_words.md) - Keyword implementation status
 - [IR Invariants](docs/gpga/ir_invariants.md) - Flattened netlist guarantees
 - [Roadmap](docs/gpga/roadmap.md) - Development milestones
-- [4-State Logic Plan](4STATE.md) - X/Z support design document
+- [4-State Logic Plan](docs/4STATE.md) - X/Z support design document
 - [Bit Packing Strategy](docs/bit_packing_strategy.md) - GPU memory optimization techniques
 - [Verilog Reference](docs/VERILOG_REFERENCE.md) - Language reference
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits

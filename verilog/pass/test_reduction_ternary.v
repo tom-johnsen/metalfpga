@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test reduction operators in ternary expressions
 module test_reduction_ternary(
     input [7:0] data,

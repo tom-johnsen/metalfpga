@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test parentheses with reduction operators
 module test_parentheses_reduction(
     input [7:0] a,

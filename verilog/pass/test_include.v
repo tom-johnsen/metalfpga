@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: include directive
 // Feature: File inclusion
 // Expected: Should fail - include not yet implemented

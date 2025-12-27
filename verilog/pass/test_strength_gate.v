@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Gate-level primitive with drive strength
 // Feature: Drive strength on gate instantiation
 // Expected: Should fail - gate primitives with strength not yet implemented

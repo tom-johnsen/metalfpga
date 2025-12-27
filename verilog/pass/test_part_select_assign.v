@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: procedural part-select assignment (fixed and indexed)
 // Feature: assign to [msb:lsb], [idx +: w], [idx -: w]
 module test_part_select_assign;

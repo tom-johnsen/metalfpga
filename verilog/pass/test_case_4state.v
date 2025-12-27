@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test case statements with 4-state values (X and Z)
 // This should show how X propagates through case matching
 

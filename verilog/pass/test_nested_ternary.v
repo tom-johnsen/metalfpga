@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module ternary_nest(
   input  wire a,
   input  wire b,

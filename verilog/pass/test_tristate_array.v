@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Array of tristate buffers
 // Feature: Gate arrays with tristate
 // Expected: Should fail - tristate gate arrays not yet implemented

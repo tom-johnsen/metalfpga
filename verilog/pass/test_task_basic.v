@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Basic task declaration and call
 // Feature: tasks (procedural task blocks)
 // Expected: Should fail - tasks not yet implemented

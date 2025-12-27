@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Complex generate combinations - stress testing
 
 // Generate creating reg arrays with initial values

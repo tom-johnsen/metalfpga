@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // File B: references module from file A
 
 module top(

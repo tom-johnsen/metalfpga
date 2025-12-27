@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $writememh system task
 // Feature: Write memory to hex file
 // Expected: Should fail - $writememh not yet implemented

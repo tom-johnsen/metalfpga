@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test combinations of reduction and signed operations
 module test_combined_reduction_signed(
     input signed [7:0] signed_val,

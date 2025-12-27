@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $finish system task
 // Feature: End simulation
 // Expected: Should fail - $finish not yet implemented

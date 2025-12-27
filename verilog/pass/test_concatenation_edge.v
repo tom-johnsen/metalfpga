@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Concatenation edge cases
 // Feature: Empty concat, single element, nested replication
 // Expected: May fail - edge case concatenation

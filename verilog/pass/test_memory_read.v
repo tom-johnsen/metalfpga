@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test memory read operations
 module test_memory_read(
     input [7:0] rd_addr1,

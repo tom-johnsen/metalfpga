@@ -159,6 +159,7 @@ std::unique_ptr<Expr> CloneExpr(const Expr& expr) {
   out->has_base = expr.has_base;
   out->base_char = expr.base_char;
   out->is_signed = expr.is_signed;
+  out->is_real_literal = expr.is_real_literal;
   out->op = expr.op;
   out->unary_op = expr.unary_op;
   out->msb = expr.msb;

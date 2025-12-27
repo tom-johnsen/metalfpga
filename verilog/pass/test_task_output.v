@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Task with output and inout parameters
 // Feature: Task parameter directions
 // Expected: May fail - task output/inout parameters

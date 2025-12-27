@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $time system function
 // Feature: Get current simulation time
 // Expected: Should fail - $time not yet implemented

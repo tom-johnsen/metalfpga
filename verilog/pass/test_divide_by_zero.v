@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Division by zero behavior
 // Feature: Edge case arithmetic
 // Expected: Implementation defined - should handle gracefully

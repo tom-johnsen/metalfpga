@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: CMOS transmission gate
 // Feature: Bidirectional MOS switch
 // Expected: Should fail - MOS switch primitives not yet implemented

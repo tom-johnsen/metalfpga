@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Sensitivity list with 'or' keyword
 // Feature: Sensitivity lists beyond @* and @(posedge/negedge clk)
 // Expected: Should fail - complex sensitivity lists not yet implemented

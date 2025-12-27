@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: $readmemb system task
 // Feature: Load memory from binary file
 // Expected: Should fail - $readmemb not yet implemented

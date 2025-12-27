@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Nested generate blocks - loops within loops
 
 // 2D generate - nested loops

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module repl_nesting(
   input  wire [3:0] a,
   output wire [31:0] y0,

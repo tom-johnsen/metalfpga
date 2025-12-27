@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: pulldown primitive
 // Feature: Gate-level primitives
 // Expected: Should fail - pulldown not yet implemented

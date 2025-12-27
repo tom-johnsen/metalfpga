@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: `protect and `endprotect directives
 // Feature: IP protection (encryption)
 // Expected: May pass - directives might be ignored

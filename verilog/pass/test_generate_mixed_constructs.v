@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Generate blocks with mixed constructs: assigns, instances, always blocks
 
 // Helper modules for instantiation tests

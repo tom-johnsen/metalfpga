@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: fork/join parallel blocks
 // Feature: Parallel execution blocks
 // Expected: Should fail - fork/join not yet implemented

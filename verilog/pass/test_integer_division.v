@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Integer division and modulo semantics
 // Feature: Division truncation, negative modulo
 // Expected: Should pass - testing integer arithmetic

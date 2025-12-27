@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Tristate bus multiplexer
 // Feature: Classic tristate bus with multiple sources
 // Expected: Should fail - tristate resolution not yet implemented

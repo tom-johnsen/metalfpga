@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // 2D array with sequential write (clock edge)
 module array_2d_write_sync(
     input clk,

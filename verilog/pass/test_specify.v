@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: specify block for timing
 // Feature: Timing specification
 // Expected: Should fail - specify blocks not yet implemented

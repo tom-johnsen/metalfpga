@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Drive strength resolution
 // Feature: Resolving conflicting drivers with different strengths
 // Expected: Should fail - strength resolution not yet implemented

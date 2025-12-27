@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test casez with Z values (no wildcard syntax yet)
 
 module casez_simple(

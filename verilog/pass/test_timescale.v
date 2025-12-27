@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: timescale directive
 // Feature: Compiler directives
 // Expected: Should fail - timescale not yet implemented

@@ -21,6 +21,7 @@ struct Port {
   std::string name;
   int width = 1;
   bool is_signed = false;
+  bool is_real = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
 };
@@ -84,6 +85,7 @@ struct Net {
   std::string name;
   int width = 1;
   bool is_signed = false;
+  bool is_real = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
   int array_size = 0;
@@ -116,6 +118,7 @@ struct Expr {
   bool has_base = false;
   char base_char = 'd';
   bool is_signed = false;
+  bool is_real_literal = false;
   char op = 0;
   char unary_op = 0;
   std::unique_ptr<Expr> operand;
@@ -148,6 +151,7 @@ struct Parameter {
   std::string name;
   std::unique_ptr<Expr> value;
   bool is_local = false;
+  bool is_real = false;
 };
 
 struct Statement;
@@ -156,6 +160,7 @@ struct FunctionArg {
   std::string name;
   int width = 1;
   bool is_signed = false;
+  bool is_real = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
 };
@@ -164,12 +169,14 @@ struct LocalVar {
   std::string name;
   int width = 1;
   bool is_signed = false;
+  bool is_real = false;
 };
 
 struct Function {
   std::string name;
   int width = 1;
   bool is_signed = false;
+  bool is_real = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
   std::vector<FunctionArg> args;
@@ -315,6 +322,7 @@ struct TaskArg {
   std::string name;
   int width = 1;
   bool is_signed = false;
+  bool is_real = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
 };

@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test basic case statement functionality
 
 module case_basic(

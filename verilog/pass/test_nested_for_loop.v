@@ -1,3 +1,4 @@
+// EXPECT=PASS
 module nested_for_test;
   integer i, j;
   reg [7:0] arr [0:11];

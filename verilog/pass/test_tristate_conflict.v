@@ -1,3 +1,4 @@
+// EXPECT=PASS
 // Test: Tristate bus contention (both enabled)
 // Feature: Handling driver conflicts on tristate bus
 // Expected: Should fail - conflict resolution not yet implemented

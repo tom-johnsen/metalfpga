@@ -166,6 +166,9 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       if (expr.ident == "$time") {
         return 64;
       }
+      if (expr.ident == "$realtobits") {
+        return 64;
+      }
       return 32;
     case gpga::ExprKind::kConcat: {
       int total = 0;
