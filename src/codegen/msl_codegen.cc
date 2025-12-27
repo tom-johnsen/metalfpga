@@ -4063,7 +4063,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (expr.full.empty() || expr.width <= 0) {
         return expr;
       }
-      const size_t kMinHoist = 200;
+      const size_t kMinHoist = 120;
       size_t min_len = force_small ? 0 : kMinHoist;
       if (expr.full.size() < min_len) {
         return expr;
@@ -4390,6 +4390,40 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     }
 
+    std::unordered_set<std::string> switch_nets;
+    for (const auto& sw : module.switches) {
+      switch_nets.insert(sw.a);
+      switch_nets.insert(sw.b);
+    }
+    std::unordered_set<std::string> drive_declared;
+    std::unordered_map<std::string, std::string> drive_vars;
+    auto drive_var_name = [&](const std::string& name) -> std::string {
+      return "__gpga_drive_" + name;
+    };
+    auto drive_init_for = [&](const std::string& name, int width) -> std::string {
+      const Port* port = FindPort(module, name);
+      if (port && (port->dir == PortDir::kInput ||
+                   port->dir == PortDir::kInout)) {
+        return drive_full(width);
+      }
+      NetType net_type = SignalNetType(module, name);
+      if (net_type == NetType::kReg || IsTriregNet(net_type)) {
+        return drive_full(width);
+      }
+      return drive_zero(width);
+    };
+    auto ensure_drive_declared =
+        [&](const std::string& name, int width,
+            const std::string& init) -> std::string {
+          std::string var = drive_var_name(name);
+          drive_vars[name] = var;
+          if (drive_declared.insert(name).second) {
+            std::string type = TypeForWidth(width);
+            out << "  " << type << " " << var << " = " << init << ";\n";
+          }
+          return var;
+        };
+
     out << "kernel void gpga_" << module.name << "(";
     int buffer_index = 0;
     bool first = true;
@@ -4681,6 +4715,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       out << "  }\n";
 
+      if (switch_nets.count(name) > 0) {
+        ensure_drive_declared(name, lhs_width, drive_zero(lhs_width));
+        out << "  " << drive_var_name(name) << " = " << resolved_drive << ";\n";
+      }
+
       bool is_output = IsOutputPort(module, name) || regs_ctx.count(name) > 0;
       bool is_local = locals_ctx.count(name) > 0 && !is_output &&
                       regs_ctx.count(name) == 0;
@@ -4800,6 +4839,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 out << "  " << lhs.xz << " = " << rhs.xz << ";\n";
               }
             }
+            if (switch_nets.count(assign.lhs) > 0) {
+              std::string drive_var =
+                  ensure_drive_declared(assign.lhs, lhs.width,
+                                        drive_zero(lhs.width));
+              out << "  " << drive_var << " = " << rhs.drive << ";\n";
+            }
           }
           for (const auto& entry : partial_assigns) {
             const std::string& name = entry.first;
@@ -4814,6 +4859,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             std::string temp_xz =
                 target_is_local ? xz_name(name)
                                 : ("__gpga_partial_" + name + "_xz");
+            bool track_drive = switch_nets.count(name) > 0;
+            std::string temp_drive = "__gpga_partial_" + name + "_drive";
             std::string zero = literal_for_width(0, lhs_width);
             if (target_is_local) {
               if (declared_ctx && declared_ctx->count(name) == 0) {
@@ -4821,15 +4868,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     << ";\n";
                 out << "  " << type << " " << temp_xz << " = " << zero
                     << ";\n";
+                if (track_drive) {
+                  out << "  " << type << " " << temp_drive << " = " << zero
+                      << ";\n";
+                }
                 declared_ctx->insert(name);
               } else {
                 out << "  " << temp_val << " = " << zero << ";\n";
                 out << "  " << temp_xz << " = " << zero << ";\n";
+                if (track_drive) {
+                  out << "  " << temp_drive << " = " << zero << ";\n";
+                }
               }
             } else {
               out << "  " << type << " " << temp_val << " = " << zero
                   << ";\n";
               out << "  " << type << " " << temp_xz << " = " << zero << ";\n";
+              if (track_drive) {
+                out << "  " << type << " " << temp_drive << " = " << zero
+                    << ";\n";
+              }
             }
             for (const auto* assign : entry.second) {
               int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
@@ -4848,6 +4906,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << "  " << temp_xz << " = (" << temp_xz << " & ~"
                   << shifted_mask << ") | ((" << cast << rhs.xz << " & "
                   << mask << ") << " << std::to_string(lo) << "u);\n";
+              if (track_drive) {
+                out << "  " << temp_drive << " = (" << temp_drive << " & ~"
+                    << shifted_mask << ") | ((" << cast << rhs.drive << " & "
+                    << mask << ") << " << std::to_string(lo) << "u);\n";
+              }
             }
             if (!target_is_local) {
               if (IsOutputPort(module, name) || regs_ctx.count(name) > 0) {
@@ -4871,9 +4934,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     << ";\n";
               }
             }
+            if (track_drive) {
+              std::string drive_var =
+                  ensure_drive_declared(name, lhs_width,
+                                        drive_zero(lhs_width));
+              out << "  " << drive_var << " = " << temp_drive << ";\n";
+            }
           }
         };
     emit_continuous_assigns(locals, regs, &declared);
+
+    for (const auto& name : switch_nets) {
+      if (drive_declared.count(name) > 0) {
+        continue;
+      }
+      int width = SignalWidth(module, name);
+      ensure_drive_declared(name, width, drive_init_for(name, width));
+    }
 
     std::unordered_set<std::string> comb_targets;
     for (const auto& block : module.always_blocks) {
@@ -5297,22 +5374,82 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  } else {\n";
       int temp_index = switch_temp_index++;
       std::string fs_type = (width > 32) ? "FourState64" : "FourState32";
+      std::string type = TypeForWidth(width);
+      std::string zero = literal_for_width(0, width);
+      std::string one = (width > 32) ? "1ul" : "1u";
+      std::string strength0 = StrengthLiteral(sw.strength0);
+      std::string strength1 = StrengthLiteral(sw.strength1);
+      std::string x_strength = (strength0 == strength1)
+                                   ? strength0
+                                   : ("(" + strength0 + " > " + strength1 +
+                                      ") ? " + strength0 + " : " + strength1);
       std::string a_tmp = "__gpga_sw_a" + std::to_string(temp_index);
       std::string b_tmp = "__gpga_sw_b" + std::to_string(temp_index);
-      std::string m_tmp = "__gpga_sw_m" + std::to_string(temp_index);
+      std::string m_val = "__gpga_sw_val" + std::to_string(temp_index);
+      std::string m_xz = "__gpga_sw_xz" + std::to_string(temp_index);
+      std::string m_drive = "__gpga_sw_drive" + std::to_string(temp_index);
+      std::string a_drive = drive_var_name(sw.a);
+      std::string b_drive = drive_var_name(sw.b);
       out << "    " << fs_type << " " << a_tmp << " = "
           << fs_make_expr(a_expr, width) << ";\n";
       out << "    " << fs_type << " " << b_tmp << " = "
           << fs_make_expr(b_expr, width) << ";\n";
-      FsExpr a_saved = fs_expr_from_base(a_tmp, drive_full(width), width);
-      FsExpr b_saved = fs_expr_from_base(b_tmp, drive_full(width), width);
-      FsExpr merged = fs_merge_expr(a_saved, b_saved, width);
-      out << "    " << fs_type << " " << m_tmp << " = " << merged.full
-          << ";\n";
-      out << "    " << a_val << " = " << m_tmp << ".val;\n";
-      out << "    " << a_xz << " = " << m_tmp << ".xz;\n";
-      out << "    " << b_val << " = " << m_tmp << ".val;\n";
-      out << "    " << b_xz << " = " << m_tmp << ".xz;\n";
+      out << "    " << type << " " << m_val << " = " << zero << ";\n";
+      out << "    " << type << " " << m_xz << " = " << zero << ";\n";
+      out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+      out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
+      out << "      " << type << " mask = (" << one << " << bit);\n";
+      out << "      uint best0 = 0u;\n";
+      out << "      uint best1 = 0u;\n";
+      out << "      uint bestx = 0u;\n";
+      out << "      if ((" << a_drive << " & mask) != " << zero << ") {\n";
+      out << "        if ((" << a_tmp << ".xz & mask) != " << zero << ") {\n";
+      out << "          bestx = (bestx > " << x_strength << ") ? bestx : "
+          << x_strength << ";\n";
+      out << "        } else if ((" << a_tmp << ".val & mask) != " << zero
+          << ") {\n";
+      out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+          << strength1 << ";\n";
+      out << "        } else {\n";
+      out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+          << strength0 << ";\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if ((" << b_drive << " & mask) != " << zero << ") {\n";
+      out << "        if ((" << b_tmp << ".xz & mask) != " << zero << ") {\n";
+      out << "          bestx = (bestx > " << x_strength << ") ? bestx : "
+          << x_strength << ";\n";
+      out << "        } else if ((" << b_tmp << ".val & mask) != " << zero
+          << ") {\n";
+      out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+          << strength1 << ";\n";
+      out << "        } else {\n";
+      out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+          << strength0 << ";\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (best0 == 0u && best1 == 0u && bestx == 0u) {\n";
+      out << "        " << m_xz << " |= mask;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      " << m_drive << " |= mask;\n";
+      out << "      uint max01 = (best0 > best1) ? best0 : best1;\n";
+      out << "      if ((bestx >= max01) && max01 != 0u) {\n";
+      out << "        " << m_xz << " |= mask;\n";
+      out << "      } else if (best0 > best1) {\n";
+      out << "        // 0 wins\n";
+      out << "      } else if (best1 > best0) {\n";
+      out << "        " << m_val << " |= mask;\n";
+      out << "      } else {\n";
+      out << "        " << m_xz << " |= mask;\n";
+      out << "      }\n";
+      out << "    }\n";
+      out << "    " << a_val << " = " << m_val << ";\n";
+      out << "    " << a_xz << " = " << m_xz << ";\n";
+      out << "    " << b_val << " = " << m_val << ";\n";
+      out << "    " << b_xz << " = " << m_xz << ";\n";
+      out << "    " << a_drive << " = " << m_drive << ";\n";
+      out << "    " << b_drive << " = " << m_drive << ";\n";
       out << "  }\n";
     }
     out << "}\n";
@@ -6237,6 +6374,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         };
 
         std::unordered_map<const Statement*, ForkInfo> fork_info;
+        std::unordered_map<int, std::unordered_map<std::string, int>>
+            fork_child_labels;
         std::vector<ProcDef> procs;
         std::vector<int> proc_parent;
         std::vector<int> proc_join_tag;
@@ -6264,6 +6403,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               procs.push_back(ProcDef{child_pid, nullptr, &branch});
               proc_parent.push_back(parent_pid);
               proc_join_tag.push_back(info.tag);
+              if (branch.kind == StatementKind::kBlock &&
+                  !branch.block_label.empty()) {
+                fork_child_labels[parent_pid][branch.block_label] = child_pid;
+              }
               collect_forks(branch, child_pid);
             }
             fork_info[&stmt] = info;
@@ -7440,6 +7583,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "}\n";
         };
 
+        auto emit_delay_value4 = [&](const Expr& expr) -> std::string {
+          if (ExprIsRealValue(expr, module)) {
+            std::string real = emit_real_value4(expr);
+            return "ulong(" + real + ")";
+          }
+          FsExpr delay_expr = emit_expr4_sized(expr, 64);
+          std::string zero = literal_for_width(0, delay_expr.width);
+          return "(" + delay_expr.xz + " == " + zero + " ? " + delay_expr.val +
+                 " : 0ul)";
+        };
+
         out << "  sched_status[gid] = GPGA_SCHED_STATUS_RUNNING;\n";
         out << "  bool finished = false;\n";
         out << "  bool stopped = false;\n";
@@ -8422,10 +8576,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     << idx_val << ");\n";
                 out << "                  uint __gpga_didx_xz = uint("
                     << idx_xz << ");\n";
-                FsExpr delay_expr =
-                    emit_expr4_sized(*stmt.assign.delay, 64);
                 out << "                  ulong __gpga_delay = "
-                    << delay_expr.val << ";\n";
+                    << emit_delay_value4(*stmt.assign.delay) << ";\n";
                 if (stmt.assign.nonblocking) {
                   out << "                  if (__gpga_delay == 0ul) {\n";
                   emit_delay_assign_apply(std::to_string(delay_id) + "u",
@@ -8499,12 +8651,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
                 body_cases.push_back(std::move(body_case));
               }
-              FsExpr delay_expr =
-                  stmt.delay ? emit_expr4_sized(*stmt.delay, 64)
-                             : FsExpr{literal_for_width(0, 64),
-                                      literal_for_width(0, 64),
-                                      drive_full(64), 64};
-              out << "                  ulong __gpga_delay = " << delay_expr.val
+              std::string delay_val =
+                  stmt.delay ? emit_delay_value4(*stmt.delay) : "0ul";
+              out << "                  ulong __gpga_delay = " << delay_val
                   << ";\n";
               out << "                  sched_wait_kind[idx] = "
                      "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
@@ -8713,12 +8862,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 body_case.body.push_back(&inner);
               }
               body_cases.push_back(std::move(body_case));
-              FsExpr delay_expr =
-                  body_stmt.delay ? emit_expr4_sized(*body_stmt.delay, 64)
-                                  : FsExpr{literal_for_width(0, 64),
-                                           literal_for_width(0, 64),
-                                           drive_full(64), 64};
-              out << "                  ulong __gpga_delay = " << delay_expr.val
+              std::string delay_val =
+                  body_stmt.delay ? emit_delay_value4(*body_stmt.delay) : "0ul";
+              out << "                  ulong __gpga_delay = " << delay_val
                   << ";\n";
               out << "                  sched_wait_kind[idx] = "
                      "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
@@ -8767,8 +8913,57 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (stmt.kind == StatementKind::kDisable) {
               auto it = block_end_pc.find(stmt.disable_target);
               if (it == block_end_pc.end()) {
-                out << "                  sched_error[gid] = 1u;\n";
-                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                int disable_pid = -1;
+                auto fork_it = fork_child_labels.find(proc.pid);
+                if (fork_it != fork_child_labels.end()) {
+                  auto label_it = fork_it->second.find(stmt.disable_target);
+                  if (label_it != fork_it->second.end()) {
+                    disable_pid = label_it->second;
+                  }
+                }
+                if (disable_pid < 0) {
+                  int parent_pid = proc_parent[proc.pid];
+                  if (parent_pid >= 0) {
+                    auto parent_it = fork_child_labels.find(parent_pid);
+                    if (parent_it != fork_child_labels.end()) {
+                      auto label_it =
+                          parent_it->second.find(stmt.disable_target);
+                      if (label_it != parent_it->second.end()) {
+                        disable_pid = label_it->second;
+                      }
+                    }
+                  }
+                }
+                if (disable_pid < 0) {
+                  out << "                  sched_error[gid] = 1u;\n";
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "                  break;\n";
+                  out << "                }\n";
+                  continue;
+                }
+                out << "                  {\n";
+                out << "                    uint __gpga_didx = gpga_sched_index(gid, "
+                    << disable_pid << "u);\n";
+                out << "                    if (sched_state[__gpga_didx] != GPGA_SCHED_PROC_DONE) {\n";
+                out << "                      sched_state[__gpga_didx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                      uint parent = sched_parent[__gpga_didx];\n";
+                out << "                      if (parent != GPGA_SCHED_NO_PARENT) {\n";
+                out << "                        uint pidx = gpga_sched_index(gid, parent);\n";
+                out << "                        if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+                out << "                            sched_wait_id[pidx] == sched_join_tag[__gpga_didx]) {\n";
+                out << "                          if (sched_join_count[pidx] > 0u) {\n";
+                out << "                            sched_join_count[pidx] -= 1u;\n";
+                out << "                          }\n";
+                out << "                          if (sched_join_count[pidx] == 0u) {\n";
+                out << "                            sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+                out << "                            sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                          }\n";
+                out << "                        }\n";
+                out << "                      }\n";
+                out << "                    }\n";
+                out << "                  }\n";
+                out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
                 out << "                  break;\n";
                 out << "                }\n";
                 continue;
@@ -9175,12 +9370,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "        if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
         out << "          continue;\n";
         out << "        }\n";
-        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_DELTA) {\n";
-        out << "          sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-        out << "          sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-        out << "          any_ready = true;\n";
-        out << "          continue;\n";
-        out << "        }\n";
         out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
         out << "          uint ev = sched_wait_event[idx];\n";
         out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
@@ -9443,13 +9632,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     port_names.insert(port.name);
   }
 
+  auto literal_for_width = [](uint64_t value, int width) -> std::string {
+    std::string suffix = (width > 32) ? "ul" : "u";
+    return std::to_string(value) + suffix;
+  };
+  auto decay_name = [](const std::string& name) {
+    return name + "_decay_time";
+  };
+  auto trireg_decay_delay = [&](const std::string& name) -> std::string {
+    for (const auto& net : module.nets) {
+      if (net.name != name) {
+        continue;
+      }
+      switch (net.charge) {
+        case ChargeStrength::kSmall:
+          return "1ul";
+        case ChargeStrength::kMedium:
+          return "10ul";
+        case ChargeStrength::kLarge:
+          return "100ul";
+        case ChargeStrength::kNone:
+          return "10ul";
+      }
+    }
+    return "10ul";
+  };
+
   std::vector<std::string> reg_names;
   std::vector<std::string> export_wires;
   for (const auto& net : module.nets) {
     if (net.array_size > 0) {
       continue;
     }
-    if (port_names.count(net.name) > 0 || IsTriregNet(net.type)) {
+    if (port_names.count(net.name) > 0) {
       continue;
     }
     if (net.type == NetType::kReg) {
@@ -9463,6 +9678,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
   std::unordered_set<std::string> export_wire_set(export_wires.begin(),
                                                    export_wires.end());
+  std::vector<const Net*> trireg_nets;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      continue;
+    }
+    if (net.type == NetType::kTrireg && !IsOutputPort(module, net.name)) {
+      trireg_nets.push_back(&net);
+    }
+  }
   std::vector<std::string> init_reg_names;
   for (const auto& net : module.nets) {
     if (net.array_size > 0) {
@@ -9479,6 +9703,40 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       array_nets.push_back(&net);
     }
   }
+
+  std::unordered_set<std::string> switch_nets;
+  for (const auto& sw : module.switches) {
+    switch_nets.insert(sw.a);
+    switch_nets.insert(sw.b);
+  }
+  std::unordered_set<std::string> drive_declared;
+  std::unordered_map<std::string, std::string> drive_vars;
+  auto drive_var_name = [&](const std::string& name) -> std::string {
+    return "__gpga_drive_" + name;
+  };
+  auto drive_init_for = [&](const std::string& name, int width) -> std::string {
+    const Port* port = FindPort(module, name);
+    if (port && (port->dir == PortDir::kInput ||
+                 port->dir == PortDir::kInout)) {
+      return MaskLiteralForWidth(width);
+    }
+    NetType net_type = SignalNetType(module, name);
+    if (net_type == NetType::kReg || IsTriregNet(net_type)) {
+      return MaskLiteralForWidth(width);
+    }
+    return ZeroForWidth(width);
+  };
+  auto ensure_drive_declared =
+      [&](const std::string& name, int width,
+          const std::string& init) -> std::string {
+        std::string var = drive_var_name(name);
+        drive_vars[name] = var;
+        if (drive_declared.insert(name).second) {
+          std::string type = TypeForWidth(width);
+          out << "  " << type << " " << var << " = " << init << ";\n";
+        }
+        return var;
+      };
 
   out << "kernel void gpga_" << module.name << "(";
   int buffer_index = 0;
@@ -9501,6 +9759,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     first = false;
     std::string type = TypeForWidth(SignalWidth(module, reg));
     out << "  device " << type << "* " << reg << " [[buffer("
+        << buffer_index++ << ")]]";
+  }
+  for (const auto* reg : trireg_nets) {
+    if (!first) {
+      out << ",\n";
+    }
+    first = false;
+    std::string type = TypeForWidth(SignalWidth(module, reg->name));
+    out << "  device " << type << "* " << reg->name << " [[buffer("
+        << buffer_index++ << ")]]";
+    out << ",\n";
+    out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
         << buffer_index++ << ")]]";
   }
   for (const auto* net : array_nets) {
@@ -9529,7 +9799,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     if (net.array_size > 0) {
       continue;
     }
-    if (net.type == NetType::kReg || export_wire_set.count(net.name) > 0) {
+    if (net.type == NetType::kReg || IsTriregNet(net.type) ||
+        export_wire_set.count(net.name) > 0) {
       if (port_names.count(net.name) == 0) {
         regs.insert(net.name);
       }
@@ -9556,97 +9827,402 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
 
   std::vector<size_t> ordered_assigns = OrderAssigns(module);
-  std::unordered_map<std::string, std::vector<const Assign*>> partial_assigns;
-  for (const auto& assign : module.assigns) {
-    if (assign.lhs_has_range) {
-      partial_assigns[assign.lhs].push_back(&assign);
+  std::unordered_map<std::string, std::vector<size_t>> assign_groups;
+  assign_groups.reserve(module.assigns.size());
+  for (size_t i = 0; i < module.assigns.size(); ++i) {
+    assign_groups[module.assigns[i].lhs].push_back(i);
+  }
+
+  std::unordered_set<std::string> multi_driver;
+  std::unordered_map<std::string, size_t> drivers_remaining_template;
+  struct DriverInfo {
+    std::string val;
+    std::string drive;
+    std::string strength0;
+    std::string strength1;
+  };
+  std::unordered_map<size_t, DriverInfo> driver_info;
+  std::unordered_map<std::string, std::vector<size_t>> drivers_for_net;
+  for (const auto& entry : assign_groups) {
+    bool force_resolve = IsTriregNet(SignalNetType(module, entry.first));
+    if (entry.second.size() <= 1 && !force_resolve) {
+      continue;
+    }
+    multi_driver.insert(entry.first);
+    drivers_remaining_template[entry.first] = entry.second.size();
+    drivers_for_net[entry.first] = entry.second;
+    for (size_t idx = 0; idx < entry.second.size(); ++idx) {
+      size_t assign_index = entry.second[idx];
+      const Assign& assign = module.assigns[assign_index];
+      DriverInfo info;
+      info.val =
+          "__gpga_drv_" + entry.first + "_" + std::to_string(idx) + "_val";
+      info.drive =
+          "__gpga_drv_" + entry.first + "_" + std::to_string(idx) + "_drive";
+      info.strength0 = StrengthLiteral(assign.strength0);
+      info.strength1 = StrengthLiteral(assign.strength1);
+      driver_info[assign_index] = std::move(info);
     }
   }
-  for (size_t index : ordered_assigns) {
-    const auto& assign = module.assigns[index];
+  for (const auto* net : trireg_nets) {
+    if (assign_groups.count(net->name) > 0) {
+      continue;
+    }
+    multi_driver.insert(net->name);
+    drivers_remaining_template[net->name] = 0u;
+    drivers_for_net[net->name] = {};
+  }
+
+  std::function<std::string(const Expr&, int)> emit_drive_expr;
+  emit_drive_expr = [&](const Expr& expr, int width) -> std::string {
+    uint64_t mask = MaskForWidth64(width);
+    if (expr.kind == ExprKind::kNumber) {
+      uint64_t drive_bits = mask & ~expr.z_bits;
+      return literal_for_width(drive_bits, width);
+    }
+    if (expr.kind == ExprKind::kTernary && expr.condition &&
+        expr.then_expr && expr.else_expr) {
+      std::string cond =
+          EmitCondExpr(*expr.condition, module, locals, regs);
+      std::string then_drive = emit_drive_expr(*expr.then_expr, width);
+      std::string else_drive = emit_drive_expr(*expr.else_expr, width);
+      return "((" + cond + ") ? (" + then_drive + ") : (" + else_drive + "))";
+    }
+    return MaskLiteralForWidth(width);
+  };
+
+  auto emit_driver = [&](const Assign& assign, const DriverInfo& info) {
     if (!assign.rhs) {
-      continue;
+      return;
     }
-    if (assign.lhs_has_range) {
-      continue;
-    }
-    std::string expr = EmitExpr(*assign.rhs, module, locals, regs);
-    int lhs_width = SignalWidth(module, assign.lhs);
     bool lhs_real = SignalIsReal(module, assign.lhs);
-    std::string sized = lhs_real
-                            ? EmitRealBitsExpr(*assign.rhs, module, locals,
-                                               regs)
-                            : EmitExprSized(*assign.rhs, lhs_width, module,
-                                            locals, regs);
-    if (IsOutputPort(module, assign.lhs)) {
-      out << "  " << assign.lhs << "[gid] = " << sized << ";\n";
-    } else if (regs.count(assign.lhs) > 0) {
-      out << "  " << assign.lhs << "[gid] = " << sized << ";\n";
-    } else if (locals.count(assign.lhs) > 0) {
-      if (declared.count(assign.lhs) == 0) {
-        std::string type = TypeForWidth(SignalWidth(module, assign.lhs));
-        out << "  " << type << " " << assign.lhs << " = " << sized << ";\n";
-        declared.insert(assign.lhs);
-      } else {
-        out << "  " << assign.lhs << " = " << sized << ";\n";
+    int lhs_width = SignalWidth(module, assign.lhs);
+    std::string type = TypeForWidth(lhs_width);
+    if (assign.lhs_has_range) {
+      if (lhs_real) {
+        out << "  // Unsupported real range driver: " << assign.lhs << "\n";
+        return;
       }
-    } else {
-      out << "  // Unmapped assign: " << assign.lhs << " = " << expr << ";\n";
+      int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+      int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+      int slice_width = hi - lo + 1;
+      std::string rhs =
+          EmitExprSized(*assign.rhs, slice_width, module, locals, regs);
+      std::string drive = emit_drive_expr(*assign.rhs, slice_width);
+      uint64_t mask = MaskForWidth64(slice_width);
+      std::string mask_literal = literal_for_width(mask, lhs_width);
+      std::string cast = CastForWidth(lhs_width);
+      out << "  " << type << " " << info.val << " = ((" << cast << rhs
+          << " & " << mask_literal << ") << " << std::to_string(lo)
+          << "u);\n";
+      out << "  " << type << " " << info.drive << " = ((" << cast << drive
+          << " & " << mask_literal << ") << " << std::to_string(lo)
+          << "u);\n";
+      return;
     }
-  }
-  for (const auto& entry : partial_assigns) {
-    const std::string& name = entry.first;
-    if (SignalIsReal(module, name)) {
-      out << "  // Unsupported real partial assign: " << name << "\n";
-      continue;
-    }
+    std::string rhs = lhs_real ? EmitRealBitsExpr(*assign.rhs, module, locals,
+                                                  regs)
+                               : EmitExprSized(*assign.rhs, lhs_width, module,
+                                               locals, regs);
+    std::string drive = lhs_real ? MaskLiteralForWidth(lhs_width)
+                                 : emit_drive_expr(*assign.rhs, lhs_width);
+    out << "  " << type << " " << info.val << " = " << rhs << ";\n";
+    out << "  " << type << " " << info.drive << " = "
+        << MaskForWidthExpr(drive, lhs_width) << ";\n";
+  };
+
+  auto emit_resolve = [&](const std::string& name,
+                          const std::vector<size_t>& indices,
+                          const std::unordered_set<std::string>& locals_ctx,
+                          const std::unordered_set<std::string>& regs_ctx,
+                          std::unordered_set<std::string>* declared_ctx) {
+    NetType net_type = SignalNetType(module, name);
+    bool wired_and = IsWiredAndNet(net_type);
+    bool wired_or = IsWiredOrNet(net_type);
+    bool is_trireg = IsTriregNet(net_type);
     int lhs_width = SignalWidth(module, name);
     std::string type = TypeForWidth(lhs_width);
-    bool target_is_local =
-        locals.count(name) > 0 && !IsOutputPort(module, name) &&
-        regs.count(name) == 0;
-    std::string temp = target_is_local ? name : ("__gpga_partial_" + name);
+    std::string one = (lhs_width > 32) ? "1ul" : "1u";
     std::string zero = ZeroForWidth(lhs_width);
-    if (target_is_local) {
-      if (declared.count(name) == 0) {
-        out << "  " << type << " " << temp << " = " << zero << ";\n";
-        declared.insert(name);
-      } else {
-        out << "  " << temp << " = " << zero << ";\n";
+    std::string resolved_val = "__gpga_res_" + name + "_val";
+    std::string resolved_drive = "__gpga_res_" + name + "_drive";
+    out << "  " << type << " " << resolved_val << " = " << zero << ";\n";
+    out << "  " << type << " " << resolved_drive << " = " << zero << ";\n";
+    out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
+    out << "    " << type << " mask = (" << one << " << bit);\n";
+    if (wired_and || wired_or) {
+      out << "    bool has0 = false;\n";
+      out << "    bool has1 = false;\n";
+      for (size_t idx : indices) {
+        const auto& info = driver_info[idx];
+        out << "    if ((" << info.drive << " & mask) != " << zero << ") {\n";
+        out << "      if ((" << info.val << " & mask) != " << zero << ") {\n";
+        out << "        has1 = true;\n";
+        out << "      } else {\n";
+        out << "        has0 = true;\n";
+        out << "      }\n";
+        out << "    }\n";
       }
+      out << "    if (!has0 && !has1) {\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    " << resolved_drive << " |= mask;\n";
+      if (wired_and) {
+        out << "    if (!has0) {\n";
+        out << "      " << resolved_val << " |= mask;\n";
+        out << "    }\n";
+      } else {
+        out << "    if (has1) {\n";
+        out << "      " << resolved_val << " |= mask;\n";
+        out << "    }\n";
+      }
+      out << "    continue;\n";
     } else {
-      out << "  " << type << " " << temp << " = " << zero << ";\n";
-    }
-    for (const auto* assign : entry.second) {
-      int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
-      int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
-      int slice_width = hi - lo + 1;
-      std::string rhs = EmitExprSized(*assign->rhs, slice_width, module, locals,
-                                      regs);
-      uint64_t mask = MaskForWidth64(slice_width);
-      std::string suffix = (lhs_width > 32) ? "ul" : "u";
-      std::string mask_literal = std::to_string(mask) + suffix;
-      std::string shifted_mask =
-          "(" + mask_literal + " << " + std::to_string(lo) + "u)";
-      std::string cast = CastForWidth(lhs_width);
-      out << "  " << temp << " = (" << temp << " & ~" << shifted_mask << ") | (("
-          << cast << rhs << " & " << mask_literal << ") << "
-          << std::to_string(lo) << "u);\n";
-    }
-    if (!target_is_local) {
-      if (IsOutputPort(module, name) || regs.count(name) > 0) {
-        out << "  " << name << "[gid] = " << temp << ";\n";
-      } else if (locals.count(name) > 0) {
-        if (declared.count(name) == 0) {
-          out << "  " << type << " " << name << " = " << temp << ";\n";
-          declared.insert(name);
-        } else {
-          out << "  " << name << " = " << temp << ";\n";
-        }
-      } else {
-        out << "  // Unmapped assign: " << name << " = " << temp << ";\n";
+      out << "    uint best0 = 0u;\n";
+      out << "    uint best1 = 0u;\n";
+      for (size_t idx : indices) {
+        const auto& info = driver_info[idx];
+        out << "    if ((" << info.drive << " & mask) != " << zero << ") {\n";
+        out << "      if ((" << info.val << " & mask) != " << zero << ") {\n";
+        out << "        best1 = (best1 > " << info.strength1 << ") ? best1 : "
+            << info.strength1 << ";\n";
+        out << "      } else {\n";
+        out << "        best0 = (best0 > " << info.strength0 << ") ? best0 : "
+            << info.strength0 << ";\n";
+        out << "      }\n";
+        out << "    }\n";
       }
+      out << "    if (best0 == 0u && best1 == 0u) {\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    " << resolved_drive << " |= mask;\n";
+      out << "    if (best1 > best0) {\n";
+      out << "      " << resolved_val << " |= mask;\n";
+      out << "    }\n";
     }
+    out << "  }\n";
+
+    if (switch_nets.count(name) > 0) {
+      ensure_drive_declared(name, lhs_width, ZeroForWidth(lhs_width));
+      out << "  " << drive_var_name(name) << " = " << resolved_drive << ";\n";
+    }
+
+    bool is_output = IsOutputPort(module, name) || regs_ctx.count(name) > 0;
+    bool is_local = locals_ctx.count(name) > 0 && !is_output &&
+                    regs_ctx.count(name) == 0;
+    if (is_output) {
+      if (is_trireg) {
+        std::string decay_ref = decay_name(name) + "[gid]";
+        std::string decay_delay = trireg_decay_delay(name);
+        std::string drive_flag = "__gpga_trireg_drive_" + name;
+        std::string decay_flag = "__gpga_trireg_decay_" + name;
+        out << "  bool " << drive_flag << " = (" << resolved_drive
+            << " != " << zero << ");\n";
+        out << "  if (" << drive_flag << ") {\n";
+        out << "    " << decay_ref << " = __gpga_time + " << decay_delay
+            << ";\n";
+        out << "  }\n";
+        out << "  if (!" << drive_flag << " && " << decay_ref
+            << " == 0ul) {\n";
+        out << "    " << decay_ref << " = __gpga_time + " << decay_delay
+            << ";\n";
+        out << "  }\n";
+        out << "  bool " << decay_flag << " = (!" << drive_flag << " && "
+            << decay_ref << " != 0ul && __gpga_time >= " << decay_ref
+            << ");\n";
+        out << "  " << name << "[gid] = (" << name << "[gid] & ~"
+            << resolved_drive << ") | (" << resolved_val << " & "
+            << resolved_drive << ");\n";
+        out << "  if (" << decay_flag << ") {\n";
+        out << "    " << name << "[gid] = " << zero << ";\n";
+        out << "  }\n";
+      } else {
+        out << "  " << name << "[gid] = " << resolved_val << ";\n";
+      }
+    } else if (is_local) {
+      if (declared_ctx && declared_ctx->count(name) == 0) {
+        out << "  " << type << " " << name << ";\n";
+        if (declared_ctx) {
+          declared_ctx->insert(name);
+        }
+      }
+      out << "  " << name << " = " << resolved_val << ";\n";
+    } else {
+      out << "  // Unmapped resolved assign: " << name << "\n";
+    }
+  };
+
+  auto emit_continuous_assigns =
+      [&](const std::unordered_set<std::string>& locals_ctx,
+          const std::unordered_set<std::string>& regs_ctx,
+          std::unordered_set<std::string>* declared_ctx) {
+        std::unordered_map<std::string, size_t> drivers_remaining =
+            drivers_remaining_template;
+        std::unordered_map<std::string, std::vector<const Assign*>>
+            partial_assigns;
+        for (const auto& assign : module.assigns) {
+          if (assign.lhs_has_range && multi_driver.count(assign.lhs) == 0) {
+            partial_assigns[assign.lhs].push_back(&assign);
+          }
+        }
+        for (size_t index : ordered_assigns) {
+          const auto& assign = module.assigns[index];
+          if (!assign.rhs) {
+            continue;
+          }
+          if (multi_driver.count(assign.lhs) > 0) {
+            emit_driver(assign, driver_info[index]);
+            auto it = drivers_remaining.find(assign.lhs);
+            if (it != drivers_remaining.end()) {
+              if (it->second > 0) {
+                it->second -= 1;
+              }
+              if (it->second == 0) {
+                emit_resolve(assign.lhs, drivers_for_net[assign.lhs],
+                             locals_ctx, regs_ctx, declared_ctx);
+              }
+            }
+            continue;
+          }
+          if (assign.lhs_has_range) {
+            continue;
+          }
+          std::string expr = EmitExpr(*assign.rhs, module, locals_ctx,
+                                      regs_ctx);
+          int lhs_width = SignalWidth(module, assign.lhs);
+          bool lhs_real = SignalIsReal(module, assign.lhs);
+          std::string sized = lhs_real
+                                  ? EmitRealBitsExpr(*assign.rhs, module,
+                                                     locals_ctx, regs_ctx)
+                                  : EmitExprSized(*assign.rhs, lhs_width,
+                                                  module, locals_ctx,
+                                                  regs_ctx);
+          if (IsOutputPort(module, assign.lhs)) {
+            out << "  " << assign.lhs << "[gid] = " << sized << ";\n";
+          } else if (regs_ctx.count(assign.lhs) > 0) {
+            out << "  " << assign.lhs << "[gid] = " << sized << ";\n";
+          } else if (locals_ctx.count(assign.lhs) > 0) {
+            if (declared_ctx && declared_ctx->count(assign.lhs) == 0) {
+              std::string type = TypeForWidth(SignalWidth(module, assign.lhs));
+              out << "  " << type << " " << assign.lhs << " = " << sized
+                  << ";\n";
+              declared_ctx->insert(assign.lhs);
+            } else {
+              out << "  " << assign.lhs << " = " << sized << ";\n";
+            }
+          } else {
+            out << "  // Unmapped assign: " << assign.lhs << " = " << expr
+                << ";\n";
+          }
+          if (switch_nets.count(assign.lhs) > 0) {
+            std::string drive = lhs_real
+                                    ? MaskLiteralForWidth(lhs_width)
+                                    : emit_drive_expr(*assign.rhs, lhs_width);
+            std::string drive_var =
+                ensure_drive_declared(assign.lhs, lhs_width,
+                                      ZeroForWidth(lhs_width));
+            out << "  " << drive_var << " = "
+                << MaskForWidthExpr(drive, lhs_width) << ";\n";
+          }
+        }
+        for (const auto& entry : drivers_remaining) {
+          if (entry.second != 0) {
+            continue;
+          }
+          const auto& indices = drivers_for_net[entry.first];
+          if (!indices.empty()) {
+            continue;
+          }
+          emit_resolve(entry.first, indices, locals_ctx, regs_ctx,
+                       declared_ctx);
+        }
+        for (const auto& entry : partial_assigns) {
+          const std::string& name = entry.first;
+          if (SignalIsReal(module, name)) {
+            out << "  // Unsupported real partial assign: " << name << "\n";
+            continue;
+          }
+          int lhs_width = SignalWidth(module, name);
+          std::string type = TypeForWidth(lhs_width);
+          bool target_is_local =
+              locals_ctx.count(name) > 0 && !IsOutputPort(module, name) &&
+              regs_ctx.count(name) == 0;
+          std::string temp = target_is_local ? name : ("__gpga_partial_" + name);
+          bool track_drive = switch_nets.count(name) > 0;
+          std::string temp_drive = "__gpga_partial_" + name + "_drive";
+          std::string zero = ZeroForWidth(lhs_width);
+          if (target_is_local) {
+            if (declared_ctx && declared_ctx->count(name) == 0) {
+              out << "  " << type << " " << temp << " = " << zero << ";\n";
+              if (track_drive) {
+                out << "  " << type << " " << temp_drive << " = " << zero
+                    << ";\n";
+              }
+              declared_ctx->insert(name);
+            } else {
+              out << "  " << temp << " = " << zero << ";\n";
+              if (track_drive) {
+                out << "  " << temp_drive << " = " << zero << ";\n";
+              }
+            }
+          } else {
+            out << "  " << type << " " << temp << " = " << zero << ";\n";
+            if (track_drive) {
+              out << "  " << type << " " << temp_drive << " = " << zero
+                  << ";\n";
+            }
+          }
+          for (const auto* assign : entry.second) {
+            int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
+            int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
+            int slice_width = hi - lo + 1;
+            std::string rhs = EmitExprSized(*assign->rhs, slice_width, module,
+                                            locals_ctx, regs_ctx);
+            std::string drive = emit_drive_expr(*assign->rhs, slice_width);
+            uint64_t mask = MaskForWidth64(slice_width);
+            std::string mask_literal = literal_for_width(mask, lhs_width);
+            std::string shifted_mask =
+                "(" + mask_literal + " << " + std::to_string(lo) + "u)";
+            std::string cast = CastForWidth(lhs_width);
+            out << "  " << temp << " = (" << temp << " & ~" << shifted_mask
+                << ") | ((" << cast << rhs << " & " << mask_literal << ") << "
+                << std::to_string(lo) << "u);\n";
+            if (track_drive) {
+              out << "  " << temp_drive << " = (" << temp_drive << " & ~"
+                  << shifted_mask << ") | ((" << cast << drive << " & "
+                  << mask_literal << ") << " << std::to_string(lo) << "u);\n";
+            }
+          }
+          if (!target_is_local) {
+            if (IsOutputPort(module, name) || regs_ctx.count(name) > 0) {
+              out << "  " << name << "[gid] = " << temp << ";\n";
+            } else if (locals_ctx.count(name) > 0) {
+              if (declared_ctx && declared_ctx->count(name) == 0) {
+                out << "  " << type << " " << name << " = " << temp << ";\n";
+                declared_ctx->insert(name);
+              } else {
+                out << "  " << name << " = " << temp << ";\n";
+              }
+            } else {
+              out << "  // Unmapped assign: " << name << " = " << temp << ";\n";
+            }
+          }
+          if (track_drive) {
+            std::string drive_var =
+                ensure_drive_declared(name, lhs_width, ZeroForWidth(lhs_width));
+            out << "  " << drive_var << " = " << temp_drive << ";\n";
+          }
+        }
+      };
+
+  emit_continuous_assigns(locals, regs, &declared);
+
+  for (const auto& name : switch_nets) {
+    if (drive_declared.count(name) > 0) {
+      continue;
+    }
+    int width = SignalWidth(module, name);
+    ensure_drive_declared(name, width, drive_init_for(name, width));
   }
 
   std::unordered_set<std::string> comb_targets;
@@ -9827,6 +10403,111 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       emit_comb_stmt(stmt, 2);
     }
   }
+  int switch_temp_index = 0;
+  auto signal_lvalue2 = [&](const std::string& name, std::string* expr,
+                            int* width) -> bool {
+    if (!expr || !width) {
+      return false;
+    }
+    *width = SignalWidth(module, name);
+    if (*width <= 0) {
+      return false;
+    }
+    if (IsOutputPort(module, name) || regs.count(name) > 0) {
+      *expr = name + "[gid]";
+      return true;
+    }
+    if (locals.count(name) > 0) {
+      *expr = name;
+      return true;
+    }
+    return false;
+  };
+  for (const auto& sw : module.switches) {
+    std::string a_val;
+    std::string b_val;
+    int a_width = 0;
+    int b_width = 0;
+    if (!signal_lvalue2(sw.a, &a_val, &a_width) ||
+        !signal_lvalue2(sw.b, &b_val, &b_width)) {
+      continue;
+    }
+    int width = std::min(a_width, b_width);
+    std::string cond_false;
+    if (sw.kind == SwitchKind::kTran) {
+      cond_false = "false";
+    } else if (sw.kind == SwitchKind::kTranif1 ||
+               sw.kind == SwitchKind::kTranif0) {
+      std::string cond =
+          sw.control ? EmitCondExpr(*sw.control, module, locals, regs)
+                     : "false";
+      cond_false = (sw.kind == SwitchKind::kTranif1) ? ("!(" + cond + ")")
+                                                     : cond;
+    } else {
+      std::string cond =
+          sw.control ? EmitCondExpr(*sw.control, module, locals, regs)
+                     : "false";
+      std::string cond_n =
+          sw.control_n ? EmitCondExpr(*sw.control_n, module, locals, regs)
+                       : "false";
+      std::string on = "(" + cond + " && !(" + cond_n + "))";
+      cond_false = "!(" + on + ")";
+    }
+
+    out << "  if (" << cond_false << ") {\n";
+    out << "  } else {\n";
+    int temp_index = switch_temp_index++;
+    std::string type = TypeForWidth(width);
+    std::string zero = ZeroForWidth(width);
+    std::string one = (width > 32) ? "1ul" : "1u";
+    std::string strength0 = StrengthLiteral(sw.strength0);
+    std::string strength1 = StrengthLiteral(sw.strength1);
+    std::string a_tmp = "__gpga_sw_a" + std::to_string(temp_index);
+    std::string b_tmp = "__gpga_sw_b" + std::to_string(temp_index);
+    std::string m_val = "__gpga_sw_val" + std::to_string(temp_index);
+    std::string m_drive = "__gpga_sw_drive" + std::to_string(temp_index);
+    std::string a_drive = drive_var_name(sw.a);
+    std::string b_drive = drive_var_name(sw.b);
+    out << "    " << type << " " << a_tmp << " = " << a_val << ";\n";
+    out << "    " << type << " " << b_tmp << " = " << b_val << ";\n";
+    out << "    " << type << " " << m_val << " = " << zero << ";\n";
+    out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+    out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
+    out << "      " << type << " mask = (" << one << " << bit);\n";
+    out << "      uint best0 = 0u;\n";
+    out << "      uint best1 = 0u;\n";
+    out << "      if ((" << a_drive << " & mask) != " << zero << ") {\n";
+    out << "        if ((" << a_tmp << " & mask) != " << zero << ") {\n";
+    out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+        << strength1 << ";\n";
+    out << "        } else {\n";
+    out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+        << strength0 << ";\n";
+    out << "        }\n";
+    out << "      }\n";
+    out << "      if ((" << b_drive << " & mask) != " << zero << ") {\n";
+    out << "        if ((" << b_tmp << " & mask) != " << zero << ") {\n";
+    out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+        << strength1 << ";\n";
+    out << "        } else {\n";
+    out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+        << strength0 << ";\n";
+    out << "        }\n";
+    out << "      }\n";
+    out << "      if (best0 == 0u && best1 == 0u) {\n";
+    out << "        continue;\n";
+    out << "      }\n";
+    out << "      " << m_drive << " |= mask;\n";
+    out << "      if (best1 > best0) {\n";
+    out << "        " << m_val << " |= mask;\n";
+    out << "      }\n";
+    out << "    }\n";
+    out << "    " << a_val << " = " << m_val << ";\n";
+    out << "    " << b_val << " = " << m_val << ";\n";
+    out << "    " << a_drive << " = " << m_drive << ";\n";
+    out << "    " << b_drive << " = " << m_drive << ";\n";
+    out << "  }\n";
+  }
   out << "}\n";
 
   if (has_initial && !needs_scheduler) {
@@ -9854,6 +10535,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  device " << type << "* " << reg << " [[buffer("
           << buffer_index++ << ")]]";
     }
+    for (const auto* reg : trireg_nets) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(SignalWidth(module, reg->name));
+      out << "  device " << type << "* " << reg->name << " [[buffer("
+          << buffer_index++ << ")]]";
+      out << ",\n";
+      out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
+          << buffer_index++ << ")]]";
+    }
     for (const auto* net : array_nets) {
       if (!first) {
         out << ",\n";
@@ -9872,6 +10565,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if (gid >= params.count) {\n";
     out << "    return;\n";
     out << "  }\n";
+    for (const auto* reg : trireg_nets) {
+      out << "  " << decay_name(reg->name) << "[gid] = 0ul;\n";
+    }
 
     std::unordered_set<std::string> init_locals;
     std::unordered_set<std::string> init_regs;
@@ -9880,7 +10576,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (net.array_size > 0) {
         continue;
       }
-      if (net.type == NetType::kReg || export_wire_set.count(net.name) > 0) {
+      if (net.type == NetType::kReg || IsTriregNet(net.type) ||
+          export_wire_set.count(net.name) > 0) {
         if (port_names.count(net.name) == 0) {
           init_regs.insert(net.name);
         }
@@ -10109,6 +10806,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  device " << type << "* " << reg << " [[buffer("
           << buffer_index++ << ")]]";
     }
+    for (const auto* reg : trireg_nets) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(SignalWidth(module, reg->name));
+      out << "  device " << type << "* " << reg->name << " [[buffer("
+          << buffer_index++ << ")]]";
+      out << ",\n";
+      out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
+          << buffer_index++ << ")]]";
+    }
     for (const auto* net : array_nets) {
       if (!first) {
         out << ",\n";
@@ -10157,7 +10866,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         } else {
           tick_locals.insert(net.name);
         }
-      } else if (net.type == NetType::kReg) {
+      } else if (net.type == NetType::kReg || IsTriregNet(net.type)) {
         if (sequential_regs.count(net.name) > 0 ||
             initial_regs.count(net.name) > 0) {
           tick_regs.insert(net.name);
@@ -10498,6 +11207,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       };
 
       std::unordered_map<const Statement*, ForkInfo> fork_info;
+      std::unordered_map<int, std::unordered_map<std::string, int>>
+          fork_child_labels;
       std::vector<ProcDef> procs;
       std::vector<int> proc_parent;
       std::vector<int> proc_join_tag;
@@ -10519,16 +11230,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (stmt.kind == StatementKind::kFork) {
           ForkInfo info;
           info.tag = next_fork_tag++;
-          for (const auto& branch : stmt.fork_branches) {
-            int child_pid = next_pid++;
-            info.children.push_back(child_pid);
-            procs.push_back(ProcDef{child_pid, nullptr, &branch});
-            proc_parent.push_back(parent_pid);
-            proc_join_tag.push_back(info.tag);
-            collect_forks(branch, child_pid);
+        for (const auto& branch : stmt.fork_branches) {
+          int child_pid = next_pid++;
+          info.children.push_back(child_pid);
+          procs.push_back(ProcDef{child_pid, nullptr, &branch});
+          proc_parent.push_back(parent_pid);
+          proc_join_tag.push_back(info.tag);
+          if (branch.kind == StatementKind::kBlock &&
+              !branch.block_label.empty()) {
+            fork_child_labels[parent_pid][branch.block_label] = child_pid;
           }
-          fork_info[&stmt] = info;
-          return;
+          collect_forks(branch, child_pid);
+        }
+        fork_info[&stmt] = info;
+        return;
         }
         if (stmt.kind == StatementKind::kIf) {
           for (const auto& inner : stmt.then_branch) {
@@ -11363,6 +12078,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         emit_param("  device " + type + "* " + reg + " [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
       }
+      for (const auto* reg : trireg_nets) {
+        emit_param("  device ulong* " + decay_name(reg->name) + " [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
       for (const auto* net : array_nets) {
         std::string type = TypeForWidth(net->width);
         emit_param("  device " + type + "* " + net->name + " [[buffer(" +
@@ -11466,6 +12185,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
       out << "    sched_active_init[gid] = 1u;\n";
       out << "    sched_error[gid] = 0u;\n";
+      for (const auto* reg : trireg_nets) {
+        out << "    " << decay_name(reg->name) << "[gid] = 0ul;\n";
+      }
       if (has_delayed_nba) {
         out << "    sched_dnba_count[gid] = 0u;\n";
       }
@@ -11628,6 +12350,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad2 << "}\n";
         }
         out << pad << "}\n";
+      };
+
+      auto emit_delay_value2 = [&](const Expr& expr) -> std::string {
+        if (ExprIsRealValue(expr, module)) {
+          return "ulong(" +
+                 EmitRealValueExpr(expr, module, sched_locals, sched_regs) +
+                 ")";
+        }
+        std::string delay =
+            EmitExprSized(expr, 64, module, sched_locals, sched_regs);
+        return "ulong(" + delay + ")";
       };
 
       out << "  sched_status[gid] = GPGA_SCHED_STATUS_RUNNING;\n";
@@ -12575,9 +13308,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               out << "                  uint __gpga_didx_val = uint("
                   << idx_val << ");\n";
-              std::string delay =
-                  EmitExprSized(*stmt.assign.delay, 64, module, sched_locals,
-                                sched_regs);
+              std::string delay = emit_delay_value2(*stmt.assign.delay);
               out << "                  ulong __gpga_delay = " << delay
                   << ";\n";
               if (stmt.assign.nonblocking) {
@@ -12649,10 +13380,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               body_cases.push_back(std::move(body_case));
             }
             std::string delay =
-                stmt.delay
-                    ? EmitExprSized(*stmt.delay, 64, module, sched_locals,
-                                    sched_regs)
-                    : "0ul";
+                stmt.delay ? emit_delay_value2(*stmt.delay) : "0ul";
             out << "                  ulong __gpga_delay = " << delay << ";\n";
             out << "                  sched_wait_kind[idx] = "
                    "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
@@ -12862,10 +13590,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             body_cases.push_back(std::move(body_case));
             std::string delay =
-                body_stmt.delay
-                    ? EmitExprSized(*body_stmt.delay, 64, module, sched_locals,
-                                    sched_regs)
-                    : "0ul";
+                body_stmt.delay ? emit_delay_value2(*body_stmt.delay) : "0ul";
             out << "                  ulong __gpga_delay = " << delay << ";\n";
             out << "                  sched_wait_kind[idx] = "
                    "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
@@ -12914,8 +13639,57 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (stmt.kind == StatementKind::kDisable) {
             auto it = block_end_pc.find(stmt.disable_target);
             if (it == block_end_pc.end()) {
-              out << "                  sched_error[gid] = 1u;\n";
-              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              int disable_pid = -1;
+              auto fork_it = fork_child_labels.find(proc.pid);
+              if (fork_it != fork_child_labels.end()) {
+                auto label_it = fork_it->second.find(stmt.disable_target);
+                if (label_it != fork_it->second.end()) {
+                  disable_pid = label_it->second;
+                }
+              }
+              if (disable_pid < 0) {
+                int parent_pid = proc_parent[proc.pid];
+                if (parent_pid >= 0) {
+                  auto parent_it = fork_child_labels.find(parent_pid);
+                  if (parent_it != fork_child_labels.end()) {
+                    auto label_it =
+                        parent_it->second.find(stmt.disable_target);
+                    if (label_it != parent_it->second.end()) {
+                      disable_pid = label_it->second;
+                    }
+                  }
+                }
+              }
+              if (disable_pid < 0) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              out << "                  {\n";
+              out << "                    uint __gpga_didx = gpga_sched_index(gid, "
+                  << disable_pid << "u);\n";
+              out << "                    if (sched_state[__gpga_didx] != GPGA_SCHED_PROC_DONE) {\n";
+              out << "                      sched_state[__gpga_didx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                      uint parent = sched_parent[__gpga_didx];\n";
+              out << "                      if (parent != GPGA_SCHED_NO_PARENT) {\n";
+              out << "                        uint pidx = gpga_sched_index(gid, parent);\n";
+              out << "                        if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+              out << "                            sched_wait_id[pidx] == sched_join_tag[__gpga_didx]) {\n";
+              out << "                          if (sched_join_count[pidx] > 0u) {\n";
+              out << "                            sched_join_count[pidx] -= 1u;\n";
+              out << "                          }\n";
+              out << "                          if (sched_join_count[pidx] == 0u) {\n";
+              out << "                            sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+              out << "                            sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                          }\n";
+              out << "                        }\n";
+              out << "                      }\n";
+              out << "                    }\n";
+              out << "                  }\n";
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
@@ -13272,12 +14046,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
       out << "        if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
-      out << "          continue;\n";
-      out << "        }\n";
-      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_DELTA) {\n";
-      out << "          sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-      out << "          sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-      out << "          any_ready = true;\n";
       out << "          continue;\n";
       out << "        }\n";
       out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";

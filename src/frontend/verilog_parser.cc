@@ -965,6 +965,7 @@ class Parser {
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
     current_real_params_.clear();
+    current_real_values_.clear();
     current_genvars_.Reset();
     current_module_ = &module;
 
@@ -1194,6 +1195,7 @@ class Parser {
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
     current_real_params_.clear();
+    current_real_values_.clear();
     current_genvars_.Reset();
     current_module_ = &module;
 
@@ -3369,7 +3371,12 @@ class Parser {
     if (!param_is_real && ExprIsRealParamExpr(*expr)) {
       param_is_real = true;
     }
-    if (!param_is_real) {
+    if (param_is_real) {
+      double real_value = 0.0;
+      if (TryEvalConstRealExpr(*expr, &real_value)) {
+        current_real_values_[name] = real_value;
+      }
+    } else {
       int64_t value = 0;
       if (TryEvalConstExpr(*expr, &value)) {
         current_params_[name] = value;
@@ -4134,6 +4141,7 @@ class Parser {
     out->has_base = expr.has_base;
     out->base_char = expr.base_char;
     out->is_signed = expr.is_signed;
+    out->is_real_literal = expr.is_real_literal;
     out->op = expr.op;
     out->unary_op = expr.unary_op;
     out->msb = expr.msb;
@@ -4878,6 +4886,19 @@ class Parser {
                          const std::string& prefix,
                          Module* module) {
     GenerateContext ctx = parent_ctx;
+    auto child_prefix_for_block =
+        [&](const GenerateBlock* child) -> std::string {
+      std::string child_prefix = prefix;
+      if (!child) {
+        return child_prefix;
+      }
+      if (!child->label.empty()) {
+        child_prefix += child->label + "__";
+      } else {
+        child_prefix += "genblk" + std::to_string(generate_id_++) + "__";
+      }
+      return child_prefix;
+    };
     for (const auto& item : block.items) {
       if (item.kind == GenerateItem::Kind::kNet) {
         ctx.renames[item.net.name] = prefix + item.net.name;
@@ -4980,10 +5001,7 @@ class Parser {
           if (!item.block) {
             break;
           }
-          std::string child_prefix = prefix;
-          if (!item.block->label.empty()) {
-            child_prefix += item.block->label + "__";
-          }
+          std::string child_prefix = child_prefix_for_block(item.block.get());
           if (!EmitGenerateBlock(*item.block, ctx, child_prefix, module)) {
             return false;
           }
@@ -5057,10 +5075,7 @@ class Parser {
                                 : (gen_if.has_else ? gen_if.else_block.get()
                                                    : nullptr);
           if (chosen) {
-            std::string child_prefix = prefix;
-            if (!chosen->label.empty()) {
-              child_prefix += chosen->label + "__";
-            }
+            std::string child_prefix = child_prefix_for_block(chosen);
             if (!EmitGenerateBlock(*chosen, ctx, child_prefix, module)) {
               return false;
             }
@@ -5102,10 +5117,7 @@ class Parser {
             chosen = gen_case.default_block.get();
           }
           if (chosen) {
-            std::string child_prefix = prefix;
-            if (!chosen->label.empty()) {
-              child_prefix += chosen->label + "__";
-            }
+            std::string child_prefix = child_prefix_for_block(chosen);
             if (!EmitGenerateBlock(*chosen, ctx, child_prefix, module)) {
               return false;
             }
@@ -6430,9 +6442,56 @@ class Parser {
       return false;
     }
     std::string init_lhs;
+    bool init_decl = false;
+    int init_width = 0;
+    bool init_signed = false;
+    bool init_real = false;
+    if (MatchKeyword("integer")) {
+      init_decl = true;
+      init_width = 32;
+      init_signed = true;
+      if (MatchKeyword("signed")) {
+        init_signed = true;
+      } else if (MatchKeyword("unsigned")) {
+        init_signed = false;
+      }
+    } else if (MatchKeyword("time")) {
+      init_decl = true;
+      init_width = 64;
+      init_signed = false;
+      if (MatchKeyword("signed")) {
+        init_signed = true;
+      } else if (MatchKeyword("unsigned")) {
+        init_signed = false;
+      }
+    } else if (MatchKeyword("real")) {
+      init_decl = true;
+      init_width = 64;
+      init_signed = true;
+      init_real = true;
+    }
     if (!ConsumeIdentifier(&init_lhs)) {
       ErrorHere("expected loop variable in for init");
       return false;
+    }
+    if (init_decl) {
+      if (current_module_) {
+        for (const auto& port : current_module_->ports) {
+          if (port.name == init_lhs) {
+            ErrorHere("loop variable redeclares port '" + init_lhs + "'");
+            return false;
+          }
+        }
+        for (const auto& net : current_module_->nets) {
+          if (net.name == init_lhs) {
+            ErrorHere("loop variable redeclares net '" + init_lhs + "'");
+            return false;
+          }
+        }
+      }
+      AddOrUpdateNet(current_module_, init_lhs, NetType::kWire, init_width,
+                     init_signed, std::shared_ptr<Expr>(),
+                     std::shared_ptr<Expr>(), {}, init_real);
     }
     if (!MatchSymbol("=")) {
       ErrorHere("expected '=' in for init");
@@ -8166,6 +8225,7 @@ class Parser {
   size_t pos_ = 0;
   std::unordered_map<std::string, int64_t> current_params_;
   std::unordered_map<std::string, bool> current_real_params_;
+  std::unordered_map<std::string, double> current_real_values_;
   GenvarScope current_genvars_;
   Module* current_module_ = nullptr;
   ParseOptions options_;
@@ -8212,9 +8272,355 @@ class Parser {
     return false;
   }
 
+  bool EvalConstRealExpr(const Expr& expr, double* out_value) {
+    if (!out_value) {
+      return false;
+    }
+    switch (expr.kind) {
+      case ExprKind::kNumber: {
+        if (expr.x_bits != 0 || expr.z_bits != 0) {
+          ErrorHere("x/z not allowed in real constant expression");
+          return false;
+        }
+        if (expr.is_real_literal) {
+          double value = 0.0;
+          uint64_t bits = expr.value_bits;
+          std::memcpy(&value, &bits, sizeof(value));
+          *out_value = value;
+          return true;
+        }
+        *out_value = static_cast<double>(static_cast<int64_t>(expr.number));
+        return true;
+      }
+      case ExprKind::kIdentifier: {
+        auto real_it = current_real_values_.find(expr.ident);
+        if (real_it != current_real_values_.end()) {
+          *out_value = real_it->second;
+          return true;
+        }
+        auto it = current_params_.find(expr.ident);
+        if (it == current_params_.end()) {
+          ErrorHere("unknown parameter '" + expr.ident + "'");
+          return false;
+        }
+        *out_value = static_cast<double>(it->second);
+        return true;
+      }
+      case ExprKind::kUnary: {
+        double value = 0.0;
+        if (!EvalConstRealExpr(*expr.operand, &value)) {
+          return false;
+        }
+        switch (expr.unary_op) {
+          case '+':
+            *out_value = value;
+            return true;
+          case '-':
+            *out_value = -value;
+            return true;
+          case '!':
+            *out_value = (value == 0.0) ? 1.0 : 0.0;
+            return true;
+          default:
+            ErrorHere("unsupported unary operator in real constant expression");
+            return false;
+        }
+      }
+      case ExprKind::kBinary: {
+        double lhs = 0.0;
+        double rhs = 0.0;
+        if (!EvalConstRealExpr(*expr.lhs, &lhs) ||
+            !EvalConstRealExpr(*expr.rhs, &rhs)) {
+          return false;
+        }
+        switch (expr.op) {
+          case '+':
+            *out_value = lhs + rhs;
+            return true;
+          case '-':
+            *out_value = lhs - rhs;
+            return true;
+          case '*':
+            *out_value = lhs * rhs;
+            return true;
+          case '/':
+            if (rhs == 0.0) {
+              ErrorHere("division by zero in real constant expression");
+              return false;
+            }
+            *out_value = lhs / rhs;
+            return true;
+          case 'A':
+            *out_value = ((lhs != 0.0) && (rhs != 0.0)) ? 1.0 : 0.0;
+            return true;
+          case 'O':
+            *out_value = ((lhs != 0.0) || (rhs != 0.0)) ? 1.0 : 0.0;
+            return true;
+          case 'E':
+          case 'C':
+          case 'W':
+            *out_value = (lhs == rhs) ? 1.0 : 0.0;
+            return true;
+          case 'N':
+          case 'c':
+          case 'w':
+            *out_value = (lhs != rhs) ? 1.0 : 0.0;
+            return true;
+          case '<':
+            *out_value = (lhs < rhs) ? 1.0 : 0.0;
+            return true;
+          case '>':
+            *out_value = (lhs > rhs) ? 1.0 : 0.0;
+            return true;
+          case 'L':
+            *out_value = (lhs <= rhs) ? 1.0 : 0.0;
+            return true;
+          case 'G':
+            *out_value = (lhs >= rhs) ? 1.0 : 0.0;
+            return true;
+          default:
+            ErrorHere("unsupported operator in real constant expression");
+            return false;
+        }
+      }
+      case ExprKind::kTernary: {
+        int64_t cond = 0;
+        if (!EvalConstExpr(*expr.condition, &cond)) {
+          return false;
+        }
+        if (cond != 0) {
+          return EvalConstRealExpr(*expr.then_expr, out_value);
+        }
+        return EvalConstRealExpr(*expr.else_expr, out_value);
+      }
+      case ExprKind::kCall:
+        if (expr.ident == "$itor") {
+          if (expr.call_args.size() != 1) {
+            ErrorHere("$itor expects 1 argument");
+            return false;
+          }
+          int64_t value = 0;
+          if (!EvalConstExpr(*expr.call_args[0], &value)) {
+            return false;
+          }
+          *out_value = static_cast<double>(value);
+          return true;
+        }
+        if (expr.ident == "$bitstoreal") {
+          if (expr.call_args.size() != 1) {
+            ErrorHere("$bitstoreal expects 1 argument");
+            return false;
+          }
+          int64_t bits_value = 0;
+          if (!EvalConstExpr(*expr.call_args[0], &bits_value)) {
+            return false;
+          }
+          uint64_t bits = static_cast<uint64_t>(bits_value);
+          double value = 0.0;
+          std::memcpy(&value, &bits, sizeof(value));
+          *out_value = value;
+          return true;
+        }
+        if (expr.ident == "$rtoi") {
+          if (expr.call_args.size() != 1) {
+            ErrorHere("$rtoi expects 1 argument");
+            return false;
+          }
+          double value = 0.0;
+          if (!EvalConstRealExpr(*expr.call_args[0], &value)) {
+            return false;
+          }
+          *out_value = static_cast<double>(static_cast<int64_t>(value));
+          return true;
+        }
+        ErrorHere("function call not allowed in real constant expression");
+        return false;
+      case ExprKind::kString:
+        ErrorHere("string literal not allowed in real constant expression");
+        return false;
+      case ExprKind::kSelect:
+        ErrorHere("bit/part select not allowed in real constant expression");
+        return false;
+      case ExprKind::kIndex:
+        ErrorHere("indexing not allowed in real constant expression");
+        return false;
+      case ExprKind::kConcat:
+        ErrorHere("concatenation not allowed in real constant expression");
+        return false;
+    }
+    return false;
+  }
+
+  bool TryEvalConstRealExpr(const Expr& expr, double* out_value) const {
+    if (!out_value) {
+      return false;
+    }
+    switch (expr.kind) {
+      case ExprKind::kNumber: {
+        if (expr.x_bits != 0 || expr.z_bits != 0) {
+          return false;
+        }
+        if (expr.is_real_literal) {
+          double value = 0.0;
+          uint64_t bits = expr.value_bits;
+          std::memcpy(&value, &bits, sizeof(value));
+          *out_value = value;
+          return true;
+        }
+        *out_value = static_cast<double>(static_cast<int64_t>(expr.number));
+        return true;
+      }
+      case ExprKind::kIdentifier: {
+        auto real_it = current_real_values_.find(expr.ident);
+        if (real_it != current_real_values_.end()) {
+          *out_value = real_it->second;
+          return true;
+        }
+        auto it = current_params_.find(expr.ident);
+        if (it == current_params_.end()) {
+          return false;
+        }
+        *out_value = static_cast<double>(it->second);
+        return true;
+      }
+      case ExprKind::kUnary: {
+        double value = 0.0;
+        if (!TryEvalConstRealExpr(*expr.operand, &value)) {
+          return false;
+        }
+        switch (expr.unary_op) {
+          case '+':
+            *out_value = value;
+            return true;
+          case '-':
+            *out_value = -value;
+            return true;
+          case '!':
+            *out_value = (value == 0.0) ? 1.0 : 0.0;
+            return true;
+          default:
+            return false;
+        }
+      }
+      case ExprKind::kBinary: {
+        double lhs = 0.0;
+        double rhs = 0.0;
+        if (!TryEvalConstRealExpr(*expr.lhs, &lhs) ||
+            !TryEvalConstRealExpr(*expr.rhs, &rhs)) {
+          return false;
+        }
+        switch (expr.op) {
+          case '+':
+            *out_value = lhs + rhs;
+            return true;
+          case '-':
+            *out_value = lhs - rhs;
+            return true;
+          case '*':
+            *out_value = lhs * rhs;
+            return true;
+          case '/':
+            if (rhs == 0.0) {
+              return false;
+            }
+            *out_value = lhs / rhs;
+            return true;
+          case 'A':
+            *out_value = ((lhs != 0.0) && (rhs != 0.0)) ? 1.0 : 0.0;
+            return true;
+          case 'O':
+            *out_value = ((lhs != 0.0) || (rhs != 0.0)) ? 1.0 : 0.0;
+            return true;
+          case 'E':
+          case 'C':
+          case 'W':
+            *out_value = (lhs == rhs) ? 1.0 : 0.0;
+            return true;
+          case 'N':
+          case 'c':
+          case 'w':
+            *out_value = (lhs != rhs) ? 1.0 : 0.0;
+            return true;
+          case '<':
+            *out_value = (lhs < rhs) ? 1.0 : 0.0;
+            return true;
+          case '>':
+            *out_value = (lhs > rhs) ? 1.0 : 0.0;
+            return true;
+          case 'L':
+            *out_value = (lhs <= rhs) ? 1.0 : 0.0;
+            return true;
+          case 'G':
+            *out_value = (lhs >= rhs) ? 1.0 : 0.0;
+            return true;
+          default:
+            return false;
+        }
+      }
+      case ExprKind::kTernary: {
+        int64_t cond = 0;
+        if (!TryEvalConstExpr(*expr.condition, &cond)) {
+          return false;
+        }
+        if (cond != 0) {
+          return TryEvalConstRealExpr(*expr.then_expr, out_value);
+        }
+        return TryEvalConstRealExpr(*expr.else_expr, out_value);
+      }
+      case ExprKind::kCall:
+        if (expr.ident == "$itor") {
+          if (expr.call_args.size() != 1) {
+            return false;
+          }
+          int64_t value = 0;
+          if (!TryEvalConstExpr(*expr.call_args[0], &value)) {
+            return false;
+          }
+          *out_value = static_cast<double>(value);
+          return true;
+        }
+        if (expr.ident == "$bitstoreal") {
+          if (expr.call_args.size() != 1) {
+            return false;
+          }
+          int64_t bits_value = 0;
+          if (!TryEvalConstExpr(*expr.call_args[0], &bits_value)) {
+            return false;
+          }
+          uint64_t bits = static_cast<uint64_t>(bits_value);
+          double value = 0.0;
+          std::memcpy(&value, &bits, sizeof(value));
+          *out_value = value;
+          return true;
+        }
+        if (expr.ident == "$rtoi") {
+          if (expr.call_args.size() != 1) {
+            return false;
+          }
+          double value = 0.0;
+          if (!TryEvalConstRealExpr(*expr.call_args[0], &value)) {
+            return false;
+          }
+          *out_value = static_cast<double>(static_cast<int64_t>(value));
+          return true;
+        }
+        return false;
+      case ExprKind::kString:
+      case ExprKind::kSelect:
+      case ExprKind::kIndex:
+      case ExprKind::kConcat:
+        return false;
+    }
+    return false;
+  }
+
   bool EvalConstExpr(const Expr& expr, int64_t* out_value) {
     switch (expr.kind) {
       case ExprKind::kNumber:
+        if (expr.is_real_literal) {
+          ErrorHere("real literal not allowed in constant expression");
+          return false;
+        }
         if (expr.x_bits != 0 || expr.z_bits != 0) {
           ErrorHere("x/z not allowed in constant expression");
           return false;
@@ -8298,6 +8704,56 @@ class Parser {
         }
       }
       case ExprKind::kBinary: {
+        const bool lhs_real = ExprIsRealParamExpr(*expr.lhs);
+        const bool rhs_real = ExprIsRealParamExpr(*expr.rhs);
+        if ((lhs_real || rhs_real) &&
+            (expr.op == 'A' || expr.op == 'O' || expr.op == 'E' ||
+             expr.op == 'N' || expr.op == 'C' || expr.op == 'W' ||
+             expr.op == 'c' || expr.op == 'w' || expr.op == '<' ||
+             expr.op == '>' || expr.op == 'L' || expr.op == 'G')) {
+          double lhs = 0.0;
+          double rhs = 0.0;
+          if (!EvalConstRealExpr(*expr.lhs, &lhs) ||
+              !EvalConstRealExpr(*expr.rhs, &rhs)) {
+            return false;
+          }
+          switch (expr.op) {
+            case 'A':
+              *out_value = ((lhs != 0.0) && (rhs != 0.0)) ? 1 : 0;
+              return true;
+            case 'O':
+              *out_value = ((lhs != 0.0) || (rhs != 0.0)) ? 1 : 0;
+              return true;
+            case 'E':
+            case 'C':
+            case 'W':
+              *out_value = (lhs == rhs) ? 1 : 0;
+              return true;
+            case 'N':
+            case 'c':
+            case 'w':
+              *out_value = (lhs != rhs) ? 1 : 0;
+              return true;
+            case '<':
+              *out_value = (lhs < rhs) ? 1 : 0;
+              return true;
+            case '>':
+              *out_value = (lhs > rhs) ? 1 : 0;
+              return true;
+            case 'L':
+              *out_value = (lhs <= rhs) ? 1 : 0;
+              return true;
+            case 'G':
+              *out_value = (lhs >= rhs) ? 1 : 0;
+              return true;
+            default:
+              break;
+          }
+        }
+        if (lhs_real || rhs_real) {
+          ErrorHere("real operands not allowed in constant expression");
+          return false;
+        }
         int64_t lhs = 0;
         int64_t rhs = 0;
         if (!EvalConstExpr(*expr.lhs, &lhs) ||
@@ -8430,6 +8886,18 @@ class Parser {
         ErrorHere("indexing not allowed in constant expression");
         return false;
       case ExprKind::kCall:
+        if (expr.ident == "$rtoi") {
+          if (expr.call_args.size() != 1) {
+            ErrorHere("$rtoi expects 1 argument");
+            return false;
+          }
+          double value = 0.0;
+          if (!EvalConstRealExpr(*expr.call_args[0], &value)) {
+            return false;
+          }
+          *out_value = static_cast<int64_t>(value);
+          return true;
+        }
         ErrorHere("function call not allowed in constant expression");
         return false;
       case ExprKind::kConcat:
@@ -8442,6 +8910,9 @@ class Parser {
   bool TryEvalConstExpr(const Expr& expr, int64_t* out_value) const {
     switch (expr.kind) {
       case ExprKind::kNumber:
+        if (expr.is_real_literal) {
+          return false;
+        }
         if (expr.x_bits != 0 || expr.z_bits != 0) {
           return false;
         }
@@ -8520,6 +8991,55 @@ class Parser {
         }
       }
       case ExprKind::kBinary: {
+        const bool lhs_real = ExprIsRealParamExpr(*expr.lhs);
+        const bool rhs_real = ExprIsRealParamExpr(*expr.rhs);
+        if ((lhs_real || rhs_real) &&
+            (expr.op == 'A' || expr.op == 'O' || expr.op == 'E' ||
+             expr.op == 'N' || expr.op == 'C' || expr.op == 'W' ||
+             expr.op == 'c' || expr.op == 'w' || expr.op == '<' ||
+             expr.op == '>' || expr.op == 'L' || expr.op == 'G')) {
+          double lhs = 0.0;
+          double rhs = 0.0;
+          if (!TryEvalConstRealExpr(*expr.lhs, &lhs) ||
+              !TryEvalConstRealExpr(*expr.rhs, &rhs)) {
+            return false;
+          }
+          switch (expr.op) {
+            case 'A':
+              *out_value = ((lhs != 0.0) && (rhs != 0.0)) ? 1 : 0;
+              return true;
+            case 'O':
+              *out_value = ((lhs != 0.0) || (rhs != 0.0)) ? 1 : 0;
+              return true;
+            case 'E':
+            case 'C':
+            case 'W':
+              *out_value = (lhs == rhs) ? 1 : 0;
+              return true;
+            case 'N':
+            case 'c':
+            case 'w':
+              *out_value = (lhs != rhs) ? 1 : 0;
+              return true;
+            case '<':
+              *out_value = (lhs < rhs) ? 1 : 0;
+              return true;
+            case '>':
+              *out_value = (lhs > rhs) ? 1 : 0;
+              return true;
+            case 'L':
+              *out_value = (lhs <= rhs) ? 1 : 0;
+              return true;
+            case 'G':
+              *out_value = (lhs >= rhs) ? 1 : 0;
+              return true;
+            default:
+              break;
+          }
+        }
+        if (lhs_real || rhs_real) {
+          return false;
+        }
         int64_t lhs = 0;
         int64_t rhs = 0;
         if (!TryEvalConstExpr(*expr.lhs, &lhs) ||
@@ -8642,6 +9162,18 @@ class Parser {
       case ExprKind::kSelect:
       case ExprKind::kIndex:
       case ExprKind::kCall:
+        if (expr.ident == "$rtoi") {
+          if (expr.call_args.size() != 1) {
+            return false;
+          }
+          double value = 0.0;
+          if (!TryEvalConstRealExpr(*expr.call_args[0], &value)) {
+            return false;
+          }
+          *out_value = static_cast<int64_t>(value);
+          return true;
+        }
+        return false;
       case ExprKind::kConcat:
         return false;
     }
@@ -8675,8 +9207,14 @@ class Parser {
     if (Peek(1).kind == TokenKind::kSymbol && Peek(1).text == "#") {
       return true;
     }
-    return Peek(1).kind == TokenKind::kIdentifier &&
-           Peek(2).kind == TokenKind::kSymbol && Peek(2).text == "(";
+    if (Peek(1).kind != TokenKind::kIdentifier) {
+      return false;
+    }
+    if (Peek(2).kind == TokenKind::kSymbol &&
+        (Peek(2).text == "(" || Peek(2).text == "[")) {
+      return true;
+    }
+    return false;
   }
 
   bool ParseParamOverrides(Instance* instance) {

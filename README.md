@@ -125,7 +125,8 @@ The compiler produces:
   - Transmission gates: `tran`, `tranif0`, `tranif1`, `rtran`, `rtranif0`, `rtranif1`
   - MOS switches: `nmos`, `pmos`, `rnmos`, `rpmos`, `cmos`, `rcmos`
   - Drive strengths: `supply0`, `supply1`, `strong0`, `strong1`, `pull0`, `pull1`, `weak0`, `weak1`, `highz0`, `highz1`
-  - Net types: `wire`, `wand`, `wor`, `tri`, `triand`, `trior`, `tri0`, `tri1`, `supply0`, `supply1`
+  - Net types: `wire`, `wand`, `wor`, `tri`, `triand`, `trior`, `tri0`, `tri1`, `trireg`, `supply0`, `supply1`
+  - Charge storage: `trireg` nets with capacitance levels (small/medium/large) and charge retention
 - Timing delays (`#` delay syntax)
 - `timescale` directive
 - User-Defined Primitives (UDPs):
@@ -189,17 +190,20 @@ These tests validate parsing, elaboration, codegen output quality, and semantic 
 **Test coverage includes**:
 - **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
 - **Real number arithmetic**: All IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
+- **casez/casex pattern matching** (16 tests): Don't-care case statements, priority encoding, state machines with X/Z tolerance
+- **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy
+- **Generate blocks** (20 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation in generate
+- **Timing semantics** (11 tests): Blocking vs. non-blocking assignment, delta cycles, NBA scheduling, race conditions, intra/inter-assignment delays
+- **Switch-level primitives** (21 tests): Tristate buffers (bufif/notif), transmission gates (tran/tranif), MOS switches (nmos/pmos/cmos), charge storage (trireg), drive strength resolution, wired logic
 - **Arithmetic and logic operations**: All operators including power (`**`)
 - **Match-3 operators**: Case equality `===`/`!==`, wildcard match `==?`/`!=?`
 - **Part-select assignment**: Fixed `[7:0]` and indexed `[idx +: 4]` ranges
 - **Reduction operators**: All 6 variants (&, |, ^, ~&, ~|, ~^) in all contexts
 - **Signed arithmetic**: Overflow, underflow, division by zero, sign extension
-- **Generate blocks**: Nested for/if-generate, genvar arithmetic
-- **4-state logic**: X/Z propagation, casex/casez, match operators
+- **4-state logic**: X/Z propagation, full 4-state operator semantics
 - **System tasks**: $display, $monitor, $time, $finish, $readmemh/b, $dumpvars, etc.
-- **Switch-level modeling**: Transmission gates, MOS switches, drive strengths
 - **Memory operations**: Multi-dimensional arrays, read/write
-- **Timing controls**: Delays, events, fork/join
+- **Advanced net types**: tri, trireg, wand, wor, supply0/1
 
 ### Running Tests
 

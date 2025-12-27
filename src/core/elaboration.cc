@@ -508,7 +508,7 @@ bool ExprUsesRealConst(const Expr& expr, const ParamBindings& params) {
              (expr.else_expr && ExprUsesRealConst(*expr.else_expr, params));
     case ExprKind::kCall:
       return expr.ident == "$realtime" || expr.ident == "$itor" ||
-             expr.ident == "$bitstoreal";
+             expr.ident == "$bitstoreal" || expr.ident == "$rtoi";
     case ExprKind::kString:
     case ExprKind::kSelect:
     case ExprKind::kIndex:
@@ -723,6 +723,19 @@ bool EvalConstExprRealValue(const Expr& expr, const ParamBindings& params,
         *out_value = 0.0;
         return true;
       }
+      if (expr.ident == "$rtoi") {
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          double value = 0.0;
+          if (!EvalConstExprRealValue(*expr.call_args.front(), params, module,
+                                      &value, diagnostics)) {
+            return false;
+          }
+          *out_value = static_cast<double>(static_cast<int64_t>(value));
+          return true;
+        }
+        *out_value = 0.0;
+        return true;
+      }
       diagnostics->Add(Severity::kError,
                        "unsupported function '" + expr.ident +
                            "' in real constant expression");
@@ -802,6 +815,20 @@ bool ResolveConstFunctionCalls(Expr* expr, const Module& module,
   switch (expr->kind) {
     case ExprKind::kCall: {
       if (!expr->ident.empty() && expr->ident.front() == '$') {
+        if (expr->ident == "$rtoi") {
+          if (expr->call_args.size() != 1 || !expr->call_args.front()) {
+            diagnostics->Add(Severity::kError,
+                             "$rtoi expects 1 argument in constant function");
+            return false;
+          }
+          double value = 0.0;
+          if (!EvalConstExprRealValue(*expr->call_args.front(), params, module,
+                                      &value, diagnostics)) {
+            return false;
+          }
+          ReplaceExprWithNumber(expr, static_cast<int64_t>(value), 32);
+          return true;
+        }
         diagnostics->Add(Severity::kError,
                          "system function '" + expr->ident +
                              "' not allowed in constant function");
@@ -893,6 +920,9 @@ bool EvalConstExprInScope(const Expr& expr, const Module& module,
       continue;
     }
     if (params.values.count(name) > 0) {
+      continue;
+    }
+    if (params.real_values.count(name) > 0) {
       continue;
     }
     diagnostics->Add(Severity::kError,
