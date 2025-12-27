@@ -1,4 +1,4 @@
-.TH METALFPGA 1 "December 2025" "v0.3" "User Commands"
+.TH METALFPGA 1 "December 2025" "v0.5" "User Commands"
 .SH NAME
 metalfpga \- Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation
 .SH SYNOPSIS
@@ -8,21 +8,29 @@ metalfpga \- Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation
 [\fIOPTIONS\fR]
 .SH DESCRIPTION
 .B metalfpga
-is a "GPGA" (GPU-based FPGA) compiler that parses synthesizable Verilog RTL,
-flattens module hierarchy through elaboration, and generates Metal compute shaders
-for GPU execution. This enables FPGA designers to prototype and validate hardware
-designs on Apple GPUs before synthesis to actual hardware, leveraging massive
-parallelism for fast simulation.
+is a "GPGA" (GPU-based FPGA) compiler that parses and lowers a large, practical
+subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading
+Language compute kernels. This enables FPGA designers to prototype and validate
+hardware designs on Apple GPUs before synthesis to actual hardware, leveraging
+massive parallelism for fast simulation.
 .PP
 The compiler performs the following operations:
 .IP \[bu] 2
-Parses synthesizable Verilog RTL
+Parses Verilog RTL and testbench constructs
 .IP \[bu]
 Flattens module hierarchy through elaboration
 .IP \[bu]
 Generates Metal compute shaders for GPU execution
 .IP \[bu]
-Emits host-side stubs for runtime integration
+Emits host-side runtime scaffolding
+.PP
+.B Current Status:
+v0.5+ - Compiler/codegen coverage includes IEEE 754 real number arithmetic,
+User-Defined Primitives (UDPs), match-3 operators (===, !==, ==?, !=?),
+power operator (**), and procedural part-select assignment. Extensive support
+for generate/loops, 4-state logic, signed arithmetic, system tasks, timing
+controls, and switch-level primitives. 281 total test files with 93% pass rate.
+.B GPU runtime execution and validation are the next milestone.
 .SH OPTIONS
 .TP
 .BR \-\-emit\-msl " \fIPATH\fR"
@@ -111,7 +119,7 @@ Functions with inputs and single return assignment
 Inlined during elaboration
 .SS Operators
 .IP \[bu] 2
-Arithmetic: +, -, *, /, %
+Arithmetic: +, -, *, /, %, ** (power/exponentiation)
 .IP \[bu]
 Bitwise: &, |, ^, ~
 .IP \[bu]
@@ -123,6 +131,10 @@ Shifts: <<, >>, <<<, >>>
 .IP \[bu]
 Comparison: ==, !=, <, >, <=, >=
 .IP \[bu]
+Case equality: ===, !== (exact bit-for-bit match including X/Z, requires --4state)
+.IP \[bu]
+Wildcard match: ==?, !=? (pattern matching with X/Z as don't-care, requires --4state)
+.IP \[bu]
 Ternary: ? :
 .SS Bit Operations
 .IP \[bu] 2
@@ -132,16 +144,76 @@ Part selects: signal[7:0]
 .IP \[bu]
 Indexed part selects: signal[i +: 4], signal[i -: 4]
 .IP \[bu]
+Part-select assignment (procedural): data[7:0] = value, data[idx +: 4] = value
+.IP \[bu]
 Concatenation: {a, b, c}
 .IP \[bu]
 Replication: {4{1'b0}}
-.SS Type Casting
+.SS System Functions and Tasks
 .IP \[bu] 2
-$signed(...) - convert to signed
+Type casting: $signed(...), $unsigned(...)
 .IP \[bu]
-$unsigned(...) - convert to unsigned
+Math: $clog2(...), $bits(...)
 .IP \[bu]
-$clog2(...) - ceiling logarithm base 2
+Output: $display, $write, $strobe - Console output with format specifiers
+.IP \[bu]
+Monitoring: $monitor - Continuous value watching
+.IP \[bu]
+Control: $finish, $stop - Simulation control
+.IP \[bu]
+Time: $time, $stime, $realtime - Time retrieval
+.IP \[bu]
+Formatting: $timeformat, $printtimescale
+.IP \[bu]
+Memory I/O: $readmemh, $readmemb, $writememh, $writememb
+.IP \[bu]
+Waveform: $dumpfile, $dumpvars, $dumpall, $dumpon, $dumpoff
+.IP \[bu]
+String: $sformat - String formatting
+.IP \[bu]
+Real conversion: $itor, $rtoi, $realtobits, $bitstoreal
+.SS Tasks and Time
+.IP \[bu] 2
+Tasks (procedural task blocks with inputs/outputs)
+.IP \[bu]
+time data type and time system functions
+.IP \[bu]
+Named events (event keyword and -> trigger)
+.IP \[bu]
+Timing delays (# delay syntax)
+.IP \[bu]
+timescale directive
+.SS User-Defined Primitives (UDPs)
+.IP \[bu] 2
+Combinational UDPs (truth tables)
+.IP \[bu]
+Sequential UDPs (state machines with current/next state)
+.IP \[bu]
+Edge-sensitive UDPs (posedge/negedge detection)
+.IP \[bu]
+Level-sensitive UDPs (transparent latches)
+.SS Real Number Arithmetic
+.IP \[bu] 2
+real data type for IEEE 754 double-precision floating-point
+.IP \[bu]
+Real literals: 3.14, 1.5e-10, .5, 5.
+.IP \[bu]
+Real arrays and parameters
+.IP \[bu]
+Arithmetic operators: +, -, *, /, ** (power)
+.IP \[bu]
+Comparison operators: <, >, <=, >=, ==, !=
+.IP \[bu]
+Mixed integer/real arithmetic with automatic promotion
+.SS Switch-Level Modeling
+.IP \[bu] 2
+Transmission gates: tran, tranif0, tranif1, rtran, rtranif0, rtranif1
+.IP \[bu]
+MOS switches: nmos, pmos, rnmos, rpmos, cmos, rcmos
+.IP \[bu]
+Drive strengths: supply0, supply1, strong0, strong1, pull0, pull1, weak0, weak1, highz0, highz1
+.IP \[bu]
+Net types: wire, wand, wor, tri, triand, trior, tri0, tri1, supply0, supply1, trireg
 .SS 4-State Logic
 With
 .BR \-\-4state :
@@ -156,7 +228,7 @@ The compiler detects and reports:
 .IP \[bu] 2
 Combinational loops
 .IP \[bu]
-Multiple drivers on signals
+Multiple drivers on regs or mixed always/assign conflicts (wire multi-drive is resolved in 4-state)
 .IP \[bu]
 Recursive module instantiation
 .IP \[bu]
@@ -229,8 +301,14 @@ Parsing or elaboration error
 Invalid command-line arguments
 .SH FILES
 .TP
+.I verilog/test_*.v
+Default test suite (54 files)
+.TP
 .I verilog/pass/*.v
-Passing test suite (114 test cases)
+Extended test suite (227 files, requires --full flag)
+.TP
+.I verilog/systemverilog/*.v
+SystemVerilog test suite (18 files, expected to fail)
 .TP
 .I docs/gpga/README.md
 Project architecture and goals
@@ -244,30 +322,51 @@ Flattened netlist invariants
 .I 4STATE.md
 4-state logic design document
 .SH NOTES
-.SS Limitations
-The following Verilog features are not yet implemented:
+.SS Test Suite Status
+281 total test files with 93% pass rate on the default test suite.
+Test coverage includes UDPs, real number arithmetic, match-3 operators,
+part-select assignment, reduction operators, signed arithmetic, generate
+blocks, 4-state logic, system tasks, switch-level modeling, memory operations,
+and timing controls.
+.SS Runtime Status
+MSL code generation is complete and structurally sound. GPU runtime execution
+and validation are in development. Features awaiting runtime verification include:
 .IP \[bu] 2
-System tasks ($display, $monitor, $finish, etc.)
+Event scheduling behavior under GPU dispatch
 .IP \[bu]
-Tasks (procedural task blocks)
+System tasks requiring host services ($readmemh, $display, VCD dumping)
 .IP \[bu]
-General timing controls (# delays)
+Timing controls (#delay) in real-time execution
 .IP \[bu]
-Complex sensitivity lists beyond @* and @(posedge/negedge clk)
+Switch-level resolution under GPU scheduling
 .IP \[bu]
-SystemVerilog constructs
+Non-blocking assignment scheduling semantics
+.SS Not Yet Implemented
+.IP \[bu] 2
+Runtime kernel execution and validation (MSL generation complete, GPU dispatch pending)
+.IP \[bu]
+Full sensitivity list support beyond @* and @(posedge/negedge clk)
+.IP \[bu]
+SystemVerilog constructs (classes, interfaces, packages, assertions)
 .SS Project Structure
 .nf
 src/
   frontend/       Verilog parser and AST
   core/           Elaboration and flattening
+  ir/             Intermediate representation
   codegen/        MSL and host code generation
+  msl/            Metal Shading Language backend
   runtime/        Metal runtime wrapper
   utils/          Diagnostics and utilities
 verilog/
-  pass/           Passing test cases
-  test_*.v        Additional test coverage
-docs/gpga/        Documentation
+  test_*.v        Main test suite (54 files, default run)
+  pass/           Extended test suite (227 files, --full flag)
+  systemverilog/  SystemVerilog tests (18 files, expected to fail)
+docs/
+  gpga/           Core documentation
+  diff/           REV documents (commit changelogs)
+  4STATE.md       4-state logic implementation
+artifacts/        Test run outputs (generated, gitignored)
 .fi
 .SH BUGS
 Report bugs at:

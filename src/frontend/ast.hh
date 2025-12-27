@@ -50,6 +50,13 @@ enum class Strength {
   kSupply,
 };
 
+enum class ChargeStrength {
+  kNone,
+  kSmall,
+  kMedium,
+  kLarge,
+};
+
 enum class UnconnectedDrive {
   kNone,
   kPull0,
@@ -86,6 +93,7 @@ struct Net {
   int width = 1;
   bool is_signed = false;
   bool is_real = false;
+  ChargeStrength charge = ChargeStrength::kNone;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
   int array_size = 0;

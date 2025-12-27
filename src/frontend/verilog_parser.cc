@@ -745,6 +745,7 @@ class Parser {
     std::string name;
     int width = 1;
     bool is_signed = false;
+    ChargeStrength charge = ChargeStrength::kNone;
     std::shared_ptr<Expr> msb_expr;
     std::shared_ptr<Expr> lsb_expr;
     std::vector<ArrayDim> array_dims;
@@ -764,10 +765,13 @@ class Parser {
 
   struct GateAssign {
     std::string lhs;
+    std::vector<std::unique_ptr<Expr>> lhs_indices;
     bool lhs_has_range = false;
     bool lhs_is_range = false;
     int lhs_msb = 0;
     int lhs_lsb = 0;
+    std::unique_ptr<Expr> lhs_msb_expr;
+    std::unique_ptr<Expr> lhs_lsb_expr;
     std::unique_ptr<Expr> rhs;
     Strength strength0 = Strength::kStrong;
     Strength strength1 = Strength::kStrong;
@@ -797,6 +801,18 @@ class Parser {
     std::unique_ptr<GenerateBlock> else_block;
   };
 
+  struct GenerateCaseItem {
+    std::vector<std::unique_ptr<Expr>> labels;
+    std::unique_ptr<GenerateBlock> body;
+  };
+
+  struct GenerateCase {
+    CaseKind kind = CaseKind::kCase;
+    std::unique_ptr<Expr> expr;
+    std::vector<GenerateCaseItem> items;
+    std::unique_ptr<GenerateBlock> default_block;
+  };
+
   struct GenerateItem {
     enum class Kind {
       kNet,
@@ -807,6 +823,7 @@ class Parser {
       kLocalparam,
       kFor,
       kIf,
+      kCase,
       kBlock,
     };
     Kind kind = Kind::kNet;
@@ -817,6 +834,7 @@ class Parser {
     GenerateLocalparam localparam;
     GenerateFor gen_for;
     GenerateIf gen_if;
+    GenerateCase gen_case;
     std::unique_ptr<GenerateBlock> block;
   };
 
@@ -893,7 +911,22 @@ class Parser {
     if (!ConsumeIdentifier(&name)) {
       return false;
     }
-    while (MatchSymbol(".")) {
+    while (true) {
+      if (Peek().kind == TokenKind::kSymbol && Peek().text == "[") {
+        if (Peek(1).kind == TokenKind::kNumber &&
+            Peek(2).kind == TokenKind::kSymbol && Peek(2).text == "]" &&
+            Peek(3).kind == TokenKind::kSymbol && Peek(3).text == ".") {
+          Advance();
+          std::string index = Peek().text;
+          Advance();
+          Advance();
+          name += "__";
+          name += index;
+        }
+      }
+      if (!MatchSymbol(".")) {
+        break;
+      }
       std::string part;
       if (!ConsumeIdentifier(&part)) {
         ErrorHere("expected identifier after '.'");
@@ -932,7 +965,7 @@ class Parser {
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
     current_real_params_.clear();
-    current_genvars_.clear();
+    current_genvars_.Reset();
     current_module_ = &module;
 
     if (MatchSymbol("#")) {
@@ -1109,6 +1142,10 @@ class Parser {
           return false;
         }
         for (auto& gate_assign : gate_assigns) {
+          if (!gate_assign.lhs_indices.empty()) {
+            ErrorHere("gate output array select not supported in v0");
+            return false;
+          }
           Assign assign;
           assign.lhs = gate_assign.lhs;
           assign.lhs_has_range = gate_assign.lhs_has_range;
@@ -1157,7 +1194,7 @@ class Parser {
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
     current_real_params_.clear();
-    current_genvars_.clear();
+    current_genvars_.Reset();
     current_module_ = &module;
 
     if (!MatchSymbol("(")) {
@@ -1654,12 +1691,13 @@ class Parser {
            ident == "nand" || ident == "or" || ident == "nor" ||
            ident == "xor" || ident == "xnor" || ident == "bufif0" ||
            ident == "bufif1" || ident == "notif0" || ident == "notif1" ||
-           ident == "nmos" || ident == "pmos";
+           ident == "nmos" || ident == "pmos" || ident == "rnmos" ||
+           ident == "rpmos";
   }
 
   bool IsSwitchPrimitiveKeyword(const std::string& ident) const {
     return ident == "tran" || ident == "tranif1" || ident == "tranif0" ||
-           ident == "cmos";
+           ident == "cmos" || ident == "rcmos";
   }
 
   std::unique_ptr<Expr> MakeBitSelectExpr(const Expr& base, int index) {
@@ -1686,39 +1724,92 @@ class Parser {
     return false;
   }
 
-  bool ResolveGateOutput(const Expr& expr, std::string* name, int* msb,
-                         int* lsb, bool* has_range, bool* is_range) {
-    if (!name || !msb || !lsb || !has_range || !is_range) {
+  struct GateOutputInfo {
+    std::string name;
+    std::vector<std::unique_ptr<Expr>> indices;
+    bool has_range = false;
+    bool is_range = false;
+    bool has_const_range = false;
+    int msb = 0;
+    int lsb = 0;
+    std::unique_ptr<Expr> msb_expr;
+    std::unique_ptr<Expr> lsb_expr;
+  };
+
+  bool ResolveGateOutput(const Expr& expr, GateOutputInfo* out,
+                         bool allow_nonconst_select) {
+    if (!out) {
       return false;
     }
     if (expr.kind == ExprKind::kIdentifier) {
-      *name = expr.ident;
-      *has_range = false;
-      *is_range = false;
+      out->name = expr.ident;
+      out->has_range = false;
+      out->is_range = false;
       return true;
     }
     if (expr.kind == ExprKind::kSelect && expr.base &&
         expr.base->kind == ExprKind::kIdentifier) {
+      out->name = expr.base->ident;
+      out->has_range = true;
+      out->is_range = expr.has_range;
+      if (expr.msb_expr) {
+        out->msb_expr = CloneExprSimple(*expr.msb_expr);
+      }
+      if (expr.has_range && expr.lsb_expr) {
+        out->lsb_expr = CloneExprSimple(*expr.lsb_expr);
+      }
       int64_t msb_val = 0;
       int64_t lsb_val = 0;
-      if (!expr.msb_expr || !TryEvalConstExpr(*expr.msb_expr, &msb_val)) {
-        ErrorHere("gate output select must be constant");
+      if (out->msb_expr && TryEvalConstExpr(*out->msb_expr, &msb_val) &&
+          (!expr.has_range ||
+           (out->lsb_expr && TryEvalConstExpr(*out->lsb_expr, &lsb_val)))) {
+        if (!expr.has_range) {
+          lsb_val = msb_val;
+        }
+        out->msb = static_cast<int>(msb_val);
+        out->lsb = static_cast<int>(lsb_val);
+        out->has_const_range = true;
+      } else if (expr.has_range || !allow_nonconst_select) {
+        ErrorHere("gate output select must be constant in v0");
         return false;
       }
-      if (expr.has_range) {
-        if (!expr.lsb_expr || !TryEvalConstExpr(*expr.lsb_expr, &lsb_val)) {
-          ErrorHere("gate output select must be constant");
-          return false;
-        }
-      } else {
-        lsb_val = msb_val;
-      }
-      *name = expr.base->ident;
-      *has_range = true;
-      *is_range = expr.has_range;
-      *msb = static_cast<int>(msb_val);
-      *lsb = static_cast<int>(lsb_val);
       return true;
+    }
+    if (expr.kind == ExprKind::kIndex) {
+      std::vector<const Expr*> indices;
+      const Expr* current = &expr;
+      while (current && current->kind == ExprKind::kIndex) {
+        if (!current->index || !current->base) {
+          break;
+        }
+        indices.push_back(current->index.get());
+        current = current->base.get();
+      }
+      if (current && current->kind == ExprKind::kIdentifier) {
+        out->name = current->ident;
+        if (IsArrayName(out->name)) {
+          out->indices.reserve(indices.size());
+          for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+            out->indices.push_back(CloneExprSimple(**it));
+          }
+          return true;
+        }
+        if (indices.size() == 1) {
+          out->has_range = true;
+          out->is_range = false;
+          out->msb_expr = CloneExprSimple(*indices.front());
+          int64_t msb_val = 0;
+          if (out->msb_expr && TryEvalConstExpr(*out->msb_expr, &msb_val)) {
+            out->msb = static_cast<int>(msb_val);
+            out->lsb = static_cast<int>(msb_val);
+            out->has_const_range = true;
+          } else if (!allow_nonconst_select) {
+            ErrorHere("gate output select must be constant in v0");
+            return false;
+          }
+          return true;
+        }
+      }
     }
     ErrorHere("gate output must be identifier or constant select in v0");
     return false;
@@ -1733,7 +1824,8 @@ class Parser {
   }
 
   bool ParseGatePrimitiveAssignments(const std::string& gate,
-                                     std::vector<GateAssign>* out_assigns) {
+                                     std::vector<GateAssign>* out_assigns,
+                                     bool allow_nonconst_output = false) {
     if (!out_assigns) {
       return false;
     }
@@ -1817,7 +1909,8 @@ class Parser {
         return false;
       }
     } else if (gate == "bufif0" || gate == "bufif1" || gate == "notif0" ||
-               gate == "notif1" || gate == "nmos" || gate == "pmos") {
+               gate == "notif1" || gate == "nmos" || gate == "pmos" ||
+               gate == "rnmos" || gate == "rpmos") {
       if (ports.size() != 3) {
         ErrorHere("gate requires exactly 3 ports in v0");
         return false;
@@ -1829,23 +1922,19 @@ class Parser {
       }
     }
 
-    std::string out_name;
-    int out_msb = 0;
-    int out_lsb = 0;
-    bool out_has_range = false;
-    bool out_is_range = false;
-    if (!ResolveGateOutput(*ports[0], &out_name, &out_msb, &out_lsb,
-                           &out_has_range, &out_is_range)) {
+    GateOutputInfo out_info;
+    if (!ResolveGateOutput(*ports[0], &out_info, allow_nonconst_output)) {
       return false;
     }
-    if (has_array && out_has_range) {
+    if (has_array && (out_info.has_range || !out_info.indices.empty())) {
       ErrorHere("gate array output must be identifier in v0");
       return false;
     }
 
     bool needs_tristate = gate == "bufif0" || gate == "bufif1" ||
                           gate == "notif0" || gate == "notif1" ||
-                          gate == "nmos" || gate == "pmos";
+                          gate == "nmos" || gate == "pmos" ||
+                          gate == "rnmos" || gate == "rpmos";
     if (needs_tristate && !options_.enable_4state) {
       ErrorHere("tristate primitives require --4state");
       return false;
@@ -1858,28 +1947,47 @@ class Parser {
     while (true) {
       int output_width = 1;
       GateAssign assign;
-      assign.lhs = out_name;
+      assign.lhs = out_info.name;
       assign.strength0 = strength0;
       assign.strength1 = strength1;
       assign.has_strength = has_strength;
+      for (const auto& idx : out_info.indices) {
+        assign.lhs_indices.push_back(CloneExprSimple(*idx));
+      }
       if (has_array) {
         assign.lhs_has_range = true;
         assign.lhs_is_range = false;
         assign.lhs_msb = index;
         assign.lhs_lsb = index;
         output_width = 1;
-      } else if (out_has_range) {
+      } else if (out_info.has_range) {
         assign.lhs_has_range = true;
-        assign.lhs_is_range = out_is_range;
-        assign.lhs_msb = out_msb;
-        assign.lhs_lsb = out_lsb;
-        output_width =
-            (out_msb >= out_lsb) ? (out_msb - out_lsb + 1)
-                                 : (out_lsb - out_msb + 1);
+        assign.lhs_is_range = out_info.is_range;
+        assign.lhs_msb = out_info.msb;
+        assign.lhs_lsb = out_info.lsb;
+        if (out_info.msb_expr) {
+          assign.lhs_msb_expr = CloneExprSimple(*out_info.msb_expr);
+        }
+        if (out_info.lsb_expr) {
+          assign.lhs_lsb_expr = CloneExprSimple(*out_info.lsb_expr);
+        }
+        if (out_info.is_range) {
+          if (!out_info.has_const_range) {
+            ErrorHere("gate output select must be constant in v0");
+            return false;
+          }
+          output_width =
+              (out_info.msb >= out_info.lsb)
+                  ? (out_info.msb - out_info.lsb + 1)
+                  : (out_info.lsb - out_info.msb + 1);
+        } else {
+          output_width = 1;
+        }
       } else {
-        output_width = LookupSignalWidth(out_name);
+        output_width = LookupSignalWidth(out_info.name);
         if (output_width <= 0) {
-          AddOrUpdateNet(current_module_, out_name, NetType::kWire, 1, false,
+          AddOrUpdateNet(current_module_, out_info.name, NetType::kWire, 1,
+                         false,
                          nullptr, nullptr, {});
           output_width = 1;
         }
@@ -1931,9 +2039,10 @@ class Parser {
         std::unique_ptr<Expr> data = MakeUnaryExpr('~', std::move(inputs[0]));
         rhs = MakeTernaryExpr(std::move(enable), std::move(data),
                               MakeZExpr(output_width));
-      } else if (gate == "nmos" || gate == "pmos") {
+      } else if (gate == "nmos" || gate == "pmos" || gate == "rnmos" ||
+                 gate == "rpmos") {
         std::unique_ptr<Expr> gate_expr = std::move(inputs[1]);
-        if (gate == "pmos") {
+        if (gate == "pmos" || gate == "rpmos") {
           gate_expr = MakeUnaryExpr('!', std::move(gate_expr));
         }
         rhs = MakeTernaryExpr(std::move(gate_expr), std::move(inputs[0]),
@@ -2016,7 +2125,7 @@ class Parser {
         ErrorHere("tranif requires exactly 3 ports in v0");
         return false;
       }
-    } else if (prim == "cmos") {
+    } else if (prim == "cmos" || prim == "rcmos") {
       if (ports.size() != 4) {
         ErrorHere("cmos requires exactly 4 ports in v0");
         return false;
@@ -2050,7 +2159,7 @@ class Parser {
     sw.b = b_name;
     if (prim == "tranif1" || prim == "tranif0") {
       sw.control = std::move(ports[2]);
-    } else if (prim == "cmos") {
+    } else if (prim == "cmos" || prim == "rcmos") {
       sw.control = std::move(ports[2]);
       sw.control_n = std::move(ports[3]);
     }
@@ -2087,31 +2196,18 @@ class Parser {
   bool ParseDefparam(Module* module) {
     while (true) {
       const Token& start_token = Peek();
-      std::vector<std::string> parts;
-      std::string part;
-      if (!ConsumeIdentifier(&part)) {
+      std::string path;
+      if (!ConsumeHierIdentifier(&path)) {
         ErrorHere("expected instance name in defparam");
         return false;
       }
-      parts.push_back(part);
-      while (MatchSymbol(".")) {
-        if (!ConsumeIdentifier(&part)) {
-          ErrorHere("expected identifier after '.' in defparam");
-          return false;
-        }
-        parts.push_back(part);
-      }
-      if (parts.size() < 2) {
+      size_t dot = path.rfind('.');
+      if (dot == std::string::npos) {
         ErrorHere("expected parameter name in defparam");
         return false;
       }
-      std::string param_name = parts.back();
-      parts.pop_back();
-      std::string instance_name = parts.front();
-      for (size_t i = 1; i < parts.size(); ++i) {
-        instance_name += ".";
-        instance_name += parts[i];
-      }
+      std::string instance_name = path.substr(0, dot);
+      std::string param_name = path.substr(dot + 1);
       if (!MatchSymbol("=")) {
         ErrorHere("expected '=' in defparam");
         return false;
@@ -2140,55 +2236,7 @@ class Parser {
   }
 
   bool ApplyDefparams(Module* module) {
-    if (!module) {
-      return false;
-    }
-    for (const auto& defparam : module->defparams) {
-      Instance* target = nullptr;
-      for (auto& instance : module->instances) {
-        if (instance.name == defparam.instance) {
-          target = &instance;
-          break;
-        }
-      }
-      if (!target) {
-        diagnostics_->Add(
-            Severity::kError,
-            "unknown instance '" + defparam.instance + "' in defparam",
-            SourceLocation{path_, defparam.line, defparam.column});
-        return false;
-      }
-      bool has_positional = false;
-      for (const auto& override_item : target->param_overrides) {
-        if (override_item.name.empty()) {
-          has_positional = true;
-          break;
-        }
-      }
-      if (has_positional) {
-        diagnostics_->Add(
-            Severity::kError,
-            "defparam cannot target instance with positional overrides '" +
-                defparam.instance + "'",
-            SourceLocation{path_, defparam.line, defparam.column});
-        return false;
-      }
-      bool replaced = false;
-      for (auto& override_item : target->param_overrides) {
-        if (override_item.name == defparam.param) {
-          override_item.expr = gpga::CloneExpr(*defparam.expr);
-          replaced = true;
-          break;
-        }
-      }
-      if (!replaced) {
-        ParamOverride override_item;
-        override_item.name = defparam.param;
-        override_item.expr = gpga::CloneExpr(*defparam.expr);
-        target->param_overrides.push_back(std::move(override_item));
-      }
-    }
-    return true;
+    return module != nullptr;
   }
 
   bool ParseFunction(Module* module) {
@@ -3081,8 +3129,31 @@ class Parser {
 
   bool ParseNetDecl(Module* module, NetType net_type) {
     bool is_signed = false;
-    if (MatchKeyword("signed")) {
-      is_signed = true;
+    Strength strength0 = Strength::kStrong;
+    Strength strength1 = Strength::kStrong;
+    bool has_strength = false;
+    ChargeStrength charge = ChargeStrength::kNone;
+    bool has_charge = false;
+    bool progressed = true;
+    while (progressed) {
+      progressed = false;
+      if (!has_strength && IsDriveStrengthLookahead()) {
+        if (!ParseDriveStrength(&strength0, &strength1, &has_strength)) {
+          return false;
+        }
+        progressed = true;
+      }
+      if (!is_signed && MatchKeyword("signed")) {
+        is_signed = true;
+        progressed = true;
+      }
+      if (net_type == NetType::kTrireg && !has_charge &&
+          IsChargeStrengthLookahead()) {
+        if (!ParseChargeStrengthIfPresent(&charge, &has_charge)) {
+          return false;
+        }
+        progressed = true;
+      }
     }
     if (NetTypeRequires4State(net_type) && !options_.enable_4state) {
       ErrorHere("net type requires --4state");
@@ -3094,6 +3165,20 @@ class Parser {
     if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
       return false;
     }
+    std::vector<ArrayDim> packed_array_dims;
+    while (true) {
+      int array_size = 0;
+      std::shared_ptr<Expr> array_msb;
+      std::shared_ptr<Expr> array_lsb;
+      bool had_array = false;
+      if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+        return false;
+      }
+      if (!had_array) {
+        break;
+      }
+      packed_array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+    }
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
@@ -3101,7 +3186,7 @@ class Parser {
         return false;
       }
       std::unique_ptr<Expr> init;
-      std::vector<ArrayDim> array_dims;
+      std::vector<ArrayDim> array_dims = packed_array_dims;
       while (true) {
         int array_size = 0;
         std::shared_ptr<Expr> array_msb;
@@ -3122,7 +3207,7 @@ class Parser {
         }
       }
       AddOrUpdateNet(module, name, net_type, width, is_signed, range_msb,
-                     range_lsb, array_dims);
+                     range_lsb, array_dims, false, charge);
       AddImplicitNetDriver(module, name, net_type);
       if (init) {
         Assign assign;
@@ -3153,13 +3238,27 @@ class Parser {
     if (!ParseRange(&width, &range_msb, &range_lsb, nullptr)) {
       return false;
     }
+    std::vector<ArrayDim> packed_array_dims;
+    while (true) {
+      int array_size = 0;
+      std::shared_ptr<Expr> array_msb;
+      std::shared_ptr<Expr> array_lsb;
+      bool had_array = false;
+      if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+        return false;
+      }
+      if (!had_array) {
+        break;
+      }
+      packed_array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+    }
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
         ErrorHere("expected identifier in reg declaration");
         return false;
       }
-      std::vector<ArrayDim> array_dims;
+      std::vector<ArrayDim> array_dims = packed_array_dims;
       while (true) {
         int array_size = 0;
         std::shared_ptr<Expr> array_msb;
@@ -3595,14 +3694,63 @@ class Parser {
     return true;
   }
 
-  bool ParseGenvarDecl(std::unordered_set<std::string>* genvars) {
+  struct GenvarScope {
+    std::vector<std::unordered_set<std::string>> scopes;
+
+    void Reset() {
+      scopes.clear();
+      scopes.emplace_back();
+    }
+
+    void Push() { scopes.emplace_back(); }
+
+    void Pop() {
+      if (!scopes.empty()) {
+        scopes.pop_back();
+      }
+    }
+
+    void Declare(const std::string& name) {
+      if (scopes.empty()) {
+        scopes.emplace_back();
+      }
+      scopes.back().insert(name);
+    }
+
+    bool IsDeclared(const std::string& name) const {
+      for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->count(name) > 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+  };
+
+  struct GenvarScopeGuard {
+    explicit GenvarScopeGuard(GenvarScope* scope) : scope_(scope) {
+      if (scope_) {
+        scope_->Push();
+      }
+    }
+    ~GenvarScopeGuard() {
+      if (scope_) {
+        scope_->Pop();
+      }
+    }
+
+   private:
+    GenvarScope* scope_ = nullptr;
+  };
+
+  bool ParseGenvarDecl(GenvarScope* genvars) {
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
         ErrorHere("expected identifier in genvar declaration");
         return false;
       }
-      genvars->insert(name);
+      genvars->Declare(name);
       if (MatchSymbol(",")) {
         continue;
       }
@@ -3797,6 +3945,75 @@ class Parser {
     return ParseDriveStrength(strength0, strength1, has_strength);
   }
 
+  bool ParseChargeStrengthToken(const std::string& token,
+                                ChargeStrength* out) const {
+    if (!out) {
+      return false;
+    }
+    std::string lower = token;
+    for (char& c : lower) {
+      c = static_cast<char>(std::tolower(c));
+    }
+    if (lower == "small") {
+      *out = ChargeStrength::kSmall;
+      return true;
+    }
+    if (lower == "medium") {
+      *out = ChargeStrength::kMedium;
+      return true;
+    }
+    if (lower == "large") {
+      *out = ChargeStrength::kLarge;
+      return true;
+    }
+    return false;
+  }
+
+  bool IsChargeStrengthLookahead() const {
+    if (Peek().kind != TokenKind::kSymbol || Peek().text != "(") {
+      return false;
+    }
+    if (Peek(1).kind != TokenKind::kIdentifier) {
+      return false;
+    }
+    ChargeStrength strength = ChargeStrength::kNone;
+    if (!ParseChargeStrengthToken(Peek(1).text, &strength)) {
+      return false;
+    }
+    if (Peek(2).kind != TokenKind::kSymbol || Peek(2).text != ")") {
+      return false;
+    }
+    return true;
+  }
+
+  bool ParseChargeStrengthIfPresent(ChargeStrength* out_strength,
+                                    bool* has_strength) {
+    if (!out_strength || !has_strength) {
+      return false;
+    }
+    if (!IsChargeStrengthLookahead()) {
+      *has_strength = false;
+      *out_strength = ChargeStrength::kNone;
+      return true;
+    }
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' for charge strength");
+      return false;
+    }
+    if (Peek().kind != TokenKind::kIdentifier ||
+        !ParseChargeStrengthToken(Peek().text, out_strength)) {
+      ErrorHere("expected charge strength");
+      return false;
+    }
+    Advance();
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after charge strength");
+      return false;
+    }
+    *has_strength = true;
+    return true;
+  }
+
   bool SkipDelayControl() {
     if (MatchSymbol("(")) {
       int depth = 1;
@@ -3987,8 +4204,31 @@ class Parser {
   bool ParseGenerateNetDecl(NetType type,
                             std::vector<GeneratedNetDecl>* out_decls) {
     bool is_signed = false;
-    if (MatchKeyword("signed")) {
-      is_signed = true;
+    Strength strength0 = Strength::kStrong;
+    Strength strength1 = Strength::kStrong;
+    bool has_strength = false;
+    ChargeStrength charge = ChargeStrength::kNone;
+    bool has_charge = false;
+    bool progressed = true;
+    while (progressed) {
+      progressed = false;
+      if (!has_strength && IsDriveStrengthLookahead()) {
+        if (!ParseDriveStrength(&strength0, &strength1, &has_strength)) {
+          return false;
+        }
+        progressed = true;
+      }
+      if (!is_signed && MatchKeyword("signed")) {
+        is_signed = true;
+        progressed = true;
+      }
+      if (type == NetType::kTrireg && !has_charge &&
+          IsChargeStrengthLookahead()) {
+        if (!ParseChargeStrengthIfPresent(&charge, &has_charge)) {
+          return false;
+        }
+        progressed = true;
+      }
     }
     if (NetTypeRequires4State(type) && !options_.enable_4state) {
       ErrorHere("net type requires --4state");
@@ -4029,6 +4269,7 @@ class Parser {
       decl.name = name;
       decl.width = width;
       decl.is_signed = is_signed;
+      decl.charge = charge;
       decl.msb_expr = range_msb;
       decl.lsb_expr = range_lsb;
       decl.array_dims = array_dims;
@@ -4250,6 +4491,104 @@ class Parser {
       return false;
     }
     return EvalConstExpr(*cloned, out_value);
+  }
+
+  struct ConstBits {
+    uint64_t value = 0;
+    uint64_t x = 0;
+    uint64_t z = 0;
+    int width = 0;
+  };
+
+  uint64_t MaskForWidth64(int width) const {
+    if (width <= 0) {
+      return 0;
+    }
+    if (width >= 64) {
+      return 0xFFFFFFFFFFFFFFFFull;
+    }
+    return (1ull << width) - 1ull;
+  }
+
+  int ConstExprWidth(const Expr& expr) const {
+    if (expr.has_width && expr.number_width > 0) {
+      return expr.number_width;
+    }
+    return 32;
+  }
+
+  bool EvalConstBits(const Expr& expr, ConstBits* out_bits) {
+    if (!out_bits) {
+      return false;
+    }
+    int width = ConstExprWidth(expr);
+    if (width > 64) {
+      width = 64;
+    }
+    const uint64_t mask = MaskForWidth64(width);
+    out_bits->width = width;
+    if (expr.kind == ExprKind::kNumber) {
+      out_bits->value = expr.value_bits & mask;
+      out_bits->x = expr.x_bits & mask;
+      out_bits->z = expr.z_bits & mask;
+      return true;
+    }
+    int64_t value = 0;
+    if (!EvalConstExpr(expr, &value)) {
+      return false;
+    }
+    out_bits->value = static_cast<uint64_t>(value) & mask;
+    out_bits->x = 0;
+    out_bits->z = 0;
+    return true;
+  }
+
+  bool EvalConstBitsWithContext(const Expr& expr, const GenerateContext& ctx,
+                                ConstBits* out_bits) {
+    auto cloned = CloneExprGenerate(expr, ctx.renames, ctx.consts);
+    if (!cloned) {
+      return false;
+    }
+    return EvalConstBits(*cloned, out_bits);
+  }
+
+  bool MatchGenerateCase(const ConstBits& expr_bits,
+                         const ConstBits& label_bits,
+                         CaseKind case_kind) const {
+    int width = expr_bits.width;
+    if (label_bits.width > width) {
+      width = label_bits.width;
+    }
+    if (width > 64) {
+      width = 64;
+    }
+    const uint64_t mask = MaskForWidth64(width);
+    const uint64_t expr_val = expr_bits.value & mask;
+    const uint64_t expr_x = expr_bits.x & mask;
+    const uint64_t expr_z = expr_bits.z & mask;
+    const uint64_t label_val = label_bits.value & mask;
+    const uint64_t label_x = label_bits.x & mask;
+    const uint64_t label_z = label_bits.z & mask;
+
+    if (case_kind == CaseKind::kCase) {
+      if (expr_x != label_x || expr_z != label_z) {
+        return false;
+      }
+      const uint64_t known_mask = ~(expr_x | expr_z) & mask;
+      return ((expr_val ^ label_val) & known_mask) == 0;
+    }
+    if (case_kind == CaseKind::kCaseZ) {
+      const uint64_t dontcare = (expr_z | label_z) & mask;
+      if (((expr_x ^ label_x) & ~dontcare) != 0) {
+        return false;
+      }
+      const uint64_t known_mask =
+          ~(expr_x | label_x | expr_z | label_z) & mask;
+      return ((expr_val ^ label_val) & known_mask) == 0;
+    }
+    const uint64_t dontcare = (expr_x | label_x | expr_z | label_z) & mask;
+    const uint64_t known_mask = ~dontcare & mask;
+    return ((expr_val ^ label_val) & known_mask) == 0;
   }
 
   bool CloneStatementGenerate(const Statement& statement,
@@ -4561,7 +4900,8 @@ class Parser {
           const auto& decl = item.net;
           std::string name = prefix + decl.name;
           AddOrUpdateNet(module, name, decl.type, decl.width, decl.is_signed,
-                         decl.msb_expr, decl.lsb_expr, decl.array_dims);
+                         decl.msb_expr, decl.lsb_expr, decl.array_dims, false,
+                         decl.charge);
           AddImplicitNetDriver(module, name, decl.type);
           break;
         }
@@ -4664,11 +5004,10 @@ class Parser {
           int64_t current = init_value;
           const int kMaxIterations = 100000;
           int iterations = 0;
-          std::string base_prefix =
-              prefix + "gen" + std::to_string(gen_for.id) + "__";
-          if (!gen_for.body->label.empty()) {
-            base_prefix += gen_for.body->label + "__";
-          }
+          std::string block_label = gen_for.body->label.empty()
+                                        ? ("genblk" + std::to_string(gen_for.id))
+                                        : gen_for.body->label;
+          std::string base_prefix = prefix + block_label + "__";
           while (iterations++ < kMaxIterations) {
             GenerateContext iter_ctx = ctx;
             iter_ctx.consts[gen_for.var] = current;
@@ -4683,7 +5022,7 @@ class Parser {
               break;
             }
             std::string iter_prefix =
-                base_prefix + gen_for.var + std::to_string(current) + "__";
+                base_prefix + std::to_string(current) + "__";
             if (!EmitGenerateBlock(*gen_for.body, iter_ctx, iter_prefix,
                                    module)) {
               return false;
@@ -4717,6 +5056,51 @@ class Parser {
               (cond_value != 0) ? gen_if.then_block.get()
                                 : (gen_if.has_else ? gen_if.else_block.get()
                                                    : nullptr);
+          if (chosen) {
+            std::string child_prefix = prefix;
+            if (!chosen->label.empty()) {
+              child_prefix += chosen->label + "__";
+            }
+            if (!EmitGenerateBlock(*chosen, ctx, child_prefix, module)) {
+              return false;
+            }
+          }
+          break;
+        }
+        case GenerateItem::Kind::kCase: {
+          const auto& gen_case = item.gen_case;
+          if (!gen_case.expr) {
+            break;
+          }
+          ConstBits case_bits;
+          if (!EvalConstBitsWithContext(*gen_case.expr, ctx, &case_bits)) {
+            ErrorHere("generate case expression must be constant");
+            return false;
+          }
+          const GenerateBlock* chosen = nullptr;
+          for (const auto& case_item : gen_case.items) {
+            if (!case_item.body) {
+              continue;
+            }
+            for (const auto& label : case_item.labels) {
+              ConstBits label_bits;
+              if (!label ||
+                  !EvalConstBitsWithContext(*label, ctx, &label_bits)) {
+                ErrorHere("generate case label must be constant");
+                return false;
+              }
+              if (MatchGenerateCase(case_bits, label_bits, gen_case.kind)) {
+                chosen = case_item.body.get();
+                break;
+              }
+            }
+            if (chosen) {
+              break;
+            }
+          }
+          if (!chosen && gen_case.default_block) {
+            chosen = gen_case.default_block.get();
+          }
           if (chosen) {
             std::string child_prefix = prefix;
             if (!chosen->label.empty()) {
@@ -4765,8 +5149,8 @@ class Parser {
     return true;
   }
 
-  bool ParseGenerateBlockBody(GenerateBlock* out_block,
-                              std::unordered_set<std::string>* genvars) {
+  bool ParseGenerateBlockBody(GenerateBlock* out_block, GenvarScope* genvars) {
+    GenvarScopeGuard scope_guard(genvars);
     out_block->label.clear();
     out_block->items.clear();
     if (MatchKeyword("begin")) {
@@ -4792,7 +5176,7 @@ class Parser {
   }
 
   bool ParseGenerateFor(std::vector<GenerateItem>* out_items,
-                        std::unordered_set<std::string>* genvars) {
+                        GenvarScope* genvars) {
     if (!MatchSymbol("(")) {
       ErrorHere("expected '(' after 'for'");
       return false;
@@ -4802,7 +5186,7 @@ class Parser {
       ErrorHere("expected loop variable in generate for");
       return false;
     }
-    if (genvars->count(var) == 0) {
+    if (!genvars->IsDeclared(var)) {
       ErrorHere("generate for loop variable must be a genvar");
       return false;
     }
@@ -4865,7 +5249,7 @@ class Parser {
   }
 
   bool ParseGenerateIf(std::vector<GenerateItem>* out_items,
-                       std::unordered_set<std::string>* genvars) {
+                       GenvarScope* genvars) {
     if (!MatchSymbol("(")) {
       ErrorHere("expected '(' after 'if'");
       return false;
@@ -4909,8 +5293,75 @@ class Parser {
     return true;
   }
 
-  bool ParseGenerateItem(GenerateBlock* out_block,
-                         std::unordered_set<std::string>* genvars) {
+  bool ParseGenerateCase(std::vector<GenerateItem>* out_items,
+                         GenvarScope* genvars, CaseKind case_kind) {
+    if (!MatchSymbol("(")) {
+      ErrorHere("expected '(' after 'case'");
+      return false;
+    }
+    std::unique_ptr<Expr> case_expr = ParseExpr();
+    if (!case_expr) {
+      return false;
+    }
+    if (!MatchSymbol(")")) {
+      ErrorHere("expected ')' after case expression");
+      return false;
+    }
+    GenerateCase gen_case;
+    gen_case.kind = case_kind;
+    gen_case.expr = std::move(case_expr);
+    bool saw_default = false;
+    while (true) {
+      if (MatchKeyword("endcase")) {
+        break;
+      }
+      if (MatchKeyword("default")) {
+        if (saw_default) {
+          ErrorHere("duplicate default in generate case");
+          return false;
+        }
+        saw_default = true;
+        if (!MatchSymbol(":")) {
+          ErrorHere("expected ':' after default");
+          return false;
+        }
+        auto block = std::make_unique<GenerateBlock>();
+        if (!ParseGenerateBlockBody(block.get(), genvars)) {
+          return false;
+        }
+        gen_case.default_block = std::move(block);
+        continue;
+      }
+      GenerateCaseItem item;
+      while (true) {
+        std::unique_ptr<Expr> label = ParseExpr();
+        if (!label) {
+          return false;
+        }
+        item.labels.push_back(std::move(label));
+        if (MatchSymbol(",")) {
+          continue;
+        }
+        break;
+      }
+      if (!MatchSymbol(":")) {
+        ErrorHere("expected ':' after case item");
+        return false;
+      }
+      item.body = std::make_unique<GenerateBlock>();
+      if (!ParseGenerateBlockBody(item.body.get(), genvars)) {
+        return false;
+      }
+      gen_case.items.push_back(std::move(item));
+    }
+    GenerateItem item;
+    item.kind = GenerateItem::Kind::kCase;
+    item.gen_case = std::move(gen_case);
+    out_items->push_back(std::move(item));
+    return true;
+  }
+
+  bool ParseGenerateItem(GenerateBlock* out_block, GenvarScope* genvars) {
     if (MatchKeyword("genvar")) {
       return ParseGenvarDecl(genvars);
     }
@@ -4923,8 +5374,18 @@ class Parser {
     if (MatchKeyword("if")) {
       return ParseGenerateIf(&out_block->items, genvars);
     }
+    if (MatchKeyword("casez")) {
+      return ParseGenerateCase(&out_block->items, genvars, CaseKind::kCaseZ);
+    }
+    if (MatchKeyword("casex")) {
+      return ParseGenerateCase(&out_block->items, genvars, CaseKind::kCaseX);
+    }
+    if (MatchKeyword("case")) {
+      return ParseGenerateCase(&out_block->items, genvars, CaseKind::kCase);
+    }
     if (MatchKeyword("begin")) {
       auto block = std::make_unique<GenerateBlock>();
+      GenvarScopeGuard scope_guard(genvars);
       if (MatchSymbol(":")) {
         std::string label;
         if (!ConsumeIdentifier(&label)) {
@@ -4937,9 +5398,9 @@ class Parser {
         if (MatchKeyword("end")) {
           break;
         }
-        if (!ParseGenerateItem(block.get(), genvars)) {
-          return false;
-        }
+      if (!ParseGenerateItem(block.get(), genvars)) {
+        return false;
+      }
       }
       GenerateItem item;
       item.kind = GenerateItem::Kind::kBlock;
@@ -5012,20 +5473,52 @@ class Parser {
       std::string gate = Peek().text;
       Advance();
       std::vector<GateAssign> gate_assigns;
-      if (!ParseGatePrimitiveAssignments(gate, &gate_assigns)) {
+      if (!ParseGatePrimitiveAssignments(gate, &gate_assigns, true)) {
         return false;
       }
       for (auto& gate_assign : gate_assigns) {
+        if (!gate_assign.lhs_indices.empty()) {
+          AlwaysBlock block;
+          block.edge = EdgeKind::kCombinational;
+          block.sensitivity = "*";
+          Statement stmt;
+          stmt.kind = StatementKind::kAssign;
+          stmt.assign.lhs = gate_assign.lhs;
+          stmt.assign.lhs_has_range = gate_assign.lhs_has_range;
+          stmt.assign.lhs_msb_expr = std::move(gate_assign.lhs_msb_expr);
+          stmt.assign.lhs_lsb_expr = std::move(gate_assign.lhs_lsb_expr);
+          stmt.assign.lhs_msb = gate_assign.lhs_msb;
+          stmt.assign.lhs_lsb = gate_assign.lhs_lsb;
+          for (auto& idx : gate_assign.lhs_indices) {
+            stmt.assign.lhs_indices.push_back(std::move(idx));
+          }
+          stmt.assign.rhs = std::move(gate_assign.rhs);
+          stmt.assign.nonblocking = false;
+          block.statements.push_back(std::move(stmt));
+          GenerateItem item;
+          item.kind = GenerateItem::Kind::kAlways;
+          item.always_block = std::move(block);
+          out_block->items.push_back(std::move(item));
+          continue;
+        }
         GenerateAssign assign;
         assign.lhs = gate_assign.lhs;
         assign.lhs_has_range = gate_assign.lhs_has_range;
         assign.lhs_is_range = gate_assign.lhs_is_range;
         if (gate_assign.lhs_has_range) {
-          assign.lhs_msb_expr =
-              MakeNumberExpr(static_cast<uint64_t>(gate_assign.lhs_msb));
+          if (gate_assign.lhs_msb_expr) {
+            assign.lhs_msb_expr = std::move(gate_assign.lhs_msb_expr);
+          } else {
+            assign.lhs_msb_expr =
+                MakeNumberExpr(static_cast<uint64_t>(gate_assign.lhs_msb));
+          }
           if (gate_assign.lhs_is_range) {
-            assign.lhs_lsb_expr =
-                MakeNumberExpr(static_cast<uint64_t>(gate_assign.lhs_lsb));
+            if (gate_assign.lhs_lsb_expr) {
+              assign.lhs_lsb_expr = std::move(gate_assign.lhs_lsb_expr);
+            } else {
+              assign.lhs_lsb_expr =
+                  MakeNumberExpr(static_cast<uint64_t>(gate_assign.lhs_lsb));
+            }
           }
         }
         assign.rhs = std::move(gate_assign.rhs);
@@ -5061,6 +5554,7 @@ class Parser {
 
   bool ParseGenerateBlock(Module* module) {
     GenerateBlock block;
+    GenvarScopeGuard scope_guard(&current_genvars_);
     while (true) {
       if (MatchKeyword("endgenerate")) {
         break;
@@ -6309,6 +6803,32 @@ class Parser {
       ErrorHere("expected instance name");
       return false;
     }
+    std::vector<int64_t> indices;
+    if (MatchSymbol("[")) {
+      int64_t msb = 0;
+      int64_t lsb = 0;
+      if (!ParseConstExpr(nullptr, &msb, "instance array msb")) {
+        return false;
+      }
+      if (MatchSymbol(":")) {
+        if (!ParseConstExpr(nullptr, &lsb, "instance array lsb")) {
+          return false;
+        }
+      } else {
+        lsb = msb;
+      }
+      if (!MatchSymbol("]")) {
+        ErrorHere("expected ']' after instance array");
+        return false;
+      }
+      int64_t step = (msb <= lsb) ? 1 : -1;
+      for (int64_t value = msb;; value += step) {
+        indices.push_back(value);
+        if (value == lsb) {
+          break;
+        }
+      }
+    }
     if (!MatchSymbol("(")) {
       ErrorHere("expected '(' after instance name");
       return false;
@@ -6380,7 +6900,41 @@ class Parser {
       ErrorHere("expected ';' after instance");
       return false;
     }
-    module->instances.push_back(std::move(instance));
+    if (indices.empty()) {
+      module->instances.push_back(std::move(instance));
+      return true;
+    }
+    auto clone_array_expr = [&](const Expr& expr, size_t count,
+                                size_t slot) -> std::unique_ptr<Expr> {
+      if (expr.kind == ExprKind::kConcat && expr.elements.size() == count) {
+        return CloneExprSimple(*expr.elements[slot]);
+      }
+      return CloneExprSimple(expr);
+    };
+    const size_t count = indices.size();
+    for (size_t slot = 0; slot < count; ++slot) {
+      Instance expanded;
+      expanded.module_name = instance.module_name;
+      expanded.name =
+          instance.name + "__" + std::to_string(indices[slot]);
+      for (const auto& override_item : instance.param_overrides) {
+        ParamOverride param;
+        param.name = override_item.name;
+        if (override_item.expr) {
+          param.expr = CloneExprSimple(*override_item.expr);
+        }
+        expanded.param_overrides.push_back(std::move(param));
+      }
+      for (const auto& conn : instance.connections) {
+        Connection connection;
+        connection.port = conn.port;
+        if (conn.expr) {
+          connection.expr = clone_array_expr(*conn.expr, count, slot);
+        }
+        expanded.connections.push_back(std::move(connection));
+      }
+      module->instances.push_back(std::move(expanded));
+    }
     return true;
   }
 
@@ -7395,7 +7949,8 @@ class Parser {
                       const std::shared_ptr<Expr>& msb_expr,
                       const std::shared_ptr<Expr>& lsb_expr,
                       const std::vector<ArrayDim>& array_dims,
-                      bool is_real = false) {
+                      bool is_real = false,
+                      ChargeStrength charge = ChargeStrength::kNone) {
     int array_size = 0;
     if (array_dims.size() == 1) {
       array_size = array_dims.front().size;
@@ -7406,6 +7961,7 @@ class Parser {
         net.width = width;
         net.is_signed = is_signed;
         net.is_real = is_real;
+        net.charge = charge;
         net.msb_expr = msb_expr;
         net.lsb_expr = lsb_expr;
         net.array_size = array_size;
@@ -7419,6 +7975,7 @@ class Parser {
     net.width = width;
     net.is_signed = is_signed;
     net.is_real = is_real;
+    net.charge = charge;
     net.msb_expr = msb_expr;
     net.lsb_expr = lsb_expr;
     net.array_size = array_size;
@@ -7609,7 +8166,7 @@ class Parser {
   size_t pos_ = 0;
   std::unordered_map<std::string, int64_t> current_params_;
   std::unordered_map<std::string, bool> current_real_params_;
-  std::unordered_set<std::string> current_genvars_;
+  GenvarScope current_genvars_;
   Module* current_module_ = nullptr;
   ParseOptions options_;
   std::vector<DirectiveEvent> directives_;

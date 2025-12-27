@@ -51,6 +51,168 @@ const Function* FindFunction(const Module& module, const std::string& name) {
   return nullptr;
 }
 
+Instance CloneInstance(const Instance& instance) {
+  Instance out;
+  out.module_name = instance.module_name;
+  out.name = instance.name;
+  for (const auto& override_item : instance.param_overrides) {
+    ParamOverride param;
+    param.name = override_item.name;
+    if (override_item.expr) {
+      param.expr = CloneExpr(*override_item.expr);
+    }
+    out.param_overrides.push_back(std::move(param));
+  }
+  for (const auto& conn : instance.connections) {
+    Connection connection;
+    connection.port = conn.port;
+    if (conn.expr) {
+      connection.expr = CloneExpr(*conn.expr);
+    }
+    out.connections.push_back(std::move(connection));
+  }
+  return out;
+}
+
+void SplitDefparamInstance(
+    const std::string& instance,
+    const std::unordered_set<std::string>& instance_names, std::string* head,
+    std::string* tail) {
+  if (!head || !tail) {
+    return;
+  }
+  head->clear();
+  tail->clear();
+  if (instance.empty()) {
+    return;
+  }
+  std::vector<std::string> parts;
+  size_t start = 0;
+  while (start < instance.size()) {
+    size_t next = instance.find('.', start);
+    if (next == std::string::npos) {
+      parts.push_back(instance.substr(start));
+      break;
+    }
+    parts.push_back(instance.substr(start, next - start));
+    start = next + 1;
+  }
+  if (parts.empty()) {
+    return;
+  }
+  std::string flat = parts[0];
+  size_t match_index = instance_names.count(flat) > 0 ? 0 : parts.size();
+  for (size_t i = 1; i < parts.size(); ++i) {
+    flat += "__";
+    flat += parts[i];
+    if (instance_names.count(flat) > 0) {
+      match_index = i;
+    }
+  }
+  if (match_index >= parts.size()) {
+    *head = parts[0];
+    if (parts.size() > 1) {
+      *tail = instance.substr(parts[0].size() + 1);
+    }
+    return;
+  }
+  *head = flat;
+  if (match_index + 1 < parts.size()) {
+    size_t offset = 0;
+    for (size_t i = 0; i <= match_index; ++i) {
+      offset += parts[i].size();
+      if (i + 1 <= match_index) {
+        offset += 1;
+      }
+    }
+    if (offset + 1 < instance.size()) {
+      *tail = instance.substr(offset + 1);
+    }
+  }
+}
+
+bool ValidateDefparamsForModule(
+    const std::vector<DefParam>& defparams,
+    const std::unordered_set<std::string>& instance_names,
+    Diagnostics* diagnostics) {
+  for (const auto& defparam : defparams) {
+    std::string head;
+    std::string tail;
+    SplitDefparamInstance(defparam.instance, instance_names, &head, &tail);
+    if (instance_names.count(head) == 0) {
+      diagnostics->Add(Severity::kError,
+                       "unknown instance '" + defparam.instance +
+                           "' in defparam");
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ApplyDefparamsToInstance(
+    const std::vector<DefParam>& defparams,
+    const std::unordered_set<std::string>& instance_names,
+    const Instance& instance, Instance* out_instance,
+    std::vector<DefParam>* child_defparams, Diagnostics* diagnostics) {
+  if (!out_instance) {
+    return false;
+  }
+  bool has_positional = false;
+  for (const auto& override_item : out_instance->param_overrides) {
+    if (override_item.name.empty()) {
+      has_positional = true;
+      break;
+    }
+  }
+  for (const auto& defparam : defparams) {
+    std::string head;
+    std::string tail;
+    SplitDefparamInstance(defparam.instance, instance_names, &head, &tail);
+    if (head != instance.name) {
+      continue;
+    }
+    if (tail.empty()) {
+      if (has_positional) {
+        diagnostics->Add(
+            Severity::kError,
+            "defparam cannot target instance with positional overrides '" +
+                instance.name + "'");
+        return false;
+      }
+      bool replaced = false;
+      for (auto& override_item : out_instance->param_overrides) {
+        if (override_item.name == defparam.param) {
+          override_item.expr =
+              defparam.expr ? CloneExpr(*defparam.expr) : nullptr;
+          replaced = true;
+          break;
+        }
+      }
+      if (!replaced) {
+        ParamOverride override_item;
+        override_item.name = defparam.param;
+        if (defparam.expr) {
+          override_item.expr = CloneExpr(*defparam.expr);
+        }
+        out_instance->param_overrides.push_back(std::move(override_item));
+      }
+      continue;
+    }
+    if (child_defparams) {
+      DefParam child;
+      child.instance = tail;
+      child.param = defparam.param;
+      child.line = defparam.line;
+      child.column = defparam.column;
+      if (defparam.expr) {
+        child.expr = CloneExpr(*defparam.expr);
+      }
+      child_defparams->push_back(std::move(child));
+    }
+  }
+  return true;
+}
+
 void ForceUnsizedWidth(Expr* expr, int width) {
   if (!expr) {
     return;
@@ -117,19 +279,15 @@ bool FindTopModule(const Program& program, std::string* top_name,
     }
   }
 
-  std::string candidate;
+  std::vector<const Module*> roots;
+  roots.reserve(program.modules.size());
   for (const auto& module : program.modules) {
     if (instantiated.count(module.name) == 0) {
-      if (!candidate.empty()) {
-        diagnostics->Add(Severity::kError,
-                         "multiple top-level modules found (use --top <name>)");
-        return false;
-      }
-      candidate = module.name;
+      roots.push_back(&module);
     }
   }
 
-  if (candidate.empty()) {
+  if (roots.empty()) {
     std::unordered_set<std::string> names;
     names.reserve(program.modules.size());
     for (const auto& module : program.modules) {
@@ -186,7 +344,51 @@ bool FindTopModule(const Program& program, std::string* top_name,
     diagnostics->Add(Severity::kError, "no top-level module found");
     return false;
   }
-  *top_name = candidate;
+  if (roots.size() > 1) {
+    auto has_initial = [](const Module& module) -> bool {
+      for (const auto& block : module.always_blocks) {
+        if (block.edge == EdgeKind::kInitial) {
+          return true;
+        }
+      }
+      return false;
+    };
+    auto is_test = [](const std::string& name) -> bool {
+      return name.rfind("test_", 0) == 0;
+    };
+    const Module* chosen = nullptr;
+    for (const auto* module : roots) {
+      if (has_initial(*module) && is_test(module->name)) {
+        chosen = module;
+        break;
+      }
+    }
+    if (!chosen) {
+      for (const auto* module : roots) {
+        if (has_initial(*module)) {
+          chosen = module;
+          break;
+        }
+      }
+    }
+    if (!chosen) {
+      for (const auto* module : roots) {
+        if (is_test(module->name)) {
+          chosen = module;
+          break;
+        }
+      }
+    }
+    if (!chosen) {
+      chosen = roots.front();
+    }
+    diagnostics->Add(Severity::kWarning,
+                     "multiple top-level modules found; using '" +
+                         chosen->name + "' (use --top <name> to override)");
+    *top_name = chosen->name;
+    return true;
+  }
+  *top_name = roots.front()->name;
   return true;
 }
 
@@ -2481,7 +2683,9 @@ bool CloneStatement(
                             "array '" + statement.assign.lhs + "'")) {
         return false;
       }
-      if (dims.size() != statement.assign.lhs_indices.size()) {
+      const size_t dims_count = dims.size();
+      const size_t index_count = statement.assign.lhs_indices.size();
+      if (index_count != dims_count && index_count != dims_count + 1) {
         diagnostics->Add(Severity::kError,
                          "array '" + statement.assign.lhs + "' requires " +
                              std::to_string(dims.size()) +
@@ -2489,8 +2693,9 @@ bool CloneStatement(
         return false;
       }
       std::vector<std::unique_ptr<Expr>> cloned_indices;
-      cloned_indices.reserve(statement.assign.lhs_indices.size());
-      for (const auto& index_expr : statement.assign.lhs_indices) {
+      cloned_indices.reserve(dims_count);
+      for (size_t i = 0; i < dims_count; ++i) {
+        const auto& index_expr = statement.assign.lhs_indices[i];
         auto cloned = CloneExprWithParams(*index_expr, rename, params,
                                           &source_module, diagnostics, nullptr);
         if (!cloned) {
@@ -2501,6 +2706,25 @@ bool CloneStatement(
       out->assign.lhs_index =
           SimplifyExpr(BuildFlatIndexExpr(dims, std::move(cloned_indices)),
                        flat_module);
+      if (index_count == dims_count + 1) {
+        const auto& bit_expr = statement.assign.lhs_indices.back();
+        auto cloned_bit = CloneExprWithParams(*bit_expr, rename, params,
+                                              &source_module, diagnostics,
+                                              nullptr);
+        if (!cloned_bit) {
+          return false;
+        }
+        cloned_bit = SimplifyExpr(std::move(cloned_bit), flat_module);
+        out->assign.lhs_has_range = true;
+        out->assign.lhs_msb_expr = std::move(cloned_bit);
+        int64_t bit_value = 0;
+        if (out->assign.lhs_msb_expr &&
+            TryEvalConstExprWithParams(*out->assign.lhs_msb_expr, params,
+                                       &bit_value)) {
+          out->assign.lhs_msb = static_cast<int>(bit_value);
+          out->assign.lhs_lsb = static_cast<int>(bit_value);
+        }
+      }
     } else if (statement.assign.lhs_index) {
       out->assign.lhs_index =
           CloneExprWithParams(*statement.assign.lhs_index, rename, params,
@@ -2993,7 +3217,8 @@ bool CloneStatement(
 }
 
 bool AddFlatNet(const std::string& name, int width, bool is_signed,
-                NetType type, const std::vector<int>& array_dims, bool is_real,
+                NetType type, ChargeStrength charge,
+                const std::vector<int>& array_dims, bool is_real,
                 const std::string& hier_path, Module* out,
                 std::unordered_set<std::string>* net_names,
                 std::unordered_map<std::string, std::string>* flat_to_hier,
@@ -3013,6 +3238,7 @@ bool AddFlatNet(const std::string& name, int width, bool is_signed,
   net.width = width;
   net.is_signed = is_signed;
   net.is_real = is_real;
+  net.charge = charge;
   int total = 0;
   if (!array_dims.empty()) {
     int64_t product = 1;
@@ -5024,7 +5250,8 @@ bool InlineModule(const Program& program, const Module& module,
                   std::unordered_set<std::string>* stack,
                   std::unordered_set<std::string>* net_names,
                   std::unordered_map<std::string, std::string>* flat_to_hier,
-                  bool enable_4state) {
+                  bool enable_4state,
+                  const std::vector<DefParam>* inherited_defparams) {
     if (stack->count(module.name) > 0) {
     diagnostics->Add(Severity::kError,
                      "recursive module instantiation detected");
@@ -5043,6 +5270,19 @@ bool InlineModule(const Program& program, const Module& module,
   }
   for (const auto& event_decl : module.events) {
     local_event_names.insert(event_decl.name);
+  }
+  std::unordered_set<std::string> instance_names;
+  for (const auto& instance : module.instances) {
+    instance_names.insert(instance.name);
+  }
+  if (!ValidateDefparamsForModule(module.defparams, instance_names,
+                                  diagnostics)) {
+    return false;
+  }
+  if (inherited_defparams &&
+      !ValidateDefparamsForModule(*inherited_defparams, instance_names,
+                                  diagnostics)) {
+    return false;
   }
 
   auto rename = [&](const std::string& ident) -> std::string {
@@ -5102,6 +5342,14 @@ bool InlineModule(const Program& program, const Module& module,
       }
     }
     return false;
+  };
+  auto lookup_charge = [&](const std::string& ident) -> ChargeStrength {
+    for (const auto& net : module.nets) {
+      if (net.name == ident) {
+        return net.charge;
+      }
+    }
+    return ChargeStrength::kNone;
   };
 
   auto register_event = [&](const std::string& name,
@@ -5175,9 +5423,9 @@ bool InlineModule(const Program& program, const Module& module,
                             "net '" + net.name + "' array range")) {
         return false;
       }
-      if (!AddFlatNet(net.name, width, net.is_signed, net.type, array_dims,
-                      net.is_real, hier_prefix + "." + net.name, out, net_names,
-                      flat_to_hier, diagnostics)) {
+      if (!AddFlatNet(net.name, width, net.is_signed, net.type, net.charge,
+                      array_dims, net.is_real, hier_prefix + "." + net.name,
+                      out, net_names, flat_to_hier, diagnostics)) {
         return false;
       }
     }
@@ -5227,9 +5475,10 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       NetType type = lookup_type(port.name);
-      if (!AddFlatNet(prefix + port.name, width, port.is_signed, type, {},
-                      lookup_real(port.name), hier_prefix + "." + port.name,
-                      out, net_names, flat_to_hier, diagnostics)) {
+      if (!AddFlatNet(prefix + port.name, width, port.is_signed, type,
+                      lookup_charge(port.name), {}, lookup_real(port.name),
+                      hier_prefix + "." + port.name, out, net_names,
+                      flat_to_hier, diagnostics)) {
         return false;
       }
     }
@@ -5246,8 +5495,9 @@ bool InlineModule(const Program& program, const Module& module,
         return false;
       }
       if (!AddFlatNet(prefix + net.name, width, net.is_signed, net.type,
-                      array_dims, net.is_real, hier_prefix + "." + net.name,
-                      out, net_names, flat_to_hier, diagnostics)) {
+                      net.charge, array_dims, net.is_real,
+                      hier_prefix + "." + net.name, out, net_names,
+                      flat_to_hier, diagnostics)) {
         return false;
       }
     }
@@ -5355,8 +5605,22 @@ bool InlineModule(const Program& program, const Module& module,
       return false;
     }
 
+    Instance effective_instance = CloneInstance(instance);
+    std::vector<DefParam> child_defparams;
+    if (!ApplyDefparamsToInstance(module.defparams, instance_names, instance,
+                                  &effective_instance, &child_defparams,
+                                  diagnostics)) {
+      return false;
+    }
+    if (inherited_defparams &&
+        !ApplyDefparamsToInstance(*inherited_defparams, instance_names,
+                                  instance, &effective_instance,
+                                  &child_defparams, diagnostics)) {
+      return false;
+    }
+
     ParamBindings child_params;
-    if (!BuildParamBindings(*child, &instance, &params, &child_params,
+    if (!BuildParamBindings(*child, &effective_instance, &params, &child_params,
                             diagnostics)) {
       return false;
     }
@@ -5370,6 +5634,7 @@ bool InlineModule(const Program& program, const Module& module,
     std::unordered_map<std::string, bool> child_port_signed;
     std::unordered_map<std::string, bool> child_port_real;
     std::unordered_map<std::string, NetType> child_port_types;
+    std::unordered_map<std::string, ChargeStrength> child_port_charge;
     for (const auto& port : child->ports) {
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr,
@@ -5379,9 +5644,11 @@ bool InlineModule(const Program& program, const Module& module,
       }
       NetType port_type = NetType::kWire;
       bool port_is_real = false;
+      ChargeStrength port_charge = ChargeStrength::kNone;
       if (const Net* net = FindNet(*child, port.name)) {
         port_type = net->type;
         port_is_real = net->is_real;
+        port_charge = net->charge;
       }
       child_ports.insert(port.name);
       child_port_dirs[port.name] = port.dir;
@@ -5389,6 +5656,7 @@ bool InlineModule(const Program& program, const Module& module,
       child_port_signed[port.name] = port.is_signed;
       child_port_real[port.name] = port_is_real;
       child_port_types[port.name] = port_type;
+      child_port_charge[port.name] = port_charge;
       child_port_map[port.name] = PortBinding{child_prefix + port.name};
     }
     std::unordered_set<std::string> seen_ports;
@@ -5494,7 +5762,8 @@ bool InlineModule(const Program& program, const Module& module,
       std::string port_net = child_prefix + port_name;
       NetType type = child_port_types[port_name];
       if (!AddFlatNet(port_net, child_port_widths[port_name],
-                      child_port_signed[port_name], type, {},
+                      child_port_signed[port_name], type,
+                      child_port_charge[port_name], {},
                       child_port_real[port_name],
                       child_hier + "." + port_name, out, net_names,
                       flat_to_hier, diagnostics)) {
@@ -5541,9 +5810,11 @@ bool InlineModule(const Program& program, const Module& module,
       }
     }
 
+    const std::vector<DefParam>* child_defparam_ptr =
+        child_defparams.empty() ? nullptr : &child_defparams;
     if (!InlineModule(program, *child, child_prefix, child_hier, child_params,
                       child_port_map, out, diagnostics, stack, net_names,
-                      flat_to_hier, enable_4state)) {
+                      flat_to_hier, enable_4state, child_defparam_ptr)) {
       return false;
     }
   }
@@ -5601,7 +5872,7 @@ bool Elaborate(const Program& program, const std::string& top_name,
   std::unordered_map<std::string, std::string> flat_to_hier;
   if (!InlineModule(program, *top, "", top->name, top_params, port_map, &flat,
                     diagnostics, &stack, &net_names, &flat_to_hier,
-                    enable_4state)) {
+                    enable_4state, nullptr)) {
     return false;
   }
 

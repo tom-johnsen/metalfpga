@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.5 — Compiler/codegen coverage includes match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), and procedural part-select assignment. Extensive support for generate/loops, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **228+ compiler tests** pass in `verilog/pass/`. **GPU runtime execution and validation are the next milestone.**
+**Current Status**: v0.5+ — Compiler/codegen coverage includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), and procedural part-select assignment. Extensive support for generate/loops, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **281 total test files** with **93% pass rate** on the default test suite. **GPU runtime execution and validation are the next milestone.**
 
 ## What is this?
 
@@ -128,6 +128,22 @@ The compiler produces:
   - Net types: `wire`, `wand`, `wor`, `tri`, `triand`, `trior`, `tri0`, `tri1`, `supply0`, `supply1`
 - Timing delays (`#` delay syntax)
 - `timescale` directive
+- User-Defined Primitives (UDPs):
+  - Combinational UDPs (truth tables)
+  - Sequential UDPs (state machines with current/next state)
+  - Edge-sensitive UDPs (posedge/negedge detection)
+  - Level-sensitive UDPs (transparent latches)
+- Real number arithmetic (IEEE 754 double-precision):
+  - `real` data type for floating-point variables
+  - Real literals: `3.14`, `1.5e-10`, `.5`, `5.`
+  - Real arrays: `real voltage[0:15];`
+  - Real parameters: `parameter real PI = 3.14159;`
+  - Arithmetic operators: `+`, `-`, `*`, `/`, `**` (power)
+  - Comparison operators: `<`, `>`, `<=`, `>=`, `==`, `!=`
+  - Type conversion: `$itor()` (int→real), `$rtoi()` (real→int with truncation)
+  - Bit conversion: `$realtobits()`, `$bitstoreal()` (for real storage in 4-state)
+  - Mixed integer/real arithmetic with automatic promotion
+  - Real constant expressions in parameters and generate blocks
 
 ### 🧪 Implemented but awaiting GPU runtime verification
 
@@ -146,7 +162,6 @@ These features are fully implemented in the compiler pipeline + MSL emission, bu
 - Runtime kernel execution and validation (MSL code generation complete, GPU dispatch pending)
 - Event scheduling validation (infrastructure complete, needs runtime testing)
 - Full sensitivity list support beyond `@*` and `@(posedge/negedge clk)`
-- Real number arithmetic (floating-point)
 
 **Low Priority**:
 - SystemVerilog constructs
@@ -158,61 +173,61 @@ These features are fully implemented in the compiler pipeline + MSL emission, bu
 
 ## Test Suite
 
-**228+ passing compiler tests** in `verilog/pass/`:
+**281 total test files** across the test suite:
+- **54 files** in `verilog/` (default test suite, runs in ~30 seconds)
+- **227 files** in `verilog/pass/` (extended test suite, requires `--full` flag)
+- **18 files** in `verilog/systemverilog/` (SystemVerilog features, expected to fail)
 
-These tests currently validate parsing, elaboration, codegen output quality, and semantic lowering decisions. Full GPU runtime validation is in progress.
-- Arithmetic and logic operations
-- Match-3 operators (case equality `===`/`!==`, wildcard match `==?`/`!=?`)
-- Power operator (`**`) with signed/unsigned variants
-- Part-select assignment (fixed `[7:0]` and indexed `[idx +: 4]` ranges)
-- Reduction operators (all 6 variants: &, |, ^, ~&, ~|, ~^)
-  - Comprehensive coverage: nested, slices, wide buses (64/128/256-bit)
-  - In combinational and sequential contexts
-  - With ternary and case statements
-- Signed arithmetic and comparisons
-  - Edge cases: overflow, underflow, division by zero
-  - Arithmetic right shift with sign extension
-  - Mixed signed/unsigned operations
-  - Unary operators on signed values
-- Module instantiation and hierarchy
-- Multi-file module references
-- Generate blocks (nested for/if-generate, genvar arithmetic)
-- Sequential and combinational logic
-- Memory read/write operations
-- Case statements (case, casex, casez)
-- 4-state logic with X/Z values
-- Parentheses and expression grouping
-- Width extension and truncation
-- System tasks ($display, $monitor, $time, $finish, $readmemh/b, etc.)
-- Procedural tasks with inputs/outputs
-- Switch-level modeling (transmission gates, MOS switches, drive strengths)
-- Named events and event triggering
-- Timing controls and delays
-- Advanced net types (wand, wor, tri variants, supply nets)
+**Pass rate: 93%** (54/58 passing in default suite)
 
-**In-development test coverage** in `verilog/`:
-- Additional tests and edge cases beyond the passing suite
+The 4 expected failures are SystemVerilog-specific features (not Verilog-2005):
+- `test_streaming_operator.v`, `test_struct.v`, `test_enum.v`, `test_interface.v`
+- Plus 10 more SystemVerilog features in `verilog/systemverilog/`
 
-Run all passing tests:
+These tests validate parsing, elaboration, codegen output quality, and semantic lowering decisions. Full GPU runtime validation is in progress.
+
+**Test coverage includes**:
+- **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
+- **Real number arithmetic**: All IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
+- **Arithmetic and logic operations**: All operators including power (`**`)
+- **Match-3 operators**: Case equality `===`/`!==`, wildcard match `==?`/`!=?`
+- **Part-select assignment**: Fixed `[7:0]` and indexed `[idx +: 4]` ranges
+- **Reduction operators**: All 6 variants (&, |, ^, ~&, ~|, ~^) in all contexts
+- **Signed arithmetic**: Overflow, underflow, division by zero, sign extension
+- **Generate blocks**: Nested for/if-generate, genvar arithmetic
+- **4-state logic**: X/Z propagation, casex/casez, match operators
+- **System tasks**: $display, $monitor, $time, $finish, $readmemh/b, $dumpvars, etc.
+- **Switch-level modeling**: Transmission gates, MOS switches, drive strengths
+- **Memory operations**: Multi-dimensional arrays, read/write
+- **Timing controls**: Delays, events, fork/join
+
+### Running Tests
+
+**Default test suite** (54 files, ~30 seconds):
 ```sh
-set -e
-for f in verilog/pass/*.v; do
-  ./build/metalfpga_cli "$f"
-done
+./test_runner.sh
 ```
 
-Run a design in 4-state mode (for X/Z propagation features):
+**Full test suite** (281 files, ~3 minutes):
 ```sh
-./build/metalfpga_cli --4state path/to/design.v
+./test_runner.sh --full
 ```
 
-Run all tests (including in-development):
+**With 4-state mode**:
 ```sh
-set -e
-for f in verilog/test_*.v; do
-  ./build/metalfpga_cli "$f"
-done
+./test_runner.sh --4state
 ```
+
+**Single file**:
+```sh
+./build/metalfpga_cli verilog/test_example.v
+./build/metalfpga_cli verilog/test_example.v --4state  # With X/Z support
+```
+
+**Artifacts**: Test results are saved to `artifacts/<RUN_ID>/` with:
+- Generated MSL files in `msl/`
+- Test logs in `test_results/`
+- Flattened netlists for each test
 
 ## Error Detection
 
@@ -246,14 +261,22 @@ src/
   runtime/        # Metal runtime wrapper
   utils/          # Diagnostics and utilities
 verilog/
-  pass/           # Passing test cases (228+ files)
-  systemverilog/  # SystemVerilog feature tests
-  test_*.v        # Additional test coverage
+  test_*.v        # Main test suite (54 files, default run)
+  pass/           # Extended test suite (227 files, --full flag)
+  systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/
   gpga/           # Core documentation
-  bit_packing_strategy.md  # GPU memory optimization
+  diff/           # REV documents (commit changelogs)
+  4STATE.md       # 4-state logic implementation
+  ANALOG.md       # Analog/mixed-signal support
+  GPGA_KEYWORDS.md  # Verilog keyword reference
   VERILOG_REFERENCE.md     # Language reference
   ASYNC_DEBUGGING.md       # Async circuit debugging
+  bit_packing_strategy.md  # GPU memory optimization
+artifacts/        # Test run outputs (generated, gitignored)
+  <RUN_ID>/
+    msl/          # Generated Metal shaders
+    test_results/ # Test logs and status
 ```
 
 ## Contributing
