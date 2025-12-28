@@ -14,6 +14,7 @@ module test_real_generate;
 
   // Generate blocks with real parameters
   genvar i;
+  integer j;
   generate
     for (i = 0; i < SIZE; i = i + 1) begin : gen_loop
       wire [7:0] item;
@@ -33,7 +34,7 @@ module test_real_generate;
 
   initial begin
     // Use real parameters in array initialization
-    for (integer j = 0; j < SIZE; j = j + 1) begin
+    for (j = 0; j < SIZE; j = j + 1) begin
       data[j] = j * 2;
     end
   end

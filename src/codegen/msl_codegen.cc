@@ -121,6 +121,11 @@ bool SignalIsReal(const Module& module, const std::string& name) {
       return it->second;
     }
   }
+  for (const auto& param : module.parameters) {
+    if (param.name == name) {
+      return param.is_real;
+    }
+  }
   for (const auto& net : module.nets) {
     if (net.name == name) {
       return net.is_real;
@@ -701,7 +706,7 @@ bool IsSystemTaskName(const std::string& name) {
 bool IsFileSystemFunctionName(const std::string& name) {
   return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
          name == "$fgets" || name == "$feof" || name == "$fscanf" ||
-         name == "$sscanf";
+         name == "$sscanf" || name == "$ftell";
 }
 
 bool ExtractFeofCondition(const Expr& expr, const Expr** fd_expr,
@@ -732,7 +737,8 @@ bool ExtractFeofCondition(const Expr& expr, const Expr** fd_expr,
 }
 
 bool TaskTreatsIdentifierAsString(const std::string& name) {
-  return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb";
+  return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
+         name == "$writememh" || name == "$writememb";
 }
 
 uint32_t AddSystemTaskString(SystemTaskInfo* info,
@@ -1358,13 +1364,16 @@ std::string EmitRealValueExpr(const Expr& expr, const Module& module,
     int width = ExprWidth(value_expr, module);
     bool signed_expr = ExprSigned(value_expr, module);
     std::string raw = EmitExpr(value_expr, module, locals, regs);
-    std::string cast;
     if (width > 32) {
-      cast = signed_expr ? "(double)(long)" : "(double)(ulong)";
-    } else {
-      cast = signed_expr ? "(double)(int)" : "(double)(uint)";
+      if (signed_expr) {
+        return "gpga_double_from_s64((long)(" + raw + "))";
+      }
+      return "gpga_double_from_u64((ulong)(" + raw + "))";
     }
-    return cast + "(" + raw + ")";
+    if (signed_expr) {
+      return "gpga_double_from_s32((int)(" + raw + "))";
+    }
+    return "gpga_double_from_u32((uint)(" + raw + "))";
   };
 
   switch (expr.kind) {
@@ -1390,35 +1399,44 @@ std::string EmitRealValueExpr(const Expr& expr, const Module& module,
       }
       return emit_int_as_real(expr);
     case ExprKind::kString:
-      return "0.0";
+      return "gpga_bits_to_real(0ul)";
     case ExprKind::kUnary: {
       std::string operand = expr.operand
                                 ? EmitRealValueExpr(*expr.operand, module,
                                                     locals, regs)
-                                : "0.0";
+                                : "gpga_bits_to_real(0ul)";
       if (expr.unary_op == '+') {
         return operand;
       }
       if (expr.unary_op == '-') {
-        return "(-" + operand + ")";
+        return "gpga_double_neg(" + operand + ")";
       }
-      return "0.0";
+      return "gpga_bits_to_real(0ul)";
     }
     case ExprKind::kBinary: {
       std::string lhs = expr.lhs ? EmitRealValueExpr(*expr.lhs, module, locals,
                                                      regs)
-                                 : "0.0";
+                                 : "gpga_bits_to_real(0ul)";
       std::string rhs = expr.rhs ? EmitRealValueExpr(*expr.rhs, module, locals,
                                                      regs)
-                                 : "0.0";
+                                 : "gpga_bits_to_real(0ul)";
       if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
           expr.op == '/') {
-        return "(" + lhs + " " + std::string(1, expr.op) + " " + rhs + ")";
+        if (expr.op == '+') {
+          return "gpga_double_add(" + lhs + ", " + rhs + ")";
+        }
+        if (expr.op == '-') {
+          return "gpga_double_sub(" + lhs + ", " + rhs + ")";
+        }
+        if (expr.op == '*') {
+          return "gpga_double_mul(" + lhs + ", " + rhs + ")";
+        }
+        return "gpga_double_div(" + lhs + ", " + rhs + ")";
       }
       if (expr.op == 'p') {
-        return "pow(" + lhs + ", " + rhs + ")";
+        return "gpga_double_pow(" + lhs + ", " + rhs + ")";
       }
-      return "0.0";
+      return "gpga_bits_to_real(0ul)";
     }
     case ExprKind::kTernary: {
       std::string cond = expr.condition
@@ -1428,16 +1446,16 @@ std::string EmitRealValueExpr(const Expr& expr, const Module& module,
       std::string then_expr =
           expr.then_expr
               ? EmitRealValueExpr(*expr.then_expr, module, locals, regs)
-              : "0.0";
+              : "gpga_bits_to_real(0ul)";
       std::string else_expr =
           expr.else_expr
               ? EmitRealValueExpr(*expr.else_expr, module, locals, regs)
-              : "0.0";
+              : "gpga_bits_to_real(0ul)";
       return "((" + cond + ") ? (" + then_expr + ") : (" + else_expr + "))";
     }
     case ExprKind::kIndex: {
       if (!expr.base || !expr.index) {
-        return "0.0";
+        return "gpga_bits_to_real(0ul)";
       }
       if (expr.base->kind == ExprKind::kIdentifier) {
         int element_width = 0;
@@ -1452,7 +1470,7 @@ std::string EmitRealValueExpr(const Expr& expr, const Module& module,
               "(" + idx + " < " + std::to_string(array_size) + "u)";
           if (SignalIsReal(module, expr.base->ident)) {
             return "((" + bounds + ") ? gpga_bits_to_real(" +
-                   expr.base->ident + "[" + base + "]) : 0.0)";
+                   expr.base->ident + "[" + base + "]) : gpga_bits_to_real(0ul))";
           }
         }
       }
@@ -1460,13 +1478,13 @@ std::string EmitRealValueExpr(const Expr& expr, const Module& module,
     }
     case ExprKind::kCall:
       if (expr.ident == "$realtime") {
-        return "(double)__gpga_time";
+        return "gpga_double_from_u64(__gpga_time)";
       }
       if (expr.ident == "$itor") {
         if (!expr.call_args.empty() && expr.call_args.front()) {
           return emit_int_as_real(*expr.call_args.front());
         }
-        return "0.0";
+        return "gpga_bits_to_real(0ul)";
       }
       if (expr.ident == "$bitstoreal") {
         if (!expr.call_args.empty() && expr.call_args.front()) {
@@ -1474,14 +1492,14 @@ std::string EmitRealValueExpr(const Expr& expr, const Module& module,
               EmitExprSized(*expr.call_args.front(), 64, module, locals, regs);
           return "gpga_bits_to_real(" + bits + ")";
         }
-        return "0.0";
+        return "gpga_bits_to_real(0ul)";
       }
-      return "0.0";
+      return "gpga_bits_to_real(0ul)";
     case ExprKind::kSelect:
     case ExprKind::kConcat:
-      return "0.0";
+      return "gpga_bits_to_real(0ul)";
   }
-  return "0.0";
+  return "gpga_bits_to_real(0ul)";
 }
 
 std::string EmitRealBitsExpr(const Expr& expr, const Module& module,
@@ -1503,13 +1521,10 @@ std::string EmitRealToIntExpr(const Expr& expr, int target_width,
                               const std::unordered_set<std::string>& locals,
                               const std::unordered_set<std::string>& regs) {
   std::string real_value = EmitRealValueExpr(expr, module, locals, regs);
-  std::string cast;
-  if (target_width > 32) {
-    cast = signed_target ? "(long)" : "(ulong)";
-  } else {
-    cast = signed_target ? "(int)" : "(uint)";
+  std::string raw = "gpga_double_to_s64(" + real_value + ")";
+  if (!signed_target) {
+    raw = "(ulong)(" + raw + ")";
   }
-  std::string raw = cast + "(" + real_value + ")";
   return MaskForWidthExpr(raw, target_width);
 }
 
@@ -1518,7 +1533,7 @@ std::string EmitCondExpr(const Expr& expr, const Module& module,
                          const std::unordered_set<std::string>& regs) {
   if (ExprIsRealValue(expr, module)) {
     std::string real_val = EmitRealValueExpr(expr, module, locals, regs);
-    return "(" + real_val + " != 0.0)";
+    return "(!gpga_double_is_zero(" + real_val + "))";
   }
   std::string raw = EmitExpr(expr, module, locals, regs);
   int width = ExprWidth(expr, module);
@@ -2728,12 +2743,27 @@ std::string EmitExpr(const Expr& expr, const Module& module,
             (expr.rhs && ExprIsRealValue(*expr.rhs, module))) {
           std::string lhs_real =
               expr.lhs ? EmitRealValueExpr(*expr.lhs, module, locals, regs)
-                       : "0.0";
+                       : "gpga_bits_to_real(0ul)";
           std::string rhs_real =
               expr.rhs ? EmitRealValueExpr(*expr.rhs, module, locals, regs)
-                       : "0.0";
-          std::string op = BinaryOpString(expr.op);
-          return "((" + lhs_real + " " + op + " " + rhs_real + ") ? 1u : 0u)";
+                       : "gpga_bits_to_real(0ul)";
+          std::string pred;
+          if (expr.op == 'E' || expr.op == 'C' || expr.op == 'W') {
+            pred = "gpga_double_eq(" + lhs_real + ", " + rhs_real + ")";
+          } else if (expr.op == 'N' || expr.op == 'c' || expr.op == 'w') {
+            pred = "!gpga_double_eq(" + lhs_real + ", " + rhs_real + ")";
+          } else if (expr.op == '<') {
+            pred = "gpga_double_lt(" + lhs_real + ", " + rhs_real + ")";
+          } else if (expr.op == '>') {
+            pred = "gpga_double_gt(" + lhs_real + ", " + rhs_real + ")";
+          } else if (expr.op == 'L') {
+            pred = "gpga_double_le(" + lhs_real + ", " + rhs_real + ")";
+          } else if (expr.op == 'G') {
+            pred = "gpga_double_ge(" + lhs_real + ", " + rhs_real + ")";
+          } else {
+            pred = "false";
+          }
+          return "((" + pred + ") ? 1u : 0u)";
         }
         std::string lhs_ext = signed_op
                                   ? SignExtendExpr(lhs, lhs_width, target_width)
@@ -2843,6 +2873,9 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       }
       if (expr.ident == "$feof") {
         return "1u";
+      }
+      if (expr.ident == "$ftell") {
+        return "0u";
       }
       if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
         return "0u";
@@ -3181,11 +3214,509 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "}\n\n";
   }
   if (uses_real) {
-    out << "inline double gpga_bits_to_real(ulong bits) {\n";
-    out << "  return as_type<double>(bits);\n";
+    out << "typedef ulong gpga_double;\n";
+    out << "inline uint gpga_double_sign(gpga_double d) {\n";
+    out << "  return (uint)((d >> 63) & 1ul);\n";
     out << "}\n";
-    out << "inline ulong gpga_real_to_bits(double value) {\n";
-    out << "  return as_type<ulong>(value);\n";
+    out << "inline uint gpga_double_exp(gpga_double d) {\n";
+    out << "  return (uint)((d >> 52) & 0x7FFu);\n";
+    out << "}\n";
+    out << "inline ulong gpga_double_mantissa(gpga_double d) {\n";
+    out << "  return d & 0x000FFFFFFFFFFFFFul;\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_pack(uint sign, uint exp, ulong mantissa) {\n";
+    out << "  return ((ulong)sign << 63) | ((ulong)exp << 52) |\n";
+    out << "         (mantissa & 0x000FFFFFFFFFFFFFul);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_zero(uint sign) {\n";
+    out << "  return ((ulong)sign << 63);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_inf(uint sign) {\n";
+    out << "  return gpga_double_pack(sign, 0x7FFu, 0ul);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_nan() {\n";
+    out << "  return 0x7FF8000000000000ul;\n";
+    out << "}\n";
+    out << "inline bool gpga_double_is_zero(gpga_double d) {\n";
+    out << "  return (d & 0x7FFFFFFFFFFFFFFFul) == 0ul;\n";
+    out << "}\n";
+    out << "inline bool gpga_double_is_inf(gpga_double d) {\n";
+    out << "  return (d & 0x7FFFFFFFFFFFFFFFul) == 0x7FF0000000000000ul;\n";
+    out << "}\n";
+    out << "inline bool gpga_double_is_nan(gpga_double d) {\n";
+    out << "  return (gpga_double_exp(d) == 0x7FFu) &&\n";
+    out << "         (gpga_double_mantissa(d) != 0ul);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_bits_to_real(ulong bits) {\n";
+    out << "  return bits;\n";
+    out << "}\n";
+    out << "inline ulong gpga_real_to_bits(gpga_double value) {\n";
+    out << "  return value;\n";
+    out << "}\n";
+    out << "inline uint gpga_clz64(ulong value) {\n";
+    out << "  if (value == 0ul) {\n";
+    out << "    return 64u;\n";
+    out << "  }\n";
+    out << "  uint count = 0u;\n";
+    out << "  ulong mask = 1ul << 63;\n";
+    out << "  while ((value & mask) == 0ul) {\n";
+    out << "    count += 1u;\n";
+    out << "    mask >>= 1;\n";
+    out << "  }\n";
+    out << "  return count;\n";
+    out << "}\n";
+    out << "inline ulong gpga_shift_right_sticky(ulong value, uint shift) {\n";
+    out << "  if (shift == 0u) {\n";
+    out << "    return value;\n";
+    out << "  }\n";
+    out << "  if (shift >= 64u) {\n";
+    out << "    return (value != 0ul) ? 1ul : 0ul;\n";
+    out << "  }\n";
+    out << "  ulong mask = (1ul << shift) - 1ul;\n";
+    out << "  ulong sticky = (value & mask) ? 1ul : 0ul;\n";
+    out << "  ulong shifted = value >> shift;\n";
+    out << "  return shifted | sticky;\n";
+    out << "}\n";
+    out << "inline void gpga_mul_64(ulong a, ulong b, thread ulong* hi,\n";
+    out << "                         thread ulong* lo) {\n";
+    out << "  ulong a_lo = a & 0xFFFFFFFFul;\n";
+    out << "  ulong a_hi = a >> 32;\n";
+    out << "  ulong b_lo = b & 0xFFFFFFFFul;\n";
+    out << "  ulong b_hi = b >> 32;\n";
+    out << "  ulong p0 = a_lo * b_lo;\n";
+    out << "  ulong p1 = a_lo * b_hi;\n";
+    out << "  ulong p2 = a_hi * b_lo;\n";
+    out << "  ulong p3 = a_hi * b_hi;\n";
+    out << "  ulong mid = (p0 >> 32) + (p1 & 0xFFFFFFFFul) + (p2 & 0xFFFFFFFFul);\n";
+    out << "  *lo = (p0 & 0xFFFFFFFFul) | (mid << 32);\n";
+    out << "  *hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);\n";
+    out << "}\n";
+    out << "inline ulong gpga_shift_right_sticky_128(ulong hi, ulong lo,\n";
+    out << "                                         uint shift) {\n";
+    out << "  if (shift == 0u) {\n";
+    out << "    return lo;\n";
+    out << "  }\n";
+    out << "  if (shift >= 128u) {\n";
+    out << "    return (hi | lo) ? 1ul : 0ul;\n";
+    out << "  }\n";
+    out << "  if (shift >= 64u) {\n";
+    out << "    uint s = shift - 64u;\n";
+    out << "    ulong shifted = (s >= 64u) ? 0ul : (hi >> s);\n";
+    out << "    ulong lost = lo;\n";
+    out << "    if (s < 64u) {\n";
+    out << "      ulong mask = (s == 0u) ? 0ul : ((1ul << s) - 1ul);\n";
+    out << "      lost |= (hi & mask);\n";
+    out << "    }\n";
+    out << "    if (lost != 0ul) {\n";
+    out << "      shifted |= 1ul;\n";
+    out << "    }\n";
+    out << "    return shifted;\n";
+    out << "  }\n";
+    out << "  ulong shifted = (hi << (64u - shift)) | (lo >> shift);\n";
+    out << "  ulong mask = (shift == 0u) ? 0ul : ((1ul << shift) - 1ul);\n";
+    out << "  ulong lost = lo & mask;\n";
+    out << "  if (lost != 0ul) {\n";
+    out << "    shifted |= 1ul;\n";
+    out << "  }\n";
+    out << "  return shifted;\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_round_pack(uint sign, int exp,\n";
+    out << "                                          ulong mant_ext) {\n";
+    out << "  ulong sig = mant_ext >> 3;\n";
+    out << "  uint guard = (uint)((mant_ext >> 2) & 1ul);\n";
+    out << "  uint round = (uint)((mant_ext >> 1) & 1ul);\n";
+    out << "  uint sticky = (uint)(mant_ext & 1ul);\n";
+    out << "  if (guard != 0u && (round != 0u || sticky != 0u || (sig & 1ul))) {\n";
+    out << "    sig += 1ul;\n";
+    out << "  }\n";
+    out << "  if ((sig & (1ul << 53)) != 0ul) {\n";
+    out << "    sig >>= 1;\n";
+    out << "    exp += 1;\n";
+    out << "  }\n";
+    out << "  if (exp >= 1024) {\n";
+    out << "    return gpga_double_inf(sign);\n";
+    out << "  }\n";
+    out << "  if (exp < -1022) {\n";
+    out << "    int shift = -1022 - exp;\n";
+    out << "    if (shift >= 64) {\n";
+    out << "      return gpga_double_zero(sign);\n";
+    out << "    }\n";
+    out << "    ulong den_ext = gpga_shift_right_sticky(sig << 3, (uint)shift);\n";
+    out << "    ulong den_sig = den_ext >> 3;\n";
+    out << "    uint g = (uint)((den_ext >> 2) & 1ul);\n";
+    out << "    uint r = (uint)((den_ext >> 1) & 1ul);\n";
+    out << "    uint s = (uint)(den_ext & 1ul);\n";
+    out << "    if (g != 0u && (r != 0u || s != 0u || (den_sig & 1ul))) {\n";
+    out << "      den_sig += 1ul;\n";
+    out << "    }\n";
+    out << "    if (den_sig >= (1ul << 52)) {\n";
+    out << "      return gpga_double_pack(sign, 1u, 0ul);\n";
+    out << "    }\n";
+    out << "    return gpga_double_pack(sign, 0u,\n";
+    out << "                            den_sig & 0x000FFFFFFFFFFFFFul);\n";
+    out << "  }\n";
+    out << "  uint exp_bits = (uint)(exp + 1023);\n";
+    out << "  return gpga_double_pack(sign, exp_bits,\n";
+    out << "                          sig & 0x000FFFFFFFFFFFFFul);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_from_u64(ulong value) {\n";
+    out << "  if (value == 0ul) {\n";
+    out << "    return gpga_double_zero(0u);\n";
+    out << "  }\n";
+    out << "  uint lz = gpga_clz64(value);\n";
+    out << "  uint msb = 63u - lz;\n";
+    out << "  int exp = (int)msb;\n";
+    out << "  if (msb <= 52u) {\n";
+    out << "    ulong mant = (value << (52u - msb)) & 0x000FFFFFFFFFFFFFul;\n";
+    out << "    return gpga_double_pack(0u, (uint)(exp + 1023), mant);\n";
+    out << "  }\n";
+    out << "  uint shift = msb - 52u;\n";
+    out << "  ulong mant_full = value >> shift;\n";
+    out << "  ulong mant = mant_full & 0x000FFFFFFFFFFFFFul;\n";
+    out << "  ulong lost = value & ((1ul << shift) - 1ul);\n";
+    out << "  if (shift != 0u) {\n";
+    out << "    ulong round_half = 1ul << (shift - 1u);\n";
+    out << "    if (lost > round_half || (lost == round_half && (mant & 1ul))) {\n";
+    out << "      mant += 1ul;\n";
+    out << "      if (mant == (1ul << 52)) {\n";
+    out << "        mant = 0ul;\n";
+    out << "        exp += 1;\n";
+    out << "      }\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  if (exp >= 1024) {\n";
+    out << "    return gpga_double_inf(0u);\n";
+    out << "  }\n";
+    out << "  return gpga_double_pack(0u, (uint)(exp + 1023), mant);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_from_s64(long value) {\n";
+    out << "  if (value == 0l) {\n";
+    out << "    return gpga_double_zero(0u);\n";
+    out << "  }\n";
+    out << "  uint sign = (value < 0l) ? 1u : 0u;\n";
+    out << "  ulong abs_val = (value < 0l)\n";
+    out << "      ? (ulong)((~(ulong)value) + 1ul)\n";
+    out << "      : (ulong)value;\n";
+    out << "  gpga_double out = gpga_double_from_u64(abs_val);\n";
+    out << "  if (sign != 0u) {\n";
+    out << "    out ^= (1ul << 63);\n";
+    out << "  }\n";
+    out << "  return out;\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_from_u32(uint value) {\n";
+    out << "  return gpga_double_from_u64((ulong)value);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_from_s32(int value) {\n";
+    out << "  return gpga_double_from_s64((long)value);\n";
+    out << "}\n";
+    out << "inline long gpga_double_to_s64(gpga_double d) {\n";
+    out << "  if (gpga_double_is_nan(d) || gpga_double_is_inf(d)) {\n";
+    out << "    return 0l;\n";
+    out << "  }\n";
+    out << "  uint sign = gpga_double_sign(d);\n";
+    out << "  uint exp_bits = gpga_double_exp(d);\n";
+    out << "  ulong mant = gpga_double_mantissa(d);\n";
+    out << "  if (exp_bits == 0u) {\n";
+    out << "    return 0l;\n";
+    out << "  }\n";
+    out << "  int exp = (int)exp_bits - 1023;\n";
+    out << "  if (exp < 0) {\n";
+    out << "    return 0l;\n";
+    out << "  }\n";
+    out << "  if (exp > 62) {\n";
+    out << "    return 0l;\n";
+    out << "  }\n";
+    out << "  ulong sig = mant | (1ul << 52);\n";
+    out << "  ulong val = (exp >= 52) ? (sig << (uint)(exp - 52))\n";
+    out << "                            : (sig >> (uint)(52 - exp));\n";
+    out << "  long out = (long)val;\n";
+    out << "  return sign ? -out : out;\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_neg(gpga_double d) {\n";
+    out << "  return d ^ (1ul << 63);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_add(gpga_double a, gpga_double b) {\n";
+    out << "  if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {\n";
+    out << "    return gpga_double_nan();\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_inf(a)) {\n";
+    out << "    if (gpga_double_is_inf(b) &&\n";
+    out << "        (gpga_double_sign(a) != gpga_double_sign(b))) {\n";
+    out << "      return gpga_double_nan();\n";
+    out << "    }\n";
+    out << "    return a;\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_inf(b)) {\n";
+    out << "    return b;\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(a)) {\n";
+    out << "    return b;\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(b)) {\n";
+    out << "    return a;\n";
+    out << "  }\n";
+    out << "  uint sign_a = gpga_double_sign(a);\n";
+    out << "  uint sign_b = gpga_double_sign(b);\n";
+    out << "  uint exp_a_bits = gpga_double_exp(a);\n";
+    out << "  uint exp_b_bits = gpga_double_exp(b);\n";
+    out << "  long exp_a = (exp_a_bits == 0u) ? -1022 : (long)exp_a_bits - 1023;\n";
+    out << "  long exp_b = (exp_b_bits == 0u) ? -1022 : (long)exp_b_bits - 1023;\n";
+    out << "  ulong mant_a = gpga_double_mantissa(a);\n";
+    out << "  ulong mant_b = gpga_double_mantissa(b);\n";
+    out << "  if (exp_a_bits != 0u) {\n";
+    out << "    mant_a |= (1ul << 52);\n";
+    out << "  } else if (mant_a != 0ul) {\n";
+    out << "    while ((mant_a & (1ul << 52)) == 0ul) {\n";
+    out << "      mant_a <<= 1;\n";
+    out << "      exp_a -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  if (exp_b_bits != 0u) {\n";
+    out << "    mant_b |= (1ul << 52);\n";
+    out << "  } else if (mant_b != 0ul) {\n";
+    out << "    while ((mant_b & (1ul << 52)) == 0ul) {\n";
+    out << "      mant_b <<= 1;\n";
+    out << "      exp_b -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  if (exp_a < exp_b) {\n";
+    out << "    long tmp_exp = exp_a;\n";
+    out << "    exp_a = exp_b;\n";
+    out << "    exp_b = tmp_exp;\n";
+    out << "    uint tmp_sign = sign_a;\n";
+    out << "    sign_a = sign_b;\n";
+    out << "    sign_b = tmp_sign;\n";
+    out << "    ulong tmp_mant = mant_a;\n";
+    out << "    mant_a = mant_b;\n";
+    out << "    mant_b = tmp_mant;\n";
+    out << "  }\n";
+    out << "  uint diff = (uint)(exp_a - exp_b);\n";
+    out << "  ulong mant_a_ext = mant_a << 3;\n";
+    out << "  ulong mant_b_ext = gpga_shift_right_sticky(mant_b << 3, diff);\n";
+    out << "  ulong mant_ext = 0ul;\n";
+    out << "  uint sign = sign_a;\n";
+    out << "  if (sign_a == sign_b) {\n";
+    out << "    mant_ext = mant_a_ext + mant_b_ext;\n";
+    out << "    if ((mant_ext & (1ul << 56)) != 0ul) {\n";
+    out << "      mant_ext = gpga_shift_right_sticky(mant_ext, 1u);\n";
+    out << "      exp_a += 1;\n";
+    out << "    }\n";
+    out << "  } else {\n";
+    out << "    if (mant_a_ext >= mant_b_ext) {\n";
+    out << "      mant_ext = mant_a_ext - mant_b_ext;\n";
+    out << "      sign = sign_a;\n";
+    out << "    } else {\n";
+    out << "      mant_ext = mant_b_ext - mant_a_ext;\n";
+    out << "      sign = sign_b;\n";
+    out << "      exp_a = exp_b;\n";
+    out << "    }\n";
+    out << "    if (mant_ext == 0ul) {\n";
+    out << "      return gpga_double_zero(0u);\n";
+    out << "    }\n";
+    out << "    while ((mant_ext & (1ul << 55)) == 0ul && exp_a > -1022) {\n";
+    out << "      mant_ext <<= 1;\n";
+    out << "      exp_a -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  return gpga_double_round_pack(sign, (int)exp_a, mant_ext);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_sub(gpga_double a, gpga_double b) {\n";
+    out << "  return gpga_double_add(a, gpga_double_neg(b));\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_mul(gpga_double a, gpga_double b) {\n";
+    out << "  if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {\n";
+    out << "    return gpga_double_nan();\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_inf(a) || gpga_double_is_inf(b)) {\n";
+    out << "    if (gpga_double_is_zero(a) || gpga_double_is_zero(b)) {\n";
+    out << "      return gpga_double_nan();\n";
+    out << "    }\n";
+    out << "    uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "    return gpga_double_inf(sign);\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(a) || gpga_double_is_zero(b)) {\n";
+    out << "    uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "    return gpga_double_zero(sign);\n";
+    out << "  }\n";
+    out << "  uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "  uint exp_a_bits = gpga_double_exp(a);\n";
+    out << "  uint exp_b_bits = gpga_double_exp(b);\n";
+    out << "  long exp_a = (exp_a_bits == 0u) ? -1022 : (long)exp_a_bits - 1023;\n";
+    out << "  long exp_b = (exp_b_bits == 0u) ? -1022 : (long)exp_b_bits - 1023;\n";
+    out << "  ulong mant_a = gpga_double_mantissa(a);\n";
+    out << "  ulong mant_b = gpga_double_mantissa(b);\n";
+    out << "  if (exp_a_bits != 0u) {\n";
+    out << "    mant_a |= (1ul << 52);\n";
+    out << "  } else if (mant_a != 0ul) {\n";
+    out << "    while ((mant_a & (1ul << 52)) == 0ul) {\n";
+    out << "      mant_a <<= 1;\n";
+    out << "      exp_a -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  if (exp_b_bits != 0u) {\n";
+    out << "    mant_b |= (1ul << 52);\n";
+    out << "  } else if (mant_b != 0ul) {\n";
+    out << "    while ((mant_b & (1ul << 52)) == 0ul) {\n";
+    out << "      mant_b <<= 1;\n";
+    out << "      exp_b -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  long exp = exp_a + exp_b;\n";
+    out << "  ulong hi = 0ul;\n";
+    out << "  ulong lo = 0ul;\n";
+    out << "  gpga_mul_64(mant_a, mant_b, &hi, &lo);\n";
+    out << "  bool msb = (hi & (1ul << 41)) != 0ul;\n";
+    out << "  if (msb) {\n";
+    out << "    exp += 1;\n";
+    out << "  }\n";
+    out << "  uint shift = msb ? 50u : 49u;\n";
+    out << "  ulong mant_ext = gpga_shift_right_sticky_128(hi, lo, shift);\n";
+    out << "  return gpga_double_round_pack(sign, (int)exp, mant_ext);\n";
+    out << "}\n";
+    out << "inline ulong gpga_div_mantissa(ulong num, ulong den) {\n";
+    out << "  if (den == 0ul) {\n";
+    out << "    return 0ul;\n";
+    out << "  }\n";
+    out << "  ulong hi = num >> 9;\n";
+    out << "  ulong lo = num << 55;\n";
+    out << "  ulong rem = 0ul;\n";
+    out << "  ulong quot = 0ul;\n";
+    out << "  for (uint i = 0u; i < 56u; ++i) {\n";
+    out << "    uint bit_index = 107u - i;\n";
+    out << "    ulong bit = 0ul;\n";
+    out << "    if (bit_index >= 64u) {\n";
+    out << "      bit = (hi >> (bit_index - 64u)) & 1ul;\n";
+    out << "    } else {\n";
+    out << "      bit = (lo >> bit_index) & 1ul;\n";
+    out << "    }\n";
+    out << "    rem = (rem << 1) | bit;\n";
+    out << "    quot <<= 1;\n";
+    out << "    if (rem >= den) {\n";
+    out << "      rem -= den;\n";
+    out << "      quot |= 1ul;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  if (rem != 0ul) {\n";
+    out << "    quot |= 1ul;\n";
+    out << "  }\n";
+    out << "  return quot;\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_div(gpga_double a, gpga_double b) {\n";
+    out << "  if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {\n";
+    out << "    return gpga_double_nan();\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(b)) {\n";
+    out << "    if (gpga_double_is_zero(a)) {\n";
+    out << "      return gpga_double_nan();\n";
+    out << "    }\n";
+    out << "    uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "    return gpga_double_inf(sign);\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(a)) {\n";
+    out << "    uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "    return gpga_double_zero(sign);\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_inf(a)) {\n";
+    out << "    if (gpga_double_is_inf(b)) {\n";
+    out << "      return gpga_double_nan();\n";
+    out << "    }\n";
+    out << "    uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "    return gpga_double_inf(sign);\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_inf(b)) {\n";
+    out << "    uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "    return gpga_double_zero(sign);\n";
+    out << "  }\n";
+    out << "  uint sign = gpga_double_sign(a) ^ gpga_double_sign(b);\n";
+    out << "  uint exp_a_bits = gpga_double_exp(a);\n";
+    out << "  uint exp_b_bits = gpga_double_exp(b);\n";
+    out << "  long exp_a = (exp_a_bits == 0u) ? -1022 : (long)exp_a_bits - 1023;\n";
+    out << "  long exp_b = (exp_b_bits == 0u) ? -1022 : (long)exp_b_bits - 1023;\n";
+    out << "  ulong mant_a = gpga_double_mantissa(a);\n";
+    out << "  ulong mant_b = gpga_double_mantissa(b);\n";
+    out << "  if (exp_a_bits != 0u) {\n";
+    out << "    mant_a |= (1ul << 52);\n";
+    out << "  } else if (mant_a != 0ul) {\n";
+    out << "    while ((mant_a & (1ul << 52)) == 0ul) {\n";
+    out << "      mant_a <<= 1;\n";
+    out << "      exp_a -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  if (exp_b_bits != 0u) {\n";
+    out << "    mant_b |= (1ul << 52);\n";
+    out << "  } else if (mant_b != 0ul) {\n";
+    out << "    while ((mant_b & (1ul << 52)) == 0ul) {\n";
+    out << "      mant_b <<= 1;\n";
+    out << "      exp_b -= 1;\n";
+    out << "    }\n";
+    out << "  }\n";
+    out << "  long exp = exp_a - exp_b;\n";
+    out << "  if (mant_a < mant_b) {\n";
+    out << "    mant_a <<= 1;\n";
+    out << "    exp -= 1;\n";
+    out << "  }\n";
+    out << "  ulong mant_ext = gpga_div_mantissa(mant_a, mant_b);\n";
+    out << "  return gpga_double_round_pack(sign, (int)exp, mant_ext);\n";
+    out << "}\n";
+    out << "inline bool gpga_double_eq(gpga_double a, gpga_double b) {\n";
+    out << "  if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {\n";
+    out << "    return false;\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(a) && gpga_double_is_zero(b)) {\n";
+    out << "    return true;\n";
+    out << "  }\n";
+    out << "  return a == b;\n";
+    out << "}\n";
+    out << "inline bool gpga_double_lt(gpga_double a, gpga_double b) {\n";
+    out << "  if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {\n";
+    out << "    return false;\n";
+    out << "  }\n";
+    out << "  if (gpga_double_is_zero(a) && gpga_double_is_zero(b)) {\n";
+    out << "    return false;\n";
+    out << "  }\n";
+    out << "  uint sign_a = gpga_double_sign(a);\n";
+    out << "  uint sign_b = gpga_double_sign(b);\n";
+    out << "  if (sign_a != sign_b) {\n";
+    out << "    return sign_a > sign_b;\n";
+    out << "  }\n";
+    out << "  ulong mag_a = a & 0x7FFFFFFFFFFFFFFFul;\n";
+    out << "  ulong mag_b = b & 0x7FFFFFFFFFFFFFFFul;\n";
+    out << "  if (sign_a != 0u) {\n";
+    out << "    return mag_a > mag_b;\n";
+    out << "  }\n";
+    out << "  return mag_a < mag_b;\n";
+    out << "}\n";
+    out << "inline bool gpga_double_le(gpga_double a, gpga_double b) {\n";
+    out << "  return gpga_double_lt(a, b) || gpga_double_eq(a, b);\n";
+    out << "}\n";
+    out << "inline bool gpga_double_gt(gpga_double a, gpga_double b) {\n";
+    out << "  return gpga_double_lt(b, a);\n";
+    out << "}\n";
+    out << "inline bool gpga_double_ge(gpga_double a, gpga_double b) {\n";
+    out << "  return gpga_double_gt(a, b) || gpga_double_eq(a, b);\n";
+    out << "}\n";
+    out << "inline gpga_double gpga_double_pow(gpga_double base, gpga_double exp) {\n";
+    out << "  long e = gpga_double_to_s64(exp);\n";
+    out << "  if (e == 0l) {\n";
+    out << "    return gpga_double_from_u32(1u);\n";
+    out << "  }\n";
+    out << "  bool neg = (e < 0l);\n";
+    out << "  if (neg) {\n";
+    out << "    e = -e;\n";
+    out << "  }\n";
+    out << "  gpga_double result = gpga_double_from_u32(1u);\n";
+    out << "  gpga_double factor = base;\n";
+    out << "  while (e > 0l) {\n";
+    out << "    if ((e & 1l) != 0l) {\n";
+    out << "      result = gpga_double_mul(result, factor);\n";
+    out << "    }\n";
+    out << "    factor = gpga_double_mul(factor, factor);\n";
+    out << "    e >>= 1;\n";
+    out << "  }\n";
+    out << "  if (neg) {\n";
+    out << "    result = gpga_double_div(gpga_double_from_u32(1u), result);\n";
+    out << "  }\n";
+    out << "  return result;\n";
     out << "}\n\n";
   }
   out << "struct GpgaParams { uint count; };\n\n";
@@ -3787,13 +4318,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string known_val =
             "((" + int_expr.val + " & ~" + int_expr.xz + ") & " + mask + ")";
         bool signed_expr = ExprSigned(expr, module);
-        std::string cast;
         if (int_expr.width > 32) {
-          cast = signed_expr ? "(long)" : "(ulong)";
-        } else {
-          cast = signed_expr ? "(int)" : "(uint)";
+          if (signed_expr) {
+            return "gpga_double_from_s64((long)(" + known_val + "))";
+          }
+          return "gpga_double_from_u64((ulong)(" + known_val + "))";
         }
-        return "double(" + cast + "(" + known_val + "))";
+        if (signed_expr) {
+          return "gpga_double_from_s32((int)(" + known_val + "))";
+        }
+        return "gpga_double_from_u32((uint)(" + known_val + "))";
       }
       switch (expr.kind) {
         case ExprKind::kIdentifier: {
@@ -3813,54 +4347,68 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return "gpga_bits_to_real(" + std::to_string(expr.value_bits) +
                    "ul)";
           }
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         case ExprKind::kString:
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         case ExprKind::kUnary: {
           std::string operand =
-              expr.operand ? emit_real_value4(*expr.operand) : "0.0";
+              expr.operand ? emit_real_value4(*expr.operand)
+                           : "gpga_bits_to_real(0ul)";
           if (expr.unary_op == '+') {
             return operand;
           }
           if (expr.unary_op == '-') {
-            return "(-" + operand + ")";
+            return "gpga_double_neg(" + operand + ")";
           }
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         }
         case ExprKind::kBinary: {
           std::string lhs =
-              expr.lhs ? emit_real_value4(*expr.lhs) : "0.0";
+              expr.lhs ? emit_real_value4(*expr.lhs)
+                       : "gpga_bits_to_real(0ul)";
           std::string rhs =
-              expr.rhs ? emit_real_value4(*expr.rhs) : "0.0";
+              expr.rhs ? emit_real_value4(*expr.rhs)
+                       : "gpga_bits_to_real(0ul)";
           if (expr.op == '+' || expr.op == '-' || expr.op == '*' ||
               expr.op == '/') {
-            return "(" + lhs + " " + std::string(1, expr.op) + " " + rhs + ")";
+            if (expr.op == '+') {
+              return "gpga_double_add(" + lhs + ", " + rhs + ")";
+            }
+            if (expr.op == '-') {
+              return "gpga_double_sub(" + lhs + ", " + rhs + ")";
+            }
+            if (expr.op == '*') {
+              return "gpga_double_mul(" + lhs + ", " + rhs + ")";
+            }
+            return "gpga_double_div(" + lhs + ", " + rhs + ")";
           }
           if (expr.op == 'p') {
-            return "pow(" + lhs + ", " + rhs + ")";
+            return "gpga_double_pow(" + lhs + ", " + rhs + ")";
           }
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         }
         case ExprKind::kTernary: {
           std::string cond = expr.condition
-                                 ? "(" + emit_real_value4(*expr.condition) +
-                                       " != 0.0)"
+                                 ? "(!gpga_double_is_zero(" +
+                                       emit_real_value4(*expr.condition) + "))"
                                  : "false";
           std::string then_expr =
-              expr.then_expr ? emit_real_value4(*expr.then_expr) : "0.0";
+              expr.then_expr ? emit_real_value4(*expr.then_expr)
+                             : "gpga_bits_to_real(0ul)";
           std::string else_expr =
-              expr.else_expr ? emit_real_value4(*expr.else_expr) : "0.0";
+              expr.else_expr ? emit_real_value4(*expr.else_expr)
+                             : "gpga_bits_to_real(0ul)";
           return "((" + cond + ") ? (" + then_expr + ") : (" + else_expr + "))";
         }
         case ExprKind::kCall:
           if (expr.ident == "$realtime") {
-            return "(double)__gpga_time";
+            return "gpga_double_from_u64(__gpga_time)";
           }
           if (expr.ident == "$itor") {
             if (!expr.call_args.empty() && expr.call_args.front()) {
               return emit_real_value4(*expr.call_args.front());
             }
-            return "0.0";
+            return "gpga_bits_to_real(0ul)";
           }
           if (expr.ident == "$bitstoreal") {
             if (!expr.call_args.empty() && expr.call_args.front()) {
@@ -3870,14 +4418,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               std::string bits = "((" + bits_expr.val + ") & " + mask + ")";
               return "gpga_bits_to_real(" + bits + ")";
             }
-            return "0.0";
+            return "gpga_bits_to_real(0ul)";
           }
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         case ExprKind::kSelect:
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         case ExprKind::kIndex: {
           if (!expr.base || !expr.index) {
-            return "0.0";
+            return "gpga_bits_to_real(0ul)";
           }
           if (expr.base->kind == ExprKind::kIdentifier) {
             int element_width = 0;
@@ -3901,15 +4449,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   idx_val + ")";
               return "((" + xguard + ") ? ((" + bounds + ") ? " +
                      "gpga_bits_to_real(" + val_name(expr.base->ident) + "[" +
-                     base + "]) : 0.0) : 0.0)";
+                     base + "]) : gpga_bits_to_real(0ul)) : gpga_bits_to_real(0ul))";
             }
           }
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
         }
         case ExprKind::kConcat:
-          return "0.0";
+          return "gpga_bits_to_real(0ul)";
       }
-      return "0.0";
+      return "gpga_bits_to_real(0ul)";
     };
 
     const std::unordered_map<std::string, int64_t> kEmptyParams;
@@ -3998,7 +4546,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (expr.unary_op == '!') {
             if (expr.operand && ExprIsRealValue(*expr.operand, module)) {
               std::string real_val = emit_real_value4(*expr.operand);
-              std::string pred = "(" + real_val + " == 0.0)";
+              std::string pred = "gpga_double_is_zero(" + real_val + ")";
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
@@ -4011,7 +4559,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (expr.unary_op == 'B') {
             if (expr.operand && ExprIsRealValue(*expr.operand, module)) {
               std::string real_val = emit_real_value4(*expr.operand);
-              std::string pred = "(" + real_val + " != 0.0)";
+              std::string pred = "!gpga_double_is_zero(" + real_val + ")";
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
@@ -4052,7 +4600,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             FsExpr rhs = emit_expr4(*expr.rhs);
             auto bool_expr = [&](const FsExpr& value) -> std::string {
               if (value.is_real) {
-                return "(gpga_bits_to_real(" + value.val + ") != 0.0)";
+                return "(!gpga_double_is_zero(gpga_bits_to_real(" + value.val +
+                       ")))";
               }
               return "(" + value.xz + " == " +
                      literal_for_width(0, value.width) + " && " + value.val +
@@ -4085,13 +4634,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if ((expr.lhs && ExprIsRealValue(*expr.lhs, module)) ||
                 (expr.rhs && ExprIsRealValue(*expr.rhs, module))) {
               std::string lhs_real =
-                  expr.lhs ? emit_real_value4(*expr.lhs) : "0.0";
+                  expr.lhs ? emit_real_value4(*expr.lhs)
+                           : "gpga_bits_to_real(0ul)";
               std::string rhs_real =
-                  expr.rhs ? emit_real_value4(*expr.rhs) : "0.0";
-              std::string op = (expr.op == 'c' || expr.op == 'w') ? "!="
-                                                                 : "==";
-              std::string pred = "(" + lhs_real + " " + op + " " + rhs_real +
-                                 ")";
+                  expr.rhs ? emit_real_value4(*expr.rhs)
+                           : "gpga_bits_to_real(0ul)";
+              std::string pred = "gpga_double_eq(" + lhs_real + ", " +
+                                 rhs_real + ")";
+              if (expr.op == 'c' || expr.op == 'w') {
+                pred = "!" + pred;
+              }
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
@@ -4127,12 +4679,27 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if ((expr.lhs && ExprIsRealValue(*expr.lhs, module)) ||
                 (expr.rhs && ExprIsRealValue(*expr.rhs, module))) {
               std::string lhs_real =
-                  expr.lhs ? emit_real_value4(*expr.lhs) : "0.0";
+                  expr.lhs ? emit_real_value4(*expr.lhs)
+                           : "gpga_bits_to_real(0ul)";
               std::string rhs_real =
-                  expr.rhs ? emit_real_value4(*expr.rhs) : "0.0";
-              std::string op = BinaryOpString(expr.op);
-              std::string pred = "(" + lhs_real + " " + op + " " + rhs_real +
-                                 ")";
+                  expr.rhs ? emit_real_value4(*expr.rhs)
+                           : "gpga_bits_to_real(0ul)";
+              std::string pred;
+              if (expr.op == 'E') {
+                pred = "gpga_double_eq(" + lhs_real + ", " + rhs_real + ")";
+              } else if (expr.op == 'N') {
+                pred = "!gpga_double_eq(" + lhs_real + ", " + rhs_real + ")";
+              } else if (expr.op == '<') {
+                pred = "gpga_double_lt(" + lhs_real + ", " + rhs_real + ")";
+              } else if (expr.op == '>') {
+                pred = "gpga_double_gt(" + lhs_real + ", " + rhs_real + ")";
+              } else if (expr.op == 'L') {
+                pred = "gpga_double_le(" + lhs_real + ", " + rhs_real + ")";
+              } else if (expr.op == 'G') {
+                pred = "gpga_double_ge(" + lhs_real + ", " + rhs_real + ")";
+              } else {
+                pred = "false";
+              }
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
@@ -4407,6 +4974,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return FsExpr{"1u", literal_for_width(0, width),
                           drive_full(width), width};
           }
+          if (expr.ident == "$ftell") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
           if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
             int width = 32;
             return FsExpr{"0u", literal_for_width(0, width),
@@ -4417,9 +4989,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             std::string real_val =
                 (!expr.call_args.empty() && expr.call_args.front())
                     ? emit_real_value4(*expr.call_args.front())
-                    : "0.0";
-            std::string cast = (width > 32) ? "(long)" : "(int)";
-            std::string raw = cast + "(" + real_val + ")";
+                    : "gpga_bits_to_real(0ul)";
+            std::string raw = "gpga_double_to_s64(" + real_val + ")";
             std::string val = MaskForWidthExpr(raw, width);
             return FsExpr{val, literal_for_width(0, width), drive_full(width),
                           width};
@@ -5566,7 +6137,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     auto cond_bool = [&](const FsExpr& expr) -> std::string {
       if (expr.is_real) {
-        return "(gpga_bits_to_real(" + expr.val + ") != 0.0)";
+        return "(!gpga_double_is_zero(gpga_bits_to_real(" + expr.val + ")))";
       }
       return "(" + expr.xz + " == " + literal_for_width(0, expr.width) +
              " && " + expr.val + " != " + literal_for_width(0, expr.width) +
@@ -7917,6 +8488,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
           out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
           out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_ARG_REAL = 3u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
@@ -7940,6 +8512,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constant constexpr uint GPGA_SERVICE_KIND_FEOF = 20u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_FSCANF = 21u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_SSCANF = 22u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FTELL = 23u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_REWIND = 24u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMH = 25u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMB = 26u;\n";
           out << "struct GpgaServiceRecord {\n";
           out << "  uint kind;\n";
           out << "  uint pid;\n";
@@ -8606,7 +9182,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
 
           bool requires_string =
-              name == "$dumpfile" || name == "$readmemh" || name == "$readmemb";
+              name == "$dumpfile" || name == "$readmemh" ||
+              name == "$readmemb" || name == "$writememh" ||
+              name == "$writememb";
           if (requires_string &&
               *format_id_expr == "GPGA_SERVICE_INVALID_ID") {
             return false;
@@ -8646,13 +9224,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                              "0ul"});
               continue;
             }
-            int width = ExprWidth(*arg, module);
+            bool is_real = ExprIsRealValue(*arg, module);
+            int width = is_real ? 64 : ExprWidth(*arg, module);
             if (width <= 0) {
               width = 1;
             }
             FsExpr value = emit_expr4_sized(*arg, width);
-            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", width,
-                                        to_ulong(value.val, width),
+            args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
+                                               : "GPGA_SERVICE_ARG_VALUE",
+                                        width, to_ulong(value.val, width),
                                         to_ulong(value.xz, width)});
           }
           return true;
@@ -8762,13 +9342,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                           std::to_string(id) + "ul", "0ul"});
               continue;
             }
-            int width = ExprWidth(*arg, module);
+            bool is_real = ExprIsRealValue(*arg, module);
+            int width = is_real ? 64 : ExprWidth(*arg, module);
             if (width <= 0) {
               width = 1;
             }
             FsExpr value = emit_expr4_sized(*arg, width);
-            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", width,
-                                        to_ulong(value.val, width),
+            args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
+                                               : "GPGA_SERVICE_ARG_VALUE",
+                                        width, to_ulong(value.val, width),
                                         to_ulong(value.xz, width)});
           }
           return true;
@@ -8922,6 +9504,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_FGETS";
           } else if (call.ident == "$feof") {
             kind_expr = "GPGA_SERVICE_KIND_FEOF";
+          } else if (call.ident == "$ftell") {
+            kind_expr = "GPGA_SERVICE_KIND_FTELL";
           } else if (call.ident == "$fscanf") {
             kind_expr = "GPGA_SERVICE_KIND_FSCANF";
           } else if (call.ident == "$sscanf") {
@@ -8975,7 +9559,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "bool " << changed << " = "
               << (force_emit ? "true" : "false") << ";\n";
           for (size_t i = 0; i < args.size(); ++i) {
-            if (args[i].kind != "GPGA_SERVICE_ARG_VALUE") {
+            if (args[i].kind != "GPGA_SERVICE_ARG_VALUE" &&
+                args[i].kind != "GPGA_SERVICE_ARG_REAL") {
               continue;
             }
             int width = args[i].width;
@@ -9062,6 +9647,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           } else if (name == "$fclose") {
             kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
             guard_file_fd = true;
+          } else if (name == "$ftell") {
+            kind_expr = "GPGA_SERVICE_KIND_FTELL";
+            guard_file_fd = true;
+          } else if (name == "$rewind") {
+            kind_expr = "GPGA_SERVICE_KIND_REWIND";
+            guard_file_fd = true;
           } else if (name == "$dumpfile") {
             kind_expr = "GPGA_SERVICE_KIND_DUMPFILE";
           } else if (name == "$dumpvars") {
@@ -9070,6 +9661,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_READMEMH";
           } else if (name == "$readmemb") {
             kind_expr = "GPGA_SERVICE_KIND_READMEMB";
+          } else if (name == "$writememh") {
+            kind_expr = "GPGA_SERVICE_KIND_WRITEMEMH";
+          } else if (name == "$writememb") {
+            kind_expr = "GPGA_SERVICE_KIND_WRITEMEMB";
           } else if (name == "$dumpoff") {
             kind_expr = "GPGA_SERVICE_KIND_DUMPOFF";
           } else if (name == "$dumpon") {
@@ -9124,7 +9719,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               name == "$dumpfile" || name == "$dumpvars" ||
               name == "$dumpoff" || name == "$dumpon" ||
               name == "$dumpflush" || name == "$dumpall" ||
-              name == "$dumplimit";
+              name == "$dumplimit" || name == "$writememh" ||
+              name == "$writememb";
 
           if (name == "$monitor") {
             auto it = system_task_info.monitor_ids.find(&stmt);
@@ -13526,6 +14122,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
         out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
         out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_ARG_REAL = 3u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
@@ -13549,6 +14146,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_KIND_FEOF = 20u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_FSCANF = 21u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_SSCANF = 22u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FTELL = 23u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_REWIND = 24u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMH = 25u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMB = 26u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -14170,8 +14771,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             *format_id_expr = std::to_string(id) + "u";
           }
 
-        bool requires_string =
-            name == "$dumpfile" || name == "$readmemh" || name == "$readmemb";
+          bool requires_string =
+              name == "$dumpfile" || name == "$readmemh" ||
+              name == "$readmemb" || name == "$writememh" ||
+              name == "$writememb";
         if (requires_string &&
             *format_id_expr == "GPGA_SERVICE_INVALID_ID") {
           return false;
@@ -14210,14 +14813,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                        "__gpga_time"});
             continue;
           }
-          int width = ExprWidth(*arg, module);
+          bool is_real = ExprIsRealValue(*arg, module);
+          int width = is_real ? 64 : ExprWidth(*arg, module);
           if (width <= 0) {
             width = 1;
           }
           std::string value =
-              EmitExprSized(*arg, width, module, sched_locals, sched_regs);
-          args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", width,
-                                     to_ulong(value, width)});
+              is_real
+                  ? EmitRealBitsExpr(*arg, module, sched_locals, sched_regs)
+                  : EmitExprSized(*arg, width, module, sched_locals, sched_regs);
+          args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
+                                             : "GPGA_SERVICE_ARG_VALUE",
+                                     width, to_ulong(value, width)});
         }
         return true;
       };
@@ -14360,14 +14967,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                        std::to_string(id) + "ul"});
             continue;
           }
-          int width = ExprWidth(*arg, module);
+          bool is_real = ExprIsRealValue(*arg, module);
+          int width = is_real ? 64 : ExprWidth(*arg, module);
           if (width <= 0) {
             width = 1;
           }
           std::string value =
-              EmitExprSized(*arg, width, module, sched_locals, sched_regs);
-          args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", width,
-                                     to_ulong(value, width)});
+              is_real
+                  ? EmitRealBitsExpr(*arg, module, sched_locals, sched_regs)
+                  : EmitExprSized(*arg, width, module, sched_locals, sched_regs);
+          args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
+                                             : "GPGA_SERVICE_ARG_VALUE",
+                                     width, to_ulong(value, width)});
         }
         return true;
       };
@@ -14480,6 +15091,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           kind_expr = "GPGA_SERVICE_KIND_FGETS";
         } else if (call.ident == "$feof") {
           kind_expr = "GPGA_SERVICE_KIND_FEOF";
+        } else if (call.ident == "$ftell") {
+          kind_expr = "GPGA_SERVICE_KIND_FTELL";
         } else if (call.ident == "$fscanf") {
           kind_expr = "GPGA_SERVICE_KIND_FSCANF";
         } else if (call.ident == "$sscanf") {
@@ -14535,7 +15148,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << pad << "bool " << changed << " = "
             << (force_emit ? "true" : "false") << ";\n";
         for (size_t i = 0; i < args.size(); ++i) {
-          if (args[i].kind != "GPGA_SERVICE_ARG_VALUE") {
+          if (args[i].kind != "GPGA_SERVICE_ARG_VALUE" &&
+              args[i].kind != "GPGA_SERVICE_ARG_REAL") {
             continue;
           }
           int width = args[i].width;
@@ -14619,18 +15233,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
           arg_start = 1;
           guard_file_fd = true;
+        } else if (name == "$ftell") {
+          kind_expr = "GPGA_SERVICE_KIND_FTELL";
+          guard_file_fd = true;
+        } else if (name == "$rewind") {
+          kind_expr = "GPGA_SERVICE_KIND_REWIND";
+          guard_file_fd = true;
         } else if (name == "$dumpfile") {
           kind_expr = "GPGA_SERVICE_KIND_DUMPFILE";
         } else if (name == "$dumpvars") {
           kind_expr = "GPGA_SERVICE_KIND_DUMPVARS";
-        } else if (name == "$readmemh") {
-          kind_expr = "GPGA_SERVICE_KIND_READMEMH";
-        } else if (name == "$readmemb") {
-          kind_expr = "GPGA_SERVICE_KIND_READMEMB";
-        } else if (name == "$dumpoff") {
-          kind_expr = "GPGA_SERVICE_KIND_DUMPOFF";
-        } else if (name == "$dumpon") {
-          kind_expr = "GPGA_SERVICE_KIND_DUMPON";
+          } else if (name == "$readmemh") {
+            kind_expr = "GPGA_SERVICE_KIND_READMEMH";
+          } else if (name == "$readmemb") {
+            kind_expr = "GPGA_SERVICE_KIND_READMEMB";
+          } else if (name == "$writememh") {
+            kind_expr = "GPGA_SERVICE_KIND_WRITEMEMH";
+          } else if (name == "$writememb") {
+            kind_expr = "GPGA_SERVICE_KIND_WRITEMEMB";
+          } else if (name == "$dumpoff") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPOFF";
+          } else if (name == "$dumpon") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPON";
         } else if (name == "$dumpflush") {
           kind_expr = "GPGA_SERVICE_KIND_DUMPFLUSH";
         } else if (name == "$dumpall") {
@@ -14676,7 +15300,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             name == "$dumpfile" || name == "$dumpvars" ||
             name == "$dumpoff" || name == "$dumpon" ||
             name == "$dumpflush" || name == "$dumpall" ||
-            name == "$dumplimit";
+            name == "$dumplimit" || name == "$writememh" ||
+            name == "$writememb";
 
         if (name == "$monitor") {
           auto it = system_task_info.monitor_ids.find(&stmt);

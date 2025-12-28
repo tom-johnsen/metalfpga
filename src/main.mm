@@ -76,13 +76,14 @@ bool IsSystemTask(const std::string& name) {
 }
 
 bool IdentAsString(const std::string& name) {
-  return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb";
+  return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
+         name == "$writememh" || name == "$writememb";
 }
 
 bool IsFileSystemFunctionName(const std::string& name) {
   return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
          name == "$fgets" || name == "$feof" || name == "$fscanf" ||
-         name == "$sscanf";
+         name == "$sscanf" || name == "$ftell";
 }
 
 void AddString(SysTaskInfo* info, const std::string& value) {
@@ -681,8 +682,13 @@ std::string ReadSignalString(const gpga::SignalInfo& sig, uint32_t gid,
   return UnpackStringBits(value, max_bytes);
 }
 
-std::vector<char> ParseFormatSpecs(const std::string& format) {
-  std::vector<char> specs;
+struct FormatSpec {
+  char spec = 0;
+  bool suppress = false;
+};
+
+std::vector<FormatSpec> ParseFormatSpecs(const std::string& format) {
+  std::vector<FormatSpec> specs;
   for (size_t i = 0; i < format.size(); ++i) {
     if (format[i] != '%') {
       continue;
@@ -691,16 +697,25 @@ std::vector<char> ParseFormatSpecs(const std::string& format) {
       ++i;
       continue;
     }
+    bool suppress = false;
     size_t j = i + 1;
     while (j < format.size()) {
       char c = format[j];
+      if (c == '*') {
+        suppress = true;
+        ++j;
+        continue;
+      }
       if (std::isdigit(static_cast<unsigned char>(c)) || c == '-' || c == '+' ||
           c == '#' || c == '.') {
         ++j;
         continue;
       }
-      specs.push_back(static_cast<char>(std::tolower(
-          static_cast<unsigned char>(c))));
+      FormatSpec spec;
+      spec.spec =
+          static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      spec.suppress = suppress;
+      specs.push_back(spec);
       i = j;
       break;
     }
@@ -768,6 +783,27 @@ bool ParseTokenValue(const std::string& token, char spec, uint64_t* out_value,
     }
     return true;
   }
+  if (spec == 'c') {
+    if (out_value) {
+      unsigned char ch =
+          token.empty() ? 0u : static_cast<unsigned char>(token[0]);
+      *out_value = static_cast<uint64_t>(ch);
+    }
+    return true;
+  }
+  if (spec == 'f' || spec == 'e' || spec == 'g') {
+    char* end = nullptr;
+    double val = std::strtod(token.c_str(), &end);
+    if (end == token.c_str()) {
+      return false;
+    }
+    if (out_value) {
+      uint64_t bits = 0;
+      std::memcpy(&bits, &val, sizeof(bits));
+      *out_value = bits;
+    }
+    return true;
+  }
   int base = 10;
   if (spec == 'h' || spec == 'x') {
     base = 16;
@@ -778,7 +814,8 @@ bool ParseTokenValue(const std::string& token, char spec, uint64_t* out_value,
   }
   char* end = nullptr;
   if (spec == 'd' || spec == 'i') {
-    long long val = std::strtoll(token.c_str(), &end, base);
+    int parse_base = (spec == 'i') ? 0 : base;
+    long long val = std::strtoll(token.c_str(), &end, parse_base);
     if (end == token.c_str()) {
       return false;
     }
@@ -919,7 +956,33 @@ std::string FormatNumeric(const gpga::ServiceArgView& arg, char spec,
   return std::to_string(signed_value);
 }
 
-std::string FormatArg(const gpga::ServiceArgView& arg, char spec,
+std::string FormatReal(const gpga::ServiceArgView& arg, char spec,
+                       int precision, bool has_xz) {
+  if (has_xz && arg.xz != 0u) {
+    return "x";
+  }
+  double value = 0.0;
+  if (arg.kind == gpga::ServiceArgKind::kReal) {
+    uint64_t bits = arg.value;
+    std::memcpy(&value, &bits, sizeof(value));
+  } else {
+    int64_t signed_value = SignExtend(arg.value, arg.width);
+    value = static_cast<double>(signed_value);
+  }
+  std::ostringstream oss;
+  if (spec == 'f') {
+    oss << std::fixed;
+  } else if (spec == 'e') {
+    oss << std::scientific;
+  }
+  if (precision >= 0) {
+    oss << std::setprecision(precision);
+  }
+  oss << value;
+  return oss.str();
+}
+
+std::string FormatArg(const gpga::ServiceArgView& arg, char spec, int precision,
                       const gpga::ServiceStringTable& strings, bool has_xz) {
   if (arg.kind == gpga::ServiceArgKind::kString ||
       arg.kind == gpga::ServiceArgKind::kIdent) {
@@ -927,6 +990,9 @@ std::string FormatArg(const gpga::ServiceArgView& arg, char spec,
   }
   if (spec == 's') {
     return FormatNumeric(arg, 'd', has_xz);
+  }
+  if (spec == 'f' || spec == 'e' || spec == 'g') {
+    return FormatReal(arg, spec, precision, has_xz);
   }
   return FormatNumeric(arg, spec, has_xz);
 }
@@ -951,6 +1017,7 @@ std::string FormatWithSpec(const std::string& fmt,
     }
     bool zero_pad = false;
     int width = 0;
+    int precision = -1;
     size_t j = i + 1;
     if (j < fmt.size() && fmt[j] == '0') {
       zero_pad = true;
@@ -959,6 +1026,14 @@ std::string FormatWithSpec(const std::string& fmt,
     while (j < fmt.size() && fmt[j] >= '0' && fmt[j] <= '9') {
       width = (width * 10) + (fmt[j] - '0');
       ++j;
+    }
+    if (j < fmt.size() && fmt[j] == '.') {
+      ++j;
+      precision = 0;
+      while (j < fmt.size() && fmt[j] >= '0' && fmt[j] <= '9') {
+        precision = (precision * 10) + (fmt[j] - '0');
+        ++j;
+      }
     }
     if (j >= fmt.size()) {
       break;
@@ -972,7 +1047,8 @@ std::string FormatWithSpec(const std::string& fmt,
       oss << ApplyPadding("<missing>", width, false);
       continue;
     }
-    std::string text = FormatArg(args[arg_index], spec, strings, has_xz);
+    std::string text =
+        FormatArg(args[arg_index], spec, precision, strings, has_xz);
     ++arg_index;
     oss << ApplyPadding(std::move(text), width, zero_pad);
   }
@@ -991,6 +1067,8 @@ std::string FormatDefaultArgs(const std::vector<gpga::ServiceArgView>& args,
     if (arg.kind == gpga::ServiceArgKind::kString ||
         arg.kind == gpga::ServiceArgKind::kIdent) {
       oss << ResolveString(strings, static_cast<uint32_t>(arg.value));
+    } else if (arg.kind == gpga::ServiceArgKind::kReal) {
+      oss << FormatReal(arg, 'g', -1, has_xz);
     } else {
       oss << FormatNumeric(arg, 'd', has_xz);
     }
@@ -1510,6 +1588,10 @@ class VcdWriter {
 
   void EmitValue(const VcdSignal& sig, uint64_t val, uint64_t xz) {
     if (sig.is_real) {
+      if (xz != 0) {
+        out_ << "rnan " << sig.id << "\n";
+        return;
+      }
       double real_val = 0.0;
       std::memcpy(&real_val, &val, sizeof(real_val));
       out_ << "r" << real_val << " " << sig.id << "\n";
@@ -1540,6 +1622,14 @@ class VcdWriter {
       bool force_values) {
     if (!active_) {
       return;
+    }
+    if (dump_limit_ != 0u && out_) {
+      std::streampos pos = out_.tellp();
+      if (pos >= 0 &&
+          static_cast<uint64_t>(pos) >= dump_limit_) {
+        dumping_ = false;
+        return;
+      }
     }
     if (!has_time_ || time != last_time_) {
       out_ << "#" << time << "\n";
@@ -1806,6 +1896,157 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
   return true;
 }
 
+std::string FormatMemWord(uint64_t val, uint64_t xz, uint32_t width,
+                          bool is_hex, bool four_state) {
+  if (width == 0u) {
+    width = 1u;
+  }
+  if (width > 64u) {
+    width = 64u;
+  }
+  if (!is_hex) {
+    std::string out;
+    out.reserve(width);
+    for (int bit = static_cast<int>(width) - 1; bit >= 0; --bit) {
+      uint64_t mask = 1ull << static_cast<uint32_t>(bit);
+      bool has_xz = four_state && ((xz & mask) != 0u);
+      if (!has_xz) {
+        out.push_back((val & mask) ? '1' : '0');
+      } else {
+        out.push_back((val & mask) ? 'x' : 'z');
+      }
+    }
+    return out;
+  }
+  uint32_t digits = (width + 3u) / 4u;
+  std::string out;
+  out.reserve(digits);
+  for (uint32_t d = 0; d < digits; ++d) {
+    int start_bit = static_cast<int>(width) - 1 - static_cast<int>(d * 4u);
+    uint32_t nibble_val = 0u;
+    uint32_t nibble_xz = 0u;
+    uint32_t nibble_mask = 0u;
+    for (int b = 0; b < 4; ++b) {
+      int bit_index = start_bit - b;
+      if (bit_index < 0) {
+        continue;
+      }
+      uint32_t nibble_bit = 1u << (3 - b);
+      nibble_mask |= nibble_bit;
+      uint64_t mask = 1ull << static_cast<uint32_t>(bit_index);
+      if (val & mask) {
+        nibble_val |= nibble_bit;
+      }
+      if (xz & mask) {
+        nibble_xz |= nibble_bit;
+      }
+    }
+    if (four_state && nibble_xz != 0u) {
+      if (nibble_xz == nibble_mask && nibble_val == 0u) {
+        out.push_back('z');
+      } else {
+        out.push_back('x');
+      }
+    } else {
+      static const char kDigits[] = "0123456789abcdef";
+      out.push_back(kDigits[nibble_val & 0xFu]);
+    }
+  }
+  return out;
+}
+
+bool ApplyWritemem(const std::string& filename, bool is_hex,
+                   const gpga::SignalInfo& signal, bool four_state,
+                   std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
+                   uint64_t start, uint64_t end, std::string* error) {
+  if (!buffers) {
+    return false;
+  }
+  std::ofstream out(filename, std::ios::out | std::ios::trunc);
+  if (!out) {
+    if (error) {
+      *error = "failed to open writemem file: " + filename;
+    }
+    return false;
+  }
+  const std::string base = signal.name;
+  auto it_val = buffers->find(base + "_val");
+  if (it_val == buffers->end()) {
+    it_val = buffers->find(base);
+  }
+  if (it_val == buffers->end()) {
+    if (error) {
+      *error = "writemem target buffer not found: " + base;
+    }
+    return false;
+  }
+  gpga::MetalBuffer* val_buf = &it_val->second;
+  gpga::MetalBuffer* xz_buf = nullptr;
+  if (four_state) {
+    auto it_xz = buffers->find(base + "_xz");
+    if (it_xz != buffers->end()) {
+      xz_buf = &it_xz->second;
+    }
+  }
+  uint32_t width = signal.is_real ? 64u : signal.width;
+  if (width == 0u) {
+    width = 1u;
+  }
+  size_t elem_size = (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
+  uint32_t array_size = signal.array_size > 0 ? signal.array_size : 1u;
+  if (end == std::numeric_limits<uint64_t>::max()) {
+    end = (array_size > 0) ? static_cast<uint64_t>(array_size - 1u) : 0u;
+  }
+  if (start > end) {
+    std::swap(start, end);
+  }
+  if (array_size == 0 || start >= array_size) {
+    return true;
+  }
+  uint64_t limit_end = std::min<uint64_t>(end, array_size - 1u);
+  for (uint64_t addr = start; addr <= limit_end; ++addr) {
+    size_t offset = static_cast<size_t>(addr) * elem_size;
+    if (val_buf->length() < offset + elem_size) {
+      break;
+    }
+    uint64_t val = 0;
+    uint64_t xz = 0;
+    if (elem_size == sizeof(uint64_t)) {
+      std::memcpy(&val,
+                  static_cast<uint8_t*>(val_buf->contents()) + offset,
+                  sizeof(uint64_t));
+      if (four_state && xz_buf && xz_buf->contents() &&
+          xz_buf->length() >= offset + elem_size) {
+        std::memcpy(&xz,
+                    static_cast<uint8_t*>(xz_buf->contents()) + offset,
+                    sizeof(uint64_t));
+      }
+    } else {
+      uint32_t tmp = 0;
+      std::memcpy(&tmp,
+                  static_cast<uint8_t*>(val_buf->contents()) + offset,
+                  sizeof(uint32_t));
+      val = tmp;
+      if (four_state && xz_buf && xz_buf->contents() &&
+          xz_buf->length() >= offset + elem_size) {
+        uint32_t tmp_xz = 0;
+        std::memcpy(&tmp_xz,
+                    static_cast<uint8_t*>(xz_buf->contents()) + offset,
+                    sizeof(uint32_t));
+        xz = tmp_xz;
+      }
+    }
+    out << FormatMemWord(val, xz, width, is_hex, four_state) << "\n";
+    if (!out) {
+      if (error) {
+        *error = "failed to write writemem file: " + filename;
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 bool HandleServiceRecords(
     const std::vector<DecodedServiceRecord>& records,
     const gpga::ServiceStringTable& strings, const gpga::ModuleInfo& module,
@@ -2063,6 +2304,20 @@ bool HandleServiceRecords(
         resume_service(rec.pid, 0);
         break;
       }
+      case gpga::ServiceKind::kRewind: {
+        if (rec.args.empty() ||
+            rec.args.front().kind != gpga::ServiceArgKind::kValue) {
+          resume_service(rec.pid, 0);
+          break;
+        }
+        uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
+        auto file_it = files->handles.find(fd);
+        if (file_it != files->handles.end() && file_it->second.file) {
+          std::rewind(file_it->second.file);
+        }
+        resume_service(rec.pid, 0);
+        break;
+      }
       case gpga::ServiceKind::kFgetc: {
         if (rec.args.empty() ||
             rec.args.front().kind != gpga::ServiceArgKind::kValue) {
@@ -2130,6 +2385,24 @@ bool HandleServiceRecords(
         resume_service(rec.pid, value);
         break;
       }
+      case gpga::ServiceKind::kFtell: {
+        if (rec.args.empty() ||
+            rec.args.front().kind != gpga::ServiceArgKind::kValue) {
+          resume_service(rec.pid, 0xFFFFFFFFFFFFFFFFull);
+          break;
+        }
+        uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
+        auto file_it = files->handles.find(fd);
+        uint64_t value = 0xFFFFFFFFFFFFFFFFull;
+        if (file_it != files->handles.end() && file_it->second.file) {
+          long pos = std::ftell(file_it->second.file);
+          if (pos >= 0) {
+            value = static_cast<uint64_t>(pos);
+          }
+        }
+        resume_service(rec.pid, value);
+        break;
+      }
       case gpga::ServiceKind::kFscanf: {
         if (rec.args.size() < 2 ||
             rec.args[0].kind != gpga::ServiceArgKind::kValue) {
@@ -2145,15 +2418,12 @@ bool HandleServiceRecords(
         std::string fmt = (rec.format_id != 0xFFFFFFFFu)
                               ? ResolveString(strings, rec.format_id)
                               : "";
-        std::vector<char> specs = ParseFormatSpecs(fmt);
+        std::vector<FormatSpec> specs = ParseFormatSpecs(fmt);
         int assigned = 0;
         bool eof_before = false;
-        size_t out_index = 0;
-        for (size_t i = 1; i < rec.args.size() && out_index < specs.size();
-             ++i) {
-          if (rec.args[i].kind != gpga::ServiceArgKind::kIdent) {
-            continue;
-          }
+        size_t arg_index = 1;
+        for (size_t spec_index = 0; spec_index < specs.size(); ++spec_index) {
+          const FormatSpec& spec = specs[spec_index];
           std::string token;
           bool token_eof = false;
           if (!ReadTokenFromFile(file_it->second.file, &token, &token_eof)) {
@@ -2162,12 +2432,22 @@ bool HandleServiceRecords(
           }
           uint64_t value = 0;
           std::string str_value;
-          if (!ParseTokenValue(token, specs[out_index], &value, &str_value)) {
+          if (!ParseTokenValue(token, spec.spec, &value, &str_value)) {
             break;
           }
-          write_output_arg(rec.args[i], value, str_value);
+          if (spec.suppress) {
+            continue;
+          }
+          while (arg_index < rec.args.size() &&
+                 rec.args[arg_index].kind != gpga::ServiceArgKind::kIdent) {
+            ++arg_index;
+          }
+          if (arg_index >= rec.args.size()) {
+            break;
+          }
+          write_output_arg(rec.args[arg_index], value, str_value);
           assigned++;
-          out_index++;
+          ++arg_index;
         }
         if (specs.empty()) {
           resume_service(rec.pid, 0);
@@ -2189,15 +2469,12 @@ bool HandleServiceRecords(
         std::string fmt = (rec.format_id != 0xFFFFFFFFu)
                               ? ResolveString(strings, rec.format_id)
                               : "";
-        std::vector<char> specs = ParseFormatSpecs(fmt);
+        std::vector<FormatSpec> specs = ParseFormatSpecs(fmt);
         size_t pos = 0;
         int assigned = 0;
-        size_t out_index = 0;
-        for (size_t i = 1; i < rec.args.size() && out_index < specs.size();
-             ++i) {
-          if (rec.args[i].kind != gpga::ServiceArgKind::kIdent) {
-            continue;
-          }
+        size_t arg_index = 1;
+        for (size_t spec_index = 0; spec_index < specs.size(); ++spec_index) {
+          const FormatSpec& spec = specs[spec_index];
           std::string token;
           if (!ReadTokenFromString(input, &pos, &token)) {
             resume_service(rec.pid, static_cast<uint64_t>(assigned));
@@ -2205,13 +2482,23 @@ bool HandleServiceRecords(
           }
           uint64_t value = 0;
           std::string str_value;
-          if (!ParseTokenValue(token, specs[out_index], &value, &str_value)) {
+          if (!ParseTokenValue(token, spec.spec, &value, &str_value)) {
             resume_service(rec.pid, static_cast<uint64_t>(assigned));
             break;
           }
-          write_output_arg(rec.args[i], value, str_value);
+          if (spec.suppress) {
+            continue;
+          }
+          while (arg_index < rec.args.size() &&
+                 rec.args[arg_index].kind != gpga::ServiceArgKind::kIdent) {
+            ++arg_index;
+          }
+          if (arg_index >= rec.args.size()) {
+            break;
+          }
+          write_output_arg(rec.args[arg_index], value, str_value);
           assigned++;
-          out_index++;
+          ++arg_index;
         }
         resume_service(rec.pid, static_cast<uint64_t>(assigned));
         break;
@@ -2302,6 +2589,73 @@ bool HandleServiceRecords(
         bool is_hex = rec.kind == gpga::ServiceKind::kReadmemh;
         if (!ApplyReadmem(filename, is_hex, *it, four_state, buffers,
                           instance_count, start, end, error)) {
+          return false;
+        }
+        std::cout << label << " \"" << filename << "\" (pid=" << rec.pid << ")";
+        for (const auto& arg : rec.args) {
+          std::cout << " ";
+          if (arg.kind == gpga::ServiceArgKind::kString ||
+              arg.kind == gpga::ServiceArgKind::kIdent) {
+            std::cout
+                << ResolveString(strings, static_cast<uint32_t>(arg.value));
+          } else {
+            std::cout << FormatNumeric(arg, 'h', four_state);
+          }
+        }
+        std::cout << "\n";
+        break;
+      }
+      case gpga::ServiceKind::kWritememh:
+      case gpga::ServiceKind::kWritememb: {
+        std::string label =
+            (rec.kind == gpga::ServiceKind::kWritememh) ? "$writememh"
+                                                        : "$writememb";
+        std::string filename = ResolveString(strings, rec.format_id);
+        std::string target;
+        uint64_t start = 0;
+        uint64_t end = std::numeric_limits<uint64_t>::max();
+        bool seen_target = false;
+        bool seen_start = false;
+        for (const auto& arg : rec.args) {
+          if (arg.kind == gpga::ServiceArgKind::kIdent ||
+              arg.kind == gpga::ServiceArgKind::kString) {
+            if (!seen_target &&
+                arg.kind == gpga::ServiceArgKind::kString &&
+                arg.value == static_cast<uint64_t>(rec.format_id)) {
+              continue;
+            }
+            if (!seen_target) {
+              target =
+                  ResolveString(strings, static_cast<uint32_t>(arg.value));
+              seen_target = true;
+              continue;
+            }
+          }
+          if (seen_target && arg.kind == gpga::ServiceArgKind::kValue) {
+            if (!seen_start) {
+              start = arg.value;
+              seen_start = true;
+            } else if (end == std::numeric_limits<uint64_t>::max()) {
+              end = arg.value;
+            }
+          }
+        }
+        if (target.empty()) {
+          continue;
+        }
+        auto it = std::find_if(module.signals.begin(), module.signals.end(),
+                               [&](const gpga::SignalInfo& sig) {
+                                 return sig.name == target;
+                               });
+        if (it == module.signals.end()) {
+          if (error) {
+            *error = "writemem target not found: " + target;
+          }
+          return false;
+        }
+        bool is_hex = rec.kind == gpga::ServiceKind::kWritememh;
+        if (!ApplyWritemem(filename, is_hex, *it, four_state, buffers, start,
+                           end, error)) {
           return false;
         }
         std::cout << label << " \"" << filename << "\" (pid=" << rec.pid << ")";
@@ -2536,6 +2890,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           for (uint32_t gid = 0; gid < count; ++gid) {
             uint32_t used = counts[gid];
             if (used > service_capacity) {
+              std::cerr << "warning: service record overflow (gid=" << gid
+                        << ", used=" << used << ", capacity="
+                        << service_capacity << ")\n";
               used = service_capacity;
             }
             if (used == 0u) {

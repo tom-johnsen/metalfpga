@@ -176,7 +176,33 @@ std::string FormatNumeric(const ServiceArgView& arg, char spec, bool has_xz) {
   return std::to_string(signed_value);
 }
 
-std::string FormatArg(const ServiceArgView& arg, char spec,
+std::string FormatReal(const ServiceArgView& arg, char spec, int precision,
+                       bool has_xz) {
+  if (has_xz && arg.xz != 0u) {
+    return "x";
+  }
+  double value = 0.0;
+  if (arg.kind == ServiceArgKind::kReal) {
+    uint64_t bits = arg.value;
+    std::memcpy(&value, &bits, sizeof(value));
+  } else {
+    int64_t signed_value = SignExtend(arg.value, arg.width);
+    value = static_cast<double>(signed_value);
+  }
+  std::ostringstream oss;
+  if (spec == 'f') {
+    oss << std::fixed;
+  } else if (spec == 'e') {
+    oss << std::scientific;
+  }
+  if (precision >= 0) {
+    oss << std::setprecision(precision);
+  }
+  oss << value;
+  return oss.str();
+}
+
+std::string FormatArg(const ServiceArgView& arg, char spec, int precision,
                       const ServiceStringTable& strings, bool has_xz) {
   if (arg.kind == ServiceArgKind::kString ||
       arg.kind == ServiceArgKind::kIdent) {
@@ -184,6 +210,9 @@ std::string FormatArg(const ServiceArgView& arg, char spec,
   }
   if (spec == 's') {
     return FormatNumeric(arg, 'd', has_xz);
+  }
+  if (spec == 'f' || spec == 'e' || spec == 'g') {
+    return FormatReal(arg, spec, precision, has_xz);
   }
   return FormatNumeric(arg, spec, has_xz);
 }
@@ -207,6 +236,7 @@ std::string FormatWithSpec(const std::string& fmt,
     }
     bool zero_pad = false;
     int width = 0;
+    int precision = -1;
     size_t j = i + 1;
     if (j < fmt.size() && fmt[j] == '0') {
       zero_pad = true;
@@ -215,6 +245,14 @@ std::string FormatWithSpec(const std::string& fmt,
     while (j < fmt.size() && fmt[j] >= '0' && fmt[j] <= '9') {
       width = (width * 10) + (fmt[j] - '0');
       ++j;
+    }
+    if (j < fmt.size() && fmt[j] == '.') {
+      ++j;
+      precision = 0;
+      while (j < fmt.size() && fmt[j] >= '0' && fmt[j] <= '9') {
+        precision = (precision * 10) + (fmt[j] - '0');
+        ++j;
+      }
     }
     if (j >= fmt.size()) {
       break;
@@ -228,7 +266,8 @@ std::string FormatWithSpec(const std::string& fmt,
       oss << ApplyPadding("<missing>", width, false);
       continue;
     }
-    std::string text = FormatArg(args[arg_index], spec, strings, has_xz);
+    std::string text =
+        FormatArg(args[arg_index], spec, precision, strings, has_xz);
     ++arg_index;
     oss << ApplyPadding(std::move(text), width, zero_pad);
   }
@@ -246,6 +285,8 @@ std::string FormatDefaultArgs(const std::vector<ServiceArgView>& args,
     if (arg.kind == ServiceArgKind::kString ||
         arg.kind == ServiceArgKind::kIdent) {
       oss << ResolveString(strings, static_cast<uint32_t>(arg.value));
+    } else if (arg.kind == ServiceArgKind::kReal) {
+      oss << FormatReal(arg, 'g', -1, has_xz);
     } else {
       oss << FormatNumeric(arg, 'd', has_xz);
     }
@@ -1065,10 +1106,36 @@ ServiceDrainResult DrainSchedulerServices(
         out << "\n";
         break;
       }
+      case ServiceKind::kFtell:
+        out << "$ftell (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kRewind:
+        out << "$rewind (pid=" << pid << ")\n";
+        break;
       case ServiceKind::kReadmemh:
       case ServiceKind::kReadmemb: {
         std::string label =
             (kind == ServiceKind::kReadmemh) ? "$readmemh" : "$readmemb";
+        std::string filename = ResolveString(strings, format_id);
+        out << label << " \"" << filename << "\" (pid=" << pid << ")";
+        for (uint32_t a = 0; a < arg_count; ++a) {
+          const ServiceArgView& arg = args[a];
+          out << " ";
+          if (arg.kind == ServiceArgKind::kString ||
+              arg.kind == ServiceArgKind::kIdent) {
+            out << ResolveString(strings,
+                                 static_cast<uint32_t>(arg.value));
+          } else {
+            out << FormatNumeric(arg, 'h', has_xz);
+          }
+        }
+        out << "\n";
+        break;
+      }
+      case ServiceKind::kWritememh:
+      case ServiceKind::kWritememb: {
+        std::string label =
+            (kind == ServiceKind::kWritememh) ? "$writememh" : "$writememb";
         std::string filename = ResolveString(strings, format_id);
         out << label << " \"" << filename << "\" (pid=" << pid << ")";
         for (uint32_t a = 0; a < arg_count; ++a) {

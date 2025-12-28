@@ -11,6 +11,7 @@ msl/
 host/
 test_results/
 artifacts/
+goldentests/
 
 docs/PLAN.md
 docs/IDEA.md

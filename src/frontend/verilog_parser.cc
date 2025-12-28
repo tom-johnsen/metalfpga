@@ -1529,7 +1529,7 @@ class Parser {
       case 'x':
       default:
         expr->number = 0;
-        expr->value_bits = 0;
+        expr->value_bits = mask;
         expr->x_bits = mask;
         expr->z_bits = 0;
         break;
@@ -7714,6 +7714,8 @@ class Parser {
         expr = parse_system_call("$fgetc", false);
       } else if (MatchKeyword("feof")) {
         expr = parse_system_call("$feof", false);
+      } else if (MatchKeyword("ftell")) {
+        expr = parse_system_call("$ftell", false);
       } else if (MatchKeyword("fgets")) {
         expr = parse_system_call("$fgets", false);
       } else if (MatchKeyword("fscanf")) {
@@ -8231,6 +8233,7 @@ class Parser {
           mask = ((1ull << bits_per_digit) - 1ull) << shift;
         }
         if (c == 'x' || c == 'X') {
+          value_bits |= mask;
           x_bits |= mask;
           continue;
         }

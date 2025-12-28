@@ -1,7 +1,7 @@
 // EXPECT=PASS
 // Test: $writememb system task
 // Feature: Write memory to binary file
-// Expected: Should fail - $writememb not yet implemented
+// Expected: Binary files are written with memory contents
 
 module test_system_writememb;
   reg [7:0] memory [0:255];

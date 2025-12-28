@@ -14,6 +14,7 @@ enum class ServiceArgKind : uint32_t {
   kValue = 0u,
   kIdent = 1u,
   kString = 2u,
+  kReal = 3u,
 };
 
 enum class ServiceKind : uint32_t {
@@ -40,6 +41,10 @@ enum class ServiceKind : uint32_t {
   kFeof = 20u,
   kFscanf = 21u,
   kSscanf = 22u,
+  kFtell = 23u,
+  kRewind = 24u,
+  kWritememh = 25u,
+  kWritememb = 26u,
 };
 
 struct ServiceStringTable {

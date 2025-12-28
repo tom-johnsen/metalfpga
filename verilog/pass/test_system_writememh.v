@@ -1,7 +1,7 @@
 // EXPECT=PASS
 // Test: $writememh system task
 // Feature: Write memory to hex file
-// Expected: Should fail - $writememh not yet implemented
+// Expected: Hex file is written with memory contents
 
 module test_system_writememh;
   reg [15:0] data [0:15];

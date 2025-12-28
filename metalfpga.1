@@ -175,6 +175,8 @@ Part-select assignment (procedural): data[7:0] = value, data[idx +: 4] = value
 Concatenation: {a, b, c}
 .IP \[bu]
 Replication: {4{1'b0}}
+.IP \[bu]
+String literals: "Hello" - Converted to packed ASCII bit values (little-endian, up to 8 characters/64 bits)
 .SS System Functions and Tasks
 .IP \[bu] 2
 Type casting: $signed(...), $unsigned(...)
@@ -194,6 +196,8 @@ Formatting: $timeformat, $printtimescale
 Memory I/O: $readmemh, $readmemb, $writememh, $writememb - Memory initialization and dump
 .IP \[bu]
 Waveform: $dumpfile, $dumpvars, $dumpall, $dumpon, $dumpoff, $dumpflush, $dumplimit - Full VCD waveform generation with dump control
+.IP \[bu]
+File I/O: $fopen, $fclose, $fgetc, $fgets, $feof, $fscanf, $sscanf - File operations (infrastructure in place, runtime execution pending)
 .IP \[bu]
 String: $sformat - String formatting
 .IP \[bu]
@@ -385,8 +389,11 @@ Flattened netlist invariants
 .I docs/gpga_4state_api.md
 Complete MSL 4-state library reference (100+ functions)
 .TP
+.I docs/GPGA_KEYWORDS.md
+GPGA keywords reference - All gpga_* and __gpga_* keywords used in generated MSL
+.TP
 .I docs/diff/
-REV documents tracking commit-by-commit changes (REV0-REV29)
+REV documents tracking commit-by-commit changes (REV0-REV30)
 .TP
 .I verilog/test_vcd_*.v
 VCD waveform generation tests (12 files)

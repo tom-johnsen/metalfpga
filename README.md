@@ -112,6 +112,7 @@ The compiler produces:
 - Part-select assignment (procedural): `data[7:0] = value`, `data[idx +: 4] = value`, `data[idx -: 4] = value`
 - Concatenation: `{a, b, c}`
 - Replication: `{4{1'b0}}`
+- String literals: `"Hello"` - Converted to packed ASCII bit values (little-endian, up to 8 characters/64 bits)
 - Memory arrays: `reg [7:0] mem [0:255]` (multi-dimensional supported)
 - Parameters and localparams with expressions (including port widths)
 - Width mismatches (automatic extension/truncation)
@@ -127,6 +128,7 @@ The compiler produces:
   - Formatting: `$timeformat`, `$printtimescale` - Time formatting
   - Memory I/O: `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - Memory initialization and dump
   - Waveform: `$dumpfile`, `$dumpvars`, `$dumpall`, `$dumpon`, `$dumpoff`, `$dumpflush`, `$dumplimit` - Full VCD waveform generation with dump control
+  - File I/O: `$fopen`, `$fclose`, `$fgetc`, `$fgets`, `$feof`, `$fscanf`, `$sscanf` - File operations (infrastructure in place, runtime execution pending)
   - String: `$sformat` - String formatting
   - Math/Type: `$signed`, `$unsigned`, `$clog2`, `$bits` - Type casting and utility functions
 - Tasks (procedural `task` blocks with inputs/outputs)
@@ -267,12 +269,14 @@ The compiler detects and reports:
 ### Technical References
 - [4-State Logic Plan](docs/4STATE.md) - X/Z support design document
 - [4-State API Reference](docs/gpga_4state_api.md) - Complete MSL library documentation (100+ functions)
+- [GPGA Keywords Reference](docs/GPGA_KEYWORDS.md) - All `gpga_*` and `__gpga_*` keywords used in generated MSL
 - [Bit Packing Strategy](docs/bit_packing_strategy.md) - GPU memory optimization techniques
 - [Verilog Reference](docs/VERILOG_REFERENCE.md) - Language reference
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ### Revision History
-- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV29)
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV30)
+  - [REV30](docs/diff/REV30.md) - File I/O & string literals (v0.7)
   - [REV29](docs/diff/REV29.md) - Enhanced VCD & dynamic repeat (v0.7+)
   - [REV28](docs/diff/REV28.md) - VCD writer & service record integration (v0.7)
   - [REV27](docs/diff/REV27.md) - GPU runtime & smoke test success (v0.666)

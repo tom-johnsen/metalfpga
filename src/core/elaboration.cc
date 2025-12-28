@@ -2302,8 +2302,9 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
     return call;
   }
   if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
-      expr.ident == "$feof" || expr.ident == "$fgets" ||
-      expr.ident == "$fscanf" || expr.ident == "$sscanf") {
+      expr.ident == "$feof" || expr.ident == "$ftell" ||
+      expr.ident == "$fgets" || expr.ident == "$fscanf" ||
+      expr.ident == "$sscanf") {
     auto call = std::make_unique<Expr>();
     call->kind = ExprKind::kCall;
     call->ident = expr.ident;
@@ -2448,8 +2449,9 @@ std::unique_ptr<Expr> CloneExprWithParamsImpl(
     if (!expr.ident.empty() && expr.ident.front() == '$') {
       if (!module) {
         if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
-            expr.ident == "$feof" || expr.ident == "$fgets" ||
-            expr.ident == "$fscanf" || expr.ident == "$sscanf") {
+            expr.ident == "$feof" || expr.ident == "$ftell" ||
+            expr.ident == "$fgets" || expr.ident == "$fscanf" ||
+            expr.ident == "$sscanf") {
           auto out = std::make_unique<Expr>();
           out->kind = ExprKind::kCall;
           out->ident = expr.ident;
@@ -3987,8 +3989,8 @@ bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
         expr.ident != "$rtoi" && expr.ident != "$itor" &&
         expr.ident != "$fopen" && expr.ident != "$fclose" &&
         expr.ident != "$fgetc" && expr.ident != "$fgets" &&
-        expr.ident != "$feof" && expr.ident != "$fscanf" &&
-        expr.ident != "$sscanf") {
+        expr.ident != "$feof" && expr.ident != "$ftell" &&
+        expr.ident != "$fscanf" && expr.ident != "$sscanf") {
       if (name_out) {
         *name_out = expr.ident;
       }

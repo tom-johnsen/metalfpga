@@ -8,6 +8,8 @@ module test_real_array_bounds;
   real matrix [0:2][0:3];  // 3x4 matrix
   real result;
   integer idx;
+  integer i;
+  integer j;
 
   initial begin
     // Initialize array
@@ -57,8 +59,8 @@ module test_real_array_bounds;
     result = matrix[3][4];  // Both out of bounds
 
     // Variable indices in 2D
-    for (integer i = 0; i < 4; i = i + 1) begin
-      for (integer j = 0; j < 5; j = j + 1) begin
+    for (i = 0; i < 4; i = i + 1) begin
+      for (j = 0; j < 5; j = j + 1) begin
         result = matrix[i][j];  // Some valid, some out of bounds
       end
     end
