@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.5+ — Compiler/codegen coverage includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), and procedural part-select assignment. Extensive support for generate/loops, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **281 total test files** with **93% pass rate** on the default test suite. **GPU runtime execution and validation are the next milestone.**
+**Current Status**: v0.6 — Compiler/codegen coverage includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), and procedural part-select assignment. Extensive support for generate/loops, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **288 total test files** with **93% pass rate** on the default test suite. Enhanced drive strength tracking for switch primitives and comprehensive edge case coverage. **GPU runtime execution and validation are the next milestone.**
 
 ## What is this?
 
@@ -174,8 +174,8 @@ These features are fully implemented in the compiler pipeline + MSL emission, bu
 
 ## Test Suite
 
-**281 total test files** across the test suite:
-- **54 files** in `verilog/` (default test suite, runs in ~30 seconds)
+**288 total test files** across the test suite:
+- **61 files** in `verilog/` (default test suite, runs in ~30 seconds)
 - **227 files** in `verilog/pass/` (extended test suite, requires `--full` flag)
 - **18 files** in `verilog/systemverilog/` (SystemVerilog features, expected to fail)
 
@@ -191,10 +191,10 @@ These tests validate parsing, elaboration, codegen output quality, and semantic 
 - **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
 - **Real number arithmetic**: All IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
 - **casez/casex pattern matching** (16 tests): Don't-care case statements, priority encoding, state machines with X/Z tolerance
-- **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy
-- **Generate blocks** (20 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation in generate
-- **Timing semantics** (11 tests): Blocking vs. non-blocking assignment, delta cycles, NBA scheduling, race conditions, intra/inter-assignment delays
-- **Switch-level primitives** (21 tests): Tristate buffers (bufif/notif), transmission gates (tran/tranif), MOS switches (nmos/pmos/cmos), charge storage (trireg), drive strength resolution, wired logic
+- **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy, nested generate
+- **Generate blocks** (23 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation, scoping edge cases
+- **Timing semantics** (13 tests): Blocking vs. non-blocking assignment, delta cycles, NBA scheduling, race conditions, intra/inter-assignment delays, multi-always interactions
+- **Switch-level primitives** (23 tests): Tristate buffers (bufif/notif), transmission gates (tran/tranif), MOS switches (nmos/pmos/cmos), charge storage (trireg), drive strength resolution, wired logic, 4-state control values
 - **Arithmetic and logic operations**: All operators including power (`**`)
 - **Match-3 operators**: Case equality `===`/`!==`, wildcard match `==?`/`!=?`
 - **Part-select assignment**: Fixed `[7:0]` and indexed `[idx +: 4]` ranges
@@ -207,12 +207,12 @@ These tests validate parsing, elaboration, codegen output quality, and semantic 
 
 ### Running Tests
 
-**Default test suite** (54 files, ~30 seconds):
+**Default test suite** (61 files, ~30 seconds):
 ```sh
 ./test_runner.sh
 ```
 
-**Full test suite** (281 files, ~3 minutes):
+**Full test suite** (288 files, ~3 minutes):
 ```sh
 ./test_runner.sh --full
 ```
@@ -265,7 +265,7 @@ src/
   runtime/        # Metal runtime wrapper
   utils/          # Diagnostics and utilities
 verilog/
-  test_*.v        # Main test suite (54 files, default run)
+  test_*.v        # Main test suite (61 files, default run)
   pass/           # Extended test suite (227 files, --full flag)
   systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/

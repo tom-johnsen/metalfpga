@@ -74,17 +74,14 @@ Instance CloneInstance(const Instance& instance) {
   return out;
 }
 
-void SplitDefparamInstance(
-    const std::string& instance,
-    const std::unordered_set<std::string>& instance_names, std::string* head,
-    std::string* tail) {
-  if (!head || !tail) {
-    return;
+bool MatchDefparamInstance(const std::string& instance,
+                           const std::string& instance_name,
+                           std::string* tail) {
+  if (tail) {
+    tail->clear();
   }
-  head->clear();
-  tail->clear();
   if (instance.empty()) {
-    return;
+    return false;
   }
   std::vector<std::string> parts;
   size_t start = 0;
@@ -98,37 +95,29 @@ void SplitDefparamInstance(
     start = next + 1;
   }
   if (parts.empty()) {
-    return;
+    return false;
   }
   std::string flat = parts[0];
-  size_t match_index = instance_names.count(flat) > 0 ? 0 : parts.size();
-  for (size_t i = 1; i < parts.size(); ++i) {
-    flat += "__";
-    flat += parts[i];
-    if (instance_names.count(flat) > 0) {
-      match_index = i;
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i > 0) {
+      flat += "__";
+      flat += parts[i];
     }
-  }
-  if (match_index >= parts.size()) {
-    *head = parts[0];
-    if (parts.size() > 1) {
-      *tail = instance.substr(parts[0].size() + 1);
-    }
-    return;
-  }
-  *head = flat;
-  if (match_index + 1 < parts.size()) {
-    size_t offset = 0;
-    for (size_t i = 0; i <= match_index; ++i) {
-      offset += parts[i].size();
-      if (i + 1 <= match_index) {
-        offset += 1;
+    if (flat == instance_name) {
+      if (tail && i + 1 < parts.size()) {
+        std::string suffix;
+        for (size_t j = i + 1; j < parts.size(); ++j) {
+          if (!suffix.empty()) {
+            suffix += ".";
+          }
+          suffix += parts[j];
+        }
+        *tail = suffix;
       }
-    }
-    if (offset + 1 < instance.size()) {
-      *tail = instance.substr(offset + 1);
+      return true;
     }
   }
+  return false;
 }
 
 bool ValidateDefparamsForModule(
@@ -136,10 +125,14 @@ bool ValidateDefparamsForModule(
     const std::unordered_set<std::string>& instance_names,
     Diagnostics* diagnostics) {
   for (const auto& defparam : defparams) {
-    std::string head;
-    std::string tail;
-    SplitDefparamInstance(defparam.instance, instance_names, &head, &tail);
-    if (instance_names.count(head) == 0) {
+    bool matched = false;
+    for (const auto& instance_name : instance_names) {
+      if (MatchDefparamInstance(defparam.instance, instance_name, nullptr)) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
       diagnostics->Add(Severity::kError,
                        "unknown instance '" + defparam.instance +
                            "' in defparam");
@@ -151,7 +144,6 @@ bool ValidateDefparamsForModule(
 
 bool ApplyDefparamsToInstance(
     const std::vector<DefParam>& defparams,
-    const std::unordered_set<std::string>& instance_names,
     const Instance& instance, Instance* out_instance,
     std::vector<DefParam>* child_defparams, Diagnostics* diagnostics) {
   if (!out_instance) {
@@ -165,10 +157,8 @@ bool ApplyDefparamsToInstance(
     }
   }
   for (const auto& defparam : defparams) {
-    std::string head;
     std::string tail;
-    SplitDefparamInstance(defparam.instance, instance_names, &head, &tail);
-    if (head != instance.name) {
+    if (!MatchDefparamInstance(defparam.instance, instance.name, &tail)) {
       continue;
     }
     if (tail.empty()) {
@@ -2626,7 +2616,59 @@ std::unique_ptr<Expr> CloneExprWithParamsImpl(
                                 "array '" + base_name + "'")) {
             return nullptr;
           }
-          if (dims.size() != indices.size()) {
+          if (indices.size() == dims.size()) {
+            std::vector<std::unique_ptr<Expr>> cloned_indices;
+            cloned_indices.reserve(indices.size());
+            for (const auto* index_expr : indices) {
+              auto cloned =
+                  CloneExprWithParamsImpl(*index_expr, rename, params, module,
+                                          diagnostics, bindings, inline_depth);
+              if (!cloned) {
+                return nullptr;
+              }
+              cloned_indices.push_back(std::move(cloned));
+            }
+            auto flat_index =
+                BuildFlatIndexExpr(dims, std::move(cloned_indices));
+            auto base_ident = std::make_unique<Expr>();
+            base_ident->kind = ExprKind::kIdentifier;
+            base_ident->ident = rename(base_name);
+            out->base = std::move(base_ident);
+            out->index = std::move(flat_index);
+            return out;
+          }
+          if (indices.size() == dims.size() + 1) {
+            std::vector<std::unique_ptr<Expr>> cloned_indices;
+            cloned_indices.reserve(dims.size());
+            for (size_t i = 0; i < dims.size(); ++i) {
+              auto cloned =
+                  CloneExprWithParamsImpl(*indices[i], rename, params, module,
+                                          diagnostics, bindings, inline_depth);
+              if (!cloned) {
+                return nullptr;
+              }
+              cloned_indices.push_back(std::move(cloned));
+            }
+            auto flat_index =
+                BuildFlatIndexExpr(dims, std::move(cloned_indices));
+            auto base_ident = std::make_unique<Expr>();
+            base_ident->kind = ExprKind::kIdentifier;
+            base_ident->ident = rename(base_name);
+            auto array_index = std::make_unique<Expr>();
+            array_index->kind = ExprKind::kIndex;
+            array_index->base = std::move(base_ident);
+            array_index->index = std::move(flat_index);
+            auto bit_index =
+                CloneExprWithParamsImpl(*indices.back(), rename, params, module,
+                                        diagnostics, bindings, inline_depth);
+            if (!bit_index) {
+              return nullptr;
+            }
+            out->base = std::move(array_index);
+            out->index = std::move(bit_index);
+            return out;
+          }
+          {
             diagnostics->Add(
                 Severity::kError,
                 "array '" + base_name +
@@ -2634,24 +2676,6 @@ std::unique_ptr<Expr> CloneExprWithParamsImpl(
                     " index(es) in v0");
             return nullptr;
           }
-          std::vector<std::unique_ptr<Expr>> cloned_indices;
-          cloned_indices.reserve(indices.size());
-          for (const auto* index_expr : indices) {
-            auto cloned =
-                CloneExprWithParamsImpl(*index_expr, rename, params, module,
-                                        diagnostics, bindings, inline_depth);
-            if (!cloned) {
-              return nullptr;
-            }
-            cloned_indices.push_back(std::move(cloned));
-          }
-          auto flat_index = BuildFlatIndexExpr(dims, std::move(cloned_indices));
-          auto base_ident = std::make_unique<Expr>();
-          base_ident->kind = ExprKind::kIdentifier;
-          base_ident->ident = rename(base_name);
-          out->base = std::move(base_ident);
-          out->index = std::move(flat_index);
-          return out;
         }
       }
     }
@@ -2788,15 +2812,29 @@ bool CloneStatement(
     if (out->assign.lhs_has_range && !out->assign.lhs_indexed_range) {
       int64_t msb = 0;
       int64_t lsb = 0;
-      if (!out->assign.lhs_msb_expr || !out->assign.lhs_lsb_expr ||
-          !TryEvalConstExprWithParams(*out->assign.lhs_msb_expr, params, &msb) ||
-          !TryEvalConstExprWithParams(*out->assign.lhs_lsb_expr, params, &lsb)) {
+      if (!out->assign.lhs_msb_expr) {
         diagnostics->Add(Severity::kError,
                          "part-select assignment indices must be constant in v0");
         return false;
       }
-      out->assign.lhs_msb = static_cast<int>(msb);
-      out->assign.lhs_lsb = static_cast<int>(lsb);
+      if (!out->assign.lhs_lsb_expr) {
+        if (TryEvalConstExprWithParams(*out->assign.lhs_msb_expr, params,
+                                       &msb)) {
+          out->assign.lhs_msb = static_cast<int>(msb);
+          out->assign.lhs_lsb = static_cast<int>(msb);
+        }
+      } else {
+        if (!TryEvalConstExprWithParams(*out->assign.lhs_msb_expr, params,
+                                        &msb) ||
+            !TryEvalConstExprWithParams(*out->assign.lhs_lsb_expr, params,
+                                        &lsb)) {
+          diagnostics->Add(Severity::kError,
+                           "part-select assignment indices must be constant in v0");
+          return false;
+        }
+        out->assign.lhs_msb = static_cast<int>(msb);
+        out->assign.lhs_lsb = static_cast<int>(lsb);
+      }
     }
     if (statement.assign.rhs) {
       out->assign.rhs =
@@ -4953,19 +4991,50 @@ bool IsDeclaredEvent(const Module& module, const std::string& name) {
   return false;
 }
 
-bool IsDeclaredSignalOrEvent(const Module& module, const std::string& name) {
+bool IsDeclaredLocal(const std::unordered_set<std::string>* locals,
+                     const std::string& name) {
+  return locals && locals->count(name) > 0;
+}
+
+bool IsDeclaredSignalOrEventOrLocal(
+    const Module& module, const std::string& name,
+    const std::unordered_set<std::string>* locals) {
+  if (IsDeclaredLocal(locals, name)) {
+    return true;
+  }
   return IsDeclaredSignal(module, name) || IsDeclaredEvent(module, name);
 }
 
+bool IsSystemTaskName(const std::string& name) {
+  return !name.empty() && name[0] == '$';
+}
+
+bool SystemTaskAllowsScope(const std::string& name) {
+  return name == "$dumpvars" || name == "$printtimescale";
+}
+
+bool IsModuleOrInstanceName(const Module& module, const std::string& name) {
+  if (module.name == name) {
+    return true;
+  }
+  for (const auto& inst : module.instances) {
+    if (inst.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool ValidateExprIdentifiers(const Expr* expr, const Module& module,
-                             Diagnostics* diagnostics) {
+                             Diagnostics* diagnostics,
+                             const std::unordered_set<std::string>* locals) {
   if (!expr) {
     return true;
   }
   bool ok = true;
   switch (expr->kind) {
     case ExprKind::kIdentifier:
-      if (!IsDeclaredSignalOrEvent(module, expr->ident)) {
+      if (!IsDeclaredSignalOrEventOrLocal(module, expr->ident, locals)) {
         diagnostics->Add(Severity::kError,
                          "unknown signal '" + expr->ident + "'");
         ok = false;
@@ -4975,37 +5044,48 @@ bool ValidateExprIdentifiers(const Expr* expr, const Module& module,
     case ExprKind::kString:
       break;
     case ExprKind::kUnary:
-      ok &= ValidateExprIdentifiers(expr->operand.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->operand.get(), module, diagnostics,
+                                    locals);
       break;
     case ExprKind::kBinary:
-      ok &= ValidateExprIdentifiers(expr->lhs.get(), module, diagnostics);
-      ok &= ValidateExprIdentifiers(expr->rhs.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->lhs.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(expr->rhs.get(), module, diagnostics,
+                                    locals);
       break;
     case ExprKind::kTernary:
-      ok &=
-          ValidateExprIdentifiers(expr->condition.get(), module, diagnostics);
-      ok &= ValidateExprIdentifiers(expr->then_expr.get(), module, diagnostics);
-      ok &= ValidateExprIdentifiers(expr->else_expr.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->condition.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(expr->then_expr.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(expr->else_expr.get(), module, diagnostics,
+                                    locals);
       break;
     case ExprKind::kSelect:
-      ok &= ValidateExprIdentifiers(expr->base.get(), module, diagnostics);
-      ok &= ValidateExprIdentifiers(expr->msb_expr.get(), module, diagnostics);
-      ok &= ValidateExprIdentifiers(expr->lsb_expr.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->base.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(expr->msb_expr.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(expr->lsb_expr.get(), module, diagnostics,
+                                    locals);
       break;
     case ExprKind::kIndex:
-      ok &= ValidateExprIdentifiers(expr->base.get(), module, diagnostics);
-      ok &= ValidateExprIdentifiers(expr->index.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(expr->base.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(expr->index.get(), module, diagnostics,
+                                    locals);
       break;
     case ExprKind::kCall:
       for (const auto& arg : expr->call_args) {
-        ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics);
+        ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics, locals);
       }
       break;
     case ExprKind::kConcat:
       ok &= ValidateExprIdentifiers(expr->repeat_expr.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       for (const auto& element : expr->elements) {
-        ok &= ValidateExprIdentifiers(element.get(), module, diagnostics);
+        ok &= ValidateExprIdentifiers(element.get(), module, diagnostics,
+                                      locals);
       }
       break;
   }
@@ -5013,7 +5093,11 @@ bool ValidateExprIdentifiers(const Expr* expr, const Module& module,
 }
 
 bool ValidateAssignTarget(const Module& module, const std::string& name,
-                          Diagnostics* diagnostics) {
+                          Diagnostics* diagnostics,
+                          const std::unordered_set<std::string>* locals) {
+  if (IsDeclaredLocal(locals, name)) {
+    return true;
+  }
   if (!IsDeclaredSignal(module, name)) {
     diagnostics->Add(Severity::kError,
                      "assignment target '" + name + "' is not declared");
@@ -5023,98 +5107,113 @@ bool ValidateAssignTarget(const Module& module, const std::string& name,
 }
 
 bool ValidateStatementIdentifiers(const Statement& stmt, const Module& module,
-                                  Diagnostics* diagnostics) {
+                                  Diagnostics* diagnostics,
+                                  const std::unordered_set<std::string>* locals) {
   bool ok = true;
   switch (stmt.kind) {
     case StatementKind::kAssign:
     case StatementKind::kForce:
     case StatementKind::kRelease:
-      ok &= ValidateAssignTarget(module, stmt.assign.lhs, diagnostics);
+      ok &=
+          ValidateAssignTarget(module, stmt.assign.lhs, diagnostics, locals);
       for (const auto& index_expr : stmt.assign.lhs_indices) {
-        ok &= ValidateExprIdentifiers(index_expr.get(), module, diagnostics);
+        ok &= ValidateExprIdentifiers(index_expr.get(), module, diagnostics,
+                                      locals);
       }
       ok &= ValidateExprIdentifiers(stmt.assign.lhs_index.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       ok &= ValidateExprIdentifiers(stmt.assign.lhs_msb_expr.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       ok &= ValidateExprIdentifiers(stmt.assign.lhs_lsb_expr.get(), module,
-                                    diagnostics);
-      ok &= ValidateExprIdentifiers(stmt.assign.rhs.get(), module, diagnostics);
-      ok &=
-          ValidateExprIdentifiers(stmt.assign.delay.get(), module, diagnostics);
+                                    diagnostics, locals);
+      ok &= ValidateExprIdentifiers(stmt.assign.rhs.get(), module, diagnostics,
+                                    locals);
+      ok &= ValidateExprIdentifiers(stmt.assign.delay.get(), module,
+                                    diagnostics, locals);
       break;
     case StatementKind::kIf:
-      ok &= ValidateExprIdentifiers(stmt.condition.get(), module, diagnostics);
+      ok &=
+          ValidateExprIdentifiers(stmt.condition.get(), module, diagnostics,
+                                  locals);
       for (const auto& inner : stmt.then_branch) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       for (const auto& inner : stmt.else_branch) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kBlock:
       for (const auto& inner : stmt.block) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kCase:
-      ok &= ValidateExprIdentifiers(stmt.case_expr.get(), module, diagnostics);
+      ok &=
+          ValidateExprIdentifiers(stmt.case_expr.get(), module, diagnostics,
+                                  locals);
       for (const auto& item : stmt.case_items) {
         for (const auto& label : item.labels) {
-          ok &= ValidateExprIdentifiers(label.get(), module, diagnostics);
+          ok &= ValidateExprIdentifiers(label.get(), module, diagnostics,
+                                        locals);
         }
         for (const auto& inner : item.body) {
-          ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+          ok &= ValidateStatementIdentifiers(inner, module, diagnostics,
+                                             locals);
         }
       }
       for (const auto& inner : stmt.default_branch) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kFor:
       if (!stmt.for_init_lhs.empty()) {
-        ok &= ValidateAssignTarget(module, stmt.for_init_lhs, diagnostics);
+        ok &= ValidateAssignTarget(module, stmt.for_init_lhs, diagnostics,
+                                   locals);
       }
       ok &= ValidateExprIdentifiers(stmt.for_init_rhs.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       ok &= ValidateExprIdentifiers(stmt.for_condition.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       if (!stmt.for_step_lhs.empty()) {
-        ok &= ValidateAssignTarget(module, stmt.for_step_lhs, diagnostics);
+        ok &= ValidateAssignTarget(module, stmt.for_step_lhs, diagnostics,
+                                   locals);
       }
-      ok &=
-          ValidateExprIdentifiers(stmt.for_step_rhs.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(stmt.for_step_rhs.get(), module,
+                                    diagnostics, locals);
       for (const auto& inner : stmt.for_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kWhile:
       ok &= ValidateExprIdentifiers(stmt.while_condition.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       for (const auto& inner : stmt.while_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kRepeat:
       ok &= ValidateExprIdentifiers(stmt.repeat_count.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       for (const auto& inner : stmt.repeat_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kDelay:
-      ok &= ValidateExprIdentifiers(stmt.delay.get(), module, diagnostics);
+      ok &=
+          ValidateExprIdentifiers(stmt.delay.get(), module, diagnostics, locals);
       for (const auto& inner : stmt.delay_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kEventControl:
-      ok &= ValidateExprIdentifiers(stmt.event_expr.get(), module, diagnostics);
+      ok &= ValidateExprIdentifiers(stmt.event_expr.get(), module, diagnostics,
+                                    locals);
       for (const auto& item : stmt.event_items) {
-        ok &= ValidateExprIdentifiers(item.expr.get(), module, diagnostics);
+        ok &= ValidateExprIdentifiers(item.expr.get(), module, diagnostics,
+                                      locals);
       }
       for (const auto& inner : stmt.event_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kEventTrigger:
@@ -5127,26 +5226,45 @@ bool ValidateStatementIdentifiers(const Statement& stmt, const Module& module,
       break;
     case StatementKind::kWait:
       ok &= ValidateExprIdentifiers(stmt.wait_condition.get(), module,
-                                    diagnostics);
+                                    diagnostics, locals);
       for (const auto& inner : stmt.wait_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kForever:
       for (const auto& inner : stmt.forever_body) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kFork:
       for (const auto& inner : stmt.fork_branches) {
-        ok &= ValidateStatementIdentifiers(inner, module, diagnostics);
+        ok &= ValidateStatementIdentifiers(inner, module, diagnostics, locals);
       }
       break;
     case StatementKind::kDisable:
       break;
     case StatementKind::kTaskCall:
-      for (const auto& arg : stmt.task_args) {
-        ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics);
+      if (IsSystemTaskName(stmt.task_name) &&
+          SystemTaskAllowsScope(stmt.task_name)) {
+        for (const auto& arg : stmt.task_args) {
+          if (!arg) {
+            continue;
+          }
+          if (arg->kind == ExprKind::kIdentifier &&
+              !IsDeclaredSignalOrEventOrLocal(module, arg->ident, locals)) {
+            if (!IsModuleOrInstanceName(module, arg->ident)) {
+              diagnostics->Add(Severity::kError,
+                               "unknown signal '" + arg->ident + "'");
+              ok = false;
+            }
+            continue;
+          }
+          ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics, locals);
+        }
+      } else {
+        for (const auto& arg : stmt.task_args) {
+          ok &= ValidateExprIdentifiers(arg.get(), module, diagnostics, locals);
+        }
       }
       break;
   }
@@ -5157,23 +5275,30 @@ bool ValidateModuleIdentifiers(const Module& module,
                                Diagnostics* diagnostics) {
   bool ok = true;
   for (const auto& assign : module.assigns) {
-    ok &= ValidateAssignTarget(module, assign.lhs, diagnostics);
-    ok &= ValidateExprIdentifiers(assign.rhs.get(), module, diagnostics);
+    ok &= ValidateAssignTarget(module, assign.lhs, diagnostics, nullptr);
+    ok &= ValidateExprIdentifiers(assign.rhs.get(), module, diagnostics,
+                                  nullptr);
   }
   for (const auto& sw : module.switches) {
-    ok &= ValidateAssignTarget(module, sw.a, diagnostics);
-    ok &= ValidateAssignTarget(module, sw.b, diagnostics);
-    ok &= ValidateExprIdentifiers(sw.control.get(), module, diagnostics);
-    ok &= ValidateExprIdentifiers(sw.control_n.get(), module, diagnostics);
+    ok &= ValidateAssignTarget(module, sw.a, diagnostics, nullptr);
+    ok &= ValidateAssignTarget(module, sw.b, diagnostics, nullptr);
+    ok &= ValidateExprIdentifiers(sw.control.get(), module, diagnostics,
+                                  nullptr);
+    ok &= ValidateExprIdentifiers(sw.control_n.get(), module, diagnostics,
+                                  nullptr);
   }
   for (const auto& block : module.always_blocks) {
     for (const auto& stmt : block.statements) {
-      ok &= ValidateStatementIdentifiers(stmt, module, diagnostics);
+      ok &= ValidateStatementIdentifiers(stmt, module, diagnostics, nullptr);
     }
   }
   for (const auto& task : module.tasks) {
+    std::unordered_set<std::string> locals;
+    for (const auto& arg : task.args) {
+      locals.insert(arg.name);
+    }
     for (const auto& stmt : task.body) {
-      ok &= ValidateStatementIdentifiers(stmt, module, diagnostics);
+      ok &= ValidateStatementIdentifiers(stmt, module, diagnostics, &locals);
     }
   }
   return ok;
@@ -5637,15 +5762,15 @@ bool InlineModule(const Program& program, const Module& module,
 
     Instance effective_instance = CloneInstance(instance);
     std::vector<DefParam> child_defparams;
-    if (!ApplyDefparamsToInstance(module.defparams, instance_names, instance,
+    if (!ApplyDefparamsToInstance(module.defparams, instance,
                                   &effective_instance, &child_defparams,
                                   diagnostics)) {
       return false;
     }
     if (inherited_defparams &&
-        !ApplyDefparamsToInstance(*inherited_defparams, instance_names,
-                                  instance, &effective_instance,
-                                  &child_defparams, diagnostics)) {
+        !ApplyDefparamsToInstance(*inherited_defparams, instance,
+                                  &effective_instance, &child_defparams,
+                                  diagnostics)) {
       return false;
     }
 
@@ -5740,6 +5865,20 @@ bool InlineModule(const Program& program, const Module& module,
         expr_assign.rhs = std::move(resolved_expr);
         out->assigns.push_back(std::move(expr_assign));
         continue;
+      }
+
+      resolved_expr = SimplifyExpr(std::move(resolved_expr), *out);
+      if (resolved_expr && resolved_expr->kind == ExprKind::kTernary &&
+          resolved_expr->condition) {
+        int64_t cond_value = 0;
+        if (TryEvalConstExprWithParams(*resolved_expr->condition, params,
+                                       &cond_value)) {
+          if (cond_value != 0 && resolved_expr->then_expr) {
+            resolved_expr = std::move(resolved_expr->then_expr);
+          } else if (resolved_expr->else_expr) {
+            resolved_expr = std::move(resolved_expr->else_expr);
+          }
+        }
       }
 
       std::string base_name;
@@ -5909,7 +6048,7 @@ bool Elaborate(const Program& program, const std::string& top_name,
   if (!ValidateSwitches(flat, diagnostics)) {
     return false;
   }
-  if (!ValidateSingleDrivers(flat, diagnostics, enable_4state)) {
+  if (!ValidateSingleDrivers(flat, diagnostics, true)) {
     return false;
   }
   if (!ValidateNoFunctionCalls(flat, diagnostics)) {

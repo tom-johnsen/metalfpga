@@ -9,11 +9,15 @@ set +e  # Don't exit on error - we want to test everything
 FORCE_4STATE=0
 FORCE_AUTO=0
 FULL_SUITE=0
+FORCE_2STATE=0
+FORCE_SYSVERILOG=0
 for arg in "$@"; do
     case "$arg" in
         --4state) FORCE_4STATE=1 ;;
+        --2state) FORCE_2STATE=1 ;;
         --auto) FORCE_AUTO=1 ;;
         --full) FULL_SUITE=1 ;;
+        --sysverilog) FORCE_SYSVERILOG=1 ;;
     esac
 done
 
@@ -32,6 +36,7 @@ MISSING=0
 BUGS=0
 DISCARDED=0
 REJECTED=0
+NOT_APPLICABLE=0
 
 # Arrays to track results
 declare -a FAILED_FILES
@@ -39,6 +44,7 @@ declare -a MISSING_FILES
 declare -a BUG_FILES
 declare -a DISCARDED_FILES
 declare -a REJECTED_FILES
+declare -a NOT_APPLICABLE_FILES
 
 # Create output directories
 ARTIFACTS_ROOT="./artifacts"
@@ -122,6 +128,14 @@ is_4state_error() {
     fi
 }
 
+is_not_applicable_2state() {
+    local log="$1"
+    if [ "$FORCE_2STATE" -eq 1 ] && is_4state_error "$log"; then
+        return 0
+    fi
+    return 1
+}
+
 is_multi_top_error() {
     local log="$1"
     if [ "$HAS_RG" -eq 1 ]; then
@@ -154,7 +168,7 @@ is_rejected_error() {
 read_expectation() {
     local file="$1"
     local header
-    header=$(head -n 20 "$file" | sed -n 's/^\/\/[[:space:]]*EXPECT=\(PASS\|FAIL\|DISCARDED\|REJECTED\).*/\1/p' | head -n 1)
+    header=$(head -n 20 "$file" | sed -n -E 's/^\/\/[[:space:]]*EXPECT=(PASS|FAIL|DISCARDED|REJECTED).*/\1/p' | head -n 1 | tr -d '\r')
     echo "$header"
 }
 
@@ -202,7 +216,12 @@ run_test_case() {
             echo "  Detected multiple top-level modules, retrying per module..." | tee -a "$LOG_FILE"
             return 3
         fi
-        if [ "$use_4state" -eq 0 ] && is_4state_error "$flat_out"; then
+        if is_not_applicable_2state "$flat_out"; then
+            LAST_FAIL_LOG="$flat_out"
+            echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+            return 4
+        fi
+        if [ "$use_4state" -eq 0 ] && [ "$FORCE_2STATE" -eq 0 ] && is_4state_error "$flat_out"; then
             echo "  Retrying with --4state..." | tee -a "$LOG_FILE"
             use_4state=1
             flags=(--4state)
@@ -210,6 +229,11 @@ run_test_case() {
                 if is_multi_top_error "$flat_out"; then
                     echo "  Detected multiple top-level modules, retrying per module..." | tee -a "$LOG_FILE"
                     return 3
+                fi
+                if is_not_applicable_2state "$flat_out"; then
+                    LAST_FAIL_LOG="$flat_out"
+                    echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+                    return 4
                 fi
                 LAST_FAIL_LOG="$flat_out"
                 echo -e "  ${RED}✗ FAILED: Parsing/elaboration failed${NC}" | tee -a "$LOG_FILE"
@@ -226,11 +250,21 @@ run_test_case() {
 
     echo "  [2/3] Generating MSL..." | tee -a "$LOG_FILE"
     if ! "${cli[@]}" --emit-msl "$msl_file" --emit-host "$host_file" "${flags[@]}" > "$codegen_out" 2>&1; then
-        if [ "$use_4state" -eq 0 ] && is_4state_error "$codegen_out"; then
+        if is_not_applicable_2state "$codegen_out"; then
+            LAST_FAIL_LOG="$codegen_out"
+            echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+            return 4
+        fi
+        if [ "$use_4state" -eq 0 ] && [ "$FORCE_2STATE" -eq 0 ] && is_4state_error "$codegen_out"; then
             echo "  Retrying with --4state..." | tee -a "$LOG_FILE"
             use_4state=1
             flags=(--4state)
             if ! "${cli[@]}" --emit-msl "$msl_file" --emit-host "$host_file" "${flags[@]}" > "$codegen_out" 2>&1; then
+                if is_not_applicable_2state "$codegen_out"; then
+                    LAST_FAIL_LOG="$codegen_out"
+                    echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+                    return 4
+                fi
                 LAST_FAIL_LOG="$codegen_out"
                 echo -e "  ${RED}✗ FAILED: MSL codegen failed${NC}" | tee -a "$LOG_FILE"
                 head -5 "$codegen_out" | tee -a "$LOG_FILE"
@@ -277,11 +311,24 @@ if [ -n "${VERILOG_FILES_OVERRIDE:-}" ]; then
     VERILOG_FILES="$VERILOG_FILES_OVERRIDE"
 else
     if [ "$FULL_SUITE" -eq 1 ]; then
-        VERILOG_FILES=$(find verilog -name "*.v" -type f | sort)
+        if [ "$FORCE_SYSVERILOG" -eq 1 ]; then
+            VERILOG_FILES=$(find verilog -name "*.v" -type f | sort)
+        else
+            echo "Skipping verilog/systemverilog (use --sysverilog to include)" | tee -a "$LOG_FILE"
+            VERILOG_FILES=$(find verilog -path "verilog/systemverilog" -prune -o \
+                -name "*.v" -type f -print | sort)
+        fi
     else
         echo "Skipping verilog/pass (use --full to include)" | tee -a "$LOG_FILE"
-        VERILOG_FILES=$(find verilog -path "verilog/pass" -prune -o \
-            -name "*.v" -type f -print | sort)
+        if [ "$FORCE_SYSVERILOG" -eq 1 ]; then
+            VERILOG_FILES=$(find verilog -path "verilog/pass" -prune -o \
+                -name "*.v" -type f -print | sort)
+        else
+            echo "Skipping verilog/systemverilog (use --sysverilog to include)" | tee -a "$LOG_FILE"
+            VERILOG_FILES=$(find verilog -path "verilog/pass" -prune -o \
+                -path "verilog/systemverilog" -prune -o \
+                -name "*.v" -type f -print | sort)
+        fi
     fi
 fi
 TOTAL=$(echo "$VERILOG_FILES" | wc -l | tr -d ' ')
@@ -294,8 +341,11 @@ for vfile in $VERILOG_FILES; do
     dirname=$(dirname "$vfile")
 
     use_4state=$FORCE_4STATE
+    if [ "$FORCE_2STATE" -eq 1 ]; then
+        use_4state=0
+    fi
     if [ "$use_4state" -eq 0 ]; then
-        if needs_4state "$vfile" || file_suggests_4state "$vfile"; then
+        if [ "$FORCE_2STATE" -eq 0 ] && (needs_4state "$vfile" || file_suggests_4state "$vfile"); then
             use_4state=1
         fi
     fi
@@ -329,6 +379,13 @@ for vfile in $VERILOG_FILES; do
             BUGS=$((BUGS + 1))
             BUG_FILES+=("$vfile (expected $EXPECT_HEADER)")
         else
+            if is_not_applicable_2state "$flat_out"; then
+                echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+                NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
+                NOT_APPLICABLE_FILES+=("$vfile")
+                echo "" | tee -a "$LOG_FILE"
+                continue
+            fi
             if is_multi_top_error "$flat_out"; then
                 echo "  Detected multiple top-level modules, retrying per module..." | tee -a "$LOG_FILE"
                 module_names=$(get_module_names "$vfile")
@@ -339,6 +396,7 @@ for vfile in $VERILOG_FILES; do
                 else
                     any_pass=0
                     any_mismatch=0
+                    any_na=0
                     for top in $module_names; do
                         cli_top=(./build/metalfpga_cli "$vfile" --top "$top")
                         if [ "$use_auto" -eq 1 ]; then
@@ -347,6 +405,10 @@ for vfile in $VERILOG_FILES; do
                         if "${cli_top[@]}" --dump-flat "${flags[@]}" > "$flat_out" 2>&1; then
                             any_pass=1
                             break
+                        fi
+                        if is_not_applicable_2state "$flat_out"; then
+                            any_na=1
+                            continue
                         fi
                         if [ "$EXPECT_HEADER" = "DISCARDED" ]; then
                             if ! is_missing_error "$flat_out"; then
@@ -366,6 +428,10 @@ for vfile in $VERILOG_FILES; do
                         echo -e "  ${RED}✗ BUG: Expected $EXPECT_HEADER but saw different error${NC}" | tee -a "$LOG_FILE"
                         BUGS=$((BUGS + 1))
                         BUG_FILES+=("$vfile (expected $EXPECT_HEADER mismatch)")
+                    elif [ "$any_na" -eq 1 ]; then
+                        echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+                        NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
+                        NOT_APPLICABLE_FILES+=("$vfile")
                     else
                         if [ "$EXPECT_HEADER" = "FAIL" ]; then
                             echo -e "  ${GREEN}✓ EXPECTED FAIL${NC}" | tee -a "$LOG_FILE"
@@ -453,6 +519,13 @@ for vfile in $VERILOG_FILES; do
             BUGS=$((BUGS + 1))
             BUG_FILES+=("$vfile (expected fail)")
         else
+            if is_not_applicable_2state "$flat_out"; then
+                echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+                NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
+                NOT_APPLICABLE_FILES+=("$vfile")
+                echo "" | tee -a "$LOG_FILE"
+                continue
+            fi
             if is_multi_top_error "$flat_out"; then
                 echo "  Detected multiple top-level modules, retrying per module..." | tee -a "$LOG_FILE"
                 module_names=$(get_module_names "$vfile")
@@ -462,6 +535,7 @@ for vfile in $VERILOG_FILES; do
                     BUG_FILES+=("$vfile (expected fail multi-top)")
                 else
                     any_pass=0
+                    any_na=0
                     for top in $module_names; do
                         cli_top=(./build/metalfpga_cli "$vfile" --top "$top")
                         if [ "$use_auto" -eq 1 ]; then
@@ -471,11 +545,18 @@ for vfile in $VERILOG_FILES; do
                             any_pass=1
                             break
                         fi
+                        if is_not_applicable_2state "$flat_out"; then
+                            any_na=1
+                        fi
                     done
                     if [ "$any_pass" -eq 1 ]; then
                         echo -e "  ${RED}✗ BUG: Expected failure but succeeded${NC}" | tee -a "$LOG_FILE"
                         BUGS=$((BUGS + 1))
                         BUG_FILES+=("$vfile (expected fail)")
+                    elif [ "$any_na" -eq 1 ]; then
+                        echo -e "  ${BLUE}• N/A (requires --4state)${NC}" | tee -a "$LOG_FILE"
+                        NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
+                        NOT_APPLICABLE_FILES+=("$vfile (multi-top)")
                     else
                         echo -e "  ${GREEN}✓ EXPECTED FAILURE${NC}" | tee -a "$LOG_FILE"
                         FAILED=$((FAILED + 1))
@@ -523,6 +604,7 @@ for vfile in $VERILOG_FILES; do
         fi
         any_bug=0
         any_missing=0
+        any_na=0
         for top in $module_names; do
             echo "  Retrying with --top $top..." | tee -a "$LOG_FILE"
             run_test_case "$vfile" "$top" "${filename}__${top}" "$use_4state" "$use_auto"
@@ -535,6 +617,8 @@ for vfile in $VERILOG_FILES; do
                 fi
             elif [ "$status" -eq 2 ]; then
                 any_bug=1
+            elif [ "$status" -eq 4 ]; then
+                any_na=1
             fi
         done
         if [ -n "$EXPECT_HEADER" ] && [ "$EXPECT_HEADER" = "PASS" ] && [ "$any_missing" -eq 1 ]; then
@@ -547,6 +631,9 @@ for vfile in $VERILOG_FILES; do
         elif [ "$any_missing" -eq 1 ]; then
             MISSING=$((MISSING + 1))
             MISSING_FILES+=("$vfile (multi-top)")
+        elif [ "$any_na" -eq 1 ]; then
+            NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
+            NOT_APPLICABLE_FILES+=("$vfile (multi-top)")
         else
             PASSED=$((PASSED + 1))
         fi
@@ -556,6 +643,9 @@ for vfile in $VERILOG_FILES; do
 
     if [ "$status" -eq 0 ]; then
         PASSED=$((PASSED + 1))
+    elif [ "$status" -eq 4 ]; then
+        NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
+        NOT_APPLICABLE_FILES+=("$vfile")
     elif [ "$status" -eq 2 ]; then
         BUGS=$((BUGS + 1))
         BUG_FILES+=("$vfile (no kernel)")
@@ -585,6 +675,7 @@ echo -e "${GREEN}Passed:        $PASSED${NC}" | tee -a "$LOG_FILE"
 echo -e "${BLUE}Expected fail: $FAILED${NC}" | tee -a "$LOG_FILE"
 echo -e "${GREEN}Discarded:     $DISCARDED${NC}" | tee -a "$LOG_FILE"
 echo -e "${GREEN}Rejected:      $REJECTED${NC}" | tee -a "$LOG_FILE"
+echo -e "${BLUE}Not applicable:$NOT_APPLICABLE${NC}" | tee -a "$LOG_FILE"
 echo -e "${YELLOW}Missing:       $MISSING${NC}" | tee -a "$LOG_FILE"
 echo -e "${RED}Bugs:          $BUGS${NC}" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
@@ -632,9 +723,17 @@ if [ $REJECTED -gt 0 ]; then
     echo "" | tee -a "$LOG_FILE"
 fi
 
+if [ $NOT_APPLICABLE -gt 0 ]; then
+    echo -e "${BLUE}Not applicable files:${NC}" | tee -a "$LOG_FILE"
+    for file in "${NOT_APPLICABLE_FILES[@]}"; do
+        echo "  - $file" | tee -a "$LOG_FILE"
+    done
+    echo "" | tee -a "$LOG_FILE"
+fi
+
 # Pass rate
 if [ $TOTAL -gt 0 ]; then
-    TESTABLE=$((TOTAL - MISSING))
+    TESTABLE=$((TOTAL - MISSING - NOT_APPLICABLE))
     if [ $TESTABLE -gt 0 ]; then
         PASS_COUNT=$((PASSED + FAILED + DISCARDED + REJECTED))
         PASS_RATE=$((PASS_COUNT * 100 / TESTABLE))

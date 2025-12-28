@@ -1,4 +1,4 @@
-// EXPECT=FAIL
+// EXPECT=PASS
 module comb_loop;
   wire a;
   wire b;

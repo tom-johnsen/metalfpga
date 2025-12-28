@@ -398,7 +398,7 @@ bool EvalConstExpr4State(const Expr& expr,
           break;
         case '/':
         case '%':
-          width = clamp_width(lhs_width);
+          width = clamp_width(std::max(lhs_width, rhs_width));
           break;
         case 'l':
         case 'r':

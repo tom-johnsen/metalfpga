@@ -219,6 +219,51 @@ bool IsArrayNet(const Module& module, const std::string& name,
   return false;
 }
 
+bool GetArrayDims(const Module& module, const std::string& name,
+                  std::vector<int>* dims, int* element_width,
+                  int* array_size) {
+  for (const auto& net : module.nets) {
+    if (net.name != name ||
+        (net.array_size <= 0 && net.array_dims.empty())) {
+      continue;
+    }
+    if (element_width) {
+      *element_width = net.width;
+    }
+    int size = net.array_size;
+    if (dims) {
+      dims->clear();
+      dims->reserve(net.array_dims.size());
+      for (const auto& dim : net.array_dims) {
+        if (dim.size <= 0) {
+          dims->clear();
+          break;
+        }
+        dims->push_back(dim.size);
+      }
+    }
+    if (size <= 0 && dims && !dims->empty()) {
+      int64_t product = 1;
+      for (int dim : *dims) {
+        if (dim <= 0 || product > (0x7FFFFFFF / dim)) {
+          product = 0;
+          break;
+        }
+        product *= dim;
+      }
+      size = static_cast<int>(product);
+    }
+    if (dims && dims->empty() && size > 0) {
+      dims->push_back(size);
+    }
+    if (array_size) {
+      *array_size = size;
+    }
+    return size > 0;
+  }
+  return false;
+}
+
 uint64_t MaskForWidth64(int width) {
   if (width >= 64) {
     return 0xFFFFFFFFFFFFFFFFull;
@@ -2541,6 +2586,86 @@ LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
       return out;
     }
   }
+  if (!assign.lhs_indices.empty()) {
+    std::vector<int> dims;
+    int element_width = 0;
+    int array_size = 0;
+    if (!GetArrayDims(module, assign.lhs, &dims, &element_width, &array_size)) {
+      return out;
+    }
+    if (dims.empty() || element_width <= 0 || array_size <= 0) {
+      return out;
+    }
+    size_t dim_count = dims.size();
+    size_t index_count = assign.lhs_indices.size();
+    bool has_bit_select = false;
+    const Expr* bit_expr = nullptr;
+    if (assign.lhs_has_range) {
+      if (assign.lhs_lsb_expr) {
+        return out;
+      }
+      if (index_count != dim_count) {
+        return out;
+      }
+      has_bit_select = true;
+      bit_expr = assign.lhs_msb_expr.get();
+      if (!bit_expr) {
+        return out;
+      }
+    } else if (index_count == dim_count + 1) {
+      has_bit_select = true;
+      bit_expr = assign.lhs_indices.back().get();
+      index_count = dim_count;
+    } else if (index_count != dim_count) {
+      return out;
+    }
+    std::string linear;
+    std::string guard;
+    for (size_t i = 0; i < dim_count; ++i) {
+      const Expr* idx_expr = assign.lhs_indices[i].get();
+      if (!idx_expr) {
+        return out;
+      }
+      std::string idx = EmitExpr(*idx_expr, module, locals, regs);
+      std::string idx_u = "uint(" + idx + ")";
+      if (linear.empty()) {
+        linear = idx_u;
+      } else {
+        linear = "(" + linear + " * " + std::to_string(dims[i]) + "u + " +
+                 idx_u + ")";
+      }
+      std::string cond =
+          "(" + idx_u + " < " + std::to_string(dims[i]) + "u)";
+      guard = guard.empty() ? cond : "(" + guard + " && " + cond + ")";
+    }
+    std::string target = assign.lhs;
+    if (use_next) {
+      target += "_next";
+    }
+    std::string base =
+        "(gid * " + std::to_string(array_size) + "u) + " + linear;
+    out.expr = target + "[" + base + "]";
+    out.base_width = element_width;
+    out.ok = true;
+    if (has_bit_select) {
+      if (SignalIsReal(module, assign.lhs)) {
+        return LvalueInfo{};
+      }
+      std::string bit_index = EmitExpr(*bit_expr, module, locals, regs);
+      std::string bit_guard = "(uint(" + bit_index + ") < " +
+                              std::to_string(element_width) + "u)";
+      guard = guard.empty() ? bit_guard : "(" + guard + " && " + bit_guard + ")";
+      out.guard = guard;
+      out.is_bit_select = true;
+      out.width = 1;
+      out.bit_index = bit_index;
+      return out;
+    }
+    out.guard = guard;
+    out.is_array = true;
+    out.width = element_width;
+    return out;
+  }
   if (assign.lhs_has_range) {
     int element_width = 0;
     int array_size = 0;
@@ -4201,6 +4326,128 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return out;
         }
       }
+      if (!assign.lhs_indices.empty()) {
+        std::vector<int> dims;
+        int element_width = 0;
+        int array_size = 0;
+        if (!GetArrayDims(module, assign.lhs, &dims, &element_width,
+                          &array_size)) {
+          return out;
+        }
+        if (dims.empty() || element_width <= 0 || array_size <= 0) {
+          return out;
+        }
+        size_t dim_count = dims.size();
+        size_t index_count = assign.lhs_indices.size();
+        bool has_bit_select = false;
+        const Expr* bit_expr = nullptr;
+        if (assign.lhs_has_range) {
+          if (assign.lhs_lsb_expr) {
+            return out;
+          }
+          if (index_count != dim_count) {
+            return out;
+          }
+          has_bit_select = true;
+          bit_expr = assign.lhs_msb_expr.get();
+          if (!bit_expr) {
+            return out;
+          }
+        } else if (index_count == dim_count + 1) {
+          has_bit_select = true;
+          bit_expr = assign.lhs_indices.back().get();
+          index_count = dim_count;
+        } else if (index_count != dim_count) {
+          return out;
+        }
+        std::string linear;
+        std::string guard;
+        bool all_const = true;
+        uint64_t linear_const = 0;
+        for (size_t i = 0; i < dim_count; ++i) {
+          const Expr* idx_expr = assign.lhs_indices[i].get();
+          if (!idx_expr) {
+            return out;
+          }
+          FsExpr idx = emit_expr4(*idx_expr);
+          if (active_cse) {
+            idx = maybe_hoist_full(idx, indent, false, false);
+          }
+          if (idx.is_const) {
+            if (idx.const_xz != 0) {
+              return out;
+            }
+            if (idx.const_val >= static_cast<uint64_t>(dims[i])) {
+              return out;
+            }
+            linear_const = (i == 0)
+                               ? idx.const_val
+                               : (linear_const * dims[i] + idx.const_val);
+          } else {
+            all_const = false;
+            std::string cond =
+                "(" + idx.xz + " == " +
+                literal_for_width(0, idx.width) + " && " + idx.val + " < " +
+                std::to_string(dims[i]) + "u)";
+            guard =
+                guard.empty() ? cond : "(" + guard + " && " + cond + ")";
+          }
+          std::string idx_u = "uint(" + idx.val + ")";
+          if (linear.empty()) {
+            linear = idx_u;
+          } else {
+            linear = "(" + linear + " * " + std::to_string(dims[i]) + "u + " +
+                     idx_u + ")";
+          }
+        }
+        if (all_const) {
+          linear = std::to_string(linear_const) + "u";
+        }
+        std::string base = "(gid * " + std::to_string(array_size) + "u) + " +
+                           linear;
+        std::string name = assign.lhs;
+        if (use_next) {
+          name += "_next";
+        }
+        out.val = val_name(name) + "[" + base + "]";
+        out.xz = xz_name(name) + "[" + base + "]";
+        out.width = element_width;
+        out.ok = true;
+        if (has_bit_select) {
+          if (SignalIsReal(module, assign.lhs)) {
+            return Lvalue4{};
+          }
+          FsExpr bit_idx = emit_expr4(*bit_expr);
+          if (active_cse) {
+            bit_idx = maybe_hoist_full(bit_idx, indent, false, false);
+          }
+          if (bit_idx.is_const) {
+            if (bit_idx.const_xz != 0) {
+              return out;
+            }
+            if (bit_idx.const_val >= static_cast<uint64_t>(element_width)) {
+              return out;
+            }
+          } else {
+            std::string bit_guard =
+                "(" + bit_idx.xz + " == " +
+                literal_for_width(0, bit_idx.width) + " && " + bit_idx.val +
+                " < " + std::to_string(element_width) + "u)";
+            guard = guard.empty() ? bit_guard
+                                  : "(" + guard + " && " + bit_guard + ")";
+          }
+          out.guard = guard;
+          out.base_width = element_width;
+          out.bit_index_val = bit_idx.val;
+          out.bit_index_xz = bit_idx.xz;
+          out.width = 1;
+          out.is_bit_select = true;
+          return out;
+        }
+        out.guard = guard;
+        out.is_array = true;
+        return out;
+      }
       if (assign.lhs_has_range) {
         if (IsArrayNet(module, assign.lhs, nullptr, nullptr)) {
           return out;
@@ -4980,6 +5227,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
              ")";
     };
 
+    auto hoist_full_for_use = [&](FsExpr expr, int indent) -> FsExpr {
+      return maybe_hoist_full(expr, indent, false, true);
+    };
+
     auto eval_const_bool = [&](const FsExpr& expr, bool* value) -> bool {
       if (!value || !expr.is_const || expr.width > 64) {
         return false;
@@ -5333,6 +5584,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       FsExpr b_expr{b_val, b_xz, drive_full(width), width};
 
       std::string cond_false;
+      std::string cond_unknown = "false";
       if (sw.kind == SwitchKind::kTran) {
         cond_false = "false";
       } else if (sw.kind == SwitchKind::kTranif1 ||
@@ -5341,11 +5593,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  : FsExpr{literal_for_width(0, 1),
                                           literal_for_width(0, 1),
                                           drive_full(1), 1};
+        cond = hoist_full_for_use(cond, 2);
         std::string zero = literal_for_width(0, cond.width);
         std::string known =
             "(" + cond.xz + " == " + literal_for_width(0, cond.width) + ")";
         std::string is_zero = "(" + cond.val + " == " + zero + ")";
         std::string is_one = "(" + cond.val + " != " + zero + ")";
+        cond_unknown = "(" + cond.xz + " != " +
+                       literal_for_width(0, cond.width) + ")";
         if (sw.kind == SwitchKind::kTranif1) {
           cond_false = known + " && " + is_zero;
         } else {
@@ -5360,6 +5615,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                      : FsExpr{literal_for_width(0, 1),
                                               literal_for_width(0, 1),
                                               drive_full(1), 1};
+        cond = hoist_full_for_use(cond, 2);
+        cond_n = hoist_full_for_use(cond_n, 2);
         std::string known =
             "(" + cond.xz + " == " + literal_for_width(0, cond.width) + " && " +
             cond_n.xz + " == " + literal_for_width(0, cond_n.width) + ")";
@@ -5367,6 +5624,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             "(" + cond.val + " != " + literal_for_width(0, cond.width) +
             " && " + cond_n.val + " == " + literal_for_width(0, cond_n.width) +
             ")";
+        cond_unknown = "!(" + known + ")";
         cond_false = known + " && !" + on;
       }
 
@@ -5444,10 +5702,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "        " << m_xz << " |= mask;\n";
       out << "      }\n";
       out << "    }\n";
-      out << "    " << a_val << " = " << m_val << ";\n";
-      out << "    " << a_xz << " = " << m_xz << ";\n";
-      out << "    " << b_val << " = " << m_val << ";\n";
-      out << "    " << b_xz << " = " << m_xz << ";\n";
+      out << "    if (" << cond_unknown << ") {\n";
+      out << "      " << type << " __gpga_sw_diff_a = (" << a_tmp
+          << ".val ^ " << m_val << ") | (" << a_tmp << ".xz ^ " << m_xz
+          << ");\n";
+      out << "      " << type << " __gpga_sw_diff_b = (" << b_tmp
+          << ".val ^ " << m_val << ") | (" << b_tmp << ".xz ^ " << m_xz
+          << ");\n";
+      out << "      " << a_val << " = " << a_tmp << ".val;\n";
+      out << "      " << a_xz << " = " << a_tmp
+          << ".xz | __gpga_sw_diff_a;\n";
+      out << "      " << b_val << " = " << b_tmp << ".val;\n";
+      out << "      " << b_xz << " = " << b_tmp
+          << ".xz | __gpga_sw_diff_b;\n";
+      out << "    } else {\n";
+      out << "      " << a_val << " = " << m_val << ";\n";
+      out << "      " << a_xz << " = " << m_xz << ";\n";
+      out << "      " << b_val << " = " << m_val << ";\n";
+      out << "      " << b_xz << " = " << m_xz << ";\n";
+      out << "    }\n";
       out << "    " << a_drive << " = " << m_drive << ";\n";
       out << "    " << b_drive << " = " << m_drive << ";\n";
       out << "  }\n";
@@ -8232,6 +8505,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                : FsExpr{literal_for_width(0, 1),
                                         literal_for_width(0, 1),
                                         drive_full(1), 1};
+            cond = hoist_full_for_use(cond, indent);
             out << pad << "if (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.then_branch) {
               self(inner, indent + 2, locals_override, self);
@@ -8252,6 +8526,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               return;
             }
             FsExpr case_expr = emit_expr4(*stmt.case_expr);
+            case_expr = hoist_full_for_use(case_expr, indent);
             bool first = true;
             for (const auto& item : stmt.case_items) {
               std::string cond;
@@ -8301,6 +8576,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                    : FsExpr{literal_for_width(0, 1),
                                             literal_for_width(0, 1),
                                             drive_full(1), 1};
+            cond = hoist_full_for_use(cond, indent);
             out << pad << "while (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.for_body) {
               self(inner, indent + 2, locals_override, self);
@@ -8322,6 +8598,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                      : FsExpr{literal_for_width(0, 1),
                                               literal_for_width(0, 1),
                                               drive_full(1), 1};
+            cond = hoist_full_for_use(cond, indent);
             out << pad << "while (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.while_body) {
               self(inner, indent + 2, locals_override, self);
@@ -8738,6 +9015,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                       << info.item_offset << "u;\n";
                   for (size_t i = 0; i < info.items.size(); ++i) {
                     FsExpr edge_expr = emit_expr4(*info.items[i].expr);
+                    edge_expr = hoist_full_for_use(edge_expr, 18);
                     std::string mask =
                         literal_for_width(MaskForWidth64(edge_expr.width), 64);
                     out << "                  ulong __gpga_edge_val = ((ulong)("
@@ -8751,6 +9029,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   }
                 } else if (info.expr) {
                   FsExpr edge_expr = emit_expr4(*info.expr);
+                  edge_expr = hoist_full_for_use(edge_expr, 18);
                   std::string mask =
                       literal_for_width(MaskForWidth64(edge_expr.width), 64);
                   out << "                  uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
@@ -8815,6 +9094,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 continue;
               }
               FsExpr cond = emit_expr4(*stmt.wait_condition);
+              cond = hoist_full_for_use(cond, 18);
               out << "                  if (" << cond_bool(cond) << ") {\n";
               if (body_pc >= 0) {
                 out << "                    sched_pc[idx] = " << body_pc << "u;\n";
@@ -9132,6 +9412,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "                bool __gpga_any = false;\n";
             for (size_t j = 0; j < info.items.size(); ++j) {
               FsExpr curr = emit_expr4(*info.items[j].expr);
+              curr = hoist_full_for_use(curr, 16);
               std::string mask =
                   literal_for_width(MaskForWidth64(curr.width), 64);
               out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
@@ -9177,6 +9458,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "                ready = __gpga_any;\n";
           } else if (info.expr) {
             FsExpr curr = emit_expr4(*info.expr);
+            curr = hoist_full_for_use(curr, 16);
             std::string mask =
                 literal_for_width(MaskForWidth64(curr.width), 64);
             out << "                uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
@@ -9221,6 +9503,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               ident_expr.kind = ExprKind::kIdentifier;
               ident_expr.ident = info.star_signals[s];
               FsExpr sig = emit_expr4(ident_expr);
+              sig = hoist_full_for_use(sig, 16);
               std::string mask =
                   literal_for_width(MaskForWidth64(sig.width), 64);
               out << "                {\n";
@@ -9262,6 +9545,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "            switch (sched_wait_id[idx]) {\n";
         for (size_t i = 0; i < wait_exprs.size(); ++i) {
           FsExpr cond = emit_expr4(*wait_exprs[i]);
+          cond = hoist_full_for_use(cond, 16);
           out << "              case " << i << "u:\n";
           out << "                ready = (" << cond_bool(cond) << ");\n";
           out << "                break;\n";
@@ -9394,6 +9678,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "              bool __gpga_any = false;\n";
             for (size_t j = 0; j < info.items.size(); ++j) {
               FsExpr curr = emit_expr4(*info.items[j].expr);
+              curr = hoist_full_for_use(curr, 16);
               std::string mask =
                   literal_for_width(MaskForWidth64(curr.width), 64);
               out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
@@ -9439,6 +9724,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "              ready = __gpga_any;\n";
           } else if (info.expr) {
             FsExpr curr = emit_expr4(*info.expr);
+            curr = hoist_full_for_use(curr, 16);
             std::string mask =
                 literal_for_width(MaskForWidth64(curr.width), 64);
             out << "              uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
@@ -9483,6 +9769,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               ident_expr.kind = ExprKind::kIdentifier;
               ident_expr.ident = info.star_signals[s];
               FsExpr sig = emit_expr4(ident_expr);
+              sig = hoist_full_for_use(sig, 16);
               std::string mask =
                   literal_for_width(MaskForWidth64(sig.width), 64);
               out << "              {\n";
@@ -9524,6 +9811,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "          switch (sched_wait_id[idx]) {\n";
         for (size_t i = 0; i < wait_exprs.size(); ++i) {
           FsExpr cond = emit_expr4(*wait_exprs[i]);
+          cond = hoist_full_for_use(cond, 16);
           out << "            case " << i << "u:\n";
           out << "              ready = (" << cond_bool(cond) << ");\n";
           out << "              break;\n";
@@ -9562,6 +9850,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "          next_time = t;\n";
         out << "        }\n";
         out << "      }\n";
+        if (has_delayed_nba) {
+          out << "      if (sched_dnba_count[gid] != 0u) {\n";
+          out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
+          out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+          out << "        for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+          out << "          ulong __gpga_dnba_time = sched_dnba_time[__gpga_dnba_base + __gpga_dnba_i];\n";
+          out << "          if (!have_time || __gpga_dnba_time < next_time) {\n";
+          out << "            have_time = true;\n";
+          out << "            next_time = __gpga_dnba_time;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "      }\n";
+        }
         out << "      if (have_time) {\n";
         out << "        sched_time[gid] = next_time;\n";
         out << "        __gpga_time = next_time;\n";
@@ -14216,6 +14517,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "          next_time = t;\n";
       out << "        }\n";
       out << "      }\n";
+      if (has_delayed_nba) {
+        out << "      if (sched_dnba_count[gid] != 0u) {\n";
+        out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
+        out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+        out << "        for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+        out << "          ulong __gpga_dnba_time = sched_dnba_time[__gpga_dnba_base + __gpga_dnba_i];\n";
+        out << "          if (!have_time || __gpga_dnba_time < next_time) {\n";
+        out << "            have_time = true;\n";
+        out << "            next_time = __gpga_dnba_time;\n";
+        out << "          }\n";
+        out << "        }\n";
+        out << "      }\n";
+      }
       out << "      if (have_time) {\n";
       out << "        sched_time[gid] = next_time;\n";
       out << "        __gpga_time = next_time;\n";

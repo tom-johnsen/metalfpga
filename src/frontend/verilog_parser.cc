@@ -1738,6 +1738,18 @@ class Parser {
     std::unique_ptr<Expr> lsb_expr;
   };
 
+  int ArrayDimCount(const std::string& name) const {
+    if (!current_module_) {
+      return 0;
+    }
+    for (const auto& net : current_module_->nets) {
+      if (net.name == name) {
+        return static_cast<int>(net.array_dims.size());
+      }
+    }
+    return 0;
+  }
+
   bool ResolveGateOutput(const Expr& expr, GateOutputInfo* out,
                          bool allow_nonconst_select) {
     if (!out) {
@@ -1777,6 +1789,59 @@ class Parser {
       }
       return true;
     }
+    if (expr.kind == ExprKind::kSelect && expr.base &&
+        expr.base->kind == ExprKind::kIndex) {
+      std::vector<const Expr*> indices;
+      const Expr* current = expr.base.get();
+      while (current && current->kind == ExprKind::kIndex) {
+        if (!current->index || !current->base) {
+          break;
+        }
+        indices.push_back(current->index.get());
+        current = current->base.get();
+      }
+      if (current && current->kind == ExprKind::kIdentifier &&
+          IsArrayName(current->ident)) {
+        out->name = current->ident;
+        int dims = ArrayDimCount(out->name);
+        if (dims <= 0) {
+          ErrorHere("gate output array select must be valid in v0");
+          return false;
+        }
+        if (static_cast<int>(indices.size()) != dims) {
+          ErrorHere("gate output array select must match dimensions in v0");
+          return false;
+        }
+        out->indices.reserve(indices.size());
+        for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+          out->indices.push_back(CloneExprSimple(**it));
+        }
+        out->has_range = true;
+        out->is_range = expr.has_range;
+        if (expr.msb_expr) {
+          out->msb_expr = CloneExprSimple(*expr.msb_expr);
+        }
+        if (expr.has_range && expr.lsb_expr) {
+          out->lsb_expr = CloneExprSimple(*expr.lsb_expr);
+        }
+        int64_t msb_val = 0;
+        int64_t lsb_val = 0;
+        if (out->msb_expr && TryEvalConstExpr(*out->msb_expr, &msb_val) &&
+            (!expr.has_range ||
+             (out->lsb_expr && TryEvalConstExpr(*out->lsb_expr, &lsb_val)))) {
+          if (!expr.has_range) {
+            lsb_val = msb_val;
+          }
+          out->msb = static_cast<int>(msb_val);
+          out->lsb = static_cast<int>(lsb_val);
+          out->has_const_range = true;
+        } else if (expr.has_range || !allow_nonconst_select) {
+          ErrorHere("gate output select must be constant in v0");
+          return false;
+        }
+        return true;
+      }
+    }
     if (expr.kind == ExprKind::kIndex) {
       std::vector<const Expr*> indices;
       const Expr* current = &expr;
@@ -1790,9 +1855,36 @@ class Parser {
       if (current && current->kind == ExprKind::kIdentifier) {
         out->name = current->ident;
         if (IsArrayName(out->name)) {
-          out->indices.reserve(indices.size());
-          for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+          int dims = ArrayDimCount(out->name);
+          if (dims <= 0) {
+            ErrorHere("gate output array select must be valid in v0");
+            return false;
+          }
+          if (static_cast<int>(indices.size()) < dims ||
+              static_cast<int>(indices.size()) > dims + 1) {
+            ErrorHere("gate output array select must match dimensions in v0");
+            return false;
+          }
+          out->indices.reserve(dims);
+          for (int i = 0; i < dims; ++i) {
+            auto it = indices.rbegin() + i;
             out->indices.push_back(CloneExprSimple(**it));
+          }
+          if (static_cast<int>(indices.size()) == dims + 1) {
+            const Expr* bit_expr = indices.front();
+            out->has_range = true;
+            out->is_range = false;
+            out->msb_expr = CloneExprSimple(*bit_expr);
+            int64_t bit_val = 0;
+            if (out->msb_expr &&
+                TryEvalConstExpr(*out->msb_expr, &bit_val)) {
+              out->msb = static_cast<int>(bit_val);
+              out->lsb = static_cast<int>(bit_val);
+              out->has_const_range = true;
+            } else if (!allow_nonconst_select) {
+              ErrorHere("gate output select must be constant in v0");
+              return false;
+            }
           }
           return true;
         }
@@ -4480,6 +4572,7 @@ class Parser {
   struct GenerateContext {
     std::unordered_map<std::string, std::string> renames;
     std::unordered_map<std::string, int64_t> consts;
+    std::shared_ptr<Expr> guard;
   };
 
   std::string RenameIdent(
@@ -4499,6 +4592,117 @@ class Parser {
       return false;
     }
     return EvalConstExpr(*cloned, out_value);
+  }
+
+  int LookupSignalWidth(const Module& module,
+                        const std::string& name) const {
+    for (const auto& net : module.nets) {
+      if (net.name == name) {
+        return net.width;
+      }
+    }
+    for (const auto& port : module.ports) {
+      if (port.name == name) {
+        return port.width;
+      }
+    }
+    return 1;
+  }
+
+  bool IsModuleParamName(const Module& module,
+                         const std::string& name) const {
+    for (const auto& param : module.parameters) {
+      if (param.name == name) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool ExprUsesOnlyConstsOrParams(const Expr& expr, const GenerateContext& ctx,
+                                  const Module& module) const {
+    if (expr.kind == ExprKind::kIdentifier) {
+      if (ctx.consts.count(expr.ident) != 0) {
+        return true;
+      }
+      return IsModuleParamName(module, expr.ident);
+    }
+    if (expr.kind == ExprKind::kNumber) {
+      return true;
+    }
+    if (expr.kind == ExprKind::kCall || expr.kind == ExprKind::kString) {
+      return false;
+    }
+    auto check = [&](const std::unique_ptr<Expr>& subexpr) -> bool {
+      return subexpr ? ExprUsesOnlyConstsOrParams(*subexpr, ctx, module) : true;
+    };
+    if (!check(expr.operand) || !check(expr.lhs) || !check(expr.rhs) ||
+        !check(expr.condition) || !check(expr.then_expr) ||
+        !check(expr.else_expr) || !check(expr.base) || !check(expr.index) ||
+        !check(expr.msb_expr) || !check(expr.lsb_expr) ||
+        !check(expr.repeat_expr)) {
+      return false;
+    }
+    for (const auto& element : expr.elements) {
+      if (element && !ExprUsesOnlyConstsOrParams(*element, ctx, module)) {
+        return false;
+      }
+    }
+    for (const auto& arg : expr.call_args) {
+      if (arg && !ExprUsesOnlyConstsOrParams(*arg, ctx, module)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool ExprUsesOverridableParam(const Expr& expr,
+                                const Module& module) const {
+    if (expr.kind == ExprKind::kIdentifier) {
+      for (const auto& param : module.parameters) {
+        if (param.name == expr.ident) {
+          return !param.is_local;
+        }
+      }
+      return false;
+    }
+    auto check = [&](const std::unique_ptr<Expr>& subexpr) -> bool {
+      return subexpr ? ExprUsesOverridableParam(*subexpr, module) : false;
+    };
+    if (check(expr.operand) || check(expr.lhs) || check(expr.rhs) ||
+        check(expr.condition) || check(expr.then_expr) ||
+        check(expr.else_expr) || check(expr.base) || check(expr.index) ||
+        check(expr.msb_expr) || check(expr.lsb_expr) ||
+        check(expr.repeat_expr)) {
+      return true;
+    }
+    for (const auto& element : expr.elements) {
+      if (element && ExprUsesOverridableParam(*element, module)) {
+        return true;
+      }
+    }
+    for (const auto& arg : expr.call_args) {
+      if (arg && ExprUsesOverridableParam(*arg, module)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  std::shared_ptr<Expr> CombineGuard(const std::shared_ptr<Expr>& base,
+                                     std::unique_ptr<Expr> extra) {
+    if (!extra) {
+      return base;
+    }
+    if (!base) {
+      return std::shared_ptr<Expr>(extra.release());
+    }
+    auto expr = std::make_unique<Expr>();
+    expr->kind = ExprKind::kBinary;
+    expr->op = 'A';
+    expr->lhs = CloneExpr(*base);
+    expr->rhs = std::move(extra);
+    return std::shared_ptr<Expr>(expr.release());
   }
 
   struct ConstBits {
@@ -4646,6 +4850,47 @@ class Parser {
       if (statement.assign.lhs_lsb_expr) {
         out_statement->assign.lhs_lsb_expr = CloneExprGenerate(
             *statement.assign.lhs_lsb_expr, ctx.renames, ctx.consts);
+      }
+      if (ctx.guard && out_statement->assign.rhs) {
+        int width = 1;
+        if (out_statement->assign.lhs_has_range) {
+          int64_t msb = 0;
+          int64_t lsb = 0;
+          if (statement.assign.lhs_msb_expr &&
+              EvalConstExprWithContext(*statement.assign.lhs_msb_expr, ctx,
+                                       &msb)) {
+            if (statement.assign.lhs_lsb_expr) {
+              if (EvalConstExprWithContext(*statement.assign.lhs_lsb_expr, ctx,
+                                           &lsb)) {
+                width = (msb >= lsb)
+                            ? static_cast<int>(msb - lsb + 1)
+                            : static_cast<int>(lsb - msb + 1);
+              } else {
+                width = LookupSignalWidth(*current_module_,
+                                          out_statement->assign.lhs);
+              }
+            } else {
+              width = 1;
+            }
+          } else {
+            width = LookupSignalWidth(*current_module_,
+                                      out_statement->assign.lhs);
+          }
+        } else if (out_statement->assign.lhs_index) {
+          if (IsArrayName(out_statement->assign.lhs)) {
+            width = LookupSignalWidth(*current_module_,
+                                      out_statement->assign.lhs);
+          } else {
+            width = 1;
+          }
+        } else {
+          width =
+              LookupSignalWidth(*current_module_, out_statement->assign.lhs);
+        }
+        out_statement->assign.rhs =
+            MakeTernaryExpr(CloneExpr(*ctx.guard),
+                            std::move(out_statement->assign.rhs),
+                            MakeZExpr(width));
       }
       out_statement->assign.nonblocking = statement.assign.nonblocking;
       if (statement.kind == StatementKind::kForce) {
@@ -4960,6 +5205,17 @@ class Parser {
             assign.rhs =
                 CloneExprGenerate(*gen_assign.rhs, ctx.renames, ctx.consts);
           }
+          if (ctx.guard && assign.rhs) {
+            int width = 1;
+            if (assign.lhs_has_range) {
+              width = std::abs(assign.lhs_msb - assign.lhs_lsb) + 1;
+            } else {
+              width = LookupSignalWidth(*module, assign.lhs);
+            }
+            assign.rhs = MakeTernaryExpr(CloneExpr(*ctx.guard),
+                                         std::move(assign.rhs),
+                                         MakeZExpr(width));
+          }
           module->assigns.push_back(std::move(assign));
           break;
         }
@@ -5065,18 +5321,50 @@ class Parser {
           if (!gen_if.then_block || !gen_if.condition) {
             break;
           }
+          const bool uses_overridable =
+              ExprUsesOverridableParam(*gen_if.condition, *module);
           int64_t cond_value = 0;
-          if (!EvalConstExprWithContext(*gen_if.condition, ctx, &cond_value)) {
+          if (!uses_overridable &&
+              EvalConstExprWithContext(*gen_if.condition, ctx, &cond_value)) {
+            const GenerateBlock* chosen =
+                (cond_value != 0) ? gen_if.then_block.get()
+                                  : (gen_if.has_else ? gen_if.else_block.get()
+                                                     : nullptr);
+            if (chosen) {
+              std::string child_prefix = child_prefix_for_block(chosen);
+              if (!EmitGenerateBlock(*chosen, ctx, child_prefix, module)) {
+                return false;
+              }
+            }
+            break;
+          }
+          if (!ExprUsesOnlyConstsOrParams(*gen_if.condition, ctx, *module)) {
             ErrorHere("generate if condition must be constant");
             return false;
           }
-          const GenerateBlock* chosen =
-              (cond_value != 0) ? gen_if.then_block.get()
-                                : (gen_if.has_else ? gen_if.else_block.get()
-                                                   : nullptr);
-          if (chosen) {
-            std::string child_prefix = child_prefix_for_block(chosen);
-            if (!EmitGenerateBlock(*chosen, ctx, child_prefix, module)) {
+          auto cond_then =
+              CloneExprGenerate(*gen_if.condition, ctx.renames, ctx.consts);
+          if (!cond_then) {
+            ErrorHere("generate if condition must be constant");
+            return false;
+          }
+          std::unique_ptr<Expr> cond_else = CloneExpr(*cond_then);
+          GenerateContext then_ctx = ctx;
+          then_ctx.guard = CombineGuard(ctx.guard, std::move(cond_then));
+          std::string then_prefix =
+              child_prefix_for_block(gen_if.then_block.get());
+          if (!EmitGenerateBlock(*gen_if.then_block, then_ctx, then_prefix,
+                                 module)) {
+            return false;
+          }
+          if (gen_if.has_else && gen_if.else_block) {
+            GenerateContext else_ctx = ctx;
+            auto not_cond = MakeUnaryExpr('!', std::move(cond_else));
+            else_ctx.guard = CombineGuard(ctx.guard, std::move(not_cond));
+            std::string else_prefix =
+                child_prefix_for_block(gen_if.else_block.get());
+            if (!EmitGenerateBlock(*gen_if.else_block, else_ctx, else_prefix,
+                                   module)) {
               return false;
             }
           }
