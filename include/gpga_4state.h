@@ -15,6 +15,8 @@ static inline uint popcount(uint value) { return __builtin_popcount(value); }
 // Four-state helpers for MSL.
 struct FourState32 { uint val; uint xz; };
 struct FourState64 { ulong val; ulong xz; };
+inline int fs_sign32(uint val, uint width);
+inline long fs_sign64(ulong val, uint width);
 inline uint fs_mask32(uint width) {
   return (width >= 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);
 }

@@ -2878,7 +2878,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "}\n\n";
   }
   out << "struct GpgaParams { uint count; };\n\n";
-  out << "constexpr ulong __gpga_time = 0ul;\n\n";
+  out << "constant constexpr ulong __gpga_time = 0ul;\n\n";
   out << "// Placeholder MSL emitted by GPGA.\n\n";
   const bool needs_scheduler = ModuleNeedsScheduler(module);
   const SystemTaskInfo system_task_info = BuildSystemTaskInfo(module);
@@ -7380,82 +7380,82 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         out << "\n";
         out << "struct GpgaSchedParams { uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
-        out << "constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size()
+        out << "constant constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size()
             << "u;\n";
-        out << "constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
+        out << "constant constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
             << "u;\n";
-        out << "constexpr uint GPGA_SCHED_EVENT_COUNT = "
+        out << "constant constexpr uint GPGA_SCHED_EVENT_COUNT = "
             << module.events.size() << "u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
+        out << "constant constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
             << "u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = "
+        out << "constant constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = "
             << edge_star_count << "u;\n";
-        out << "constexpr uint GPGA_SCHED_MAX_READY = " << procs.size()
+        out << "constant constexpr uint GPGA_SCHED_MAX_READY = " << procs.size()
             << "u;\n";
-        out << "constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
-        out << "constexpr uint GPGA_SCHED_MAX_NBA = "
+        out << "constant constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_MAX_NBA = "
             << nb_targets_sorted.size() << "u;\n";
         if (has_delayed_assigns) {
-          out << "constexpr uint GPGA_SCHED_DELAY_COUNT = "
+          out << "constant constexpr uint GPGA_SCHED_DELAY_COUNT = "
               << delay_assigns.size() << "u;\n";
         }
         if (has_delayed_nba) {
-          out << "constexpr uint GPGA_SCHED_MAX_DNBA = "
+          out << "constant constexpr uint GPGA_SCHED_MAX_DNBA = "
               << delayed_nba_capacity << "u;\n";
         }
-        out << "constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
-        out << "constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
-        out << "constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
-        out << "constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
-        out << "constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
-        out << "constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
-        out << "constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
-        out << "constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
-        out << "constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
-        out << "constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
-        out << "constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
-        out << "constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
-        out << "constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
+        out << "constant constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
+        out << "constant constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
+        out << "constant constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
+        out << "constant constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
+        out << "constant constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
+        out << "constant constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
+        out << "constant constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
         if (!system_task_info.monitor_stmts.empty()) {
           size_t max_args =
               std::max<size_t>(1, system_task_info.monitor_max_args);
-          out << "constexpr uint GPGA_SCHED_MONITOR_COUNT = "
+          out << "constant constexpr uint GPGA_SCHED_MONITOR_COUNT = "
               << system_task_info.monitor_stmts.size() << "u;\n";
-          out << "constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
+          out << "constant constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
               << "u;\n";
         }
         if (!system_task_info.strobe_stmts.empty()) {
-          out << "constexpr uint GPGA_SCHED_STROBE_COUNT = "
+          out << "constant constexpr uint GPGA_SCHED_STROBE_COUNT = "
               << system_task_info.strobe_stmts.size() << "u;\n";
         }
         if (system_task_info.has_system_tasks) {
           size_t max_args = std::max<size_t>(1, system_task_info.max_args);
-          out << "constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
+          out << "constant constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
               << "u;\n";
-          out << "constexpr uint GPGA_SCHED_STRING_COUNT = "
+          out << "constant constexpr uint GPGA_SCHED_STRING_COUNT = "
               << system_task_info.string_table.size() << "u;\n";
-          out << "constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
-          out << "constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
-          out << "constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
-          out << "constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_DUMPFILE = 3u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_DUMPVARS = 4u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
-          out << "constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
+          out << "constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFILE = 3u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPVARS = 4u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
           out << "struct GpgaServiceRecord {\n";
           out << "  uint kind;\n";
           out << "  uint pid;\n";
@@ -8751,12 +8751,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         for (const auto& proc : procs) {
           std::vector<const Statement*> stmts;
+          const uint64_t kRepeatUnrollLimit = 4096u;
+          std::function<void(const Statement&)> append_stmt;
+          append_stmt = [&](const Statement& stmt) -> void {
+            if (stmt.kind == StatementKind::kBlock &&
+                stmt.block_label.empty()) {
+              for (const auto& inner : stmt.block) {
+                append_stmt(inner);
+              }
+              return;
+            }
+            if (stmt.kind == StatementKind::kRepeat && stmt.repeat_count) {
+              FourStateValue count_value;
+              if (EvalConstExpr4State(*stmt.repeat_count, kEmptyParams,
+                                      &count_value, nullptr) &&
+                  !count_value.HasXorZ()) {
+                uint64_t count = count_value.value_bits;
+                if (count == 0u) {
+                  return;
+                }
+                if (count <= kRepeatUnrollLimit) {
+                  for (uint64_t rep = 0u; rep < count; ++rep) {
+                    for (const auto& inner : stmt.repeat_body) {
+                      append_stmt(inner);
+                    }
+                  }
+                  return;
+                }
+              }
+            }
+            stmts.push_back(&stmt);
+          };
           if (proc.body) {
             for (const auto& stmt : *proc.body) {
-              stmts.push_back(&stmt);
+              append_stmt(stmt);
             }
           } else if (proc.single) {
-            stmts.push_back(proc.single);
+            append_stmt(*proc.single);
           }
           std::unordered_map<const Statement*, int> pc_for_stmt;
           int pc_counter = 0;
@@ -12246,80 +12277,80 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
       out << "\n";
       out << "struct GpgaSchedParams { uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
-      out << "constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size() << "u;\n";
-      out << "constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
+      out << "constant constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size() << "u;\n";
+      out << "constant constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
           << "u;\n";
-      out << "constexpr uint GPGA_SCHED_EVENT_COUNT = "
+      out << "constant constexpr uint GPGA_SCHED_EVENT_COUNT = "
           << module.events.size() << "u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
+      out << "constant constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
           << "u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = " << edge_star_count
+      out << "constant constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = " << edge_star_count
           << "u;\n";
-      out << "constexpr uint GPGA_SCHED_MAX_READY = " << procs.size() << "u;\n";
-      out << "constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
-      out << "constexpr uint GPGA_SCHED_MAX_NBA = " << nb_targets_sorted.size()
+      out << "constant constexpr uint GPGA_SCHED_MAX_READY = " << procs.size() << "u;\n";
+      out << "constant constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
+      out << "constant constexpr uint GPGA_SCHED_MAX_NBA = " << nb_targets_sorted.size()
           << "u;\n";
       if (has_delayed_assigns) {
-        out << "constexpr uint GPGA_SCHED_DELAY_COUNT = "
+        out << "constant constexpr uint GPGA_SCHED_DELAY_COUNT = "
             << delay_assigns.size() << "u;\n";
       }
       if (has_delayed_nba) {
-        out << "constexpr uint GPGA_SCHED_MAX_DNBA = " << delayed_nba_capacity
+        out << "constant constexpr uint GPGA_SCHED_MAX_DNBA = " << delayed_nba_capacity
             << "u;\n";
       }
-      out << "constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
-      out << "constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
-      out << "constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
-      out << "constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
-      out << "constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
-      out << "constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
-      out << "constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
-      out << "constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
-      out << "constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
-      out << "constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
-      out << "constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
-      out << "constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
-      out << "constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
+      out << "constant constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
+      out << "constant constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
+      out << "constant constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
+      out << "constant constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
+      out << "constant constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
+      out << "constant constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
+      out << "constant constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
+      out << "constant constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
+      out << "constant constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
+      out << "constant constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
       if (!system_task_info.monitor_stmts.empty()) {
         size_t max_args =
             std::max<size_t>(1, system_task_info.monitor_max_args);
-        out << "constexpr uint GPGA_SCHED_MONITOR_COUNT = "
+        out << "constant constexpr uint GPGA_SCHED_MONITOR_COUNT = "
             << system_task_info.monitor_stmts.size() << "u;\n";
-        out << "constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
+        out << "constant constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
             << "u;\n";
       }
       if (!system_task_info.strobe_stmts.empty()) {
-        out << "constexpr uint GPGA_SCHED_STROBE_COUNT = "
+        out << "constant constexpr uint GPGA_SCHED_STROBE_COUNT = "
             << system_task_info.strobe_stmts.size() << "u;\n";
       }
       if (system_task_info.has_system_tasks) {
         size_t max_args = std::max<size_t>(1, system_task_info.max_args);
-        out << "constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
+        out << "constant constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
             << "u;\n";
-        out << "constexpr uint GPGA_SCHED_STRING_COUNT = "
+        out << "constant constexpr uint GPGA_SCHED_STRING_COUNT = "
             << system_task_info.string_table.size() << "u;\n";
-        out << "constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
-        out << "constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
-        out << "constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
-        out << "constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_DUMPFILE = 3u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_DUMPVARS = 4u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
-        out << "constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
+        out << "constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFILE = 3u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPVARS = 4u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -13512,14 +13543,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         g_task_arg_real = prev_real;
       };
 
+      const std::unordered_map<std::string, int64_t> kEmptyParams;
       for (const auto& proc : procs) {
         std::vector<const Statement*> stmts;
+        const int64_t kRepeatUnrollLimit = 4096;
+        std::function<void(const Statement&)> append_stmt;
+        append_stmt = [&](const Statement& stmt) -> void {
+          if (stmt.kind == StatementKind::kBlock && stmt.block_label.empty()) {
+            for (const auto& inner : stmt.block) {
+              append_stmt(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kRepeat && stmt.repeat_count) {
+            int64_t count_value = 0;
+            if (EvalConstExpr(*stmt.repeat_count, kEmptyParams, &count_value,
+                              nullptr)) {
+              if (count_value <= 0) {
+                return;
+              }
+              if (count_value <= kRepeatUnrollLimit) {
+                for (int64_t rep = 0; rep < count_value; ++rep) {
+                  for (const auto& inner : stmt.repeat_body) {
+                    append_stmt(inner);
+                  }
+                }
+                return;
+              }
+            }
+          }
+          stmts.push_back(&stmt);
+        };
         if (proc.body) {
           for (const auto& stmt : *proc.body) {
-            stmts.push_back(&stmt);
+            append_stmt(stmt);
           }
         } else if (proc.single) {
-          stmts.push_back(proc.single);
+          append_stmt(*proc.single);
         }
         std::unordered_map<const Statement*, int> pc_for_stmt;
         int pc_counter = 0;

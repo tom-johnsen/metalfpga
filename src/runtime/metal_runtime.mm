@@ -331,7 +331,7 @@ std::string ExpandIncludes(const std::string& source,
 
 bool ParseUintConst(const std::string& source, const std::string& name,
                     uint32_t* value_out) {
-  std::regex pattern("constexpr\\s+uint\\s+" + name +
+  std::regex pattern("(?:constant\\s+)?constexpr\\s+uint\\s+" + name +
                      "\\s*=\\s*([0-9]+)u;");
   std::smatch match;
   if (!std::regex_search(source, match, pattern)) {
