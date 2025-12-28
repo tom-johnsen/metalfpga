@@ -28,7 +28,7 @@ set(METALFPGA_HEADERS
 )
 
 set(METALFPGA_MSL
-  src/msl/demo.metal
+  #src/msl/demo.metal
 )
 
 add_library(metalfpga STATIC
@@ -50,3 +50,13 @@ add_executable(metalfpga_cli
 )
 
 target_link_libraries(metalfpga_cli PRIVATE metalfpga)
+
+add_executable(metalfpga_smoke
+  src/tools/metal_smoke.mm
+)
+
+target_link_libraries(metalfpga_smoke PRIVATE metalfpga)
+
+if(APPLE)
+  target_link_libraries(metalfpga PUBLIC "-framework Metal" "-framework Foundation")
+endif()

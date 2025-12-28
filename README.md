@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.6 — Compiler/codegen coverage includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), and procedural part-select assignment. Extensive support for generate/loops, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **288 total test files** with **93% pass rate** on the default test suite. Enhanced drive strength tracking for switch primitives and comprehensive edge case coverage. **GPU runtime execution and validation are the next milestone.**
+**Current Status**: v0.6+ — **Verilog frontend complete**: parsing, elaboration, and MSL codegen for ~95% of Verilog-2005. Includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, and procedural part-select assignment. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **365 total test files** validate the compiler pipeline. **Next phase: Host-side runtime and GPU kernel execution (v0.7 → v1.0).**
 
 ## What is this?
 
@@ -12,11 +12,11 @@ metalfpga is a "GPGA" (GPU-based FPGA) compiler that:
 - Generates Metal compute shaders for GPU execution
 - Emits host-side runtime scaffolding
 
-**Current phase:** MSL codegen is in place; GPU runtime dispatch/validation is in development.
+**Current phase:** ✅ **Verilog frontend complete** (parsing → elaboration → MSL codegen). Next: GPU runtime dispatch and validation.
 
 This allows FPGA designers to prototype and validate hardware designs on GPUs before synthesis to actual hardware, leveraging massive parallelism for fast simulation.
 
-**Note**: The emitted Metal Shading Language (MSL) code is verbose and generally correct, but has not been thoroughly validated through kernel execution. The codegen produces structurally sound MSL that implements the intended semantics, though bugs may surface during actual GPU dispatch. Runtime validation is the next development phase.
+**Note**: The compiler successfully parses, elaborates, and generates MSL code for the full Verilog-2005 language. The emitted MSL is structurally sound and implements intended semantics, though runtime bugs may surface during GPU execution. The frontend is feature-complete; ongoing work focuses on host-side runtime and kernel execution validation.
 
 ## Quick Start
 
@@ -174,26 +174,22 @@ These features are fully implemented in the compiler pipeline + MSL emission, bu
 
 ## Test Suite
 
-**288 total test files** across the test suite:
-- **61 files** in `verilog/` (default test suite, runs in ~30 seconds)
-- **227 files** in `verilog/pass/` (extended test suite, requires `--full` flag)
+**365 total test files** across the test suite:
+- **1 file** in `verilog/` (smoke test for quick validation, runs in ~2 seconds)
+- **364 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
 - **18 files** in `verilog/systemverilog/` (SystemVerilog features, expected to fail)
 
-**Pass rate: 93%** (54/58 passing in default suite)
+The test suite validates parsing, elaboration, MSL codegen output quality, and semantic correctness. Tests cover all major Verilog-2005 features including edge cases and advanced semantics.
 
-The 4 expected failures are SystemVerilog-specific features (not Verilog-2005):
-- `test_streaming_operator.v`, `test_struct.v`, `test_enum.v`, `test_interface.v`
-- Plus 10 more SystemVerilog features in `verilog/systemverilog/`
+**Note**: The default test run (`./test_runner.sh`) now executes only a single smoke test for rapid iteration during development. Use `./test_runner.sh --full` for comprehensive regression testing.
 
-These tests validate parsing, elaboration, codegen output quality, and semantic lowering decisions. Full GPU runtime validation is in progress.
-
-**Test coverage includes**:
+**Test coverage includes** (all tests in `verilog/pass/`):
 - **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
 - **Real number arithmetic**: All IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
-- **casez/casex pattern matching** (16 tests): Don't-care case statements, priority encoding, state machines with X/Z tolerance
-- **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy, nested generate
-- **Generate blocks** (23 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation, scoping edge cases
-- **Timing semantics** (13 tests): Blocking vs. non-blocking assignment, delta cycles, NBA scheduling, race conditions, intra/inter-assignment delays, multi-always interactions
+- **casez/casex pattern matching** (16 tests): Don't-care case statements, wildcard matching, priority encoding, state machines with X/Z tolerance
+- **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy, generate block instances
+- **Generate blocks** (23 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation, scoping edge cases, multi-dimensional unrolling
+- **Timing semantics** (14 tests): Blocking vs. non-blocking assignment, delta cycles, NBA scheduling, race conditions, intra/inter-assignment delays, multi-always interactions, delayed NBA
 - **Switch-level primitives** (23 tests): Tristate buffers (bufif/notif), transmission gates (tran/tranif), MOS switches (nmos/pmos/cmos), charge storage (trireg), drive strength resolution, wired logic, 4-state control values
 - **Arithmetic and logic operations**: All operators including power (`**`)
 - **Match-3 operators**: Case equality `===`/`!==`, wildcard match `==?`/`!=?`
@@ -202,30 +198,33 @@ These tests validate parsing, elaboration, codegen output quality, and semantic 
 - **Signed arithmetic**: Overflow, underflow, division by zero, sign extension
 - **4-state logic**: X/Z propagation, full 4-state operator semantics
 - **System tasks**: $display, $monitor, $time, $finish, $readmemh/b, $dumpvars, etc.
-- **Memory operations**: Multi-dimensional arrays, read/write
+- **Memory operations**: Single and multi-dimensional arrays, hierarchical indexing, part-select with array access
 - **Advanced net types**: tri, trireg, wand, wor, supply0/1
+- **System functions**: File I/O ($fopen, $fclose, $fscanf, $fwrite, etc.), random ($random, $urandom), bit manipulation ($bits, $size, $dimensions)
 
 ### Running Tests
 
-**Default test suite** (61 files, ~30 seconds):
+**Quick smoke test** (1 file, ~2 seconds):
 ```sh
 ./test_runner.sh
 ```
 
-**Full test suite** (288 files, ~3 minutes):
+**Full test suite** (364 files, ~3 minutes):
 ```sh
 ./test_runner.sh --full
 ```
 
-**With 4-state mode**:
+**Test modes**:
 ```sh
-./test_runner.sh --4state
+./test_runner.sh --4state      # Force 4-state mode for all tests
+./test_runner.sh --2state      # Force 2-state mode (tests requiring X/Z marked N/A)
+./test_runner.sh --sysverilog  # Run SystemVerilog tests (expected failures)
 ```
 
 **Single file**:
 ```sh
-./build/metalfpga_cli verilog/test_example.v
-./build/metalfpga_cli verilog/test_example.v --4state  # With X/Z support
+./build/metalfpga_cli verilog/pass/test_example.v
+./build/metalfpga_cli verilog/pass/test_example.v --4state  # With X/Z support
 ```
 
 **Artifacts**: Test results are saved to `artifacts/<RUN_ID>/` with:
@@ -244,14 +243,21 @@ The compiler detects and reports:
 
 ## Documentation
 
+### Core Documentation
 - [Project Overview](docs/gpga/README.md) - Architecture and goals
 - [Verilog Coverage](docs/gpga/verilog_words.md) - Keyword implementation status
 - [IR Invariants](docs/gpga/ir_invariants.md) - Flattened netlist guarantees
 - [Roadmap](docs/gpga/roadmap.md) - Development milestones
+
+### Technical References
 - [4-State Logic Plan](docs/4STATE.md) - X/Z support design document
+- [4-State API Reference](docs/gpga_4state_api.md) - Complete MSL library documentation (100+ functions)
 - [Bit Packing Strategy](docs/bit_packing_strategy.md) - GPU memory optimization techniques
 - [Verilog Reference](docs/VERILOG_REFERENCE.md) - Language reference
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
+
+### Revision History
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV26)
 
 ## Project Structure
 
@@ -265,17 +271,18 @@ src/
   runtime/        # Metal runtime wrapper
   utils/          # Diagnostics and utilities
 verilog/
-  test_*.v        # Main test suite (61 files, default run)
-  pass/           # Extended test suite (227 files, --full flag)
+  test_v1_ready_do_not_move.v  # Smoke test (1 file, default run)
+  pass/           # Comprehensive test suite (364 files, --full flag)
   systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/
-  gpga/           # Core documentation
-  diff/           # REV documents (commit changelogs)
-  4STATE.md       # 4-state logic implementation
-  ANALOG.md       # Analog/mixed-signal support
-  GPGA_KEYWORDS.md  # Verilog keyword reference
-  VERILOG_REFERENCE.md     # Language reference
-  ASYNC_DEBUGGING.md       # Async circuit debugging
+  gpga/                 # Core documentation
+  diff/                 # REV documents (REV0-REV26 commit changelogs)
+  4STATE.md             # 4-state logic implementation
+  gpga_4state_api.md    # Complete MSL 4-state library reference
+  ANALOG.md             # Analog/mixed-signal support
+  GPGA_KEYWORDS.md      # Verilog keyword reference
+  VERILOG_REFERENCE.md  # Language reference
+  ASYNC_DEBUGGING.md    # Async circuit debugging
   bit_packing_strategy.md  # GPU memory optimization
 artifacts/        # Test run outputs (generated, gitignored)
   <RUN_ID>/

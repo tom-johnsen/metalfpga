@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include "codegen/msl_codegen.hh"
 #include "core/elaboration.hh"
 #include "frontend/verilog_parser.hh"
+#include "runtime/metal_runtime.hh"
 #include "utils/diagnostics.hh"
 
 namespace {
@@ -20,7 +22,9 @@ namespace {
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
             << " <input.v> [<more.v> ...] [--emit-msl <path>] [--emit-host <path>]"
-            << " [--dump-flat] [--top <module>] [--4state] [--auto]\n";
+            << " [--dump-flat] [--top <module>] [--4state] [--auto]"
+            << " [--run] [--count N] [--service-capacity N]"
+            << " [--max-steps N] [--max-proc-steps N]\n";
 }
 
 bool WriteFile(const std::string& path, const std::string& content,
@@ -52,6 +56,436 @@ std::string DirLabel(gpga::PortDir dir) {
       return "inout";
   }
   return "unknown";
+}
+
+struct SysTaskInfo {
+  bool has_tasks = false;
+  size_t max_args = 0;
+  std::vector<std::string> string_table;
+  std::unordered_map<std::string, size_t> string_ids;
+};
+
+bool IsSystemTask(const std::string& name) {
+  return !name.empty() && name[0] == '$';
+}
+
+bool IdentAsString(const std::string& name) {
+  return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb";
+}
+
+void AddString(SysTaskInfo* info, const std::string& value) {
+  if (!info) {
+    return;
+  }
+  auto it = info->string_ids.find(value);
+  if (it != info->string_ids.end()) {
+    return;
+  }
+  info->string_ids[value] = info->string_table.size();
+  info->string_table.push_back(value);
+}
+
+void CollectTasks(const gpga::Statement& stmt, SysTaskInfo* info) {
+  if (!info) {
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kTaskCall &&
+      IsSystemTask(stmt.task_name)) {
+    info->has_tasks = true;
+    info->max_args = std::max(info->max_args, stmt.task_args.size());
+    bool treat_ident = IdentAsString(stmt.task_name);
+    for (const auto& arg : stmt.task_args) {
+      if (!arg) {
+        continue;
+      }
+      if (arg->kind == gpga::ExprKind::kString) {
+        AddString(info, arg->string_value);
+      } else if (treat_ident && arg->kind == gpga::ExprKind::kIdentifier) {
+        AddString(info, arg->ident);
+      }
+    }
+  }
+  if (stmt.kind == gpga::StatementKind::kIf) {
+    for (const auto& inner : stmt.then_branch) {
+      CollectTasks(inner, info);
+    }
+    for (const auto& inner : stmt.else_branch) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kCase) {
+    for (const auto& item : stmt.case_items) {
+      for (const auto& inner : item.body) {
+        CollectTasks(inner, info);
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kFor) {
+    for (const auto& inner : stmt.for_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kWhile) {
+    for (const auto& inner : stmt.while_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kRepeat) {
+    for (const auto& inner : stmt.repeat_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kDelay) {
+    for (const auto& inner : stmt.delay_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kEventControl) {
+    for (const auto& inner : stmt.event_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kWait) {
+    for (const auto& inner : stmt.wait_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectTasks(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
+      CollectTasks(inner, info);
+    }
+  }
+}
+
+gpga::ServiceStringTable BuildStringTable(const gpga::Module& module) {
+  SysTaskInfo info;
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      CollectTasks(stmt, &info);
+    }
+  }
+  for (const auto& task : module.tasks) {
+    for (const auto& stmt : task.body) {
+      CollectTasks(stmt, &info);
+    }
+  }
+  gpga::ServiceStringTable table;
+  table.entries = std::move(info.string_table);
+  return table;
+}
+
+gpga::ModuleInfo BuildModuleInfo(const gpga::Module& module,
+                                 bool four_state) {
+  gpga::ModuleInfo info;
+  info.name = module.name;
+  info.four_state = four_state;
+  std::unordered_map<std::string, gpga::SignalInfo> signals;
+  for (const auto& port : module.ports) {
+    gpga::SignalInfo sig;
+    sig.name = port.name;
+    sig.width = port.width;
+    sig.is_real = port.is_real;
+    signals[port.name] = sig;
+  }
+  for (const auto& net : module.nets) {
+    auto it = signals.find(net.name);
+    if (it == signals.end()) {
+      gpga::SignalInfo sig;
+      sig.name = net.name;
+      sig.width = net.width;
+      sig.array_size = net.array_size;
+      sig.is_real = net.is_real;
+      sig.is_trireg = net.type == gpga::NetType::kTrireg;
+      signals[net.name] = sig;
+    } else {
+      it->second.width = std::max(it->second.width,
+                                  static_cast<uint32_t>(net.width));
+      if (net.array_size > 0) {
+        it->second.array_size = net.array_size;
+      }
+      if (net.is_real) {
+        it->second.is_real = true;
+      }
+      if (net.type == gpga::NetType::kTrireg) {
+        it->second.is_trireg = true;
+      }
+    }
+  }
+  info.signals.reserve(signals.size());
+  for (auto& entry : signals) {
+    info.signals.push_back(std::move(entry.second));
+  }
+  return info;
+}
+
+bool HasKernel(const std::string& msl, const std::string& name) {
+  return msl.find("kernel void " + name) != std::string::npos;
+}
+
+void MergeSpecs(std::unordered_map<std::string, size_t>* lengths,
+                const std::vector<gpga::BufferSpec>& specs) {
+  if (!lengths) {
+    return;
+  }
+  for (const auto& spec : specs) {
+    size_t& current = (*lengths)[spec.name];
+    current = std::max(current, spec.length);
+  }
+}
+
+bool BuildBindings(const gpga::MetalKernel& kernel,
+                   const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
+                   std::vector<gpga::MetalBufferBinding>* bindings,
+                   std::string* error) {
+  if (!bindings) {
+    return false;
+  }
+  bindings->clear();
+  for (const auto& entry : kernel.BufferIndices()) {
+    auto it = buffers.find(entry.first);
+    if (it == buffers.end()) {
+      if (error) {
+        *error = "missing buffer for " + entry.first;
+      }
+      return false;
+    }
+    bindings->push_back({entry.second, &it->second, 0});
+  }
+  return true;
+}
+
+void SwapNextBuffers(std::unordered_map<std::string, gpga::MetalBuffer>* buffers) {
+  if (!buffers) {
+    return;
+  }
+  std::vector<std::pair<std::string, std::string>> swaps;
+  for (const auto& entry : *buffers) {
+    const std::string& name = entry.first;
+    if (name.size() > 9 && name.compare(name.size() - 9, 9, "_next_val") == 0) {
+      swaps.emplace_back(name.substr(0, name.size() - 9) + "_val", name);
+    } else if (name.size() > 8 &&
+               name.compare(name.size() - 8, 8, "_next_xz") == 0) {
+      swaps.emplace_back(name.substr(0, name.size() - 8) + "_xz", name);
+    } else if (name.size() > 5 &&
+               name.compare(name.size() - 5, 5, "_next") == 0) {
+      swaps.emplace_back(name.substr(0, name.size() - 5), name);
+    }
+  }
+  for (const auto& pair : swaps) {
+    auto it_a = buffers->find(pair.first);
+    auto it_b = buffers->find(pair.second);
+    if (it_a != buffers->end() && it_b != buffers->end()) {
+      std::swap(it_a->second, it_b->second);
+    }
+  }
+}
+
+bool RunMetal(const gpga::Module& module, const std::string& msl,
+              bool enable_4state, uint32_t count, uint32_t service_capacity,
+              uint32_t max_steps, uint32_t max_proc_steps,
+              std::string* error) {
+  gpga::MetalRuntime runtime;
+  if (!runtime.CompileSource(msl, {"include"}, error)) {
+    return false;
+  }
+
+  gpga::SchedulerConstants sched;
+  gpga::ParseSchedulerConstants(msl, &sched, error);
+
+  gpga::ModuleInfo info = BuildModuleInfo(module, enable_4state);
+  const std::string base = "gpga_" + module.name;
+  const bool has_sched = HasKernel(msl, base + "_sched_step");
+  const bool has_init = HasKernel(msl, base + "_init");
+  const bool has_tick = HasKernel(msl, base + "_tick");
+
+  gpga::MetalKernel comb_kernel;
+  gpga::MetalKernel init_kernel;
+  gpga::MetalKernel tick_kernel;
+  gpga::MetalKernel sched_kernel;
+
+  if (has_sched) {
+    if (!runtime.CreateKernel(base + "_sched_step", &sched_kernel, error)) {
+      return false;
+    }
+  } else {
+    if (!runtime.CreateKernel(base, &comb_kernel, error)) {
+      return false;
+    }
+    if (has_init) {
+      if (!runtime.CreateKernel(base + "_init", &init_kernel, error)) {
+        return false;
+      }
+    }
+    if (has_tick) {
+      if (!runtime.CreateKernel(base + "_tick", &tick_kernel, error)) {
+        return false;
+      }
+    }
+  }
+
+  std::unordered_map<std::string, size_t> buffer_lengths;
+  std::vector<gpga::BufferSpec> specs;
+  if (has_sched) {
+    if (!gpga::BuildBufferSpecs(info, sched_kernel, sched, count,
+                                service_capacity, &specs, error)) {
+      return false;
+    }
+    MergeSpecs(&buffer_lengths, specs);
+  } else {
+    if (!gpga::BuildBufferSpecs(info, comb_kernel, sched, count,
+                                service_capacity, &specs, error)) {
+      return false;
+    }
+    MergeSpecs(&buffer_lengths, specs);
+    if (has_init) {
+      if (!gpga::BuildBufferSpecs(info, init_kernel, sched, count,
+                                  service_capacity, &specs, error)) {
+        return false;
+      }
+      MergeSpecs(&buffer_lengths, specs);
+    }
+    if (has_tick) {
+      if (!gpga::BuildBufferSpecs(info, tick_kernel, sched, count,
+                                  service_capacity, &specs, error)) {
+        return false;
+      }
+      MergeSpecs(&buffer_lengths, specs);
+    }
+  }
+
+  std::unordered_map<std::string, gpga::MetalBuffer> buffers;
+  for (const auto& entry : buffer_lengths) {
+    gpga::MetalBuffer buffer = runtime.CreateBuffer(entry.second, nullptr);
+    if (buffer.contents()) {
+      std::memset(buffer.contents(), 0, buffer.length());
+    }
+    buffers.emplace(entry.first, std::move(buffer));
+  }
+
+  auto params_it = buffers.find("params");
+  if (params_it != buffers.end() && params_it->second.contents()) {
+    auto* params =
+        static_cast<gpga::GpgaParams*>(params_it->second.contents());
+    params->count = count;
+  }
+  auto sched_it = buffers.find("sched");
+  if (sched_it != buffers.end() && sched_it->second.contents()) {
+    auto* sched_params =
+        static_cast<gpga::GpgaSchedParams*>(sched_it->second.contents());
+    sched_params->max_steps = max_steps;
+    sched_params->max_proc_steps = max_proc_steps;
+    sched_params->service_capacity = service_capacity;
+  }
+
+  gpga::ServiceStringTable strings = BuildStringTable(module);
+
+  if (has_sched) {
+    std::vector<gpga::MetalBufferBinding> bindings;
+    if (!BuildBindings(sched_kernel, buffers, &bindings, error)) {
+      return false;
+    }
+    const uint32_t kStatusFinished = 2u;
+    const uint32_t kStatusError = 3u;
+    const uint32_t kStatusStopped = 4u;
+    const uint32_t max_iters = 100000u;
+    for (uint32_t iter = 0; iter < max_iters; ++iter) {
+      if (!runtime.Dispatch(sched_kernel, bindings, count, error)) {
+        return false;
+      }
+      bool saw_finish = false;
+      if (sched_kernel.HasBuffer("sched_service") &&
+          sched_kernel.HasBuffer("sched_service_count")) {
+        auto* counts =
+            static_cast<uint32_t*>(buffers["sched_service_count"].contents());
+        auto* records =
+            static_cast<uint8_t*>(buffers["sched_service"].contents());
+        if (counts && records) {
+          size_t stride =
+              gpga::ServiceRecordStride(
+                  std::max<uint32_t>(1u, sched.service_max_args),
+                  enable_4state);
+          for (uint32_t gid = 0; gid < count; ++gid) {
+            uint32_t used = counts[gid];
+            if (used > service_capacity) {
+              used = service_capacity;
+            }
+            if (used == 0u) {
+              continue;
+            }
+            const uint8_t* rec_base =
+                records + (gid * service_capacity * stride);
+            gpga::ServiceDrainResult result = gpga::DrainSchedulerServices(
+                rec_base, used, std::max<uint32_t>(1u, sched.service_max_args),
+                enable_4state, strings, std::cout);
+            if (result.saw_finish || result.saw_stop || result.saw_error) {
+              saw_finish = true;
+            }
+            counts[gid] = 0u;
+          }
+        }
+      }
+      auto* status =
+          static_cast<uint32_t*>(buffers["sched_status"].contents());
+      if (!status) {
+        break;
+      }
+      if (status[0] == kStatusFinished || status[0] == kStatusStopped ||
+          status[0] == kStatusError || saw_finish) {
+        break;
+      }
+    }
+  } else {
+    std::vector<gpga::MetalBufferBinding> bindings;
+    if (!BuildBindings(comb_kernel, buffers, &bindings, error)) {
+      return false;
+    }
+    if (has_init) {
+      std::vector<gpga::MetalBufferBinding> init_bindings;
+      if (!BuildBindings(init_kernel, buffers, &init_bindings, error)) {
+        return false;
+      }
+      if (!runtime.Dispatch(init_kernel, init_bindings, count, error)) {
+        return false;
+      }
+    }
+    if (!runtime.Dispatch(comb_kernel, bindings, count, error)) {
+      return false;
+    }
+    if (has_tick) {
+      std::vector<gpga::MetalBufferBinding> tick_bindings;
+      if (!BuildBindings(tick_kernel, buffers, &tick_bindings, error)) {
+        return false;
+      }
+      if (!runtime.Dispatch(tick_kernel, tick_bindings, count, error)) {
+        return false;
+      }
+      SwapNextBuffers(&buffers);
+    }
+  }
+  return true;
 }
 
 int SignalWidth(const gpga::Module& module, const std::string& name) {
@@ -966,6 +1400,11 @@ int main(int argc, char** argv) {
   bool dump_flat = false;
   bool enable_4state = false;
   bool auto_discover = false;
+  bool run = false;
+  uint32_t run_count = 1u;
+  uint32_t run_service_capacity = 32u;
+  uint32_t run_max_steps = 1024u;
+  uint32_t run_max_proc_steps = 64u;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -993,6 +1432,38 @@ int main(int argc, char** argv) {
       enable_4state = true;
     } else if (arg == "--auto") {
       auto_discover = true;
+    } else if (arg == "--run") {
+      run = true;
+    } else if (arg == "--count") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      run_count = static_cast<uint32_t>(std::stoul(argv[++i]));
+      if (run_count == 0u) {
+        run_count = 1u;
+      }
+    } else if (arg == "--service-capacity") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      run_service_capacity = static_cast<uint32_t>(std::stoul(argv[++i]));
+      if (run_service_capacity == 0u) {
+        run_service_capacity = 1u;
+      }
+    } else if (arg == "--max-steps") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      run_max_steps = static_cast<uint32_t>(std::stoul(argv[++i]));
+    } else if (arg == "--max-proc-steps") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      run_max_proc_steps = static_cast<uint32_t>(std::stoul(argv[++i]));
     } else if (!arg.empty() && arg[0] == '-') {
       PrintUsage(argv[0]);
       return 2;
@@ -1112,11 +1583,14 @@ int main(int argc, char** argv) {
     diagnostics.RenderTo(std::cerr);
   }
 
-  if (!msl_out.empty()) {
-    std::string msl = gpga::EmitMSLStub(design.top, enable_4state);
-    if (!WriteFile(msl_out, msl, &diagnostics)) {
-      diagnostics.RenderTo(std::cerr);
-      return 1;
+  std::string msl;
+  if (!msl_out.empty() || run) {
+    msl = gpga::EmitMSLStub(design.top, enable_4state);
+    if (!msl_out.empty()) {
+      if (!WriteFile(msl_out, msl, &diagnostics)) {
+        diagnostics.RenderTo(std::cerr);
+        return 1;
+      }
     }
   }
 
@@ -1128,7 +1602,17 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (msl_out.empty() && host_out.empty()) {
+  if (run) {
+    std::string error;
+    if (!RunMetal(design.top, msl, enable_4state, run_count,
+                  run_service_capacity, run_max_steps, run_max_proc_steps,
+                  &error)) {
+      std::cerr << "Run failed: " << error << "\n";
+      return 1;
+    }
+  }
+
+  if (msl_out.empty() && host_out.empty() && !run) {
     std::cout << "Elaborated top module '" << design.top.name
               << "'. Use --emit-msl/--emit-host to write stubs.\n";
   }
