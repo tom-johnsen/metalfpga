@@ -26,6 +26,11 @@ enum class ServiceKind : uint32_t {
   kReadmemb = 6u,
   kStop = 7u,
   kStrobe = 8u,
+  kDumpoff = 9u,
+  kDumpon = 10u,
+  kDumpflush = 11u,
+  kDumpall = 12u,
+  kDumplimit = 13u,
 };
 
 struct ServiceStringTable {
@@ -88,6 +93,7 @@ struct SchedulerConstants {
   uint32_t event_count = 0;
   uint32_t edge_count = 0;
   uint32_t edge_star_count = 0;
+  uint32_t repeat_count = 0;
   uint32_t delay_count = 0;
   uint32_t max_dnba = 0;
   uint32_t monitor_count = 0;

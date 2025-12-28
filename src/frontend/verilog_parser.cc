@@ -335,6 +335,7 @@ enum class DirectiveKind {
   kUnconnectedDrive,
   kNoUnconnectedDrive,
   kResetAll,
+  kTimescale,
 };
 
 struct DirectiveEvent {
@@ -553,6 +554,23 @@ bool PreprocessVerilogInternal(
         continue;
       }
       if (directive == "timescale") {
+        if (active && directives) {
+          size_t arg_pos = line.find_first_not_of(" \t", pos);
+          if (arg_pos != std::string::npos) {
+            size_t arg_end = arg_pos;
+            while (arg_end < line.size() &&
+                   !std::isspace(static_cast<unsigned char>(line[arg_end])) &&
+                   line[arg_end] != '/') {
+              ++arg_end;
+            }
+            if (arg_end > arg_pos) {
+              directives->push_back(DirectiveEvent{
+                  DirectiveKind::kTimescale,
+                  line.substr(arg_pos, arg_end - arg_pos), line_number,
+                  static_cast<int>(first + 1)});
+            }
+          }
+        }
         output << "\n";
         ++line_number;
         continue;
@@ -962,6 +980,7 @@ class Parser {
     }
     Module module;
     module.name = module_name;
+    module.timescale = current_timescale_;
     module.unconnected_drive = unconnected_drive_;
     current_params_.clear();
     current_real_params_.clear();
@@ -8491,6 +8510,15 @@ class Parser {
         default_nettype_ = NetType::kWire;
         default_nettype_none_ = false;
         unconnected_drive_ = UnconnectedDrive::kNone;
+        current_timescale_ = "1ns";
+        return true;
+      case DirectiveKind::kTimescale:
+        if (!directive.arg.empty()) {
+          current_timescale_ = directive.arg;
+          if (current_module_) {
+            current_module_->timescale = current_timescale_;
+          }
+        }
         return true;
     }
     return true;
@@ -8522,6 +8550,7 @@ class Parser {
   NetType default_nettype_ = NetType::kWire;
   bool default_nettype_none_ = false;
   UnconnectedDrive unconnected_drive_ = UnconnectedDrive::kNone;
+  std::string current_timescale_ = "1ns";
   bool allow_string_literals_ = false;
   int generate_id_ = 0;
 

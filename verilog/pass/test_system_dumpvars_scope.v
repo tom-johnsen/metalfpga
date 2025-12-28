@@ -13,7 +13,7 @@ module test_system_dumpvars_scope;
 
   initial begin
     $dumpfile("selective.vcd");
-    $dumpvars(1, test_system_dumpvars_scope);  // Depth 1: only top-level
+    $dumpvars(0, test_system_dumpvars_scope);  // Depth 1: only top-level
     // $dumpvars(2, test_system_dumpvars_scope);  // Depth 2: top + 1 level down
     // $dumpvars;  // No args: dump everything
   end

@@ -1847,6 +1847,10 @@ bool EvalConstExprWithParams(const Expr& expr, const ParamBindings& params,
   ForceUnsizedWidth(resolved.get(), 32);
   std::string error;
   if (!gpga::EvalConstExpr(*resolved, {}, out_value, &error)) {
+    if (context == "repeat count" &&
+        error.rfind("unknown parameter '", 0) == 0) {
+      return false;
+    }
     diagnostics->Add(Severity::kError, error + " in " + context);
     return false;
   }
@@ -3115,34 +3119,49 @@ bool CloneStatement(
     return false;
   }
   if (statement.kind == StatementKind::kRepeat) {
-    out->kind = StatementKind::kBlock;
     if (!statement.repeat_count) {
       diagnostics->Add(Severity::kError, "malformed repeat in v0");
       return false;
     }
     int64_t count = 0;
-    if (!EvalConstExprWithParams(*statement.repeat_count, params, &count,
-                                 diagnostics, "repeat count")) {
-      return false;
-    }
-    if (count < 0) {
-      diagnostics->Add(Severity::kError, "repeat count must be >= 0");
-      return false;
-    }
-    const int64_t kMaxIterations = 100000;
-    if (count > kMaxIterations) {
-      diagnostics->Add(Severity::kError, "repeat exceeds iteration limit");
-      return false;
-    }
-    for (int64_t i = 0; i < count; ++i) {
-      for (const auto& body_stmt : statement.repeat_body) {
-        Statement cloned;
-        if (!CloneStatement(body_stmt, rename, params, source_module,
-                            flat_module, &cloned, diagnostics)) {
-          return false;
-        }
-        out->block.push_back(std::move(cloned));
+    if (TryEvalConstExprWithParams(*statement.repeat_count, params, &count)) {
+      out->kind = StatementKind::kBlock;
+      if (count < 0) {
+        diagnostics->Add(Severity::kError, "repeat count must be >= 0");
+        return false;
       }
+      const int64_t kMaxIterations = 100000;
+      if (count > kMaxIterations) {
+        diagnostics->Add(Severity::kError, "repeat exceeds iteration limit");
+        return false;
+      }
+      for (int64_t i = 0; i < count; ++i) {
+        for (const auto& body_stmt : statement.repeat_body) {
+          Statement cloned;
+          if (!CloneStatement(body_stmt, rename, params, source_module,
+                              flat_module, &cloned, diagnostics)) {
+            return false;
+          }
+          out->block.push_back(std::move(cloned));
+        }
+      }
+      return true;
+    }
+    out->kind = StatementKind::kRepeat;
+    out->repeat_count =
+        CloneExprWithParams(*statement.repeat_count, rename, params,
+                            &source_module, diagnostics, nullptr);
+    if (!out->repeat_count) {
+      return false;
+    }
+    out->repeat_count = SimplifyExpr(std::move(out->repeat_count), flat_module);
+    for (const auto& body_stmt : statement.repeat_body) {
+      Statement cloned;
+      if (!CloneStatement(body_stmt, rename, params, source_module,
+                          flat_module, &cloned, diagnostics)) {
+        return false;
+      }
+      out->repeat_body.push_back(std::move(cloned));
     }
     return true;
   }

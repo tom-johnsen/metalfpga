@@ -372,6 +372,7 @@ struct DefParam {
 
 struct Module {
   std::string name;
+  std::string timescale;
   std::vector<Port> ports;
   std::vector<Net> nets;
   std::vector<Assign> assigns;

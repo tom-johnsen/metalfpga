@@ -7238,6 +7238,120 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
         }
 
+        const uint64_t kRepeatUnrollLimit = 4096u;
+        const std::unordered_map<std::string, int64_t> kRepeatEmptyParams;
+        std::unordered_map<const Statement*, uint32_t> repeat_ids;
+        uint32_t repeat_state_count = 0;
+        auto repeat_const_count = [&](const Statement& stmt,
+                                      uint64_t* out_count) -> bool {
+          if (!stmt.repeat_count || !out_count) {
+            return false;
+          }
+          FourStateValue count_value;
+          if (!EvalConstExpr4State(*stmt.repeat_count, kRepeatEmptyParams,
+                                   &count_value, nullptr) ||
+              count_value.HasXorZ()) {
+            return false;
+          }
+          *out_count = count_value.value_bits;
+          return true;
+        };
+        std::function<void(const Statement&)> collect_repeat_states;
+        collect_repeat_states = [&](const Statement& stmt) -> void {
+          if (stmt.kind == StatementKind::kRepeat && stmt.repeat_count) {
+            uint64_t count = 0;
+            bool is_const = repeat_const_count(stmt, &count);
+            if (!is_const || count > kRepeatUnrollLimit) {
+              auto inserted = repeat_ids.emplace(&stmt, repeat_state_count);
+              if (inserted.second) {
+                repeat_state_count++;
+              }
+            } else if (count == 0u) {
+              return;
+            }
+            for (const auto& inner : stmt.repeat_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kIf) {
+            for (const auto& inner : stmt.then_branch) {
+              collect_repeat_states(inner);
+            }
+            for (const auto& inner : stmt.else_branch) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kBlock) {
+            for (const auto& inner : stmt.block) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kFor) {
+            for (const auto& inner : stmt.for_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWhile) {
+            for (const auto& inner : stmt.while_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kDelay) {
+            for (const auto& inner : stmt.delay_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kEventControl) {
+            for (const auto& inner : stmt.event_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWait) {
+            for (const auto& inner : stmt.wait_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kForever) {
+            for (const auto& inner : stmt.forever_body) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kCase) {
+            for (const auto& item : stmt.case_items) {
+              for (const auto& inner : item.body) {
+                collect_repeat_states(inner);
+              }
+            }
+            for (const auto& inner : stmt.default_branch) {
+              collect_repeat_states(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kFork) {
+            for (const auto& inner : stmt.fork_branches) {
+              collect_repeat_states(inner);
+            }
+          }
+        };
+        for (const auto& proc : procs) {
+          if (proc.body) {
+            for (const auto& stmt : *proc.body) {
+              collect_repeat_states(stmt);
+            }
+          } else if (proc.single) {
+            collect_repeat_states(*proc.single);
+          }
+        }
+
         std::unordered_set<std::string> nb_targets;
         std::unordered_set<std::string> nb_array_targets;
         std::function<void(const Statement&)> collect_nb_targets;
@@ -7395,6 +7509,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_MAX_NBA = "
             << nb_targets_sorted.size() << "u;\n";
+        if (repeat_state_count > 0) {
+          out << "constant constexpr uint GPGA_SCHED_REPEAT_COUNT = "
+              << repeat_state_count << "u;\n";
+        }
         if (has_delayed_assigns) {
           out << "constant constexpr uint GPGA_SCHED_DELAY_COUNT = "
               << delay_assigns.size() << "u;\n";
@@ -7456,6 +7574,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPOFF = 9u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPON = 10u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFLUSH = 11u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPALL = 12u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPLIMIT = 13u;\n";
           out << "struct GpgaServiceRecord {\n";
           out << "  uint kind;\n";
           out << "  uint pid;\n";
@@ -7577,6 +7700,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_join_tag [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
+        if (repeat_state_count > 0) {
+          emit_param("  device uint* sched_repeat_left [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device uint* sched_repeat_active [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
         emit_param("  device ulong* sched_time [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_phase [[buffer(" +
@@ -7713,6 +7842,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "      sched_parent[idx] = gpga_proc_parent[pid];\n";
         out << "      sched_join_tag[idx] = gpga_proc_join_tag[pid];\n";
         out << "    }\n";
+        if (repeat_state_count > 0) {
+          out << "    for (uint r = 0u; r < GPGA_SCHED_REPEAT_COUNT; ++r) {\n";
+          out << "      uint ridx = (gid * GPGA_SCHED_REPEAT_COUNT) + r;\n";
+          out << "      sched_repeat_left[ridx] = 0u;\n";
+          out << "      sched_repeat_active[ridx] = 0u;\n";
+          out << "    }\n";
+        }
         out << "    sched_initialized[gid] = 1u;\n";
         out << "  }\n";
         out << "  if (sched_error[gid] != 0u) {\n";
@@ -8336,6 +8472,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_READMEMH";
           } else if (name == "$readmemb") {
             kind_expr = "GPGA_SERVICE_KIND_READMEMB";
+          } else if (name == "$dumpoff") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPOFF";
+          } else if (name == "$dumpon") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPON";
+          } else if (name == "$dumpflush") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPFLUSH";
+          } else if (name == "$dumpall") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPALL";
+          } else if (name == "$dumplimit") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPLIMIT";
           } else {
             out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
             out << std::string(indent, ' ')
@@ -8351,6 +8497,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             return;
           }
+
+          bool dump_control =
+              name == "$dumpfile" || name == "$dumpvars" ||
+              name == "$dumpoff" || name == "$dumpon" ||
+              name == "$dumpflush" || name == "$dumpall" ||
+              name == "$dumplimit";
 
           if (name == "$monitor") {
             auto it = system_task_info.monitor_ids.find(&stmt);
@@ -8368,6 +8520,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 emit_monitor_snapshot(monitor_id, args, indent, true);
             out << pad << "if (sched_monitor_enable[gid] != 0u && " << changed
                 << ") {\n";
+            emit_service_record(kind_expr, format_id_expr, args, indent + 2);
+            out << pad << "}\n";
+          } else if (dump_control) {
+            std::string pad(indent, ' ');
+            out << pad << "if (gid == 0u) {\n";
             emit_service_record(kind_expr, format_id_expr, args, indent + 2);
             out << pad << "}\n";
           } else {
@@ -8751,7 +8908,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         for (const auto& proc : procs) {
           std::vector<const Statement*> stmts;
-          const uint64_t kRepeatUnrollLimit = 4096u;
+          std::unordered_map<const Statement*,
+                             std::pair<const Statement*, const Statement*>>
+              repeat_spans;
           std::function<void(const Statement&)> append_stmt;
           append_stmt = [&](const Statement& stmt) -> void {
             if (stmt.kind == StatementKind::kBlock &&
@@ -8762,23 +8921,31 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               return;
             }
             if (stmt.kind == StatementKind::kRepeat && stmt.repeat_count) {
-              FourStateValue count_value;
-              if (EvalConstExpr4State(*stmt.repeat_count, kEmptyParams,
-                                      &count_value, nullptr) &&
-                  !count_value.HasXorZ()) {
-                uint64_t count = count_value.value_bits;
+              uint64_t count = 0;
+              if (repeat_const_count(stmt, &count) &&
+                  count <= kRepeatUnrollLimit) {
                 if (count == 0u) {
                   return;
                 }
-                if (count <= kRepeatUnrollLimit) {
-                  for (uint64_t rep = 0u; rep < count; ++rep) {
-                    for (const auto& inner : stmt.repeat_body) {
-                      append_stmt(inner);
-                    }
+                for (uint64_t rep = 0u; rep < count; ++rep) {
+                  for (const auto& inner : stmt.repeat_body) {
+                    append_stmt(inner);
                   }
-                  return;
                 }
+                return;
               }
+              stmts.push_back(&stmt);
+              size_t body_start = stmts.size();
+              for (const auto& inner : stmt.repeat_body) {
+                append_stmt(inner);
+              }
+              size_t body_end = stmts.size();
+              const Statement* first =
+                  (body_end > body_start) ? stmts[body_start] : nullptr;
+              const Statement* last =
+                  (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+              repeat_spans[&stmt] = std::make_pair(first, last);
+              return;
             }
             stmts.push_back(&stmt);
           };
@@ -8795,6 +8962,48 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             pc_for_stmt[stmt] = pc_counter++;
           }
           const int pc_done = pc_counter++;
+          std::unordered_map<const Statement*, size_t> stmt_index;
+          for (size_t i = 0; i < stmts.size(); ++i) {
+            stmt_index[stmts[i]] = i;
+          }
+          struct RepeatRuntime {
+            uint32_t id = 0u;
+            int body_pc = -1;
+            int after_pc = -1;
+          };
+          std::unordered_map<const Statement*, RepeatRuntime> repeat_runtime;
+          std::unordered_map<const Statement*, int> next_pc_override;
+          for (const auto& entry : repeat_spans) {
+            const Statement* stmt_ptr = entry.first;
+            auto id_it = repeat_ids.find(stmt_ptr);
+            if (id_it == repeat_ids.end()) {
+              continue;
+            }
+            const Statement* first = entry.second.first;
+            const Statement* last = entry.second.second;
+            size_t after_index = 0;
+            auto stmt_it = stmt_index.find(stmt_ptr);
+            if (stmt_it == stmt_index.end()) {
+              continue;
+            }
+            if (last) {
+              auto last_it = stmt_index.find(last);
+              if (last_it == stmt_index.end()) {
+                continue;
+              }
+              after_index = last_it->second + 1;
+              next_pc_override[last] = pc_for_stmt[stmt_ptr];
+            } else {
+              after_index = stmt_it->second + 1;
+            }
+            int after_pc =
+                (after_index < stmts.size()) ? pc_for_stmt[stmts[after_index]]
+                                             : pc_done;
+            int body_pc =
+                first ? pc_for_stmt[first] : after_pc;
+            repeat_runtime[stmt_ptr] =
+                RepeatRuntime{id_it->second, body_pc, after_pc};
+          }
           struct BodyCase {
             int pc = 0;
             const Statement* owner = nullptr;
@@ -8810,13 +9019,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::unordered_map<std::string, int> block_end_pc;
           for (size_t i = 0; i < stmts.size(); ++i) {
             const auto* stmt = stmts[i];
-            if (stmt->kind == StatementKind::kBlock &&
-                !stmt->block_label.empty()) {
-              int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
-                                                   : pc_done;
-              block_end_pc[stmt->block_label] = next_pc;
+          if (stmt->kind == StatementKind::kBlock &&
+              !stmt->block_label.empty()) {
+            int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
+                                                 : pc_done;
+            auto next_override_it = next_pc_override.find(stmt);
+            if (next_override_it != next_pc_override.end()) {
+              next_pc = next_override_it->second;
             }
+            block_end_pc[stmt->block_label] = next_pc;
           }
+        }
 
           out << "            case " << proc.pid << ": {\n";
           out << "              uint pc = sched_pc[idx];\n";
@@ -8826,6 +9039,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             int pc = pc_for_stmt[&stmt];
             int next_pc =
                 (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]] : pc_done;
+            auto next_override_it = next_pc_override.find(&stmt);
+            if (next_override_it != next_pc_override.end()) {
+              next_pc = next_override_it->second;
+            }
             out << "                case " << pc << ": {\n";
             if (stmt.kind == StatementKind::kAssign) {
               if (!stmt.assign.rhs) {
@@ -8941,6 +9158,67 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
               out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kRepeat) {
+              auto rep_it = repeat_runtime.find(&stmt);
+              if (rep_it == repeat_runtime.end()) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              const RepeatRuntime& rep = rep_it->second;
+              out << "                  uint __gpga_rep_slot = (gid * "
+                  << "GPGA_SCHED_REPEAT_COUNT) + " << rep.id << "u;\n";
+              out << "                  uint __gpga_rep_left = sched_repeat_left[__gpga_rep_slot];\n";
+              out << "                  uint __gpga_rep_active = sched_repeat_active[__gpga_rep_slot];\n";
+              if (stmt.repeat_count) {
+                FsExpr rep_count = emit_expr4_sized(*stmt.repeat_count, 32);
+                rep_count = maybe_hoist_full(rep_count, 18, false, false);
+                out << "                  if (__gpga_rep_active == 0u) {\n";
+                out << "                    uint __gpga_rep_count = uint("
+                    << rep_count.val << ");\n";
+                out << "                    sched_repeat_left[__gpga_rep_slot] = __gpga_rep_count;\n";
+                out << "                    sched_repeat_active[__gpga_rep_slot] = 1u;\n";
+                out << "                    __gpga_rep_left = __gpga_rep_count;\n";
+                out << "                  }\n";
+              } else {
+                out << "                  if (__gpga_rep_active == 0u) {\n";
+                out << "                    sched_repeat_left[__gpga_rep_slot] = 0u;\n";
+                out << "                    sched_repeat_active[__gpga_rep_slot] = 1u;\n";
+                out << "                    __gpga_rep_left = 0u;\n";
+                out << "                  }\n";
+              }
+              out << "                  if (__gpga_rep_left == 0u) {\n";
+              out << "                    sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+              out << "                    sched_pc[idx] = " << rep.after_pc << "u;\n";
+              if (rep.after_pc == pc_done) {
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              } else {
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              }
+              out << "                    break;\n";
+              out << "                  }\n";
+              if (rep.body_pc == rep.after_pc) {
+                out << "                  sched_repeat_left[__gpga_rep_slot] = 0u;\n";
+                out << "                  sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+                out << "                  sched_pc[idx] = " << rep.after_pc << "u;\n";
+                if (rep.after_pc == pc_done) {
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                } else {
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                }
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              out << "                  sched_repeat_left[__gpga_rep_slot] = __gpga_rep_left - 1u;\n";
+              out << "                  sched_pc[idx] = " << rep.body_pc << "u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
               out << "                  break;\n";
               out << "                }\n";
@@ -12032,6 +12310,119 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       }
 
+      const int64_t kRepeatUnrollLimit = 4096;
+      const std::unordered_map<std::string, int64_t> kRepeatEmptyParams;
+      std::unordered_map<const Statement*, uint32_t> repeat_ids;
+      uint32_t repeat_state_count = 0;
+      auto repeat_const_count = [&](const Statement& stmt,
+                                    int64_t* out_count) -> bool {
+        if (!stmt.repeat_count || !out_count) {
+          return false;
+        }
+        int64_t count_value = 0;
+        if (!EvalConstExpr(*stmt.repeat_count, kRepeatEmptyParams, &count_value,
+                           nullptr)) {
+          return false;
+        }
+        *out_count = count_value;
+        return true;
+      };
+      std::function<void(const Statement&)> collect_repeat_states;
+      collect_repeat_states = [&](const Statement& stmt) -> void {
+        if (stmt.kind == StatementKind::kRepeat && stmt.repeat_count) {
+          int64_t count = 0;
+          bool is_const = repeat_const_count(stmt, &count);
+          if (!is_const || count > kRepeatUnrollLimit) {
+            auto inserted = repeat_ids.emplace(&stmt, repeat_state_count);
+            if (inserted.second) {
+              repeat_state_count++;
+            }
+          } else if (count <= 0) {
+            return;
+          }
+          for (const auto& inner : stmt.repeat_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          for (const auto& inner : stmt.then_branch) {
+            collect_repeat_states(inner);
+          }
+          for (const auto& inner : stmt.else_branch) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          for (const auto& inner : stmt.block) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kFor) {
+          for (const auto& inner : stmt.for_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWhile) {
+          for (const auto& inner : stmt.while_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kDelay) {
+          for (const auto& inner : stmt.delay_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kEventControl) {
+          for (const auto& inner : stmt.event_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kWait) {
+          for (const auto& inner : stmt.wait_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          for (const auto& inner : stmt.forever_body) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          for (const auto& item : stmt.case_items) {
+            for (const auto& inner : item.body) {
+              collect_repeat_states(inner);
+            }
+          }
+          for (const auto& inner : stmt.default_branch) {
+            collect_repeat_states(inner);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kFork) {
+          for (const auto& inner : stmt.fork_branches) {
+            collect_repeat_states(inner);
+          }
+        }
+      };
+      for (const auto& proc : procs) {
+        if (proc.body) {
+          for (const auto& stmt : *proc.body) {
+            collect_repeat_states(stmt);
+          }
+        } else if (proc.single) {
+          collect_repeat_states(*proc.single);
+        }
+      }
+
       std::unordered_set<std::string> nb_targets;
       std::unordered_set<std::string> nb_array_targets;
       std::function<void(const Statement&)> collect_nb_targets;
@@ -12290,6 +12681,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "constant constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_MAX_NBA = " << nb_targets_sorted.size()
           << "u;\n";
+      if (repeat_state_count > 0) {
+        out << "constant constexpr uint GPGA_SCHED_REPEAT_COUNT = "
+            << repeat_state_count << "u;\n";
+      }
       if (has_delayed_assigns) {
         out << "constant constexpr uint GPGA_SCHED_DELAY_COUNT = "
             << delay_assigns.size() << "u;\n";
@@ -12351,6 +12746,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPOFF = 9u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPON = 10u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFLUSH = 11u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPALL = 12u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPLIMIT = 13u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -12453,6 +12853,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_join_tag [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
+      if (repeat_state_count > 0) {
+        emit_param("  device uint* sched_repeat_left [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device uint* sched_repeat_active [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
       emit_param("  device ulong* sched_time [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_phase [[buffer(" +
@@ -12558,6 +12964,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "      sched_parent[idx] = gpga_proc_parent[pid];\n";
       out << "      sched_join_tag[idx] = gpga_proc_join_tag[pid];\n";
       out << "    }\n";
+      if (repeat_state_count > 0) {
+        out << "    for (uint r = 0u; r < GPGA_SCHED_REPEAT_COUNT; ++r) {\n";
+        out << "      uint ridx = (gid * GPGA_SCHED_REPEAT_COUNT) + r;\n";
+        out << "      sched_repeat_left[ridx] = 0u;\n";
+        out << "      sched_repeat_active[ridx] = 0u;\n";
+        out << "    }\n";
+      }
       out << "    sched_initialized[gid] = 1u;\n";
       out << "  }\n";
       out << "  if (sched_error[gid] != 0u) {\n";
@@ -13144,6 +13557,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           kind_expr = "GPGA_SERVICE_KIND_READMEMH";
         } else if (name == "$readmemb") {
           kind_expr = "GPGA_SERVICE_KIND_READMEMB";
+        } else if (name == "$dumpoff") {
+          kind_expr = "GPGA_SERVICE_KIND_DUMPOFF";
+        } else if (name == "$dumpon") {
+          kind_expr = "GPGA_SERVICE_KIND_DUMPON";
+        } else if (name == "$dumpflush") {
+          kind_expr = "GPGA_SERVICE_KIND_DUMPFLUSH";
+        } else if (name == "$dumpall") {
+          kind_expr = "GPGA_SERVICE_KIND_DUMPALL";
+        } else if (name == "$dumplimit") {
+          kind_expr = "GPGA_SERVICE_KIND_DUMPLIMIT";
         } else {
           out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
           out << std::string(indent, ' ')
@@ -13159,6 +13582,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           return;
         }
+
+        bool dump_control =
+            name == "$dumpfile" || name == "$dumpvars" ||
+            name == "$dumpoff" || name == "$dumpon" ||
+            name == "$dumpflush" || name == "$dumpall" ||
+            name == "$dumplimit";
 
         if (name == "$monitor") {
           auto it = system_task_info.monitor_ids.find(&stmt);
@@ -13176,6 +13605,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               emit_monitor_snapshot(monitor_id, args, indent, true);
           out << pad << "if (sched_monitor_enable[gid] != 0u && " << changed
               << ") {\n";
+          emit_service_record(kind_expr, format_id_expr, args, indent + 2);
+          out << pad << "}\n";
+        } else if (dump_control) {
+          std::string pad(indent, ' ');
+          out << pad << "if (gid == 0u) {\n";
           emit_service_record(kind_expr, format_id_expr, args, indent + 2);
           out << pad << "}\n";
         } else {
@@ -13543,10 +13977,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         g_task_arg_real = prev_real;
       };
 
-      const std::unordered_map<std::string, int64_t> kEmptyParams;
       for (const auto& proc : procs) {
         std::vector<const Statement*> stmts;
-        const int64_t kRepeatUnrollLimit = 4096;
+        std::unordered_map<const Statement*,
+                           std::pair<const Statement*, const Statement*>>
+            repeat_spans;
         std::function<void(const Statement&)> append_stmt;
         append_stmt = [&](const Statement& stmt) -> void {
           if (stmt.kind == StatementKind::kBlock && stmt.block_label.empty()) {
@@ -13556,21 +13991,31 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
           if (stmt.kind == StatementKind::kRepeat && stmt.repeat_count) {
-            int64_t count_value = 0;
-            if (EvalConstExpr(*stmt.repeat_count, kEmptyParams, &count_value,
-                              nullptr)) {
-              if (count_value <= 0) {
+            int64_t count = 0;
+            if (repeat_const_count(stmt, &count) &&
+                count <= kRepeatUnrollLimit) {
+              if (count <= 0) {
                 return;
               }
-              if (count_value <= kRepeatUnrollLimit) {
-                for (int64_t rep = 0; rep < count_value; ++rep) {
-                  for (const auto& inner : stmt.repeat_body) {
-                    append_stmt(inner);
-                  }
+              for (int64_t rep = 0; rep < count; ++rep) {
+                for (const auto& inner : stmt.repeat_body) {
+                  append_stmt(inner);
                 }
-                return;
               }
+              return;
             }
+            stmts.push_back(&stmt);
+            size_t body_start = stmts.size();
+            for (const auto& inner : stmt.repeat_body) {
+              append_stmt(inner);
+            }
+            size_t body_end = stmts.size();
+            const Statement* first =
+                (body_end > body_start) ? stmts[body_start] : nullptr;
+            const Statement* last =
+                (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+            repeat_spans[&stmt] = std::make_pair(first, last);
+            return;
           }
           stmts.push_back(&stmt);
         };
@@ -13587,6 +14032,47 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           pc_for_stmt[stmt] = pc_counter++;
         }
         const int pc_done = pc_counter++;
+        std::unordered_map<const Statement*, size_t> stmt_index;
+        for (size_t i = 0; i < stmts.size(); ++i) {
+          stmt_index[stmts[i]] = i;
+        }
+        struct RepeatRuntime {
+          uint32_t id = 0u;
+          int body_pc = -1;
+          int after_pc = -1;
+        };
+        std::unordered_map<const Statement*, RepeatRuntime> repeat_runtime;
+        std::unordered_map<const Statement*, int> next_pc_override;
+        for (const auto& entry : repeat_spans) {
+          const Statement* stmt_ptr = entry.first;
+          auto id_it = repeat_ids.find(stmt_ptr);
+          if (id_it == repeat_ids.end()) {
+            continue;
+          }
+          const Statement* first = entry.second.first;
+          const Statement* last = entry.second.second;
+          size_t after_index = 0;
+          auto stmt_it = stmt_index.find(stmt_ptr);
+          if (stmt_it == stmt_index.end()) {
+            continue;
+          }
+          if (last) {
+            auto last_it = stmt_index.find(last);
+            if (last_it == stmt_index.end()) {
+              continue;
+            }
+            after_index = last_it->second + 1;
+            next_pc_override[last] = pc_for_stmt[stmt_ptr];
+          } else {
+            after_index = stmt_it->second + 1;
+          }
+          int after_pc =
+              (after_index < stmts.size()) ? pc_for_stmt[stmts[after_index]]
+                                           : pc_done;
+          int body_pc = first ? pc_for_stmt[first] : after_pc;
+          repeat_runtime[stmt_ptr] =
+              RepeatRuntime{id_it->second, body_pc, after_pc};
+        }
         struct BodyCase {
           int pc = 0;
           const Statement* owner = nullptr;
@@ -13606,6 +14092,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               !stmt->block_label.empty()) {
             int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
                                                  : pc_done;
+            auto next_override_it = next_pc_override.find(stmt);
+            if (next_override_it != next_pc_override.end()) {
+              next_pc = next_override_it->second;
+            }
             block_end_pc[stmt->block_label] = next_pc;
           }
         }
@@ -13618,6 +14108,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           int pc = pc_for_stmt[&stmt];
           int next_pc =
               (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]] : pc_done;
+          auto next_override_it = next_pc_override.find(&stmt);
+          if (next_override_it != next_pc_override.end()) {
+            next_pc = next_override_it->second;
+          }
           out << "                case " << pc << ": {\n";
           if (stmt.kind == StatementKind::kAssign) {
             if (!stmt.assign.rhs) {
@@ -13722,6 +14216,68 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
             out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kRepeat) {
+            auto rep_it = repeat_runtime.find(&stmt);
+            if (rep_it == repeat_runtime.end()) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            const RepeatRuntime& rep = rep_it->second;
+            out << "                  uint __gpga_rep_slot = (gid * "
+                << "GPGA_SCHED_REPEAT_COUNT) + " << rep.id << "u;\n";
+            out << "                  uint __gpga_rep_left = sched_repeat_left[__gpga_rep_slot];\n";
+            out << "                  uint __gpga_rep_active = sched_repeat_active[__gpga_rep_slot];\n";
+            if (stmt.repeat_count) {
+              std::string rep_expr =
+                  EmitExprSized(*stmt.repeat_count, 32, module, sched_locals,
+                                sched_regs);
+              out << "                  if (__gpga_rep_active == 0u) {\n";
+              out << "                    uint __gpga_rep_count = uint("
+                  << rep_expr << ");\n";
+              out << "                    sched_repeat_left[__gpga_rep_slot] = __gpga_rep_count;\n";
+              out << "                    sched_repeat_active[__gpga_rep_slot] = 1u;\n";
+              out << "                    __gpga_rep_left = __gpga_rep_count;\n";
+              out << "                  }\n";
+            } else {
+              out << "                  if (__gpga_rep_active == 0u) {\n";
+              out << "                    sched_repeat_left[__gpga_rep_slot] = 0u;\n";
+              out << "                    sched_repeat_active[__gpga_rep_slot] = 1u;\n";
+              out << "                    __gpga_rep_left = 0u;\n";
+              out << "                  }\n";
+            }
+            out << "                  if (__gpga_rep_left == 0u) {\n";
+            out << "                    sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+            out << "                    sched_pc[idx] = " << rep.after_pc << "u;\n";
+            if (rep.after_pc == pc_done) {
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            } else {
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            }
+            out << "                    break;\n";
+            out << "                  }\n";
+            if (rep.body_pc == rep.after_pc) {
+              out << "                  sched_repeat_left[__gpga_rep_slot] = 0u;\n";
+              out << "                  sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+              out << "                  sched_pc[idx] = " << rep.after_pc << "u;\n";
+              if (rep.after_pc == pc_done) {
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              } else {
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              }
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            out << "                  sched_repeat_left[__gpga_rep_slot] = __gpga_rep_left - 1u;\n";
+            out << "                  sched_pc[idx] = " << rep.body_pc << "u;\n";
             out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
             out << "                  break;\n";
             out << "                }\n";

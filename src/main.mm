@@ -26,7 +26,8 @@ void PrintUsage(const char* argv0) {
             << " <input.v> [<more.v> ...] [--emit-msl <path>] [--emit-host <path>]"
             << " [--dump-flat] [--top <module>] [--4state] [--auto]"
             << " [--run] [--count N] [--service-capacity N]"
-            << " [--max-steps N] [--max-proc-steps N]\n";
+            << " [--max-steps N] [--max-proc-steps N]"
+            << " [--vcd-dir <path>] [--vcd-steps N]\n";
 }
 
 bool WriteFile(const std::string& path, const std::string& content,
@@ -356,7 +357,9 @@ struct VcdSignal {
   std::string id;
   std::string base_name;
   uint32_t width = 1;
+  uint32_t array_size = 1;
   uint32_t array_index = 0;
+  uint32_t instance_index = 0;
   bool is_real = false;
   uint64_t last_val = 0;
   uint64_t last_xz = 0;
@@ -365,14 +368,36 @@ struct VcdSignal {
 
 class VcdWriter {
  public:
-  bool Start(const std::string& filename, const gpga::ModuleInfo& module,
-             const std::vector<std::string>& filter, bool four_state,
+  bool Start(const std::string& filename, const std::string& output_dir,
+             const gpga::ModuleInfo& module,
+             const std::vector<std::string>& filter, uint32_t depth,
+             bool four_state,
              const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
+             const std::string& timescale,
+             uint32_t instance_count,
+             const std::unordered_map<std::string, std::string>* flat_to_hier,
              std::string* error) {
     if (active_) {
       return true;
     }
     std::string path = filename.empty() ? "dump.vcd" : filename;
+    if (!output_dir.empty()) {
+      std::filesystem::path base(output_dir);
+      std::filesystem::path out_path(path);
+      if (!out_path.is_absolute()) {
+        out_path = base / out_path;
+      }
+      std::error_code ec;
+      std::filesystem::create_directories(out_path.parent_path(), ec);
+      if (ec) {
+        if (error) {
+          *error = "failed to create VCD directory: " +
+                   out_path.parent_path().string();
+        }
+        return false;
+      }
+      path = out_path.string();
+    }
     out_.open(path, std::ios::out | std::ios::trunc);
     if (!out_) {
       if (error) {
@@ -381,11 +406,16 @@ class VcdWriter {
       return false;
     }
     four_state_ = four_state;
-    std::vector<std::string> filtered = filter;
-    if (std::find(filtered.begin(), filtered.end(), module.name) != filtered.end()) {
-      filtered.clear();
+    timescale_ = timescale.empty() ? "1ns" : timescale;
+    dumping_ = true;
+    bool dump_all = filter.empty();
+    for (const auto& name : filter) {
+      if (name == module.name) {
+        dump_all = true;
+        break;
+      }
     }
-    BuildSignals(module, filtered);
+    BuildSignals(module, filter, dump_all, depth, instance_count, flat_to_hier);
     WriteHeader(module.name);
     EmitInitialValues(buffers);
     active_ = true;
@@ -394,27 +424,45 @@ class VcdWriter {
 
   void Update(uint64_t time,
               const std::unordered_map<std::string, gpga::MetalBuffer>& buffers) {
+    if (!dumping_) {
+      return;
+    }
+    EmitSnapshot(time, buffers, false);
+  }
+
+  void FinalSnapshot(
+      const std::unordered_map<std::string, gpga::MetalBuffer>& buffers) {
     if (!active_) {
       return;
     }
-    if (!has_time_ || time != last_time_) {
-      out_ << "#" << time << "\n";
-      last_time_ = time;
-      has_time_ = true;
+    if (!dumping_) {
+      return;
     }
-    for (auto& sig : signals_) {
-      uint64_t val = 0;
-      uint64_t xz = 0;
-      if (!ReadSignal(sig, buffers, &val, &xz)) {
-        continue;
-      }
-      if (sig.has_value && sig.last_val == val && sig.last_xz == xz) {
-        continue;
-      }
-      sig.last_val = val;
-      sig.last_xz = xz;
-      sig.has_value = true;
-      EmitValue(sig, val, xz);
+    uint64_t time = has_time_ ? last_time_ : 0;
+    if (!last_time_had_values_) {
+      EmitSnapshot(time, buffers, true);
+    }
+  }
+
+  void ForceSnapshot(
+      uint64_t time,
+      const std::unordered_map<std::string, gpga::MetalBuffer>& buffers) {
+    if (!active_ || !dumping_) {
+      return;
+    }
+    EmitSnapshot(time, buffers, true);
+  }
+
+  void SetDumping(bool enabled) { dumping_ = enabled; }
+
+  void SetDumpLimit(uint64_t limit) {
+    dump_limit_ = limit;
+    CheckDumpLimit();
+  }
+
+  void Flush() {
+    if (out_) {
+      out_.flush();
     }
   }
 
@@ -430,48 +478,251 @@ class VcdWriter {
 
  private:
   void BuildSignals(const gpga::ModuleInfo& module,
-                    const std::vector<std::string>& filter) {
+                    const std::vector<std::string>& filter, bool dump_all,
+                    uint32_t depth_limit, uint32_t instance_count,
+                    const std::unordered_map<std::string, std::string>* flat_to_hier) {
     std::unordered_set<std::string> wanted(filter.begin(), filter.end());
     signals_.clear();
     size_t index = 0;
     for (const auto& sig : module.signals) {
-      bool include = wanted.empty() || wanted.count(sig.name) > 0;
+      std::string display_base = sig.name;
+      if (flat_to_hier) {
+        auto it = flat_to_hier->find(sig.name);
+        if (it != flat_to_hier->end() && !it->second.empty()) {
+          display_base = it->second;
+        }
+      }
+      std::string display_rel = StripModulePrefix(display_base, module.name);
+      if (display_rel.empty()) {
+        display_rel = display_base;
+      }
       uint32_t array_size = sig.array_size > 0 ? sig.array_size : 1u;
-      for (uint32_t i = 0; i < array_size; ++i) {
-        if (!include && wanted.count(sig.name + "[" + std::to_string(i) + "]") == 0) {
-          continue;
+      uint32_t inst_count = std::max<uint32_t>(1u, instance_count);
+      for (uint32_t inst = 0; inst < inst_count; ++inst) {
+        std::string display_name = display_rel;
+        if (inst_count > 1u) {
+          display_name =
+              "inst" + std::to_string(inst) + "." + display_rel;
         }
-        VcdSignal entry;
-        entry.base_name = sig.name;
-        entry.array_index = i;
-        entry.is_real = sig.is_real;
-        entry.width = sig.is_real ? 64u : std::max<uint32_t>(1u, sig.width);
-        entry.id = VcdIdForIndex(index++);
-        if (array_size > 1u) {
-          entry.name = sig.name + "[" + std::to_string(i) + "]";
-        } else {
-          entry.name = sig.name;
+        for (uint32_t i = 0; i < array_size; ++i) {
+          bool include = dump_all || wanted.empty();
+          if (!include) {
+            include =
+                MatchesFilterName(wanted, module.name, display_name, i) ||
+                MatchesFilterName(wanted, module.name, display_rel, i) ||
+                MatchesFilterName(wanted, module.name, sig.name, i);
+          }
+          if (!include) {
+            continue;
+          }
+          if (depth_limit > 0 && !PassesDepth(display_rel, depth_limit)) {
+            continue;
+          }
+          VcdSignal entry;
+          entry.base_name = sig.name;
+          entry.array_size = array_size;
+          entry.array_index = i;
+          entry.instance_index = inst;
+          entry.is_real = sig.is_real;
+          entry.width = sig.is_real ? 64u : std::max<uint32_t>(1u, sig.width);
+          entry.id = VcdIdForIndex(index++);
+          if (array_size > 1u) {
+            entry.name = display_name + "[" + std::to_string(i) + "]";
+          } else {
+            entry.name = display_name;
+          }
+          signals_.push_back(std::move(entry));
         }
-        signals_.push_back(std::move(entry));
       }
     }
+  }
+
+  bool PassesDepth(const std::string& name, uint32_t depth_limit) const {
+    if (depth_limit == 0u) {
+      return true;
+    }
+    std::vector<std::string> scope;
+    std::string leaf;
+    SplitHierName(name, &scope, &leaf);
+    uint32_t depth = scope.empty() ? 1u
+                                   : static_cast<uint32_t>(scope.size() + 1u);
+    return depth <= depth_limit;
+  }
+
+  bool MatchesFilterName(const std::unordered_set<std::string>& wanted,
+                         const std::string& module_name,
+                         const std::string& name, uint32_t index) const {
+    if (wanted.empty()) {
+      return true;
+    }
+    const std::string indexed = name + "[" + std::to_string(index) + "]";
+    for (const auto& raw : wanted) {
+      std::string filter = raw;
+      if (!module_name.empty() && StartsWith(filter, module_name + ".")) {
+        filter = filter.substr(module_name.size() + 1);
+      } else if (!module_name.empty() &&
+                 StartsWith(filter, module_name + "__")) {
+        filter = filter.substr(module_name.size() + 2);
+      }
+      if (filter == name || filter == indexed) {
+        return true;
+      }
+      if (StartsWith(name, filter)) {
+        if (name.size() == filter.size()) {
+          return true;
+        }
+        char next = name[filter.size()];
+        if (next == '.') {
+          return true;
+        }
+        if (next == '_' && filter.size() + 1 < name.size() &&
+            name[filter.size() + 1] == '_') {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool StartsWith(const std::string& value, const std::string& prefix) const {
+    return value.size() >= prefix.size() &&
+           value.compare(0, prefix.size(), prefix) == 0;
+  }
+
+  std::string StripModulePrefix(const std::string& name,
+                                const std::string& module_name) const {
+    if (module_name.empty()) {
+      return name;
+    }
+    const std::string dot_prefix = module_name + ".";
+    const std::string flat_prefix = module_name + "__";
+    if (StartsWith(name, dot_prefix)) {
+      return name.substr(dot_prefix.size());
+    }
+    if (StartsWith(name, flat_prefix)) {
+      return name.substr(flat_prefix.size());
+    }
+    return name;
+  }
+
+  void SplitHierName(const std::string& name, std::vector<std::string>* scope,
+                     std::string* leaf) const {
+    if (scope) {
+      scope->clear();
+    }
+    if (leaf) {
+      *leaf = name;
+    }
+    if (!scope || !leaf) {
+      return;
+    }
+    std::vector<std::string> parts;
+    std::string current;
+    int bracket_depth = 0;
+    for (size_t i = 0; i < name.size(); ++i) {
+      char c = name[i];
+      if (c == '[') {
+        bracket_depth++;
+        current.push_back(c);
+        continue;
+      }
+      if (c == ']') {
+        if (bracket_depth > 0) {
+          bracket_depth--;
+        }
+        current.push_back(c);
+        continue;
+      }
+      if (bracket_depth == 0 && c == '.') {
+        if (!current.empty()) {
+          parts.push_back(current);
+          current.clear();
+        }
+        continue;
+      }
+      if (bracket_depth == 0 && c == '_' && i + 1 < name.size() &&
+          name[i + 1] == '_') {
+        if (!current.empty()) {
+          parts.push_back(current);
+          current.clear();
+        }
+        i++;
+        continue;
+      }
+      current.push_back(c);
+    }
+    if (!current.empty()) {
+      parts.push_back(current);
+    }
+    if (parts.empty()) {
+      return;
+    }
+    if (parts.size() == 1) {
+      *leaf = parts[0];
+      return;
+    }
+    scope->assign(parts.begin(), parts.end() - 1);
+    *leaf = parts.back();
   }
 
   void WriteHeader(const std::string& module_name) {
     out_ << "$date\n  today\n$end\n";
     out_ << "$version\n  metalfpga\n$end\n";
-    out_ << "$timescale 1ns $end\n";
+    out_ << "$timescale " << timescale_ << " $end\n";
     out_ << "$scope module " << module_name << " $end\n";
+    struct ScopedSignal {
+      std::vector<std::string> scope;
+      std::string leaf;
+      const VcdSignal* signal = nullptr;
+    };
+    std::vector<ScopedSignal> ordered;
+    ordered.reserve(signals_.size());
     for (const auto& sig : signals_) {
-      if (sig.is_real) {
-        out_ << "$var real 64 " << sig.id << " " << sig.name << " $end\n";
-      } else {
-        out_ << "$var wire " << sig.width << " " << sig.id << " " << sig.name
-             << " $end\n";
+      ScopedSignal entry;
+      entry.signal = &sig;
+      SplitHierName(sig.name, &entry.scope, &entry.leaf);
+      if (entry.leaf.empty()) {
+        entry.leaf = sig.name;
       }
+      ordered.push_back(std::move(entry));
+    }
+    std::sort(ordered.begin(), ordered.end(),
+              [](const ScopedSignal& a, const ScopedSignal& b) {
+                if (a.scope != b.scope) {
+                  return std::lexicographical_compare(
+                      a.scope.begin(), a.scope.end(), b.scope.begin(),
+                      b.scope.end());
+                }
+                return a.leaf < b.leaf;
+              });
+    std::vector<std::string> current;
+    for (const auto& entry : ordered) {
+      size_t common = 0;
+      while (common < current.size() && common < entry.scope.size() &&
+             current[common] == entry.scope[common]) {
+        common++;
+      }
+      for (size_t i = current.size(); i > common; --i) {
+        out_ << "$upscope $end\n";
+      }
+      for (size_t i = common; i < entry.scope.size(); ++i) {
+        out_ << "$scope module " << entry.scope[i] << " $end\n";
+      }
+      current = entry.scope;
+      const auto& sig = *entry.signal;
+      if (sig.is_real) {
+        out_ << "$var real 64 " << sig.id << " " << entry.leaf << " $end\n";
+      } else {
+        out_ << "$var wire " << sig.width << " " << sig.id << " "
+             << entry.leaf << " $end\n";
+      }
+    }
+    for (size_t i = current.size(); i > 0; --i) {
+      out_ << "$upscope $end\n";
     }
     out_ << "$upscope $end\n";
     out_ << "$enddefinitions $end\n";
+    CheckDumpLimit();
   }
 
   void EmitInitialValues(
@@ -490,6 +741,8 @@ class VcdWriter {
     }
     last_time_ = 0;
     has_time_ = true;
+    last_time_had_values_ = true;
+    CheckDumpLimit();
   }
 
   bool ReadSignal(const VcdSignal& sig,
@@ -508,7 +761,9 @@ class VcdWriter {
     }
     uint32_t width = sig.is_real ? 64u : sig.width;
     size_t elem_size = (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
-    size_t offset = elem_size * static_cast<size_t>(sig.array_index);
+    size_t offset = elem_size * (static_cast<size_t>(sig.instance_index) *
+                                     sig.array_size +
+                                 sig.array_index);
     if (!val_buf->contents() || val_buf->length() < offset + elem_size) {
       return false;
     }
@@ -564,10 +819,60 @@ class VcdWriter {
     }
   }
 
+  void EmitSnapshot(
+      uint64_t time,
+      const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
+      bool force_values) {
+    if (!active_) {
+      return;
+    }
+    if (!has_time_ || time != last_time_) {
+      out_ << "#" << time << "\n";
+      last_time_ = time;
+      has_time_ = true;
+      last_time_had_values_ = false;
+    }
+    for (auto& sig : signals_) {
+      uint64_t val = 0;
+      uint64_t xz = 0;
+      if (!ReadSignal(sig, buffers, &val, &xz)) {
+        continue;
+      }
+      if (!force_values && sig.has_value && sig.last_val == val &&
+          sig.last_xz == xz) {
+        continue;
+      }
+      sig.last_val = val;
+      sig.last_xz = xz;
+      sig.has_value = true;
+      EmitValue(sig, val, xz);
+      last_time_had_values_ = true;
+    }
+    CheckDumpLimit();
+  }
+
+  void CheckDumpLimit() {
+    if (!dumping_ || dump_limit_ == 0u || !out_) {
+      return;
+    }
+    std::streampos pos = out_.tellp();
+    if (pos < 0) {
+      return;
+    }
+    uint64_t written = static_cast<uint64_t>(pos);
+    if (written >= dump_limit_) {
+      dumping_ = false;
+    }
+  }
+
   bool active_ = false;
   bool four_state_ = false;
   bool has_time_ = false;
+  bool last_time_had_values_ = false;
+  bool dumping_ = true;
   uint64_t last_time_ = 0;
+  uint64_t dump_limit_ = 0;
+  std::string timescale_ = "1ns";
   std::ofstream out_;
   std::vector<VcdSignal> signals_;
 };
@@ -789,12 +1094,24 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
 bool HandleServiceRecords(
     const std::vector<DecodedServiceRecord>& records,
     const gpga::ServiceStringTable& strings, const gpga::ModuleInfo& module,
+    const std::string& vcd_dir,
+    const std::unordered_map<std::string, std::string>* flat_to_hier,
+    const std::string& timescale,
     bool four_state, uint32_t instance_count,
     std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
     VcdWriter* vcd, std::string* dumpfile, std::string* error) {
   if (!buffers || !vcd || !dumpfile) {
     return false;
   }
+  auto current_time = [&]() -> uint64_t {
+    auto time_it = buffers->find("sched_time");
+    if (time_it != buffers->end() && time_it->second.contents()) {
+      uint64_t time = 0;
+      std::memcpy(&time, time_it->second.contents(), sizeof(time));
+      return time;
+    }
+    return 0;
+  };
   for (const auto& rec : records) {
     switch (rec.kind) {
       case gpga::ServiceKind::kDumpfile: {
@@ -804,8 +1121,10 @@ bool HandleServiceRecords(
       case gpga::ServiceKind::kDumpvars: {
         std::vector<std::string> targets;
         size_t start = 0;
+        uint32_t depth = 0;
         if (!rec.args.empty() &&
             rec.args[0].kind == gpga::ServiceArgKind::kValue) {
+          depth = static_cast<uint32_t>(rec.args[0].value);
           start = 1;
         }
         for (size_t i = start; i < rec.args.size(); ++i) {
@@ -816,10 +1135,37 @@ bool HandleServiceRecords(
                                             static_cast<uint32_t>(arg.value)));
           }
         }
-        if (!vcd->Start(*dumpfile, module, targets, four_state, *buffers,
+        if (!vcd->Start(*dumpfile, vcd_dir, module, targets, depth, four_state,
+                        *buffers, timescale, instance_count, flat_to_hier,
                         error)) {
           return false;
         }
+        break;
+      }
+      case gpga::ServiceKind::kDumpoff: {
+        vcd->SetDumping(false);
+        break;
+      }
+      case gpga::ServiceKind::kDumpon: {
+        vcd->SetDumping(true);
+        vcd->ForceSnapshot(current_time(), *buffers);
+        break;
+      }
+      case gpga::ServiceKind::kDumpflush: {
+        vcd->Flush();
+        break;
+      }
+      case gpga::ServiceKind::kDumpall: {
+        vcd->ForceSnapshot(current_time(), *buffers);
+        break;
+      }
+      case gpga::ServiceKind::kDumplimit: {
+        uint64_t limit = 0;
+        if (!rec.args.empty() &&
+            rec.args[0].kind == gpga::ServiceArgKind::kValue) {
+          limit = rec.args[0].value;
+        }
+        vcd->SetDumpLimit(limit);
         break;
       }
       case gpga::ServiceKind::kReadmemh:
@@ -944,8 +1290,10 @@ void SwapNextBuffers(std::unordered_map<std::string, gpga::MetalBuffer>* buffers
 }
 
 bool RunMetal(const gpga::Module& module, const std::string& msl,
+              const std::unordered_map<std::string, std::string>& flat_to_hier,
               bool enable_4state, uint32_t count, uint32_t service_capacity,
               uint32_t max_steps, uint32_t max_proc_steps,
+              const std::string& vcd_dir, uint32_t vcd_steps,
               std::string* error) {
   gpga::MetalRuntime runtime;
   if (!runtime.CompileSource(msl, {"include"}, error)) {
@@ -1025,8 +1373,10 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     buffers.emplace(entry.first, std::move(buffer));
   }
 
+  const bool has_dumpvars = ModuleUsesDumpvars(module);
+  const uint32_t vcd_step_budget = (vcd_steps > 0u) ? vcd_steps : 1u;
   uint32_t effective_max_steps = max_steps;
-  if (ModuleUsesDumpvars(module)) {
+  if (has_dumpvars) {
     effective_max_steps = 1u;
   }
 
@@ -1037,8 +1387,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     params->count = count;
   }
   auto sched_it = buffers.find("sched");
+  gpga::GpgaSchedParams* sched_params = nullptr;
   if (sched_it != buffers.end() && sched_it->second.contents()) {
-    auto* sched_params =
+    sched_params =
         static_cast<gpga::GpgaSchedParams*>(sched_it->second.contents());
     sched_params->max_steps = effective_max_steps;
     sched_params->max_proc_steps = max_proc_steps;
@@ -1059,6 +1410,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     const uint32_t kStatusStopped = 4u;
     const uint32_t max_iters = 100000u;
     for (uint32_t iter = 0; iter < max_iters; ++iter) {
+      if (sched_params && has_dumpvars) {
+        sched_params->max_steps = vcd.active() ? vcd_step_budget : 1u;
+      }
       if (!runtime.Dispatch(sched_kernel, bindings, count, error)) {
         return false;
       }
@@ -1095,9 +1449,10 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
                                  std::max<uint32_t>(1u,
                                                     sched.service_max_args),
                                  enable_4state, &decoded);
-            if (!HandleServiceRecords(decoded, strings, info, enable_4state,
-                                      count, &buffers, &vcd, &dumpfile,
-                                      error)) {
+            if (!HandleServiceRecords(decoded, strings, info, vcd_dir,
+                                      &flat_to_hier, module.timescale,
+                                      enable_4state, count, &buffers, &vcd,
+                                      &dumpfile, error)) {
               return false;
             }
             counts[gid] = 0u;
@@ -1121,6 +1476,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       }
       if (status[0] == kStatusFinished || status[0] == kStatusStopped ||
           status[0] == kStatusError || saw_finish) {
+        vcd.FinalSnapshot(buffers);
         vcd.Close();
         break;
       }
@@ -2073,6 +2429,8 @@ int main(int argc, char** argv) {
   uint32_t run_service_capacity = 32u;
   uint32_t run_max_steps = 1024u;
   uint32_t run_max_proc_steps = 64u;
+  std::string vcd_dir;
+  uint32_t vcd_steps = 0u;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -2132,6 +2490,18 @@ int main(int argc, char** argv) {
         return 2;
       }
       run_max_proc_steps = static_cast<uint32_t>(std::stoul(argv[++i]));
+    } else if (arg == "--vcd-dir" || arg == "--vcr-dir") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      vcd_dir = argv[++i];
+    } else if (arg == "--vcd-steps" || arg == "--vcr-steps") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      vcd_steps = static_cast<uint32_t>(std::stoul(argv[++i]));
     } else if (!arg.empty() && arg[0] == '-') {
       PrintUsage(argv[0]);
       return 2;
@@ -2272,9 +2642,10 @@ int main(int argc, char** argv) {
 
   if (run) {
     std::string error;
-    if (!RunMetal(design.top, msl, enable_4state, run_count,
+    if (!RunMetal(design.top, msl, design.flat_to_hier, enable_4state,
+                  run_count,
                   run_service_capacity, run_max_steps, run_max_proc_steps,
-                  &error)) {
+                  vcd_dir, vcd_steps, &error)) {
       std::cerr << "Run failed: " << error << "\n";
       return 1;
     }

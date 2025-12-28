@@ -780,6 +780,7 @@ bool ParseSchedulerConstants(const std::string& source,
   ParseUintConst(source, "GPGA_SCHED_EVENT_COUNT", &info.event_count);
   ParseUintConst(source, "GPGA_SCHED_EDGE_COUNT", &info.edge_count);
   ParseUintConst(source, "GPGA_SCHED_EDGE_STAR_COUNT", &info.edge_star_count);
+  ParseUintConst(source, "GPGA_SCHED_REPEAT_COUNT", &info.repeat_count);
   if (ParseUintConst(source, "GPGA_SCHED_DELAY_COUNT", &info.delay_count)) {
     info.has_scheduler = true;
   }
@@ -861,6 +862,9 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
                  name == "sched_initialized" || name == "sched_error" ||
                  name == "sched_status") {
         spec.length = sizeof(uint32_t) * instance_count;
+      } else if (name == "sched_repeat_left" ||
+                 name == "sched_repeat_active") {
+        spec.length = sizeof(uint32_t) * instance_count * sched.repeat_count;
       } else if (name == "sched_edge_prev_val" ||
                  name == "sched_edge_prev_xz") {
         spec.length = sizeof(uint64_t) * instance_count * sched.edge_count;
@@ -1038,6 +1042,26 @@ ServiceDrainResult DrainSchedulerServices(
           } else {
             out << FormatNumeric(arg, 'h', has_xz);
           }
+        }
+        out << "\n";
+        break;
+      }
+      case ServiceKind::kDumpoff:
+        out << "$dumpoff (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kDumpon:
+        out << "$dumpon (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kDumpflush:
+        out << "$dumpflush (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kDumpall:
+        out << "$dumpall (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kDumplimit: {
+        out << "$dumplimit (pid=" << pid << ")";
+        if (!args.empty()) {
+          out << " " << FormatNumeric(args.front(), 'h', has_xz);
         }
         out << "\n";
         break;
