@@ -71,10 +71,48 @@ This document catalogs all `gpga_*` keywords used in the metalfpga codebase with
 
 - **__gpga_time** - Current simulation time variable (64-bit unsigned)
 - **__gpga_delay** - Temporary variable for delay calculation in timing control
+- **__gpga_delay_slot** - Delay slot index for timing control arrays
+
+## Non-Blocking Assignment (NBA) Queue
+
+- **__gpga_dnba_base** - Base index into delayed NBA queue arrays
+- **__gpga_dnba_count** - Counter for delayed NBA entries
+- **__gpga_dnba_i** - Iterator index for processing NBA queue
+- **__gpga_dnba_id** - NBA entry identifier
+- **__gpga_dnba_idx** - Index for NBA array access
+- **__gpga_dnba_out** - Output variable for NBA value retrieval
+- **__gpga_dnba_slot** - NBA queue slot allocation
+- **__gpga_dnba_time** - Scheduled execution time for NBA
+- **__gpga_dnba_write** - Flag indicating NBA write operation
+
+## Repeat Statement Management
+
+- **__gpga_rep_active** - Flag indicating repeat loop is active
+- **__gpga_rep_count** - Total iteration count for repeat statement
+- **__gpga_rep_left** - Remaining iterations in repeat loop
+- **__gpga_rep_slot** - Repeat statement slot allocation
 
 ## Strobe Management
 
 - **__gpga_strobe_count** - Counter for pending strobe system task executions
+
+## Trireg (Charge Storage) Variables
+
+- **__gpga_trireg_decay_** - Prefix for trireg capacitive decay tracking
+- **__gpga_trireg_drive_** - Prefix for trireg drive strength tracking
+
+## Drive Resolution Variables
+
+- **__gpga_didx** - Driver index for multi-driver resolution
+- **__gpga_didx_val** - Driver value bits at index
+- **__gpga_didx_xz** - Driver X/Z bits at index
+- **__gpga_dval** - Resolved driver value result
+- **__gpga_dxz** - Resolved driver X/Z result
+- **__gpga_sw_diff_a** - Switch difference value A (for strength comparison)
+- **__gpga_sw_diff_b** - Switch difference value B (for strength comparison)
+- **__gpga_sw_drive** - Switch drive strength value
+- **__gpga_sw_val** - Switch resolved value bits
+- **__gpga_sw_xz** - Switch resolved X/Z bits
 
 ## Four-State Logic Helper Functions
 (Note: These are defined in `include/gpga_4state.h` but may be referenced by generated code)
@@ -84,6 +122,32 @@ This document catalogs all `gpga_*` keywords used in the metalfpga codebase with
 - **gpga_or** - Four-state bitwise OR (inferred from fs_or32/fs_or64)
 - **gpga_xor** - Four-state bitwise XOR (inferred from fs_xor32/fs_xor64)
 - **gpga_add** - Four-state addition (inferred from fs_add32/fs_add64)
+
+## Runtime Data Structures
+
+### Parameter Structs (Metal Kernel Arguments)
+- **GpgaParams** - Basic simulation parameters (instance count)
+- **GpgaSchedParams** - Scheduler configuration (max_steps, max_proc_steps, service_capacity)
+
+### Module and Signal Metadata
+- **ModuleInfo** - Module metadata (name, four_state flag, signal list)
+- **SignalInfo** - Signal descriptor (name, width, array_size, is_real, is_trireg)
+- **SchedulerConstants** - Compile-time scheduler configuration (proc_count, event_count, edge_count, etc.)
+- **BufferSpec** - Buffer allocation specification (name, length)
+
+### Service Record Infrastructure
+- **ServiceKind** - Enum for system task types (kDisplay, kMonitor, kFinish, kDumpfile, kDumpvars, kReadmemh, kReadmemb, kStop, kStrobe, kDumpoff, kDumpon, kDumpflush, kDumpall, kDumplimit, kFwrite)
+- **ServiceArgKind** - Enum for service argument types (kValue, kIdent, kString)
+- **ServiceStringTable** - String table for $display format strings and identifiers
+- **ServiceArgView** - Service call argument view (kind, width, value, xz)
+- **ServiceRecordView** - Service record view (kind, pid, format_id, args)
+- **ServiceDrainResult** - Result of draining service queue (saw_finish, saw_stop, saw_error)
+
+### Metal Runtime Objects (C++ API)
+- **MetalBuffer** - RAII GPU buffer wrapper (handle, contents pointer, length)
+- **MetalBufferBinding** - Kernel argument binding (index, buffer, offset)
+- **MetalKernel** - Compiled kernel wrapper (pipeline, argument_table, buffer_indices, thread execution width)
+- **MetalRuntime** - Metal 4 runtime manager (device, queue, compiler)
 
 ## Special/Unused Keywords
 (Found in search but not actively used in current codebase)
@@ -95,6 +159,7 @@ This document catalogs all `gpga_*` keywords used in the metalfpga codebase with
 - **gpga_runtime** - Reserved for runtime system calls (not currently used)
 - **gpga_shift_left** - Reserved for shift operations (not currently used)
 - **gpga_std** - Reserved for standard library functions (not currently used)
+- **gpga_smoke** - Test kernel name for runtime validation (src/tools/metal_smoke.mm)
 
 ## Notes
 

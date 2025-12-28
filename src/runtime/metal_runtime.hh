@@ -31,6 +31,15 @@ enum class ServiceKind : uint32_t {
   kDumpflush = 11u,
   kDumpall = 12u,
   kDumplimit = 13u,
+  kFwrite = 14u,
+  kFdisplay = 15u,
+  kFopen = 16u,
+  kFclose = 17u,
+  kFgetc = 18u,
+  kFgets = 19u,
+  kFeof = 20u,
+  kFscanf = 21u,
+  kSscanf = 22u,
 };
 
 struct ServiceStringTable {
@@ -68,6 +77,7 @@ struct GpgaParams {
 };
 
 struct GpgaSchedParams {
+  uint32_t count = 0;
   uint32_t max_steps = 0;
   uint32_t max_proc_steps = 0;
   uint32_t service_capacity = 0;

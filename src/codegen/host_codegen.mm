@@ -528,6 +528,7 @@ std::string EmitHostStub(const Module& module) {
   out << "  auto sched_it = buffers.find(\"sched\");\n";
   out << "  if (sched_it != buffers.end() && sched_it->second.contents()) {\n";
   out << "    auto* sched_params = static_cast<gpga::GpgaSchedParams*>(sched_it->second.contents());\n";
+  out << "    sched_params->count = count;\n";
   out << "    sched_params->max_steps = max_steps;\n";
   out << "    sched_params->max_proc_steps = max_proc_steps;\n";
   out << "    sched_params->service_capacity = service_capacity;\n";

@@ -7506,6 +7506,11 @@ class Parser {
         left = MakeBinary('R', std::move(left), std::move(right));
         continue;
       }
+      if (MatchSymbol3("<<<")) {
+        auto right = ParseAddSub();
+        left = MakeBinary('l', std::move(left), std::move(right));
+        continue;
+      }
       if (MatchSymbol2("<<")) {
         auto right = ParseAddSub();
         left = MakeBinary('l', std::move(left), std::move(right));

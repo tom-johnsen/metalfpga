@@ -274,6 +274,16 @@ uint64_t MaskForWidth64(int width) {
   return (1ull << width) - 1ull;
 }
 
+uint64_t StringLiteralBits(const std::string& value) {
+  uint64_t bits = 0;
+  size_t count = std::min<size_t>(8, value.size());
+  for (size_t i = 0; i < count; ++i) {
+    bits |= (static_cast<uint64_t>(
+                 static_cast<unsigned char>(value[i])) << (i * 8));
+  }
+  return bits;
+}
+
 std::string TypeForWidth(int width) {
   return (width > 32) ? "ulong" : "uint";
 }
@@ -688,6 +698,39 @@ bool IsSystemTaskName(const std::string& name) {
   return !name.empty() && name[0] == '$';
 }
 
+bool IsFileSystemFunctionName(const std::string& name) {
+  return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
+         name == "$fgets" || name == "$feof" || name == "$fscanf" ||
+         name == "$sscanf";
+}
+
+bool ExtractFeofCondition(const Expr& expr, const Expr** fd_expr,
+                          bool* invert) {
+  if (expr.kind == ExprKind::kCall && expr.ident == "$feof") {
+    if (fd_expr) {
+      *fd_expr = (expr.call_args.empty() ? nullptr : expr.call_args[0].get());
+    }
+    if (invert) {
+      *invert = false;
+    }
+    return true;
+  }
+  if (expr.kind == ExprKind::kUnary && expr.unary_op == '!' && expr.operand &&
+      expr.operand->kind == ExprKind::kCall &&
+      expr.operand->ident == "$feof") {
+    if (fd_expr) {
+      *fd_expr = (expr.operand->call_args.empty()
+                      ? nullptr
+                      : expr.operand->call_args[0].get());
+    }
+    if (invert) {
+      *invert = true;
+    }
+    return true;
+  }
+  return false;
+}
+
 bool TaskTreatsIdentifierAsString(const std::string& name) {
   return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb";
 }
@@ -702,6 +745,249 @@ uint32_t AddSystemTaskString(SystemTaskInfo* info,
   info->string_table.push_back(value);
   info->string_ids[value] = id;
   return id;
+}
+
+void CollectSystemFunctionExpr(const Expr& expr, SystemTaskInfo* info) {
+  if (!info) {
+    return;
+  }
+  if (expr.kind == ExprKind::kCall) {
+    if (IsFileSystemFunctionName(expr.ident)) {
+      info->has_system_tasks = true;
+      info->max_args = std::max(info->max_args, expr.call_args.size());
+      for (size_t i = 0; i < expr.call_args.size(); ++i) {
+        const Expr* arg = expr.call_args[i].get();
+        if (!arg) {
+          continue;
+        }
+        if (arg->kind == ExprKind::kString) {
+          AddSystemTaskString(info, arg->string_value);
+          continue;
+        }
+        if (arg->kind == ExprKind::kIdentifier) {
+          bool treat_ident = false;
+          if (expr.ident == "$fgets") {
+            treat_ident = (i == 0);
+          } else if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
+            treat_ident = (i >= 2);
+            if (expr.ident == "$sscanf" && i == 0) {
+              treat_ident = true;
+            }
+          } else if (expr.ident == "$fopen") {
+            treat_ident = true;
+          }
+          if (treat_ident) {
+            AddSystemTaskString(info, arg->ident);
+          }
+        }
+      }
+    }
+    for (const auto& arg : expr.call_args) {
+      if (arg) {
+        CollectSystemFunctionExpr(*arg, info);
+      }
+    }
+    return;
+  }
+  if (expr.kind == ExprKind::kUnary && expr.operand) {
+    CollectSystemFunctionExpr(*expr.operand, info);
+    return;
+  }
+  if (expr.kind == ExprKind::kBinary) {
+    if (expr.lhs) {
+      CollectSystemFunctionExpr(*expr.lhs, info);
+    }
+    if (expr.rhs) {
+      CollectSystemFunctionExpr(*expr.rhs, info);
+    }
+    return;
+  }
+  if (expr.kind == ExprKind::kTernary) {
+    if (expr.condition) {
+      CollectSystemFunctionExpr(*expr.condition, info);
+    }
+    if (expr.then_expr) {
+      CollectSystemFunctionExpr(*expr.then_expr, info);
+    }
+    if (expr.else_expr) {
+      CollectSystemFunctionExpr(*expr.else_expr, info);
+    }
+    return;
+  }
+  if (expr.kind == ExprKind::kSelect) {
+    if (expr.base) {
+      CollectSystemFunctionExpr(*expr.base, info);
+    }
+    if (expr.msb_expr) {
+      CollectSystemFunctionExpr(*expr.msb_expr, info);
+    }
+    if (expr.lsb_expr) {
+      CollectSystemFunctionExpr(*expr.lsb_expr, info);
+    }
+    return;
+  }
+  if (expr.kind == ExprKind::kIndex) {
+    if (expr.base) {
+      CollectSystemFunctionExpr(*expr.base, info);
+    }
+    if (expr.index) {
+      CollectSystemFunctionExpr(*expr.index, info);
+    }
+    return;
+  }
+  if (expr.kind == ExprKind::kConcat) {
+    for (const auto& element : expr.elements) {
+      if (element) {
+        CollectSystemFunctionExpr(*element, info);
+      }
+    }
+    if (expr.repeat_expr) {
+      CollectSystemFunctionExpr(*expr.repeat_expr, info);
+    }
+    return;
+  }
+}
+
+void CollectSystemFunctionInfo(const Statement& stmt, SystemTaskInfo* info) {
+  if (!info) {
+    return;
+  }
+  if (stmt.kind == StatementKind::kAssign) {
+    if (stmt.assign.rhs) {
+      CollectSystemFunctionExpr(*stmt.assign.rhs, info);
+    }
+    if (stmt.assign.lhs_index) {
+      CollectSystemFunctionExpr(*stmt.assign.lhs_index, info);
+    }
+    for (const auto& index : stmt.assign.lhs_indices) {
+      if (index) {
+        CollectSystemFunctionExpr(*index, info);
+      }
+    }
+    if (stmt.assign.lhs_msb_expr) {
+      CollectSystemFunctionExpr(*stmt.assign.lhs_msb_expr, info);
+    }
+    if (stmt.assign.lhs_lsb_expr) {
+      CollectSystemFunctionExpr(*stmt.assign.lhs_lsb_expr, info);
+    }
+    if (stmt.assign.delay) {
+      CollectSystemFunctionExpr(*stmt.assign.delay, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    if (stmt.condition) {
+      CollectSystemFunctionExpr(*stmt.condition, info);
+    }
+    for (const auto& inner : stmt.then_branch) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    for (const auto& inner : stmt.else_branch) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    if (stmt.case_expr) {
+      CollectSystemFunctionExpr(*stmt.case_expr, info);
+    }
+    for (const auto& item : stmt.case_items) {
+      for (const auto& label : item.labels) {
+        if (label) {
+          CollectSystemFunctionExpr(*label, info);
+        }
+      }
+      for (const auto& inner : item.body) {
+        CollectSystemFunctionInfo(inner, info);
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    if (stmt.for_init_rhs) {
+      CollectSystemFunctionExpr(*stmt.for_init_rhs, info);
+    }
+    if (stmt.for_condition) {
+      CollectSystemFunctionExpr(*stmt.for_condition, info);
+    }
+    if (stmt.for_step_rhs) {
+      CollectSystemFunctionExpr(*stmt.for_step_rhs, info);
+    }
+    for (const auto& inner : stmt.for_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    if (stmt.while_condition) {
+      CollectSystemFunctionExpr(*stmt.while_condition, info);
+    }
+    for (const auto& inner : stmt.while_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    if (stmt.repeat_count) {
+      CollectSystemFunctionExpr(*stmt.repeat_count, info);
+    }
+    for (const auto& inner : stmt.repeat_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    if (stmt.delay) {
+      CollectSystemFunctionExpr(*stmt.delay, info);
+    }
+    for (const auto& inner : stmt.delay_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    if (stmt.event_expr) {
+      CollectSystemFunctionExpr(*stmt.event_expr, info);
+    }
+    for (const auto& item : stmt.event_items) {
+      if (item.expr) {
+        CollectSystemFunctionExpr(*item.expr, info);
+      }
+    }
+    for (const auto& inner : stmt.event_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    if (stmt.wait_condition) {
+      CollectSystemFunctionExpr(*stmt.wait_condition, info);
+    }
+    for (const auto& inner : stmt.wait_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
+      CollectSystemFunctionInfo(inner, info);
+    }
+  }
 }
 
 void CollectSystemTaskInfo(const Statement& stmt, SystemTaskInfo* info) {
@@ -814,11 +1100,13 @@ SystemTaskInfo BuildSystemTaskInfo(const Module& module) {
   for (const auto& block : module.always_blocks) {
     for (const auto& stmt : block.statements) {
       CollectSystemTaskInfo(stmt, &info);
+      CollectSystemFunctionInfo(stmt, &info);
     }
   }
   for (const auto& task : module.tasks) {
     for (const auto& stmt : task.body) {
       CollectSystemTaskInfo(stmt, &info);
+      CollectSystemFunctionInfo(stmt, &info);
     }
   }
   info.monitor_ids.reserve(info.monitor_stmts.size());
@@ -2321,8 +2609,13 @@ std::string EmitExpr(const Expr& expr, const Module& module,
         }
         return literal;
       }
-    case ExprKind::kString:
-      return "0u";
+    case ExprKind::kString: {
+      uint64_t bits = StringLiteralBits(expr.string_value);
+      std::string literal = (bits > 0xFFFFFFFFull)
+                                ? std::to_string(bits) + "ul"
+                                : std::to_string(bits) + "u";
+      return literal;
+    }
     case ExprKind::kUnary: {
       int width = expr.operand ? ExprWidth(*expr.operand, module) : 32;
       std::string operand =
@@ -2535,6 +2828,24 @@ std::string EmitExpr(const Expr& expr, const Module& module,
     case ExprKind::kCall:
       if (expr.ident == "$time") {
         return "__gpga_time";
+      }
+      if (expr.ident == "$fopen") {
+        return "0u";
+      }
+      if (expr.ident == "$fclose") {
+        return "0u";
+      }
+      if (expr.ident == "$fgetc") {
+        return "4294967295u";
+      }
+      if (expr.ident == "$fgets") {
+        return "0u";
+      }
+      if (expr.ident == "$feof") {
+        return "1u";
+      }
+      if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
+        return "0u";
       }
       if (expr.ident == "$rtoi") {
         if (!expr.call_args.empty() && expr.call_args.front()) {
@@ -3658,8 +3969,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           uint64_t drive_bits = MaskForWidth64(width) & ~expr.z_bits;
           return fs_const_expr(expr.value_bits, xz_bits, drive_bits, width);
         }
-        case ExprKind::kString:
-          return fs_allx_expr(1);
+        case ExprKind::kString: {
+          uint64_t bits = StringLiteralBits(expr.string_value);
+          int width = std::max<int>(
+              1, std::min<int>(64, static_cast<int>(expr.string_value.size() * 8)));
+          uint64_t drive_bits = MaskForWidth64(width);
+          return fs_const_expr(bits, 0, drive_bits, width);
+        }
         case ExprKind::kUnary: {
           FsExpr operand = emit_expr4(*expr.operand);
           int width = operand.width;
@@ -4064,6 +4380,36 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (expr.ident == "$time") {
             int width = 64;
             return FsExpr{"__gpga_time", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fopen") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fclose") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fgetc") {
+            int width = 32;
+            return FsExpr{"4294967295u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fgets") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$feof") {
+            int width = 32;
+            return FsExpr{"1u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
                           drive_full(width), width};
           }
           if (expr.ident == "$rtoi") {
@@ -7458,6 +7804,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         const bool has_delayed_nba = delayed_nba_count > 0;
         size_t delayed_nba_capacity =
             has_delayed_nba ? std::max<size_t>(1, delayed_nba_count * 4) : 0;
+        const bool has_events = !module.events.empty();
+        const bool has_edges = edge_item_count > 0;
+        const bool has_edge_star = edge_star_count > 0;
 
         std::unordered_set<std::string> sched_locals;
         std::unordered_set<std::string> sched_regs;
@@ -7493,7 +7842,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::sort(sched_reg_names.begin(), sched_reg_names.end());
 
         out << "\n";
-        out << "struct GpgaSchedParams { uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
+        out << "struct GpgaSchedParams { uint count; uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
         out << "constant constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size()
             << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
@@ -7529,6 +7878,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
         out << "constant constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
         out << "constant constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
+        out << "constant constexpr uint GPGA_SCHED_WAIT_SERVICE = 7u;\n";
         out << "constant constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
         out << "constant constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
         out << "constant constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
@@ -7543,6 +7893,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
         out << "constant constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
         out << "constant constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
+        out << "constant constexpr uint GPGA_SCHED_FLAG_INITIALIZED = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_FLAG_ACTIVE_INIT = 2u;\n";
         if (!system_task_info.monitor_stmts.empty()) {
           size_t max_args =
               std::max<size_t>(1, system_task_info.monitor_max_args);
@@ -7579,6 +7931,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFLUSH = 11u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPALL = 12u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPLIMIT = 13u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FWRITE = 14u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FDISPLAY = 15u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FOPEN = 16u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FCLOSE = 17u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FGETC = 18u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FGETS = 19u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FEOF = 20u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FSCANF = 21u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_SSCANF = 22u;\n";
           out << "struct GpgaServiceRecord {\n";
           out << "  uint kind;\n";
           out << "  uint pid;\n";
@@ -7684,14 +8045,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_wait_event [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_edge_prev_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_edge_prev_xz [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_edge_star_prev_xz [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
+        if (has_edges) {
+          emit_param("  device ulong* sched_edge_prev_val [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_edge_prev_xz [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+        if (has_edge_star) {
+          emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_edge_star_prev_xz [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
         emit_param("  device ulong* sched_wait_time [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_join_count [[buffer(" +
@@ -7710,12 +8075,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_phase [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_active_init [[buffer(" +
+        emit_param("  device uint* sched_flags [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_initialized [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_event_pending [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
+        if (has_events) {
+          emit_param("  device uint* sched_event_pending [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
         emit_param("  device uint* sched_error [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_status [[buffer(" +
@@ -7756,10 +8121,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         emit_param("  device ulong* sched_monitor_xz [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
       }
-      if (!system_task_info.strobe_stmts.empty()) {
-        emit_param("  device uint* sched_strobe_pending [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
         if (!system_task_info.strobe_stmts.empty()) {
           emit_param("  device uint* sched_strobe_pending [[buffer(" +
                      std::to_string(buffer_index++) + ")]]");
@@ -7772,21 +8133,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         emit_param("  constant GpgaSchedParams& sched [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
-        emit_param("  constant GpgaParams& params [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
         emit_param("  uint gid [[thread_position_in_grid]]) {\n");
-        out << "  if (gid >= params.count) {\n";
+        out << "  if (gid >= sched.count) {\n";
         out << "    return;\n";
         out << "  }\n";
         if (system_task_info.has_system_tasks) {
           out << "  sched_service_count[gid] = 0u;\n";
         }
         out << "  ulong __gpga_time = sched_time[gid];\n";
-        out << "  if (sched_initialized[gid] == 0u) {\n";
+        out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_INITIALIZED) == 0u) {\n";
         out << "    sched_time[gid] = 0ul;\n";
         out << "    __gpga_time = 0ul;\n";
         out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
-        out << "    sched_active_init[gid] = 1u;\n";
+        out << "    sched_flags[gid] = GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "    sched_error[gid] = 0u;\n";
         for (const auto* reg : trireg_nets) {
           out << "    " << decay_name(reg->name) << "[gid] = 0ul;\n";
@@ -7794,19 +8153,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (has_delayed_nba) {
           out << "    sched_dnba_count[gid] = 0u;\n";
         }
-        out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-        out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
-        out << "    }\n";
-        out << "    for (uint e = 0u; e < GPGA_SCHED_EDGE_COUNT; ++e) {\n";
-        out << "      uint eidx = (gid * GPGA_SCHED_EDGE_COUNT) + e;\n";
-        out << "      sched_edge_prev_val[eidx] = 0ul;\n";
-        out << "      sched_edge_prev_xz[eidx] = 0ul;\n";
-        out << "    }\n";
-        out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
-        out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
-        out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
-        out << "      sched_edge_star_prev_xz[sidx] = 0ul;\n";
-        out << "    }\n";
+        if (has_events) {
+          out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+          out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+          out << "    }\n";
+        }
+        if (has_edges) {
+          out << "    for (uint e = 0u; e < GPGA_SCHED_EDGE_COUNT; ++e) {\n";
+          out << "      uint eidx = (gid * GPGA_SCHED_EDGE_COUNT) + e;\n";
+          out << "      sched_edge_prev_val[eidx] = 0ul;\n";
+          out << "      sched_edge_prev_xz[eidx] = 0ul;\n";
+          out << "    }\n";
+        }
+        if (has_edge_star) {
+          out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
+          out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
+          out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
+          out << "      sched_edge_star_prev_xz[sidx] = 0ul;\n";
+          out << "    }\n";
+        }
       if (!system_task_info.monitor_stmts.empty()) {
         out << "    sched_monitor_enable[gid] = 1u;\n";
         out << "    for (uint m = 0u; m < GPGA_SCHED_MONITOR_COUNT; ++m) {\n";
@@ -7823,11 +8188,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
         out << "    }\n";
       }
-        if (!system_task_info.strobe_stmts.empty()) {
-          out << "    for (uint s = 0u; s < GPGA_SCHED_STROBE_COUNT; ++s) {\n";
-          out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
-          out << "    }\n";
-        }
         out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "      uint idx = gpga_sched_index(gid, pid);\n";
         out << "      sched_pc[idx] = 0u;\n";
@@ -7849,7 +8209,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "      sched_repeat_active[ridx] = 0u;\n";
           out << "    }\n";
         }
-        out << "    sched_initialized[gid] = 1u;\n";
         out << "  }\n";
         out << "  if (sched_error[gid] != 0u) {\n";
         out << "    sched_status[gid] = GPGA_SCHED_STATUS_ERROR;\n";
@@ -8010,8 +8369,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  while (steps > 0u) {\n";
         out << "    bool did_work = false;\n";
         out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
-        out << "      if (sched_active_init[gid] != 0u) {\n";
-        out << "        sched_active_init[gid] = 0u;\n";
+        out << "      if ((sched_flags[gid] & GPGA_SCHED_FLAG_ACTIVE_INIT) != 0u) {\n";
+        out << "        sched_flags[gid] &= ~GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         if (!nb_targets_sorted.empty()) {
           out << "        // Initialize NBA buffers for this delta.\n";
           for (const auto& target : nb_targets_sorted) {
@@ -8150,6 +8509,34 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "  " << lhs.xz << " = " << rhs.xz << ";\n";
             out << pad << "}\n";
           } else {
+          out << pad << lhs.val << " = " << rhs.val << ";\n";
+          out << pad << lhs.xz << " = " << rhs.xz << ";\n";
+        }
+      };
+
+        auto emit_lvalue_assign =
+            [&](const SequentialAssign& assign, const FsExpr& rhs, int indent,
+                const std::unordered_set<std::string>& locals_override) -> void {
+          std::string pad(indent, ' ');
+          Lvalue4 lhs =
+              build_lvalue4(assign, locals_override, sched_regs, false, indent);
+          if (!lhs.ok) {
+            return;
+          }
+          if (lhs.is_bit_select) {
+            emit_bit_select4(lhs, rhs, lhs.val, lhs.xz, indent);
+            return;
+          }
+          if (lhs.is_range) {
+            emit_range_select4(lhs, rhs, lhs.val, lhs.xz, indent);
+            return;
+          }
+          if (!lhs.guard.empty()) {
+            out << pad << "if " << lhs.guard << " {\n";
+            out << pad << "  " << lhs.val << " = " << rhs.val << ";\n";
+            out << pad << "  " << lhs.xz << " = " << rhs.xz << ";\n";
+            out << pad << "}\n";
+          } else {
             out << pad << lhs.val << " = " << rhs.val << ";\n";
             out << pad << lhs.xz << " = " << rhs.xz << ";\n";
           }
@@ -8203,16 +8590,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         auto build_service_args =
             [&](const Statement& stmt, const std::string& name,
-                std::string* format_id_expr,
+                size_t arg_start, std::string* format_id_expr,
                 std::vector<ServiceArg>* args) -> bool {
           if (!format_id_expr || !args) {
             return false;
           }
           *format_id_expr = "GPGA_SERVICE_INVALID_ID";
-          if (!stmt.task_args.empty() &&
-              stmt.task_args[0]->kind == ExprKind::kString) {
+          if (stmt.task_args.size() > arg_start &&
+              stmt.task_args[arg_start]->kind == ExprKind::kString) {
             uint32_t id = 0;
-            if (!string_id_for(stmt.task_args[0]->string_value, &id)) {
+            if (!string_id_for(stmt.task_args[arg_start]->string_value, &id)) {
               return false;
             }
             *format_id_expr = std::to_string(id) + "u";
@@ -8227,8 +8614,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
           bool ident_as_string = TaskTreatsIdentifierAsString(name);
           args->clear();
-          args->reserve(stmt.task_args.size());
-          for (const auto& arg : stmt.task_args) {
+          if (stmt.task_args.size() > arg_start) {
+            args->reserve(stmt.task_args.size() - arg_start);
+          }
+          for (size_t i = arg_start; i < stmt.task_args.size(); ++i) {
+            const auto& arg = stmt.task_args[i];
             if (!arg) {
               continue;
             }
@@ -8254,6 +8644,122 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               args->push_back(
                   ServiceArg{"GPGA_SERVICE_ARG_VALUE", 64, "__gpga_time",
                              "0ul"});
+              continue;
+            }
+            int width = ExprWidth(*arg, module);
+            if (width <= 0) {
+              width = 1;
+            }
+            FsExpr value = emit_expr4_sized(*arg, width);
+            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", width,
+                                        to_ulong(value.val, width),
+                                        to_ulong(value.xz, width)});
+          }
+          return true;
+        };
+
+        auto build_syscall_args =
+            [&](const Expr& call, const std::string& name,
+                std::string* format_id_expr,
+                std::vector<ServiceArg>* args) -> bool {
+          if (!format_id_expr || !args) {
+            return false;
+          }
+          *format_id_expr = "GPGA_SERVICE_INVALID_ID";
+          args->clear();
+          args->reserve(call.call_args.size());
+          for (size_t i = 0; i < call.call_args.size(); ++i) {
+            const Expr* arg = call.call_args[i].get();
+            if (!arg) {
+              continue;
+            }
+            if (name == "$fgets" && i == 0) {
+              if (arg->kind != ExprKind::kIdentifier) {
+                return false;
+              }
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              int width = SignalWidth(module, arg->ident);
+              if (width <= 0) {
+                width = 1;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                          std::to_string(id) + "ul", "0ul"});
+              continue;
+            }
+            if ((name == "$fscanf" || name == "$sscanf") && i >= 2) {
+              if (arg->kind != ExprKind::kIdentifier) {
+                return false;
+              }
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              int width = SignalWidth(module, arg->ident);
+              if (width <= 0) {
+                width = 1;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                          std::to_string(id) + "ul", "0ul"});
+              continue;
+            }
+            if (name == "$sscanf" && i == 0) {
+              if (arg->kind == ExprKind::kString) {
+                uint32_t id = 0;
+                if (!string_id_for(arg->string_value, &id)) {
+                  return false;
+                }
+                args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                            std::to_string(id) + "ul", "0ul"});
+                continue;
+              }
+              if (arg->kind == ExprKind::kIdentifier) {
+                uint32_t id = 0;
+                if (!string_id_for(arg->ident, &id)) {
+                  return false;
+                }
+                int width = SignalWidth(module, arg->ident);
+                if (width <= 0) {
+                  width = 1;
+                }
+                args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                            std::to_string(id) + "ul", "0ul"});
+                continue;
+              }
+              return false;
+            }
+            if (name == "$fopen" && i < 2) {
+              if (arg->kind == ExprKind::kString) {
+                uint32_t id = 0;
+                if (!string_id_for(arg->string_value, &id)) {
+                  return false;
+                }
+                args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                            std::to_string(id) + "ul", "0ul"});
+                continue;
+              }
+              if (arg->kind == ExprKind::kIdentifier) {
+                uint32_t id = 0;
+                if (!string_id_for(arg->ident, &id)) {
+                  return false;
+                }
+                args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", 0,
+                                            std::to_string(id) + "ul", "0ul"});
+                continue;
+              }
+              return false;
+            }
+            if ((name == "$fscanf" || name == "$sscanf") && i == 1 &&
+                arg->kind == ExprKind::kString) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->string_value, &id)) {
+                return false;
+              }
+              *format_id_expr = std::to_string(id) + "u";
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                          std::to_string(id) + "ul", "0ul"});
               continue;
             }
             int width = ExprWidth(*arg, module);
@@ -8379,6 +8885,83 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "}\n";
         };
 
+        struct BodyCase {
+          int pc = 0;
+          const Statement* owner = nullptr;
+          std::vector<const Statement*> body;
+          int next_pc = 0;
+          int loop_pc = -1;
+          bool is_forever_body = false;
+          bool is_assign_delay = false;
+          int delay_id = -1;
+          bool is_service_resume = false;
+          bool is_service_cond = false;
+          int service_width = 0;
+          bool service_invert = false;
+          int service_true_pc = 0;
+          int service_false_pc = 0;
+        };
+        int pc_counter = 0;
+        std::vector<BodyCase> body_cases;
+
+        auto emit_syscall_assign =
+            [&](const Statement& stmt, const Expr& call, int resume_pc,
+                int indent) -> bool {
+          if (call.kind != ExprKind::kCall ||
+              !IsFileSystemFunctionName(call.ident)) {
+            return false;
+          }
+          const char* kind_expr = nullptr;
+          if (call.ident == "$fopen") {
+            kind_expr = "GPGA_SERVICE_KIND_FOPEN";
+          } else if (call.ident == "$fclose") {
+            kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+          } else if (call.ident == "$fgetc") {
+            kind_expr = "GPGA_SERVICE_KIND_FGETC";
+          } else if (call.ident == "$fgets") {
+            kind_expr = "GPGA_SERVICE_KIND_FGETS";
+          } else if (call.ident == "$feof") {
+            kind_expr = "GPGA_SERVICE_KIND_FEOF";
+          } else if (call.ident == "$fscanf") {
+            kind_expr = "GPGA_SERVICE_KIND_FSCANF";
+          } else if (call.ident == "$sscanf") {
+            kind_expr = "GPGA_SERVICE_KIND_SSCANF";
+          }
+          if (!kind_expr) {
+            return false;
+          }
+          std::string format_id_expr;
+          std::vector<ServiceArg> args;
+          if (!build_syscall_args(call, call.ident, &format_id_expr, &args)) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return true;
+          }
+          int width = SignalWidth(module, stmt.assign.lhs);
+          if (width <= 0) {
+            width = ExprWidth(call, module);
+          }
+          int body_pc = pc_counter++;
+          BodyCase body_case;
+          body_case.pc = body_pc;
+          body_case.owner = &stmt;
+          body_case.next_pc = resume_pc;
+          body_case.is_service_resume = true;
+          body_case.service_width = width;
+          body_cases.push_back(std::move(body_case));
+
+          emit_service_record(kind_expr, format_id_expr, args, indent);
+          out << std::string(indent, ' ')
+              << "sched_wait_kind[idx] = GPGA_SCHED_WAIT_SERVICE;\n";
+          out << std::string(indent, ' ') << "sched_wait_time[idx] = 0ul;\n";
+          out << std::string(indent, ' ') << "sched_pc[idx] = " << body_pc
+              << "u;\n";
+          out << std::string(indent, ' ')
+              << "sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          return true;
+        };
+
         auto emit_monitor_snapshot =
             [&](uint32_t monitor_id, const std::vector<ServiceArg>& args,
                 int indent, bool force_emit) -> std::string {
@@ -8456,14 +9039,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
           const char* kind_expr = nullptr;
+          size_t arg_start = 0;
+          bool guard_file_fd = false;
+          FsExpr fd_expr;
+          bool has_fd_expr = false;
           if (name == "$display") {
             kind_expr = "GPGA_SERVICE_KIND_DISPLAY";
+          } else if (name == "$fdisplay") {
+            kind_expr = "GPGA_SERVICE_KIND_FDISPLAY";
+            arg_start = 1;
+            guard_file_fd = true;
           } else if (name == "$monitor") {
             kind_expr = "GPGA_SERVICE_KIND_MONITOR";
           } else if (name == "$finish") {
             kind_expr = "GPGA_SERVICE_KIND_FINISH";
           } else if (name == "$stop") {
             kind_expr = "GPGA_SERVICE_KIND_STOP";
+          } else if (name == "$fwrite") {
+            kind_expr = "GPGA_SERVICE_KIND_FWRITE";
+            arg_start = 1;
+            guard_file_fd = true;
+          } else if (name == "$fclose") {
+            kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+            guard_file_fd = true;
           } else if (name == "$dumpfile") {
             kind_expr = "GPGA_SERVICE_KIND_DUMPFILE";
           } else if (name == "$dumpvars") {
@@ -8491,11 +9089,35 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
           std::string format_id_expr;
           std::vector<ServiceArg> args;
-          if (!build_service_args(stmt, name, &format_id_expr, &args)) {
+          std::string fd_guard;
+          if (guard_file_fd) {
+            if (stmt.task_args.empty() || !stmt.task_args[0]) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            fd_expr = emit_expr4_sized(*stmt.task_args[0], 32);
+            has_fd_expr = true;
+            fd_expr = maybe_hoist_full(fd_expr, indent, false, false);
+            std::string zero = literal_for_width(0, fd_expr.width);
+            fd_guard =
+                "(" + fd_expr.xz + " == " + zero + " && " + fd_expr.val +
+                " != " + zero + ")";
+          }
+          if (!build_service_args(stmt, name, arg_start, &format_id_expr,
+                                  &args)) {
             out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
             out << std::string(indent, ' ')
                 << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             return;
+          }
+          if (guard_file_fd && has_fd_expr && arg_start > 0) {
+            args.insert(
+                args.begin(),
+                ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                           to_ulong(fd_expr.val, 32),
+                           to_ulong(fd_expr.xz, 32)});
           }
 
           bool dump_control =
@@ -8525,6 +9147,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           } else if (dump_control) {
             std::string pad(indent, ' ');
             out << pad << "if (gid == 0u) {\n";
+            emit_service_record(kind_expr, format_id_expr, args, indent + 2);
+            out << pad << "}\n";
+          } else if (guard_file_fd) {
+            std::string pad(indent, ' ');
+            out << pad << "if (" << fd_guard << ") {\n";
             emit_service_record(kind_expr, format_id_expr, args, indent + 2);
             out << pad << "}\n";
           } else {
@@ -8624,7 +9251,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       auto emit_inline_stmt =
           [&](const Statement& stmt, int indent,
               const std::unordered_set<std::string>& locals_override,
-              const auto& self) -> void {
+              int resume_pc, const auto& self) -> void {
           std::string pad(indent, ' ');
           if (stmt.kind == StatementKind::kTaskCall &&
               IsSystemTaskName(stmt.task_name)) {
@@ -8648,6 +9275,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
               return;
             }
+            if (stmt.assign.rhs &&
+                stmt.assign.rhs->kind == ExprKind::kCall &&
+                IsFileSystemFunctionName(stmt.assign.rhs->ident)) {
+              emit_syscall_assign(stmt, *stmt.assign.rhs, resume_pc, indent);
+              return;
+            }
             emit_inline_assign(stmt.assign, indent, locals_override);
             return;
           }
@@ -8665,12 +9298,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             cond = hoist_full_for_use(cond, indent);
             out << pad << "if (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.then_branch) {
-              self(inner, indent + 2, locals_override, self);
+              out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(inner, indent + 4, locals_override, resume_pc, self);
+              out << pad << "  }\n";
             }
             if (!stmt.else_branch.empty()) {
               out << pad << "} else {\n";
               for (const auto& inner : stmt.else_branch) {
-                self(inner, indent + 2, locals_override, self);
+                out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                self(inner, indent + 4, locals_override, resume_pc, self);
+                out << pad << "  }\n";
               }
               out << pad << "}\n";
             } else {
@@ -8706,13 +9343,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 out << pad << "} else if (" << cond << ") {\n";
               }
               for (const auto& inner : item.body) {
-                self(inner, indent + 2, locals_override, self);
+                out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                self(inner, indent + 4, locals_override, resume_pc, self);
+                out << pad << "  }\n";
               }
             }
             if (!stmt.default_branch.empty()) {
               out << pad << "} else {\n";
               for (const auto& inner : stmt.default_branch) {
-                self(inner, indent + 2, locals_override, self);
+                out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                self(inner, indent + 4, locals_override, resume_pc, self);
+                out << pad << "  }\n";
               }
               out << pad << "}\n";
             } else if (!first) {
@@ -8736,7 +9377,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             cond = hoist_full_for_use(cond, indent);
             out << pad << "while (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.for_body) {
-              self(inner, indent + 2, locals_override, self);
+              self(inner, indent + 2, locals_override, resume_pc, self);
+              out << pad << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) { break; }\n";
             }
             int step_width = SignalWidth(module, stmt.for_step_lhs);
             FsExpr step =
@@ -8758,7 +9400,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             cond = hoist_full_for_use(cond, indent);
             out << pad << "while (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.while_body) {
-              self(inner, indent + 2, locals_override, self);
+              self(inner, indent + 2, locals_override, resume_pc, self);
+              out << pad << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) { break; }\n";
             }
             out << pad << "}\n";
             return;
@@ -8772,7 +9415,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "for (uint __gpga_rep = 0u; __gpga_rep < " << count.val
                 << "; ++__gpga_rep) {\n";
             for (const auto& inner : stmt.repeat_body) {
-              self(inner, indent + 2, locals_override, self);
+              self(inner, indent + 2, locals_override, resume_pc, self);
+              out << pad << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) { break; }\n";
             }
             out << pad << "}\n";
             return;
@@ -8780,7 +9424,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (stmt.kind == StatementKind::kBlock) {
             out << pad << "{\n";
             for (const auto& inner : stmt.block) {
-              self(inner, indent + 2, locals_override, self);
+              out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(inner, indent + 4, locals_override, resume_pc, self);
+              out << pad << "  }\n";
             }
             out << pad << "}\n";
             return;
@@ -8788,7 +9434,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         };
 
         auto emit_task_call =
-            [&](const Statement& stmt, int indent,
+            [&](const Statement& stmt, int indent, int resume_pc,
                 const auto& emit_inline_stmt_fn) -> void {
           if (IsSystemTaskName(stmt.task_name)) {
             emit_system_task(stmt, indent);
@@ -8871,7 +9517,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           g_task_arg_signed = &task_signed;
           g_task_arg_real = &task_real;
           for (const auto& inner : task->body) {
-            emit_inline_stmt_fn(inner, indent, task_locals,
+            emit_inline_stmt_fn(inner, indent, task_locals, resume_pc,
                                 emit_inline_stmt_fn);
           }
           for (const auto& out_arg : task_outs) {
@@ -8956,12 +9602,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           } else if (proc.single) {
             append_stmt(*proc.single);
           }
-          std::unordered_map<const Statement*, int> pc_for_stmt;
-          int pc_counter = 0;
-          for (const auto* stmt : stmts) {
-            pc_for_stmt[stmt] = pc_counter++;
-          }
-          const int pc_done = pc_counter++;
+        std::unordered_map<const Statement*, int> pc_for_stmt;
+        pc_counter = 0;
+        for (const auto* stmt : stmts) {
+          pc_for_stmt[stmt] = pc_counter++;
+        }
+        const int pc_done = pc_counter++;
           std::unordered_map<const Statement*, size_t> stmt_index;
           for (size_t i = 0; i < stmts.size(); ++i) {
             stmt_index[stmts[i]] = i;
@@ -9004,17 +9650,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             repeat_runtime[stmt_ptr] =
                 RepeatRuntime{id_it->second, body_pc, after_pc};
           }
-          struct BodyCase {
-            int pc = 0;
-            const Statement* owner = nullptr;
-            std::vector<const Statement*> body;
-            int next_pc = 0;
-            int loop_pc = -1;
-            bool is_forever_body = false;
-            bool is_assign_delay = false;
-            int delay_id = -1;
-          };
-          std::vector<BodyCase> body_cases;
+        body_cases.clear();
 
           std::unordered_map<std::string, int> block_end_pc;
           for (size_t i = 0; i < stmts.size(); ++i) {
@@ -9156,9 +9792,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 out << "                }\n";
                 continue;
               }
-              emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
-              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
-              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              if (stmt.assign.rhs &&
+                  stmt.assign.rhs->kind == ExprKind::kCall &&
+                  IsFileSystemFunctionName(stmt.assign.rhs->ident)) {
+                emit_syscall_assign(stmt, *stmt.assign.rhs, next_pc, 18);
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              emit_inline_stmt(stmt, 18, sched_locals, next_pc,
+                               emit_inline_stmt);
+              out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                out << "                    sched_pc[idx] = " << next_pc << "u;\n";
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                  }\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
@@ -9589,8 +10236,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             if (stmt.kind == StatementKind::kTaskCall) {
-              emit_task_call(stmt, 18, emit_inline_stmt);
-              out << "                  if (sched_state[idx] != GPGA_SCHED_PROC_DONE) {\n";
+              emit_task_call(stmt, 18, next_pc, emit_inline_stmt);
+              out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
               out << "                    sched_pc[idx] = " << next_pc << "u;\n";
               out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
               out << "                  }\n";
@@ -9598,8 +10245,73 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << "                }\n";
               continue;
             }
-            emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
-            out << "                  if (sched_state[idx] != GPGA_SCHED_PROC_DONE) {\n";
+            if (stmt.kind == StatementKind::kWhile && stmt.while_condition) {
+              const Expr* fd_expr = nullptr;
+              bool invert = false;
+              if (ExtractFeofCondition(*stmt.while_condition, &fd_expr,
+                                       &invert)) {
+                const Expr* call_expr =
+                    invert && stmt.while_condition->operand
+                        ? stmt.while_condition->operand.get()
+                        : stmt.while_condition.get();
+                if (!call_expr || call_expr->kind != ExprKind::kCall) {
+                  out << "                  sched_error[gid] = 1u;\n";
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "                  break;\n";
+                  out << "                }\n";
+                  continue;
+                }
+                int body_pc = -1;
+                if (!stmt.while_body.empty()) {
+                  body_pc = pc_counter++;
+                  BodyCase body_case;
+                  body_case.pc = body_pc;
+                  body_case.owner = &stmt;
+                  for (const auto& inner : stmt.while_body) {
+                    body_case.body.push_back(&inner);
+                  }
+                  body_case.next_pc = pc;
+                  body_cases.push_back(std::move(body_case));
+                }
+                int cond_pc = pc_counter++;
+                BodyCase cond_case;
+                cond_case.pc = cond_pc;
+                cond_case.is_service_cond = true;
+                cond_case.service_invert = invert;
+                cond_case.service_true_pc = (body_pc >= 0) ? body_pc : pc;
+                cond_case.service_false_pc = next_pc;
+                body_cases.push_back(std::move(cond_case));
+
+                std::string format_id_expr;
+                std::vector<ServiceArg> args;
+                if (!build_syscall_args(*call_expr, call_expr->ident,
+                                        &format_id_expr, &args)) {
+                  out << "                  sched_error[gid] = 1u;\n";
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "                  break;\n";
+                  out << "                }\n";
+                  continue;
+                }
+                emit_service_record("GPGA_SERVICE_KIND_FEOF", format_id_expr,
+                                    args, 18);
+                out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_SERVICE;\n";
+                out << "                  sched_wait_time[idx] = 0ul;\n";
+                out << "                  sched_pc[idx] = " << cond_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+            }
+            int inline_resume_pc = next_pc;
+            if (stmt.kind == StatementKind::kWhile ||
+                stmt.kind == StatementKind::kFor ||
+                stmt.kind == StatementKind::kRepeat) {
+              inline_resume_pc = pc;
+            }
+            emit_inline_stmt(stmt, 18, sched_locals, inline_resume_pc,
+                             emit_inline_stmt);
+            out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
             out << "                    sched_pc[idx] = " << next_pc << "u;\n";
             out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
             out << "                  }\n";
@@ -9634,10 +10346,58 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << "                }\n";
               continue;
             }
-            for (const auto* inner : body_case.body) {
-              emit_inline_stmt(*inner, 18, sched_locals, emit_inline_stmt);
+            if (body_case.is_service_cond) {
+              out << "                  ulong __gpga_ret = sched_wait_time[idx];\n";
+              out << "                  bool __gpga_cond = ((__gpga_ret & 1ul) != 0ul);\n";
+              if (body_case.service_invert) {
+                out << "                  __gpga_cond = !__gpga_cond;\n";
+              }
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+              out << "                  if (__gpga_cond) {\n";
+              out << "                    sched_pc[idx] = " << body_case.service_true_pc
+                  << "u;\n";
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  } else {\n";
+              out << "                    sched_pc[idx] = " << body_case.service_false_pc
+                  << "u;\n";
+              if (body_case.service_false_pc == pc_done) {
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              } else {
+                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              }
+              out << "                  }\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
             }
-            out << "                  if (sched_state[idx] != GPGA_SCHED_PROC_DONE) {\n";
+            if (body_case.is_service_resume) {
+              int width = body_case.service_width;
+              if (width <= 0) {
+                width = 1;
+              }
+              std::string ret_val = "__gpga_ret";
+              std::string masked =
+                  (width > 32) ? MaskForWidthExpr(ret_val, width)
+                               : MaskForWidthExpr("uint(" + ret_val + ")", width);
+              FsExpr result{masked, literal_for_width(0, width),
+                            drive_full(width), width};
+              out << "                  ulong __gpga_ret = sched_wait_time[idx];\n";
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+              if (!body_case.owner || body_case.owner->kind != StatementKind::kAssign) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              } else {
+                emit_lvalue_assign(body_case.owner->assign, result, 18,
+                                   sched_locals);
+              }
+            } else {
+              int inline_resume_pc = body_case.next_pc;
+              for (const auto* inner : body_case.body) {
+                emit_inline_stmt(*inner, 18, sched_locals, inline_resume_pc,
+                                 emit_inline_stmt);
+              }
+            }
+            out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
             out << "                    sched_pc[idx] = " << body_case.next_pc
                 << "u;\n";
             if (body_case.next_pc == pc_done) {
@@ -9697,17 +10457,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "            any_ready = true;\n";
         out << "            continue;\n";
         out << "          }\n";
-        out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
-        out << "            uint ev = sched_wait_event[idx];\n";
-        out << "            uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
-        out << "            if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
-        out << "                sched_event_pending[eidx] != 0u) {\n";
-        out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-        out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-        out << "              any_ready = true;\n";
-        out << "            }\n";
-        out << "            continue;\n";
-        out << "          }\n";
+        if (has_events) {
+          out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
+          out << "            uint ev = sched_wait_event[idx];\n";
+          out << "            uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
+          out << "            if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
+          out << "                sched_event_pending[eidx] != 0u) {\n";
+          out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+          out << "              any_ready = true;\n";
+          out << "            }\n";
+          out << "            continue;\n";
+          out << "          }\n";
+        }
         out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
         out << "            bool ready = false;\n";
         out << "            uint edge_kind = sched_wait_edge_kind[idx];\n";
@@ -9871,9 +10633,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "            continue;\n";
         out << "          }\n";
         out << "        }\n";
-        out << "        for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-        out << "          sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
-        out << "        }\n";
+        if (has_events) {
+          out << "        for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+          out << "          sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+          out << "        }\n";
+        }
         out << "        if (any_ready) {\n";
         out << "          sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
         out << "          continue;\n";
@@ -9913,7 +10677,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             const Statement* monitor_stmt = system_task_info.monitor_stmts[i];
             std::string format_id_expr;
             std::vector<ServiceArg> args;
-            build_service_args(*monitor_stmt, monitor_stmt->task_name,
+            build_service_args(*monitor_stmt, monitor_stmt->task_name, 0,
                                &format_id_expr, &args);
             uint32_t monitor_pid_value = 0u;
             auto pid_it = monitor_pid.find(monitor_stmt);
@@ -9938,7 +10702,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             const Statement* strobe_stmt = system_task_info.strobe_stmts[i];
             std::string format_id_expr;
             std::vector<ServiceArg> args;
-            build_service_args(*strobe_stmt, strobe_stmt->task_name,
+            build_service_args(*strobe_stmt, strobe_stmt->task_name, 0,
                                &format_id_expr, &args);
             uint32_t strobe_pid_value = 0u;
             auto pid_it = strobe_pid.find(strobe_stmt);
@@ -9960,20 +10724,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "      bool any_ready = false;\n";
         out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "        uint idx = gpga_sched_index(gid, pid);\n";
+        out << "        if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+        out << "          any_ready = true;\n";
+        out << "          continue;\n";
+        out << "        }\n";
         out << "        if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
         out << "          continue;\n";
         out << "        }\n";
-        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
-        out << "          uint ev = sched_wait_event[idx];\n";
-        out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
-        out << "          if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
-        out << "              sched_event_pending[eidx] != 0u) {\n";
-        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-        out << "            any_ready = true;\n";
-        out << "          }\n";
-        out << "          continue;\n";
-        out << "        }\n";
+        if (has_events) {
+          out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
+          out << "          uint ev = sched_wait_event[idx];\n";
+          out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
+          out << "          if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
+          out << "              sched_event_pending[eidx] != 0u) {\n";
+          out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+          out << "            any_ready = true;\n";
+          out << "          }\n";
+          out << "          continue;\n";
+          out << "        }\n";
+        }
         out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
         out << "          bool ready = false;\n";
         out << "          uint edge_kind = sched_wait_edge_kind[idx];\n";
@@ -10137,11 +10907,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "          continue;\n";
         out << "        }\n";
         out << "      }\n";
-        out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-        out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
-        out << "      }\n";
+        if (has_events) {
+          out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+          out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+          out << "      }\n";
+        }
         out << "      if (any_ready) {\n";
-        out << "        sched_active_init[gid] = 1u;\n";
+        out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
         out << "        continue;\n";
         out << "      }\n";
@@ -10183,9 +10955,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
         out << "          }\n";
         out << "        }\n";
-        out << "        sched_active_init[gid] = 1u;\n";
+        out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
         out << "        continue;\n";
+        out << "      }\n";
+        out << "      bool have_service = false;\n";
+        out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "        uint idx = gpga_sched_index(gid, pid);\n";
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_SERVICE) {\n";
+        out << "          have_service = true;\n";
+        out << "          break;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      if (have_service) {\n";
+        out << "        break;\n";
         out << "      }\n";
         out << "      finished = true;\n";
         out << "      break;\n";
@@ -12529,6 +13312,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       const bool has_delayed_nba = delayed_nba_count > 0;
       size_t delayed_nba_capacity =
           has_delayed_nba ? std::max<size_t>(1, delayed_nba_count * 4) : 0;
+      const bool has_events = !module.events.empty();
+      const bool has_edges = edge_item_count > 0;
+      const bool has_edge_star = edge_star_count > 0;
 
       std::unordered_set<std::string> sched_locals;
       std::unordered_set<std::string> sched_regs;
@@ -12667,7 +13453,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
 
       out << "\n";
-      out << "struct GpgaSchedParams { uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
+      out << "struct GpgaSchedParams { uint count; uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
       out << "constant constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size() << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
           << "u;\n";
@@ -12701,6 +13487,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "constant constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
       out << "constant constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
       out << "constant constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
+      out << "constant constexpr uint GPGA_SCHED_WAIT_SERVICE = 7u;\n";
       out << "constant constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
       out << "constant constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
       out << "constant constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
@@ -12715,6 +13502,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "constant constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
       out << "constant constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
       out << "constant constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
+      out << "constant constexpr uint GPGA_SCHED_FLAG_INITIALIZED = 1u;\n";
+      out << "constant constexpr uint GPGA_SCHED_FLAG_ACTIVE_INIT = 2u;\n";
       if (!system_task_info.monitor_stmts.empty()) {
         size_t max_args =
             std::max<size_t>(1, system_task_info.monitor_max_args);
@@ -12751,6 +13540,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFLUSH = 11u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPALL = 12u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPLIMIT = 13u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FWRITE = 14u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FDISPLAY = 15u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FOPEN = 16u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FCLOSE = 17u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FGETC = 18u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FGETS = 19u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FEOF = 20u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FSCANF = 21u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_SSCANF = 22u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -12841,10 +13639,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_wait_event [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
-      emit_param("  device ulong* sched_edge_prev_val [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
+      if (has_edges) {
+        emit_param("  device ulong* sched_edge_prev_val [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
+      if (has_edge_star) {
+        emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
       emit_param("  device ulong* sched_wait_time [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_join_count [[buffer(" +
@@ -12863,12 +13665,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_phase [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_active_init [[buffer(" +
+      emit_param("  device uint* sched_flags [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_initialized [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_event_pending [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
+      if (has_events) {
+        emit_param("  device uint* sched_event_pending [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
       emit_param("  device uint* sched_error [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_status [[buffer(" +
@@ -12907,21 +13709,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       emit_param("  constant GpgaSchedParams& sched [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
-      emit_param("  constant GpgaParams& params [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
     emit_param("  uint gid [[thread_position_in_grid]]) {\n");
-    out << "  if (gid >= params.count) {\n";
+    out << "  if (gid >= sched.count) {\n";
     out << "    return;\n";
     out << "  }\n";
     if (system_task_info.has_system_tasks) {
       out << "  sched_service_count[gid] = 0u;\n";
     }
     out << "  ulong __gpga_time = sched_time[gid];\n";
-      out << "  if (sched_initialized[gid] == 0u) {\n";
+      out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_INITIALIZED) == 0u) {\n";
       out << "    sched_time[gid] = 0ul;\n";
       out << "    __gpga_time = 0ul;\n";
       out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
-      out << "    sched_active_init[gid] = 1u;\n";
+      out << "    sched_flags[gid] = GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "    sched_error[gid] = 0u;\n";
       for (const auto* reg : trireg_nets) {
         out << "    " << decay_name(reg->name) << "[gid] = 0ul;\n";
@@ -12929,17 +13729,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (has_delayed_nba) {
         out << "    sched_dnba_count[gid] = 0u;\n";
       }
-    out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-    out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
-    out << "    }\n";
-    out << "    for (uint e = 0u; e < GPGA_SCHED_EDGE_COUNT; ++e) {\n";
-    out << "      uint eidx = (gid * GPGA_SCHED_EDGE_COUNT) + e;\n";
-    out << "      sched_edge_prev_val[eidx] = 0ul;\n";
-    out << "    }\n";
-    out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
-    out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
-    out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
-    out << "    }\n";
+    if (has_events) {
+      out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+      out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+      out << "    }\n";
+    }
+    if (has_edges) {
+      out << "    for (uint e = 0u; e < GPGA_SCHED_EDGE_COUNT; ++e) {\n";
+      out << "      uint eidx = (gid * GPGA_SCHED_EDGE_COUNT) + e;\n";
+      out << "      sched_edge_prev_val[eidx] = 0ul;\n";
+      out << "    }\n";
+    }
+    if (has_edge_star) {
+      out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
+      out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
+      out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
+      out << "    }\n";
+    }
     if (!system_task_info.monitor_stmts.empty()) {
       out << "    sched_monitor_enable[gid] = 1u;\n";
       out << "    for (uint m = 0u; m < GPGA_SCHED_MONITOR_COUNT; ++m) {\n";
@@ -12971,7 +13777,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "      sched_repeat_active[ridx] = 0u;\n";
         out << "    }\n";
       }
-      out << "    sched_initialized[gid] = 1u;\n";
       out << "  }\n";
       out << "  if (sched_error[gid] != 0u) {\n";
       out << "    sched_status[gid] = GPGA_SCHED_STATUS_ERROR;\n";
@@ -13115,8 +13920,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  while (steps > 0u) {\n";
       out << "    bool did_work = false;\n";
       out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
-      out << "      if (sched_active_init[gid] != 0u) {\n";
-      out << "        sched_active_init[gid] = 0u;\n";
+      out << "      if ((sched_flags[gid] & GPGA_SCHED_FLAG_ACTIVE_INIT) != 0u) {\n";
+      out << "        sched_flags[gid] &= ~GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       if (!nb_targets_sorted.empty()) {
         out << "        // Initialize NBA buffers for this delta.\n";
         for (const auto& target : nb_targets_sorted) {
@@ -13271,9 +14076,60 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << pad << "  " << lhs.expr << " = " << sized << ";\n";
           out << pad << "}\n";
         } else {
-          out << pad << lhs.expr << " = " << sized << ";\n";
+        out << pad << lhs.expr << " = " << sized << ";\n";
+      }
+    };
+
+    auto emit_lvalue_value =
+        [&](const SequentialAssign& assign, const std::string& value_expr,
+            int value_width, int indent,
+            const std::unordered_set<std::string>& locals_override) -> void {
+      std::string pad(indent, ' ');
+      LvalueInfo lhs =
+          BuildLvalue(assign, module, locals_override, sched_regs, false);
+      if (!lhs.ok) {
+        return;
+      }
+      int target_width = lhs.width > 0 ? lhs.width : value_width;
+      std::string cast_expr = (target_width > 32)
+                                  ? value_expr
+                                  : ("uint(" + value_expr + ")");
+      std::string sized = MaskForWidthExpr(cast_expr, target_width);
+      if (lhs.is_bit_select) {
+        std::string update = EmitBitSelectUpdate(
+            lhs.expr, lhs.bit_index, lhs.base_width, sized);
+        if (!lhs.guard.empty()) {
+          out << pad << "if " << lhs.guard << " {\n";
+          out << pad << "  " << lhs.expr << " = " << update << ";\n";
+          out << pad << "}\n";
+        } else {
+          out << pad << lhs.expr << " = " << update << ";\n";
         }
-      };
+        return;
+      }
+      if (lhs.is_range) {
+        std::string update = EmitRangeSelectUpdate(
+            lhs.expr,
+            lhs.is_indexed_range ? lhs.range_index
+                                 : std::to_string(lhs.range_lsb),
+            lhs.base_width, lhs.width, sized);
+        if (!lhs.guard.empty()) {
+          out << pad << "if " << lhs.guard << " {\n";
+          out << pad << "  " << lhs.expr << " = " << update << ";\n";
+          out << pad << "}\n";
+        } else {
+          out << pad << lhs.expr << " = " << update << ";\n";
+        }
+        return;
+      }
+      if (!lhs.guard.empty()) {
+        out << pad << "if " << lhs.guard << " {\n";
+        out << pad << "  " << lhs.expr << " = " << sized << ";\n";
+        out << pad << "}\n";
+      } else {
+        out << pad << lhs.expr << " = " << sized << ";\n";
+      }
+    };
 
       auto string_id_for = [&](const std::string& value,
                                uint32_t* out_id) -> bool {
@@ -13297,22 +14153,22 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string val;
       };
 
-      auto build_service_args =
-          [&](const Statement& stmt, const std::string& name,
-              std::string* format_id_expr,
-              std::vector<ServiceArg>* args) -> bool {
-        if (!format_id_expr || !args) {
-          return false;
-        }
-        *format_id_expr = "GPGA_SERVICE_INVALID_ID";
-        if (!stmt.task_args.empty() &&
-            stmt.task_args[0]->kind == ExprKind::kString) {
-          uint32_t id = 0;
-          if (!string_id_for(stmt.task_args[0]->string_value, &id)) {
+        auto build_service_args =
+            [&](const Statement& stmt, const std::string& name,
+                size_t arg_start, std::string* format_id_expr,
+                std::vector<ServiceArg>* args) -> bool {
+          if (!format_id_expr || !args) {
             return false;
           }
-          *format_id_expr = std::to_string(id) + "u";
-        }
+          *format_id_expr = "GPGA_SERVICE_INVALID_ID";
+          if (stmt.task_args.size() > arg_start &&
+              stmt.task_args[arg_start]->kind == ExprKind::kString) {
+            uint32_t id = 0;
+            if (!string_id_for(stmt.task_args[arg_start]->string_value, &id)) {
+              return false;
+            }
+            *format_id_expr = std::to_string(id) + "u";
+          }
 
         bool requires_string =
             name == "$dumpfile" || name == "$readmemh" || name == "$readmemb";
@@ -13321,13 +14177,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return false;
         }
 
-        bool ident_as_string = TaskTreatsIdentifierAsString(name);
-        args->clear();
-        args->reserve(stmt.task_args.size());
-        for (const auto& arg : stmt.task_args) {
-          if (!arg) {
-            continue;
+          bool ident_as_string = TaskTreatsIdentifierAsString(name);
+          args->clear();
+          if (stmt.task_args.size() > arg_start) {
+            args->reserve(stmt.task_args.size() - arg_start);
           }
+          for (size_t i = arg_start; i < stmt.task_args.size(); ++i) {
+            const auto& arg = stmt.task_args[i];
+            if (!arg) {
+              continue;
+            }
           if (arg->kind == ExprKind::kString) {
             uint32_t id = 0;
             if (!string_id_for(arg->string_value, &id)) {
@@ -13395,6 +14254,122 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         out << pad << "  }\n";
         out << pad << "}\n";
+      };
+
+      auto build_syscall_args =
+          [&](const Expr& call, const std::string& name,
+              std::string* format_id_expr,
+              std::vector<ServiceArg>* args) -> bool {
+        if (!format_id_expr || !args) {
+          return false;
+        }
+        *format_id_expr = "GPGA_SERVICE_INVALID_ID";
+        args->clear();
+        args->reserve(call.call_args.size());
+        for (size_t i = 0; i < call.call_args.size(); ++i) {
+          const Expr* arg = call.call_args[i].get();
+          if (!arg) {
+            continue;
+          }
+          if (name == "$fgets" && i == 0) {
+            if (arg->kind != ExprKind::kIdentifier) {
+              return false;
+            }
+            uint32_t id = 0;
+            if (!string_id_for(arg->ident, &id)) {
+              return false;
+            }
+            int width = SignalWidth(module, arg->ident);
+            if (width <= 0) {
+              width = 1;
+            }
+            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                       std::to_string(id) + "ul"});
+            continue;
+          }
+          if ((name == "$fscanf" || name == "$sscanf") && i >= 2) {
+            if (arg->kind != ExprKind::kIdentifier) {
+              return false;
+            }
+            uint32_t id = 0;
+            if (!string_id_for(arg->ident, &id)) {
+              return false;
+            }
+            int width = SignalWidth(module, arg->ident);
+            if (width <= 0) {
+              width = 1;
+            }
+            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                       std::to_string(id) + "ul"});
+            continue;
+          }
+          if (name == "$sscanf" && i == 0) {
+            if (arg->kind == ExprKind::kString) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->string_value, &id)) {
+                return false;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                         std::to_string(id) + "ul"});
+              continue;
+            }
+            if (arg->kind == ExprKind::kIdentifier) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              int width = SignalWidth(module, arg->ident);
+              if (width <= 0) {
+                width = 1;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                         std::to_string(id) + "ul"});
+              continue;
+            }
+            return false;
+          }
+          if (name == "$fopen" && i < 2) {
+            if (arg->kind == ExprKind::kString) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->string_value, &id)) {
+                return false;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                         std::to_string(id) + "ul"});
+              continue;
+            }
+            if (arg->kind == ExprKind::kIdentifier) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", 0,
+                                         std::to_string(id) + "ul"});
+              continue;
+            }
+            return false;
+          }
+          if ((name == "$fscanf" || name == "$sscanf") && i == 1 &&
+              arg->kind == ExprKind::kString) {
+            uint32_t id = 0;
+            if (!string_id_for(arg->string_value, &id)) {
+              return false;
+            }
+            *format_id_expr = std::to_string(id) + "u";
+            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                       std::to_string(id) + "ul"});
+            continue;
+          }
+          int width = ExprWidth(*arg, module);
+          if (width <= 0) {
+            width = 1;
+          }
+          std::string value =
+              EmitExprSized(*arg, width, module, sched_locals, sched_regs);
+          args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", width,
+                                     to_ulong(value, width)});
+        }
+        return true;
       };
 
       auto emit_monitor_record =
@@ -13466,6 +14441,86 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         out << pad << "  }\n";
         out << pad << "}\n";
+      };
+
+      struct BodyCase {
+        int pc = 0;
+        const Statement* owner = nullptr;
+        std::vector<const Statement*> body;
+        int next_pc = 0;
+        int loop_pc = -1;
+        bool is_forever_body = false;
+        bool is_assign_delay = false;
+        int delay_id = -1;
+        bool is_service_resume = false;
+        bool is_service_cond = false;
+        int service_width = 0;
+        bool service_invert = false;
+        int service_true_pc = 0;
+        int service_false_pc = 0;
+      };
+      int pc_counter = 0;
+      std::vector<BodyCase> body_cases;
+
+      auto emit_syscall_assign =
+          [&](const Statement& stmt, const Expr& call, int resume_pc,
+              int indent) -> bool {
+        if (call.kind != ExprKind::kCall ||
+            !IsFileSystemFunctionName(call.ident)) {
+          return false;
+        }
+        const char* kind_expr = nullptr;
+        if (call.ident == "$fopen") {
+          kind_expr = "GPGA_SERVICE_KIND_FOPEN";
+        } else if (call.ident == "$fclose") {
+          kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+        } else if (call.ident == "$fgetc") {
+          kind_expr = "GPGA_SERVICE_KIND_FGETC";
+        } else if (call.ident == "$fgets") {
+          kind_expr = "GPGA_SERVICE_KIND_FGETS";
+        } else if (call.ident == "$feof") {
+          kind_expr = "GPGA_SERVICE_KIND_FEOF";
+        } else if (call.ident == "$fscanf") {
+          kind_expr = "GPGA_SERVICE_KIND_FSCANF";
+        } else if (call.ident == "$sscanf") {
+          kind_expr = "GPGA_SERVICE_KIND_SSCANF";
+        }
+        if (!kind_expr) {
+          return false;
+        }
+        std::string format_id_expr;
+        std::vector<ServiceArg> args;
+        if (!build_syscall_args(call, call.ident, &format_id_expr, &args)) {
+          out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+          out << std::string(indent, ' ')
+              << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          return true;
+        }
+        int width = SignalWidth(module, stmt.assign.lhs);
+        if (width <= 0) {
+          width = ExprWidth(call, module);
+        }
+        if (width <= 0) {
+          width = 1;
+        }
+        int body_pc = pc_counter++;
+        BodyCase body_case;
+        body_case.pc = body_pc;
+        body_case.owner = &stmt;
+        body_case.next_pc = resume_pc;
+        body_case.is_service_resume = true;
+        body_case.service_width = width;
+        body_cases.push_back(std::move(body_case));
+
+        emit_service_record(kind_expr, format_id_expr, args, indent);
+        out << std::string(indent, ' ')
+            << "sched_wait_kind[idx] = GPGA_SCHED_WAIT_SERVICE;\n";
+        out << std::string(indent, ' ') << "sched_wait_time[idx] = 0ul;\n";
+        out << std::string(indent, ' ') << "sched_pc[idx] = " << body_pc
+            << "u;\n";
+        out << std::string(indent, ' ')
+            << "sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+        return true;
       };
 
       auto emit_monitor_snapshot =
@@ -13541,14 +14596,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         const char* kind_expr = nullptr;
+        size_t arg_start = 0;
+        bool guard_file_fd = false;
+        std::string fd_expr;
         if (name == "$display") {
           kind_expr = "GPGA_SERVICE_KIND_DISPLAY";
+        } else if (name == "$fdisplay") {
+          kind_expr = "GPGA_SERVICE_KIND_FDISPLAY";
+          arg_start = 1;
+          guard_file_fd = true;
         } else if (name == "$monitor") {
           kind_expr = "GPGA_SERVICE_KIND_MONITOR";
         } else if (name == "$finish") {
           kind_expr = "GPGA_SERVICE_KIND_FINISH";
         } else if (name == "$stop") {
           kind_expr = "GPGA_SERVICE_KIND_STOP";
+        } else if (name == "$fwrite") {
+          kind_expr = "GPGA_SERVICE_KIND_FWRITE";
+          arg_start = 1;
+          guard_file_fd = true;
+        } else if (name == "$fclose") {
+          kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+          arg_start = 1;
+          guard_file_fd = true;
         } else if (name == "$dumpfile") {
           kind_expr = "GPGA_SERVICE_KIND_DUMPFILE";
         } else if (name == "$dumpvars") {
@@ -13576,11 +14646,30 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         std::string format_id_expr;
         std::vector<ServiceArg> args;
-        if (!build_service_args(stmt, name, &format_id_expr, &args)) {
+        std::string fd_guard;
+        if (guard_file_fd) {
+          if (stmt.task_args.empty() || !stmt.task_args[0]) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          fd_expr = EmitExprSized(*stmt.task_args[0], 32, module, sched_locals,
+                                  sched_regs);
+          fd_expr = MaskForWidthExpr(fd_expr, 32);
+          fd_guard = "(" + fd_expr + " != 0u)";
+        }
+        if (!build_service_args(stmt, name, arg_start, &format_id_expr,
+                                &args)) {
           out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
           out << std::string(indent, ' ')
               << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           return;
+        }
+        if (guard_file_fd && arg_start > 0) {
+          args.insert(args.begin(),
+                      ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                 to_ulong(fd_expr, 32)});
         }
 
         bool dump_control =
@@ -13610,6 +14699,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         } else if (dump_control) {
           std::string pad(indent, ' ');
           out << pad << "if (gid == 0u) {\n";
+          emit_service_record(kind_expr, format_id_expr, args, indent + 2);
+          out << pad << "}\n";
+        } else if (guard_file_fd) {
+          std::string pad(indent, ' ');
+          out << pad << "if (" << fd_guard << ") {\n";
           emit_service_record(kind_expr, format_id_expr, args, indent + 2);
           out << pad << "}\n";
         } else {
@@ -13709,7 +14803,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         auto emit_inline_stmt =
             [&](const Statement& stmt, int indent,
                 const std::unordered_set<std::string>& locals_override,
-                const auto& self) -> void {
+                int resume_pc, const auto& self) -> void {
         std::string pad(indent, ' ');
         if (stmt.kind == StatementKind::kTaskCall &&
             IsSystemTaskName(stmt.task_name)) {
@@ -13733,6 +14827,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             return;
           }
+          if (stmt.assign.rhs &&
+              stmt.assign.rhs->kind == ExprKind::kCall &&
+              IsFileSystemFunctionName(stmt.assign.rhs->ident)) {
+            emit_syscall_assign(stmt, *stmt.assign.rhs, resume_pc, indent);
+            return;
+          }
           emit_inline_assign(stmt.assign, indent, locals_override);
           return;
         }
@@ -13748,12 +14848,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  : "false";
           out << pad << "if (" << cond << ") {\n";
           for (const auto& inner : stmt.then_branch) {
-            self(inner, indent + 2, locals_override, self);
+            out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            self(inner, indent + 4, locals_override, resume_pc, self);
+            out << pad << "  }\n";
           }
           if (!stmt.else_branch.empty()) {
             out << pad << "} else {\n";
             for (const auto& inner : stmt.else_branch) {
-              self(inner, indent + 2, locals_override, self);
+              out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(inner, indent + 4, locals_override, resume_pc, self);
+              out << pad << "  }\n";
             }
             out << pad << "}\n";
           } else {
@@ -13794,13 +14898,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << pad << "} else if (" << cond << ") {\n";
             }
             for (const auto& inner : item.body) {
-              self(inner, indent + 2, locals_override, self);
+              out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(inner, indent + 4, locals_override, resume_pc, self);
+              out << pad << "  }\n";
             }
           }
           if (!stmt.default_branch.empty()) {
             out << pad << "} else {\n";
             for (const auto& inner : stmt.default_branch) {
-              self(inner, indent + 2, locals_override, self);
+              out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(inner, indent + 4, locals_override, resume_pc, self);
+              out << pad << "  }\n";
             }
             out << pad << "}\n";
           } else if (!first) {
@@ -13823,7 +14931,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  : "false";
           out << pad << "while (" << cond << ") {\n";
           for (const auto& inner : stmt.for_body) {
-            self(inner, indent + 2, locals_override, self);
+            out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            self(inner, indent + 4, locals_override, resume_pc, self);
+            out << pad << "  }\n";
           }
           std::string step = stmt.for_step_rhs
                                  ? EmitExprSized(*stmt.for_step_rhs,
@@ -13843,7 +14953,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  : "false";
           out << pad << "while (" << cond << ") {\n";
           for (const auto& inner : stmt.while_body) {
-            self(inner, indent + 2, locals_override, self);
+            out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            self(inner, indent + 4, locals_override, resume_pc, self);
+            out << pad << "  }\n";
           }
           out << pad << "}\n";
           return;
@@ -13857,7 +14969,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "for (uint __gpga_rep = 0u; __gpga_rep < " << count
               << "; ++__gpga_rep) {\n";
           for (const auto& inner : stmt.repeat_body) {
-            self(inner, indent + 2, locals_override, self);
+            out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            self(inner, indent + 4, locals_override, resume_pc, self);
+            out << pad << "  }\n";
           }
           out << pad << "}\n";
           return;
@@ -13865,7 +14979,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (stmt.kind == StatementKind::kBlock) {
           out << pad << "{\n";
           for (const auto& inner : stmt.block) {
-            self(inner, indent + 2, locals_override, self);
+            out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            self(inner, indent + 4, locals_override, resume_pc, self);
+            out << pad << "  }\n";
           }
           out << pad << "}\n";
           return;
@@ -13873,7 +14989,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       };
 
     auto emit_task_call =
-        [&](const Statement& stmt, int indent,
+        [&](const Statement& stmt, int indent, int resume_pc,
             const auto& emit_inline_stmt_fn) -> void {
       if (IsSystemTaskName(stmt.task_name)) {
         emit_system_task(stmt, indent);
@@ -13958,7 +15074,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         g_task_arg_signed = &task_signed;
         g_task_arg_real = &task_real;
         for (const auto& inner : task->body) {
-          emit_inline_stmt_fn(inner, indent, task_locals, emit_inline_stmt_fn);
+          emit_inline_stmt_fn(inner, indent, task_locals, resume_pc,
+                              emit_inline_stmt_fn);
         }
         for (const auto& out_arg : task_outs) {
           Expr arg_expr;
@@ -14027,7 +15144,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           append_stmt(*proc.single);
         }
         std::unordered_map<const Statement*, int> pc_for_stmt;
-        int pc_counter = 0;
+        pc_counter = 0;
         for (const auto* stmt : stmts) {
           pc_for_stmt[stmt] = pc_counter++;
         }
@@ -14073,17 +15190,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           repeat_runtime[stmt_ptr] =
               RepeatRuntime{id_it->second, body_pc, after_pc};
         }
-        struct BodyCase {
-          int pc = 0;
-          const Statement* owner = nullptr;
-          std::vector<const Statement*> body;
-          int next_pc = 0;
-          int loop_pc = -1;
-          bool is_forever_body = false;
-          bool is_assign_delay = false;
-          int delay_id = -1;
-        };
-        std::vector<BodyCase> body_cases;
+        body_cases.clear();
 
         std::unordered_map<std::string, int> block_end_pc;
         for (size_t i = 0; i < stmts.size(); ++i) {
@@ -14214,9 +15321,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << "                }\n";
               continue;
             }
-            emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
-            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
-            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            emit_inline_stmt(stmt, 18, sched_locals, next_pc, emit_inline_stmt);
+            out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            out << "                    sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  }\n";
             out << "                  break;\n";
             out << "                }\n";
             continue;
@@ -14643,8 +15752,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             continue;
           }
           if (stmt.kind == StatementKind::kTaskCall) {
-            emit_task_call(stmt, 18, emit_inline_stmt);
-            out << "                  if (sched_state[idx] != GPGA_SCHED_PROC_DONE) {\n";
+            emit_task_call(stmt, 18, next_pc, emit_inline_stmt);
+            out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
             out << "                    sched_pc[idx] = " << next_pc << "u;\n";
             out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
             out << "                  }\n";
@@ -14652,8 +15761,73 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "                }\n";
             continue;
           }
-          emit_inline_stmt(stmt, 18, sched_locals, emit_inline_stmt);
-          out << "                  if (sched_state[idx] != GPGA_SCHED_PROC_DONE) {\n";
+          if (stmt.kind == StatementKind::kWhile && stmt.while_condition) {
+            const Expr* fd_expr = nullptr;
+            bool invert = false;
+            if (ExtractFeofCondition(*stmt.while_condition, &fd_expr,
+                                     &invert)) {
+              const Expr* call_expr =
+                  invert && stmt.while_condition->operand
+                      ? stmt.while_condition->operand.get()
+                      : stmt.while_condition.get();
+              if (!call_expr || call_expr->kind != ExprKind::kCall) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              int body_pc = -1;
+              if (!stmt.while_body.empty()) {
+                body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                for (const auto& inner : stmt.while_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_case.next_pc = pc;
+                body_cases.push_back(std::move(body_case));
+              }
+              int cond_pc = pc_counter++;
+              BodyCase cond_case;
+              cond_case.pc = cond_pc;
+              cond_case.is_service_cond = true;
+              cond_case.service_invert = invert;
+              cond_case.service_true_pc = (body_pc >= 0) ? body_pc : pc;
+              cond_case.service_false_pc = next_pc;
+              body_cases.push_back(std::move(cond_case));
+
+              std::string format_id_expr;
+              std::vector<ServiceArg> args;
+              if (!build_syscall_args(*call_expr, call_expr->ident,
+                                      &format_id_expr, &args)) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              emit_service_record("GPGA_SERVICE_KIND_FEOF", format_id_expr,
+                                  args, 18);
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_SERVICE;\n";
+              out << "                  sched_wait_time[idx] = 0ul;\n";
+              out << "                  sched_pc[idx] = " << cond_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+          }
+          int inline_resume_pc = next_pc;
+          if (stmt.kind == StatementKind::kWhile ||
+              stmt.kind == StatementKind::kFor ||
+              stmt.kind == StatementKind::kRepeat) {
+            inline_resume_pc = pc;
+          }
+          emit_inline_stmt(stmt, 18, sched_locals, inline_resume_pc,
+                           emit_inline_stmt);
+          out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
           out << "                    sched_pc[idx] = " << next_pc << "u;\n";
           out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
           out << "                  }\n";
@@ -14672,14 +15846,54 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             emit_delay_assign_apply(
                 std::to_string(body_case.delay_id) + "u", "__gpga_dval",
                 "__gpga_didx_val", false, 18);
+          } else if (body_case.is_service_cond) {
+            out << "                  ulong __gpga_ret = sched_wait_time[idx];\n";
+            out << "                  bool __gpga_cond = ((__gpga_ret & 1ul) != 0ul);\n";
+            if (body_case.service_invert) {
+              out << "                  __gpga_cond = !__gpga_cond;\n";
+            }
+            out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+            out << "                  if (__gpga_cond) {\n";
+            out << "                    sched_pc[idx] = " << body_case.service_true_pc
+                << "u;\n";
+            out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            out << "                  } else {\n";
+            out << "                    sched_pc[idx] = " << body_case.service_false_pc
+                << "u;\n";
+            if (body_case.service_false_pc == pc_done) {
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            } else {
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+            }
+            out << "                  }\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          } else if (body_case.is_service_resume) {
+            int width = body_case.service_width;
+            if (width <= 0) {
+              width = 1;
+            }
+            out << "                  ulong __gpga_ret = sched_wait_time[idx];\n";
+            out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+            if (!body_case.owner ||
+                body_case.owner->kind != StatementKind::kAssign) {
+              out << "                  sched_error[gid] = 1u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            } else {
+              emit_lvalue_value(body_case.owner->assign, "__gpga_ret", width,
+                                18, sched_locals);
+            }
           } else {
+            int inline_resume_pc = body_case.next_pc;
             for (const auto* inner : body_case.body) {
-              emit_inline_stmt(*inner, 18, sched_locals, emit_inline_stmt);
+              emit_inline_stmt(*inner, 18, sched_locals, inline_resume_pc,
+                               emit_inline_stmt);
             }
           }
           int next_pc = body_case.is_forever_body ? body_case.loop_pc
                                                    : body_case.next_pc;
-          out << "                  if (sched_state[idx] != GPGA_SCHED_PROC_DONE) {\n";
+          out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
           out << "                    sched_pc[idx] = " << next_pc << "u;\n";
           if (next_pc == pc_done) {
             out << "                    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
@@ -14735,17 +15949,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "            any_ready = true;\n";
       out << "            continue;\n";
       out << "          }\n";
-      out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
-      out << "            uint ev = sched_wait_event[idx];\n";
-      out << "            uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
-      out << "            if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
-      out << "                sched_event_pending[eidx] != 0u) {\n";
-      out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-      out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-      out << "              any_ready = true;\n";
-      out << "            }\n";
-      out << "            continue;\n";
-      out << "          }\n";
+      if (has_events) {
+        out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
+        out << "            uint ev = sched_wait_event[idx];\n";
+        out << "            uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
+        out << "            if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
+        out << "                sched_event_pending[eidx] != 0u) {\n";
+        out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "              any_ready = true;\n";
+        out << "            }\n";
+        out << "            continue;\n";
+        out << "          }\n";
+      }
       out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
       out << "            bool ready = false;\n";
       out << "            uint edge_kind = sched_wait_edge_kind[idx];\n";
@@ -14881,9 +16097,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "            continue;\n";
       out << "          }\n";
       out << "        }\n";
-      out << "        for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-      out << "          sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
-      out << "        }\n";
+      if (has_events) {
+        out << "        for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+        out << "          sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+        out << "        }\n";
+      }
       out << "        if (any_ready) {\n";
       out << "          sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
       out << "          continue;\n";
@@ -14915,8 +16133,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           const Statement* monitor_stmt = system_task_info.monitor_stmts[i];
           std::string format_id_expr;
           std::vector<ServiceArg> args;
-          build_service_args(*monitor_stmt, monitor_stmt->task_name,
-                             &format_id_expr, &args);
+        build_service_args(*monitor_stmt, monitor_stmt->task_name, 0,
+                           &format_id_expr, &args);
           uint32_t monitor_pid_value = 0u;
           auto pid_it = monitor_pid.find(monitor_stmt);
           if (pid_it != monitor_pid.end()) {
@@ -14940,8 +16158,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           const Statement* strobe_stmt = system_task_info.strobe_stmts[i];
           std::string format_id_expr;
           std::vector<ServiceArg> args;
-          build_service_args(*strobe_stmt, strobe_stmt->task_name,
-                             &format_id_expr, &args);
+        build_service_args(*strobe_stmt, strobe_stmt->task_name, 0,
+                           &format_id_expr, &args);
           uint32_t strobe_pid_value = 0u;
           auto pid_it = strobe_pid.find(strobe_stmt);
           if (pid_it != strobe_pid.end()) {
@@ -14962,20 +16180,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "      bool any_ready = false;\n";
       out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
+      out << "        if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+      out << "          any_ready = true;\n";
+      out << "          continue;\n";
+      out << "        }\n";
       out << "        if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
       out << "          continue;\n";
       out << "        }\n";
-      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
-      out << "          uint ev = sched_wait_event[idx];\n";
-      out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
-      out << "          if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
-      out << "              sched_event_pending[eidx] != 0u) {\n";
-      out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-      out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-      out << "            any_ready = true;\n";
-      out << "          }\n";
-      out << "          continue;\n";
-      out << "        }\n";
+      if (has_events) {
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EVENT) {\n";
+        out << "          uint ev = sched_wait_event[idx];\n";
+        out << "          uint eidx = (gid * GPGA_SCHED_EVENT_COUNT) + ev;\n";
+        out << "          if (ev < GPGA_SCHED_EVENT_COUNT &&\n";
+        out << "              sched_event_pending[eidx] != 0u) {\n";
+        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "            any_ready = true;\n";
+        out << "          }\n";
+        out << "          continue;\n";
+        out << "        }\n";
+      }
       out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
       out << "          bool ready = false;\n";
       out << "          uint edge_kind = sched_wait_edge_kind[idx];\n";
@@ -15111,11 +16335,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "          continue;\n";
       out << "        }\n";
       out << "      }\n";
-      out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-      out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
-      out << "      }\n";
+      if (has_events) {
+        out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
+        out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+        out << "      }\n";
+      }
       out << "      if (any_ready) {\n";
-      out << "        sched_active_init[gid] = 1u;\n";
+      out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
       out << "        continue;\n";
       out << "      }\n";
@@ -15157,9 +16383,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
       out << "          }\n";
       out << "        }\n";
-      out << "        sched_active_init[gid] = 1u;\n";
+      out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
       out << "        continue;\n";
+      out << "      }\n";
+      out << "      bool have_service = false;\n";
+      out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "        uint idx = gpga_sched_index(gid, pid);\n";
+      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_SERVICE) {\n";
+      out << "          have_service = true;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (have_service) {\n";
+      out << "        break;\n";
       out << "      }\n";
       out << "      finished = true;\n";
       out << "      break;\n";

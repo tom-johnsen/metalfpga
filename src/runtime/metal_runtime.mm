@@ -858,9 +858,8 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
         spec.length = sizeof(uint64_t) * instance_count * sched.proc_count;
       } else if (name == "sched_time") {
         spec.length = sizeof(uint64_t) * instance_count;
-      } else if (name == "sched_phase" || name == "sched_active_init" ||
-                 name == "sched_initialized" || name == "sched_error" ||
-                 name == "sched_status") {
+      } else if (name == "sched_phase" || name == "sched_flags" ||
+                 name == "sched_error" || name == "sched_status") {
         spec.length = sizeof(uint32_t) * instance_count;
       } else if (name == "sched_repeat_left" ||
                  name == "sched_repeat_active") {

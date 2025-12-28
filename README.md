@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.666 — **Verilog frontend complete** + **GPU runtime functional**: parsing, elaboration, and MSL codegen for ~95% of Verilog-2005, plus Metal runtime with successful smoke test execution on GPU. Includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, and procedural part-select assignment. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **365 total test files** validate the compiler. **Smoke test passes on GPU hardware ✅**. **Next: Full test suite validation on GPU (v1.0).**
+**Current Status**: v0.7+ — **Verilog frontend complete** + **GPU runtime functional** + **VCD waveform generation**: parsing, elaboration, and MSL codegen for ~95% of Verilog-2005, plus Metal runtime with GPU execution and industry-standard VCD waveform output. Includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, procedural part-select assignment, and **dynamic repeat loops**. Full **VCD debugging support** with `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), and `$readmemh`/`$readmemb`. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **377 total test files** validate the compiler. **VCD smoke test passes ✅**. **Next: Full test suite validation on GPU (v1.0).**
 
 ## What is this?
 
@@ -12,11 +12,11 @@ metalfpga is a "GPGA" (GPU-based FPGA) compiler that:
 - Generates Metal compute shaders for GPU execution
 - Emits host-side runtime scaffolding
 
-**Current phase:** ✅ **Verilog frontend complete** (parsing → elaboration → MSL codegen). ✅ **GPU runtime functional** (Metal framework integration, smoke test passes). Next: Full test suite validation.
+**Current phase:** ✅ **Verilog frontend complete** (parsing → elaboration → MSL codegen). ✅ **GPU runtime functional** (Metal framework integration, smoke test passes). ✅ **VCD waveform generation** (full debugging support with dump control). Next: Full test suite validation.
 
 This allows FPGA designers to prototype and validate hardware designs on GPUs before synthesis to actual hardware, leveraging massive parallelism for fast simulation.
 
-**Note**: The compiler successfully parses, elaborates, and generates MSL code for the full Verilog-2005 language. The Metal runtime infrastructure is functional with smoke test passing on actual GPU hardware. The frontend and runtime core are complete; ongoing work focuses on full test suite validation and system task implementation ($display, $finish, VCD output).
+**Note**: The compiler successfully parses, elaborates, and generates MSL code for the full Verilog-2005 language. The Metal runtime infrastructure is functional with smoke test passing on actual GPU hardware. **VCD waveform generation is fully implemented** with support for `$dumpfile`, `$dumpvars`, `$dumpoff`/`$dumpon`, `$dumpflush`, `$dumpall`, and hierarchical signal naming. The frontend and runtime core are complete; ongoing work focuses on full test suite validation and `$display`/`$monitor` format string implementation.
 
 ## Quick Start
 
@@ -55,6 +55,9 @@ cmake --build build
 
 # Auto-discover modules under the input file's directory tree
 ./build/metalfpga_cli path/to/top.v --auto --top top
+
+# Run with VCD waveform output (requires --run, generates .vcd files)
+./build/metalfpga_cli path/to/design.v --run --vcd-dir ./waves/
 ```
 
 ## Output Artifacts
@@ -64,8 +67,9 @@ The compiler produces:
 - **Metal shaders** (`--emit-msl`): Emits `.metal` source containing compute kernels for combinational logic, sequential blocks, and scheduler infrastructure
 - **Host runtime** (`--emit-host`): Complete executable `.mm` file with Metal runtime integration, buffer management, and service record handling
 - **Flattened netlist** (`--dump-flat`): Human-readable elaborated design showing hierarchy flattening, signal widths, drivers, and lowered constructs
+- **VCD waveforms** (automatic with `$dumpfile`/`$dumpvars`): Industry-standard `.vcd` files compatible with GTKWave, ModelSim, and other waveform viewers
 
-**Runtime execution**: The Metal runtime (`src/runtime/metal_runtime.{hh,mm}`) provides GPU kernel compilation, dispatch, and buffer management. Smoke test validates the full compilation → execution pipeline.
+**Runtime execution**: The Metal runtime (`src/runtime/metal_runtime.{hh,mm}`) provides GPU kernel compilation, dispatch, and buffer management. VCD writer (`src/main.mm`) generates waveform output with full dump control support. Smoke test validates the full compilation → execution → waveform pipeline.
 
 ## Supported Verilog Features
 
@@ -87,7 +91,8 @@ The compiler produces:
   - `casex` - Case with X don't-care matching (requires `--4state`)
   - `casez` - Case with Z/X don't-care matching (requires `--4state`)
 - Generate blocks with `genvar` and for/if-generate
-- For/while/repeat loops (constant bounds, unrolled during elaboration)
+- For/while loops (constant bounds, unrolled during elaboration)
+- Repeat loops (both constant and dynamic/runtime-evaluated counts)
 - Initial blocks
 - Functions (inputs + single return assignment, inlined during elaboration)
 - Operators:
@@ -121,7 +126,7 @@ The compiler produces:
   - Time: `$time`, `$stime`, `$realtime` - Time retrieval
   - Formatting: `$timeformat`, `$printtimescale` - Time formatting
   - Memory I/O: `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - Memory initialization and dump
-  - Waveform: `$dumpfile`, `$dumpvars`, `$dumpall`, `$dumpon`, `$dumpoff` - VCD waveform dumping (infrastructure)
+  - Waveform: `$dumpfile`, `$dumpvars`, `$dumpall`, `$dumpon`, `$dumpoff`, `$dumpflush`, `$dumplimit` - Full VCD waveform generation with dump control
   - String: `$sformat` - String formatting
   - Math/Type: `$signed`, `$unsigned`, `$clog2`, `$bits` - Type casting and utility functions
 - Tasks (procedural `task` blocks with inputs/outputs)
@@ -154,21 +159,20 @@ The compiler produces:
 
 ### 🧪 Implemented with runtime validation in progress
 
-The Metal runtime infrastructure is functional (smoke test passes on GPU). The following features are implemented in the compiler and runtime but require full validation:
+The Metal runtime infrastructure is fully functional (smoke test passes on GPU). **VCD waveform generation is complete and working** with full dump control support. The following features are implemented in the compiler and runtime but require full validation:
 
 - Event scheduling behavior (fork/join, wait, delays) under dispatch loop
-- System tasks requiring host services: `$readmemh`/`$readmemb` file I/O, `$display` formatting, VCD waveform dumping (`$dumpvars`)
+- `$display`/`$monitor`/`$strobe` format string parsing and output
 - Timing controls (`#delay`) in real-time execution
 - Switch-level resolution correctness under GPU scheduling / write ordering
 - Non-blocking assignment (`<=`) scheduling semantics
 
-**Status:** Metal runtime successfully compiles, dispatches, and executes GPU kernels. Smoke test validates the core pipeline. Full Verilog test suite validation is in progress.
+**Status:** Metal runtime successfully compiles, dispatches, and executes GPU kernels. VCD waveform generation fully working. `$readmemh`/`$readmemb` file I/O implemented. Smoke test validates the core pipeline. Full Verilog test suite validation is in progress.
 
 ### ❌ Not Yet Implemented
 **High Priority**:
-- Full test suite validation on GPU (smoke test passes, comprehensive suite pending)
-- System task implementation ($display, $finish, $monitor with format strings)
-- VCD waveform generation and file I/O ($dumpvars, $readmemh)
+- Full test suite validation on GPU (smoke test and VCD tests pass, comprehensive suite pending)
+- `$display`/`$monitor`/`$strobe` format string parsing (infrastructure exists, formatting pending)
 - Timing delay execution and NBA scheduling validation
 - Full sensitivity list support beyond `@*` and `@(posedge/negedge clk)`
 
@@ -183,16 +187,16 @@ The Metal runtime infrastructure is functional (smoke test passes on GPU). The f
 
 ## Test Suite
 
-**365 total test files** across the test suite:
-- **1 file** in `verilog/` (smoke test for quick validation, runs in ~2 seconds)
-- **364 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
+**377 total test files** across the test suite:
+- **13 files** in `verilog/` (smoke tests including VCD tests, for quick validation)
+- **365 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
 - **18 files** in `verilog/systemverilog/` (SystemVerilog features, expected to fail)
 
-The test suite validates parsing, elaboration, MSL codegen output quality, and semantic correctness. Tests cover all major Verilog-2005 features including edge cases and advanced semantics.
+The test suite validates parsing, elaboration, MSL codegen output quality, semantic correctness, and VCD waveform generation. Tests cover all major Verilog-2005 features including edge cases and advanced semantics.
 
 **Note**: The default test run (`./test_runner.sh`) now executes only a single smoke test for rapid iteration during development. Use `./test_runner.sh --full` for comprehensive regression testing.
 
-**Test coverage includes** (all tests in `verilog/pass/`):
+**Test coverage includes**:
 - **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
 - **Real number arithmetic**: All IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
 - **casez/casex pattern matching** (16 tests): Don't-care case statements, wildcard matching, priority encoding, state machines with X/Z tolerance
@@ -206,7 +210,9 @@ The test suite validates parsing, elaboration, MSL codegen output quality, and s
 - **Reduction operators**: All 6 variants (&, |, ^, ~&, ~|, ~^) in all contexts
 - **Signed arithmetic**: Overflow, underflow, division by zero, sign extension
 - **4-state logic**: X/Z propagation, full 4-state operator semantics
-- **System tasks**: $display, $monitor, $time, $finish, $readmemh/b, $dumpvars, etc.
+- **VCD waveform generation** (12 tests): `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), hierarchical signals, 4-state encoding, timing/edge detection, FSM visualization
+- **Dynamic repeat loops** (1 test): Runtime-evaluated repeat counts with non-constant expressions
+- **System tasks**: $display, $monitor, $time, $finish, $readmemh/b, $dumpvars, $dumpoff, $dumpon, etc.
 - **Memory operations**: Single and multi-dimensional arrays, hierarchical indexing, part-select with array access
 - **Advanced net types**: tri, trireg, wand, wor, supply0/1
 - **System functions**: File I/O ($fopen, $fclose, $fscanf, $fwrite, etc.), random ($random, $urandom), bit manipulation ($bits, $size, $dimensions)
@@ -266,10 +272,12 @@ The compiler detects and reports:
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ### Revision History
-- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV27)
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV29)
+  - [REV29](docs/diff/REV29.md) - Enhanced VCD & dynamic repeat (v0.7+)
+  - [REV28](docs/diff/REV28.md) - VCD writer & service record integration (v0.7)
   - [REV27](docs/diff/REV27.md) - GPU runtime & smoke test success (v0.666)
-  - [REV26](docs/diff/REV26.md) - Verilog frontend completion
-  - [REV25](docs/diff/REV25.md) - Edge case coverage & drive tracking
+  - [REV26](docs/diff/REV26.md) - Verilog frontend completion (v0.6+)
+  - [REV25](docs/diff/REV25.md) - Edge case coverage & drive tracking (v0.6)
 
 ## Runtime Tools
 
@@ -286,6 +294,54 @@ Smoke output: 1 2 3 4 5 6 7 8
 
 This confirms the entire pipeline works: Metal compilation → GPU dispatch → buffer readback.
 
+### VCD Waveform Generation
+
+Generate waveforms from Verilog testbenches:
+
+```verilog
+module test;
+  reg clk;
+  reg [7:0] counter;
+
+  initial begin
+    $dumpfile("waves.vcd");        // Set VCD output file
+    $dumpvars(0, test);            // Dump all signals in module 'test'
+
+    clk = 0;
+    counter = 0;
+
+    repeat (10) begin
+      #1 clk = ~clk;
+      counter = counter + 1;
+    end
+
+    $finish;
+  end
+endmodule
+```
+
+**Run with VCD output**:
+```sh
+./build/metalfpga_cli test.v --run --vcd-dir ./output/
+# Generates: ./output/waves.vcd
+```
+
+**View waveforms**:
+```sh
+gtkwave ./output/waves.vcd
+```
+
+**Supported VCD features**:
+- `$dumpfile(filename)` - Set VCD output file
+- `$dumpvars(depth, module)` - Start waveform capture
+- `$dumpoff` / `$dumpon` - Suspend/resume dumping
+- `$dumpflush` - Flush VCD buffer to disk
+- `$dumpall` - Force dump all signal values
+- `$dumplimit(size)` - Set maximum dump count
+- Hierarchical signal names with scope filtering
+- 4-state logic (X/Z) encoding in VCD format
+- Multi-dimensional arrays expanded to individual signals
+
 ## Project Structure
 
 ```
@@ -300,11 +356,13 @@ src/
   utils/          # Diagnostics and utilities
 verilog/
   test_v1_ready_do_not_move.v  # Smoke test (1 file, default run)
-  pass/           # Comprehensive test suite (364 files, --full flag)
+  test_vcd_*.v                 # VCD waveform tests (12 files)
+  test_repeat_dynamic.v        # Dynamic repeat test
+  pass/           # Comprehensive test suite (365 files, --full flag)
   systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/
   gpga/                 # Core documentation
-  diff/                 # REV documents (REV0-REV27 commit changelogs)
+  diff/                 # REV documents (REV0-REV29 commit changelogs)
   4STATE.md             # 4-state logic implementation
   gpga_4state_api.md    # Complete MSL 4-state library reference
   ANALOG.md             # Analog/mixed-signal support
