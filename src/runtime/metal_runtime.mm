@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <dispatch/dispatch.h>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -30,7 +31,14 @@ struct MetalRuntime::Impl {
   id<MTL4CommandAllocator> allocator = nil;
   id<MTL4Compiler> compiler = nil;
   id<MTLLibrary> library = nil;
+  id<MTLDynamicLibrary> real_lib = nil;
+  std::string last_source;
+  bool prefer_source_bindings = false;
   ~Impl() {
+    if (real_lib) {
+      [real_lib release];
+      real_lib = nil;
+    }
     if (library) {
       [library release];
       library = nil;
@@ -456,6 +464,148 @@ std::string ReadFileContents(const std::string& path, std::string* error) {
   return oss.str();
 }
 
+bool NeedsDynamicLibrary(const std::string& source,
+                         const std::string& include_name) {
+  return source.find(include_name) != std::string::npos;
+}
+
+bool NeedsRebuild(const std::filesystem::path& output_path,
+                  const std::vector<std::filesystem::path>& inputs) {
+  std::error_code ec;
+  if (!std::filesystem::exists(output_path, ec)) {
+    return true;
+  }
+  auto output_time = std::filesystem::last_write_time(output_path, ec);
+  if (ec) {
+    return true;
+  }
+  for (const auto& input : inputs) {
+    if (input.empty()) {
+      continue;
+    }
+    auto input_time = std::filesystem::last_write_time(input, ec);
+    if (ec || input_time > output_time) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string FormatNSError(NSError* error);
+std::string ExpandIncludes(const std::string& source,
+                           const std::vector<std::string>& include_paths,
+                           std::string* error);
+
+bool EnsureDynamicLibrary(id<MTL4Compiler> compiler, const std::string& name,
+                          const std::string& source_path,
+                          const std::vector<std::string>& include_paths,
+                          const std::vector<std::string>& dependencies,
+                          id<MTLDynamicLibrary>* out, std::string* error) {
+  if (!compiler || !out) {
+    if (error) {
+      *error = "Metal compiler unavailable for dynamic library";
+    }
+    return false;
+  }
+  if (*out) {
+    return true;
+  }
+  std::filesystem::path cache_dir =
+      std::filesystem::current_path() / "artifacts" / "metal_libs";
+  std::error_code ec;
+  std::filesystem::create_directories(cache_dir, ec);
+  std::filesystem::path cache_path = cache_dir / (name + ".metallib");
+
+  std::filesystem::path source_file = std::filesystem::path(source_path);
+  if (!source_file.is_absolute()) {
+    source_file = std::filesystem::current_path() / source_file;
+  }
+  std::vector<std::filesystem::path> inputs;
+  inputs.reserve(1 + dependencies.size());
+  inputs.push_back(source_file);
+  for (const auto& dep : dependencies) {
+    if (dep.empty()) {
+      continue;
+    }
+    std::filesystem::path dep_path = std::filesystem::path(dep);
+    if (!dep_path.is_absolute()) {
+      dep_path = std::filesystem::current_path() / dep_path;
+    }
+    inputs.push_back(dep_path);
+  }
+
+  bool rebuild = NeedsRebuild(cache_path, inputs);
+  if (!rebuild) {
+    NSString* ns_path =
+        [NSString stringWithUTF8String:cache_path.string().c_str()];
+    NSURL* url = [NSURL fileURLWithPath:ns_path];
+    NSError* load_err = nil;
+    id<MTLDynamicLibrary> cached =
+        [compiler newDynamicLibraryWithURL:url error:&load_err];
+    if (cached) {
+      *out = cached;
+      return true;
+    }
+  }
+
+  std::string source = ReadFileContents(source_file.string(), error);
+  if (source.empty()) {
+    if (error && error->empty()) {
+      *error = "dynamic library source missing: " + source_file.string();
+    }
+    return false;
+  }
+  std::string expanded = ExpandIncludes(source, include_paths, error);
+  if (expanded.empty()) {
+    expanded = source;
+  }
+  NSString* ns_source =
+      [[NSString alloc] initWithBytes:expanded.data()
+                               length:expanded.size()
+                             encoding:NSUTF8StringEncoding];
+  MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
+  options.libraryType = MTLLibraryTypeDynamic;
+  options.installName =
+      [NSString stringWithUTF8String:cache_path.string().c_str()];
+  MTL4LibraryDescriptor* lib_desc = [[MTL4LibraryDescriptor alloc] init];
+  lib_desc.source = ns_source;
+  lib_desc.options = options;
+  NSError* err = nil;
+  id<MTLLibrary> library =
+      [compiler newLibraryWithDescriptor:lib_desc error:&err];
+  [lib_desc release];
+  [options release];
+  [ns_source release];
+  if (!library) {
+    if (error) {
+      *error = FormatNSError(err);
+    }
+    return false;
+  }
+  id<MTLDynamicLibrary> dynamic =
+      [compiler newDynamicLibrary:library error:&err];
+  [library release];
+  if (!dynamic) {
+    if (error) {
+      *error = FormatNSError(err);
+    }
+    return false;
+  }
+  NSString* ns_path =
+      [NSString stringWithUTF8String:cache_path.string().c_str()];
+  NSURL* url = [NSURL fileURLWithPath:ns_path];
+  NSError* save_err = nil;
+  if (![dynamic serializeToURL:url error:&save_err]) {
+    if (error) {
+      *error = FormatNSError(save_err);
+    }
+    [dynamic release];
+    return false;
+  }
+  *out = dynamic;
+  return true;
+}
+
 bool StartsWith(const std::string& value, const std::string& prefix) {
   return value.size() >= prefix.size() &&
          value.compare(0, prefix.size(), prefix) == 0;
@@ -517,6 +667,77 @@ std::string ExpandIncludes(const std::string& source,
     out << line << "\n";
   }
   return out.str();
+}
+
+bool ParseKernelBindingsFromSource(
+    const std::string& source, const std::string& kernel_name,
+    std::unordered_map<std::string, uint32_t>* out, std::string* error) {
+  if (!out) {
+    if (error) {
+      *error = "buffer binding output map is null";
+    }
+    return false;
+  }
+  const std::string needle = "kernel void " + kernel_name;
+  size_t pos = source.find(needle);
+  if (pos == std::string::npos) {
+    if (error) {
+      *error = "kernel signature not found for " + kernel_name;
+    }
+    return false;
+  }
+  size_t open = source.find('(', pos);
+  if (open == std::string::npos) {
+    if (error) {
+      *error = "kernel signature missing '(' for " + kernel_name;
+    }
+    return false;
+  }
+  size_t close = std::string::npos;
+  int depth = 0;
+  for (size_t i = open; i < source.size(); ++i) {
+    if (source[i] == '(') {
+      depth += 1;
+    } else if (source[i] == ')') {
+      depth -= 1;
+      if (depth == 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close == std::string::npos || close <= open) {
+    if (error) {
+      *error = "kernel signature missing ')' for " + kernel_name;
+    }
+    return false;
+  }
+  std::string sig = source.substr(open + 1, close - open - 1);
+  std::regex pattern(
+      R"(([A-Za-z_][A-Za-z0-9_]*)\s*\[\[buffer\((\d+)\)\]\])");
+  std::sregex_iterator it(sig.begin(), sig.end(), pattern);
+  std::sregex_iterator end;
+  out->clear();
+  for (; it != end; ++it) {
+    const std::smatch& match = *it;
+    if (match.size() < 3) {
+      continue;
+    }
+    uint32_t index = 0u;
+    try {
+      index = static_cast<uint32_t>(std::stoul(match[2].str()));
+    } catch (...) {
+      continue;
+    }
+    (*out)[match[1].str()] = index;
+  }
+  if (out->empty()) {
+    if (error) {
+      *error = "no buffer bindings parsed for " + kernel_name;
+    }
+    return false;
+  }
+  return true;
 }
 
 bool ParseUintConst(const std::string& source, const std::string& name,
@@ -589,6 +810,7 @@ MetalKernel::~MetalKernel() {
     argument_table_ = nullptr;
   }
   buffer_indices_.clear();
+  max_buffer_bindings_ = 0;
   thread_execution_width_ = 0;
   max_threads_per_threadgroup_ = 0;
 }
@@ -597,10 +819,12 @@ MetalKernel::MetalKernel(MetalKernel&& other) noexcept
     : pipeline_(other.pipeline_),
       argument_table_(other.argument_table_),
       buffer_indices_(std::move(other.buffer_indices_)),
+      max_buffer_bindings_(other.max_buffer_bindings_),
       thread_execution_width_(other.thread_execution_width_),
       max_threads_per_threadgroup_(other.max_threads_per_threadgroup_) {
   other.pipeline_ = nullptr;
   other.argument_table_ = nullptr;
+  other.max_buffer_bindings_ = 0;
   other.thread_execution_width_ = 0;
   other.max_threads_per_threadgroup_ = 0;
 }
@@ -621,10 +845,12 @@ MetalKernel& MetalKernel::operator=(MetalKernel&& other) noexcept {
   pipeline_ = other.pipeline_;
   argument_table_ = other.argument_table_;
   buffer_indices_ = std::move(other.buffer_indices_);
+  max_buffer_bindings_ = other.max_buffer_bindings_;
   thread_execution_width_ = other.thread_execution_width_;
   max_threads_per_threadgroup_ = other.max_threads_per_threadgroup_;
   other.pipeline_ = nullptr;
   other.argument_table_ = nullptr;
+  other.max_buffer_bindings_ = 0;
   other.thread_execution_width_ = 0;
   other.max_threads_per_threadgroup_ = 0;
   return *this;
@@ -645,6 +871,13 @@ bool MetalKernel::HasBuffer(const std::string& name) const {
 MetalRuntime::MetalRuntime() : impl_(std::make_unique<Impl>()) {}
 
 MetalRuntime::~MetalRuntime() = default;
+
+void MetalRuntime::SetPreferSourceBindings(bool value) {
+  if (!impl_) {
+    impl_ = std::make_unique<Impl>();
+  }
+  impl_->prefer_source_bindings = value;
+}
 
 bool MetalRuntime::Initialize(std::string* error) {
   if (!impl_) {
@@ -705,15 +938,33 @@ bool MetalRuntime::CompileSource(const std::string& source,
     }
     return false;
   }
+  const bool needs_real_lib =
+      NeedsDynamicLibrary(source, "gpga_real_decl.h") ||
+      NeedsDynamicLibrary(source, "gpga_real.h");
+  if (needs_real_lib) {
+    if (!EnsureDynamicLibrary(impl_->compiler, "gpga_real",
+                              "src/msl/gpga_real_lib.metal", include_paths,
+                              {"include/gpga_real.h"}, &impl_->real_lib,
+                              error)) {
+      return false;
+    }
+  }
   std::string expanded = ExpandIncludes(source, include_paths, error);
   if (expanded.empty()) {
     expanded = source;
+  }
+  if (impl_) {
+    impl_->last_source = expanded;
   }
   NSString* ns_source =
       [[NSString alloc] initWithBytes:expanded.data()
                                length:expanded.size()
                              encoding:NSUTF8StringEncoding];
   MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
+  if (needs_real_lib && impl_->real_lib) {
+    NSArray<id<MTLDynamicLibrary>>* libs = @[ impl_->real_lib ];
+    options.libraries = libs;
+  }
   MTL4LibraryDescriptor* lib_desc = [[MTL4LibraryDescriptor alloc] init];
   lib_desc.source = ns_source;
   lib_desc.options = options;
@@ -766,7 +1017,11 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
       [[MTL4ComputePipelineDescriptor alloc] init];
   desc.computeFunctionDescriptor = fn_desc;
   MTL4PipelineOptions* pipe_opts = [[MTL4PipelineOptions alloc] init];
-  pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
+  if (impl_->prefer_source_bindings) {
+    pipe_opts.shaderReflection = static_cast<MTL4ShaderReflection>(0);
+  } else {
+    pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
+  }
   desc.options = pipe_opts;
 
   NSError* err = nil;
@@ -783,14 +1038,6 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     }
     return false;
   }
-  MTLComputePipelineReflection* reflection = pipeline.reflection;
-  if (!reflection) {
-    if (error) {
-      *error = "Metal pipeline reflection unavailable";
-    }
-    [pipeline release];
-    return false;
-  }
   MetalKernel temp;
   temp.pipeline_ = pipeline;
   temp.thread_execution_width_ =
@@ -799,21 +1046,49 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
       static_cast<uint32_t>(pipeline.maxTotalThreadsPerThreadgroup);
   uint32_t max_index = 0;
   bool has_index = false;
-  for (id<MTLBinding> binding in reflection.bindings) {
-    if (binding.type != MTLBindingTypeBuffer) {
-      continue;
+  if (impl_->prefer_source_bindings && !impl_->last_source.empty()) {
+    std::unordered_map<std::string, uint32_t> bindings;
+    if (!ParseKernelBindingsFromSource(impl_->last_source, name, &bindings,
+                                       error)) {
+      [pipeline release];
+      temp.pipeline_ = nullptr;
+      return false;
     }
-    uint32_t index = static_cast<uint32_t>(binding.index);
-    temp.buffer_indices_[std::string([binding.name UTF8String])] = index;
-    if (!has_index || index > max_index) {
-      max_index = index;
-      has_index = true;
+    temp.buffer_indices_ = std::move(bindings);
+    for (const auto& entry : temp.buffer_indices_) {
+      uint32_t index = entry.second;
+      if (!has_index || index > max_index) {
+        max_index = index;
+        has_index = true;
+      }
+    }
+  } else {
+    MTLComputePipelineReflection* reflection = pipeline.reflection;
+    if (!reflection) {
+      if (error) {
+        *error = "Metal pipeline reflection unavailable";
+      }
+      [pipeline release];
+      return false;
+    }
+    for (id<MTLBinding> binding in reflection.bindings) {
+      if (binding.type != MTLBindingTypeBuffer) {
+        continue;
+      }
+      uint32_t index = static_cast<uint32_t>(binding.index);
+      temp.buffer_indices_[std::string([binding.name UTF8String])] = index;
+      if (!has_index || index > max_index) {
+        max_index = index;
+        has_index = true;
+      }
     }
   }
   if (has_index) {
-    if (max_index >= 31u) {
+    constexpr uint32_t kMaxArgumentTableBindings = 31u;
+    if (max_index >= kMaxArgumentTableBindings) {
       if (error) {
-        *error = "Metal 4 argument tables support up to 31 buffer bindings";
+        *error =
+            "Metal 4 argument tables support up to 31 buffer bindings (0-30)";
       }
       [pipeline release];
       temp.pipeline_ = nullptr;
@@ -837,6 +1112,7 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
       return false;
     }
     temp.argument_table_ = table;
+    temp.max_buffer_bindings_ = max_index + 1u;
   }
   *kernel = std::move(temp);
   return true;
@@ -865,7 +1141,8 @@ MetalBuffer MetalRuntime::CreateBuffer(size_t length,
 
 bool MetalRuntime::Dispatch(const MetalKernel& kernel,
                             const std::vector<MetalBufferBinding>& bindings,
-                            uint32_t grid_size, std::string* error) {
+                            uint32_t grid_size, std::string* error,
+                            uint32_t timeout_ms) {
   if (!impl_ || !impl_->queue || !impl_->allocator || !kernel.pipeline_) {
     if (error) {
       *error = "Metal runtime not initialized";
@@ -903,9 +1180,32 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     return false;
   }
   if (table) {
+    const uint32_t max_bindings = kernel.MaxBufferBindings();
     for (const auto& binding : bindings) {
       if (!binding.buffer || !binding.buffer->handle_) {
         continue;
+      }
+      if (max_bindings != 0u && binding.index >= max_bindings) {
+        if (error) {
+          *error = "Metal buffer binding index out of range (index=" +
+                   std::to_string(binding.index) + ", max=" +
+                   std::to_string(max_bindings - 1u) + ")";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      if (binding.offset >= binding.buffer->length()) {
+        if (error) {
+          *error = "Metal buffer binding offset out of range (offset=" +
+                   std::to_string(binding.offset) + ", length=" +
+                   std::to_string(binding.buffer->length()) + ")";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
       }
       id<MTLBuffer> buffer = (id<MTLBuffer>)binding.buffer->handle_;
       MTLGPUAddress address =
@@ -937,7 +1237,25 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   }];
   const id<MTL4CommandBuffer> buffers[] = {cmd};
   [impl_->queue commit:buffers count:1 options:options];
-  dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  if (timeout_ms == 0u) {
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  } else {
+    dispatch_time_t timeout =
+        dispatch_time(DISPATCH_TIME_NOW,
+                      static_cast<int64_t>(timeout_ms) * NSEC_PER_MSEC);
+    if (dispatch_semaphore_wait(done, timeout) != 0) {
+      if (error) {
+        *error = "Metal dispatch timed out";
+      }
+#if !OS_OBJECT_USE_OBJC
+      dispatch_release(done);
+#endif
+      [options release];
+      [cmd release];
+      [impl_->allocator reset];
+      return false;
+    }
+  }
   [options release];
 #if !OS_OBJECT_USE_OBJC
   dispatch_release(done);
@@ -1274,6 +1592,12 @@ ServiceDrainResult DrainSchedulerServices(
         break;
       case ServiceKind::kPrinttimescale:
         out << "$printtimescale (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kTestPlusargs:
+        out << "$test$plusargs (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kValuePlusargs:
+        out << "$value$plusargs (pid=" << pid << ")\n";
         break;
       case ServiceKind::kDumpfile: {
         std::string filename = ResolveString(strings, format_id);

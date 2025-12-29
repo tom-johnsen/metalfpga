@@ -55,6 +55,8 @@ enum class ServiceKind : uint32_t {
   kSformat = 33u,
   kTimeformat = 34u,
   kPrinttimescale = 35u,
+  kTestPlusargs = 36u,
+  kValuePlusargs = 37u,
 };
 
 struct ServiceStringTable {
@@ -181,12 +183,14 @@ class MetalKernel {
   uint32_t MaxThreadsPerThreadgroup() const {
     return max_threads_per_threadgroup_;
   }
+  uint32_t MaxBufferBindings() const { return max_buffer_bindings_; }
 
  private:
   friend class MetalRuntime;
   void* pipeline_ = nullptr;
   void* argument_table_ = nullptr;
   std::unordered_map<std::string, uint32_t> buffer_indices_;
+  uint32_t max_buffer_bindings_ = 0;
   uint32_t thread_execution_width_ = 0;
   uint32_t max_threads_per_threadgroup_ = 0;
 };
@@ -199,6 +203,7 @@ class MetalRuntime {
   MetalRuntime& operator=(const MetalRuntime&) = delete;
 
   bool Initialize(std::string* error);
+  void SetPreferSourceBindings(bool value);
   bool CompileSource(const std::string& source,
                      const std::vector<std::string>& include_paths,
                      std::string* error);
@@ -207,7 +212,8 @@ class MetalRuntime {
   MetalBuffer CreateBuffer(size_t length, const void* initial_data);
   bool Dispatch(const MetalKernel& kernel,
                 const std::vector<MetalBufferBinding>& bindings,
-                uint32_t grid_size, std::string* error);
+                uint32_t grid_size, std::string* error,
+                uint32_t timeout_ms = 0u);
 
  private:
   struct Impl;

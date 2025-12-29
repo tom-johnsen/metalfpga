@@ -498,7 +498,14 @@ bool ExprUsesRealConst(const Expr& expr, const ParamBindings& params) {
              (expr.else_expr && ExprUsesRealConst(*expr.else_expr, params));
     case ExprKind::kCall:
       return expr.ident == "$realtime" || expr.ident == "$itor" ||
-             expr.ident == "$bitstoreal" || expr.ident == "$rtoi";
+             expr.ident == "$bitstoreal" || expr.ident == "$rtoi" ||
+             expr.ident == "$log10" || expr.ident == "$ln" ||
+             expr.ident == "$exp" || expr.ident == "$sqrt" ||
+             expr.ident == "$pow" || expr.ident == "$floor" ||
+             expr.ident == "$ceil" || expr.ident == "$sin" ||
+             expr.ident == "$cos" || expr.ident == "$tan" ||
+             expr.ident == "$asin" || expr.ident == "$acos" ||
+             expr.ident == "$atan";
     case ExprKind::kString:
     case ExprKind::kSelect:
     case ExprKind::kIndex:
@@ -724,6 +731,66 @@ bool EvalConstExprRealValue(const Expr& expr, const ParamBindings& params,
           return true;
         }
         *out_value = 0.0;
+        return true;
+      }
+      if (expr.ident == "$log10" || expr.ident == "$ln" ||
+          expr.ident == "$exp" || expr.ident == "$sqrt" ||
+          expr.ident == "$floor" || expr.ident == "$ceil" ||
+          expr.ident == "$sin" || expr.ident == "$cos" ||
+          expr.ident == "$tan" || expr.ident == "$asin" ||
+          expr.ident == "$acos" || expr.ident == "$atan") {
+        double value = 0.0;
+        if (!expr.call_args.empty() && expr.call_args.front()) {
+          if (!EvalConstExprRealValue(*expr.call_args.front(), params, module,
+                                      &value, diagnostics)) {
+            return false;
+          }
+        }
+        if (expr.ident == "$log10") {
+          *out_value = std::log10(value);
+        } else if (expr.ident == "$ln") {
+          *out_value = std::log(value);
+        } else if (expr.ident == "$exp") {
+          *out_value = std::exp(value);
+        } else if (expr.ident == "$sqrt") {
+          *out_value = std::sqrt(value);
+        } else if (expr.ident == "$floor") {
+          *out_value = std::floor(value);
+        } else if (expr.ident == "$ceil") {
+          *out_value = std::ceil(value);
+        } else if (expr.ident == "$sin") {
+          *out_value = std::sin(value);
+        } else if (expr.ident == "$cos") {
+          *out_value = std::cos(value);
+        } else if (expr.ident == "$tan") {
+          *out_value = std::tan(value);
+        } else if (expr.ident == "$asin") {
+          *out_value = std::asin(value);
+        } else if (expr.ident == "$acos") {
+          *out_value = std::acos(value);
+        } else if (expr.ident == "$atan") {
+          *out_value = std::atan(value);
+        } else {
+          *out_value = 0.0;
+        }
+        return true;
+      }
+      if (expr.ident == "$pow") {
+        double base = 0.0;
+        double exponent = 0.0;
+        if (expr.call_args.size() > 0 && expr.call_args[0]) {
+          if (!EvalConstExprRealValue(*expr.call_args[0], params, module, &base,
+                                      diagnostics)) {
+            return false;
+          }
+        }
+        if (expr.call_args.size() > 1 && expr.call_args[1]) {
+          if (!EvalConstExprRealValue(*expr.call_args[1], params, module,
+                                      &exponent, diagnostics)) {
+            return false;
+          }
+        }
+        *out_value = std::pow(base, exponent);
         return true;
       }
       diagnostics->Add(Severity::kError,
@@ -2295,7 +2362,13 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
   if (expr.ident == "$realtime" || expr.ident == "$realtobits" ||
       expr.ident == "$bitstoreal" || expr.ident == "$rtoi" ||
       expr.ident == "$itor" || expr.ident == "$time" ||
-      expr.ident == "$stime") {
+      expr.ident == "$stime" || expr.ident == "$log10" ||
+      expr.ident == "$ln" || expr.ident == "$exp" ||
+      expr.ident == "$sqrt" || expr.ident == "$pow" ||
+      expr.ident == "$floor" || expr.ident == "$ceil" ||
+      expr.ident == "$sin" || expr.ident == "$cos" ||
+      expr.ident == "$tan" || expr.ident == "$asin" ||
+      expr.ident == "$acos" || expr.ident == "$atan") {
     auto call = std::make_unique<Expr>();
     call->kind = ExprKind::kCall;
     call->ident = expr.ident;
@@ -2315,7 +2388,11 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
     return call;
   }
   if (expr.ident == "$test$plusargs" || expr.ident == "$value$plusargs") {
-    return make_u32(0u);
+    auto call = std::make_unique<Expr>();
+    call->kind = ExprKind::kCall;
+    call->ident = expr.ident;
+    call->call_args = std::move(arg_clones);
+    return call;
   }
   return make_zero();
 }
@@ -3994,12 +4071,20 @@ bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
         expr.ident != "$realtime" &&
         expr.ident != "$realtobits" && expr.ident != "$bitstoreal" &&
         expr.ident != "$rtoi" && expr.ident != "$itor" &&
+        expr.ident != "$log10" && expr.ident != "$ln" &&
+        expr.ident != "$exp" && expr.ident != "$sqrt" &&
+        expr.ident != "$pow" && expr.ident != "$floor" &&
+        expr.ident != "$ceil" && expr.ident != "$sin" &&
+        expr.ident != "$cos" && expr.ident != "$tan" &&
+        expr.ident != "$asin" && expr.ident != "$acos" &&
+        expr.ident != "$atan" &&
         expr.ident != "$fopen" && expr.ident != "$fclose" &&
         expr.ident != "$fgetc" && expr.ident != "$fgets" &&
         expr.ident != "$feof" && expr.ident != "$ftell" &&
         expr.ident != "$fseek" && expr.ident != "$ferror" &&
         expr.ident != "$ungetc" && expr.ident != "$fread" &&
-        expr.ident != "$fscanf" && expr.ident != "$sscanf") {
+        expr.ident != "$fscanf" && expr.ident != "$sscanf" &&
+        expr.ident != "$test$plusargs" && expr.ident != "$value$plusargs") {
       if (name_out) {
         *name_out = expr.ident;
       }

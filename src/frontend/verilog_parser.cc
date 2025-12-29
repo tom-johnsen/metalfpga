@@ -7703,6 +7703,32 @@ class Parser {
         expr = parse_system_call("$rtoi", false);
       } else if (MatchKeyword("itor")) {
         expr = parse_system_call("$itor", false);
+      } else if (MatchKeyword("log10")) {
+        expr = parse_system_call("$log10", false);
+      } else if (MatchKeyword("ln")) {
+        expr = parse_system_call("$ln", false);
+      } else if (MatchKeyword("exp")) {
+        expr = parse_system_call("$exp", false);
+      } else if (MatchKeyword("sqrt")) {
+        expr = parse_system_call("$sqrt", false);
+      } else if (MatchKeyword("pow")) {
+        expr = parse_system_call("$pow", false);
+      } else if (MatchKeyword("floor")) {
+        expr = parse_system_call("$floor", false);
+      } else if (MatchKeyword("ceil")) {
+        expr = parse_system_call("$ceil", false);
+      } else if (MatchKeyword("sin")) {
+        expr = parse_system_call("$sin", false);
+      } else if (MatchKeyword("cos")) {
+        expr = parse_system_call("$cos", false);
+      } else if (MatchKeyword("tan")) {
+        expr = parse_system_call("$tan", false);
+      } else if (MatchKeyword("asin")) {
+        expr = parse_system_call("$asin", false);
+      } else if (MatchKeyword("acos")) {
+        expr = parse_system_call("$acos", false);
+      } else if (MatchKeyword("atan")) {
+        expr = parse_system_call("$atan", false);
       } else if (MatchKeyword("bits")) {
         expr = parse_system_call("$bits", false);
       } else if (MatchKeyword("size")) {

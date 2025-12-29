@@ -12,6 +12,7 @@ host/
 test_results/
 artifacts/
 goldentests/
+thirdparty/
 
 docs/PLAN.md
 docs/IDEA.md

@@ -10,9 +10,104 @@ This document catalogs all `gpga_*` keywords used in the metalfpga codebase with
 - **gpga_pow_s32** - Signed 32-bit power operation with negative exponent handling
 - **gpga_pow_s64** - Signed 64-bit power operation with negative exponent handling
 
-### Real Number Conversion
+### Real Number Operations
 - **gpga_bits_to_real** - Convert 64-bit unsigned integer bits to IEEE 754 double
 - **gpga_real_to_bits** - Convert IEEE 754 double to 64-bit unsigned integer bits
+- **gpga_double** - Typedef for ulong representing IEEE 754 double precision float
+- **gpga_double_from_u32** - Convert unsigned 32-bit integer to double
+- **gpga_double_from_u64** - Convert unsigned 64-bit integer to double
+- **gpga_double_from_s32** - Convert signed 32-bit integer to double
+- **gpga_double_from_s64** - Convert signed 64-bit integer to double
+- **gpga_double_to_s64** - Convert double to signed 64-bit integer (with saturation)
+- **gpga_double_neg** - Negate a double value
+- **gpga_double_add** - Add two double values
+- **gpga_double_sub** - Subtract two double values
+- **gpga_double_mul** - Multiply two double values
+- **gpga_double_div** - Divide two double values
+- **gpga_double_pow** - Power operation for double values
+- **gpga_double_eq** - Equality comparison for double values
+- **gpga_double_lt** - Less-than comparison for double values
+- **gpga_double_gt** - Greater-than comparison for double values
+- **gpga_double_le** - Less-than-or-equal comparison for double values
+- **gpga_double_ge** - Greater-than-or-equal comparison for double values
+- **gpga_double_is_zero** - Check if double value is zero
+- **gpga_double_is_nan** - Check if double value is NaN
+- **gpga_double_is_inf** - Check if double value is infinity
+
+### Wide Integer Operations (>64-bit)
+Generated functions for arbitrary-width integers using uint2, uint3, uint4, etc. vectors:
+
+#### Wide Construction and Conversion
+- **gpga_wide_zero_N** - Create zero value for N-bit wide integer
+- **gpga_wide_mask_const_N** - Create all-ones mask for N-bit wide integer
+- **gpga_wide_from_u64_N** - Convert 64-bit value to N-bit wide integer
+- **gpga_wide_from_words_N** - Construct N-bit wide integer from component words
+- **gpga_wide_to_u64_N** - Convert N-bit wide integer to 64-bit value (truncate)
+- **gpga_wide_mask_N** - Apply bit mask to N-bit wide integer
+- **gpga_wide_resize_N_from_M** - Zero-extend or truncate M-bit to N-bit wide integer
+- **gpga_wide_sext_N_from_M** - Sign-extend M-bit to N-bit wide integer
+- **gpga_wide_sext_from_u64_N** - Sign-extend from 64-bit to N-bit with dynamic source width
+
+#### Wide Bitwise Operations
+- **gpga_wide_not_N** - Bitwise NOT for N-bit wide integer
+- **gpga_wide_and_N** - Bitwise AND for N-bit wide integers
+- **gpga_wide_or_N** - Bitwise OR for N-bit wide integers
+- **gpga_wide_xor_N** - Bitwise XOR for N-bit wide integers
+
+#### Wide Arithmetic Operations
+- **gpga_wide_add_N** - Addition for N-bit wide integers with carry propagation
+- **gpga_wide_sub_N** - Subtraction for N-bit wide integers with borrow propagation
+- **gpga_wide_mul_N** - Multiplication for N-bit wide integers (shift-and-add)
+- **gpga_wide_div_N** - Unsigned division for N-bit wide integers (long division)
+- **gpga_wide_mod_N** - Unsigned modulo for N-bit wide integers
+
+#### Wide Shift Operations
+- **gpga_wide_shl_N** - Logical left shift for N-bit wide integers
+- **gpga_wide_shr_N** - Logical right shift for N-bit wide integers
+- **gpga_wide_sar_N** - Arithmetic right shift for N-bit wide integers
+
+#### Wide Comparison Operations
+- **gpga_wide_eq_N** - Equality comparison for N-bit wide integers
+- **gpga_wide_ne_N** - Inequality comparison for N-bit wide integers
+- **gpga_wide_lt_u_N** - Unsigned less-than for N-bit wide integers
+- **gpga_wide_gt_u_N** - Unsigned greater-than for N-bit wide integers
+- **gpga_wide_le_u_N** - Unsigned less-or-equal for N-bit wide integers
+- **gpga_wide_ge_u_N** - Unsigned greater-or-equal for N-bit wide integers
+- **gpga_wide_lt_s_N** - Signed less-than for N-bit wide integers
+- **gpga_wide_gt_s_N** - Signed greater-than for N-bit wide integers
+- **gpga_wide_le_s_N** - Signed less-or-equal for N-bit wide integers
+- **gpga_wide_ge_s_N** - Signed greater-or-equal for N-bit wide integers
+
+#### Wide Utility Operations
+- **gpga_wide_any_N** - Check if any bit is set in N-bit wide integer
+- **gpga_wide_get_bit_N** - Extract single bit from N-bit wide integer
+- **gpga_wide_set_bit_N** - Set single bit in N-bit wide integer
+- **gpga_wide_signbit_N** - Extract sign bit from N-bit wide integer
+- **gpga_wide_select_N** - Conditional select between two N-bit wide integers
+
+#### Wide Reduction Operations
+- **gpga_wide_red_and_N** - Reduction AND for N-bit wide integer
+- **gpga_wide_red_or_N** - Reduction OR for N-bit wide integer
+- **gpga_wide_red_xor_N** - Reduction XOR for N-bit wide integer
+
+#### Wide Power Operations
+- **gpga_wide_pow_u_N** - Unsigned power operation for N-bit wide integers
+- **gpga_wide_pow_s_N** - Signed power operation for N-bit wide integers
+
+### Double Precision Internals
+Internal helper functions for software double-precision floating point:
+- **gpga_double_sign** - Extract sign bit from double
+- **gpga_double_exp** - Extract exponent from double
+- **gpga_double_mantissa** - Extract mantissa from double
+- **gpga_double_pack** - Pack sign, exponent, mantissa into double
+- **gpga_double_zero** - Create zero with specified sign
+- **gpga_double_inf** - Create infinity with specified sign
+- **gpga_double_nan** - Create NaN value
+- **gpga_double_round_pack** - Round and pack normalized significand
+- **gpga_clz64** - Count leading zeros in 64-bit value
+- **gpga_shift_right_sticky** - Shift right with sticky bit for rounding
+- **gpga_shift_right_sticky_128** - Shift right 128-bit value with sticky bit
+- **gpga_mul_64** - 64-bit multiplication producing 128-bit result
 
 ## Scheduler Infrastructure
 
@@ -167,6 +262,8 @@ This document catalogs all `gpga_*` keywords used in the metalfpga codebase with
 - Prefix `__gpga_` (double underscore): Internal temporary variables and constants
 - Prefix `gpga_` (single underscore): Runtime helper functions and constants
 - Suffix pattern `_val`, `_xz`, `_drive`: Four-state logic value, X/Z bits, and drive strength components
+- Suffix `_N` in wide functions: N represents the bit width (e.g., `gpga_wide_add_128` for 128-bit addition)
+- Suffix `_u` or `_s`: Unsigned or signed variants (e.g., `gpga_wide_lt_u_N` vs `gpga_wide_lt_s_N`)
 
 ### Usage Context
 Most of these keywords are generated by the MSL (Metal Shading Language) code generator in [src/codegen/msl_codegen.cc](../src/codegen/msl_codegen.cc). They represent internal implementation details of the Verilog-to-Metal compilation process for GPU-accelerated simulation.
@@ -177,3 +274,9 @@ The four-state system represents Verilog's 4-valued logic (0, 1, X, Z) using two
 - `xz`: The X/Z bits (indicates unknown or high-impedance)
 
 Combined, these encode: `0` = (val:0, xz:0), `1` = (val:1, xz:0), `X` = (val:0, xz:1), `Z` = (val:1, xz:1)
+
+### Wide Integer Implementation
+For Verilog signals wider than 64 bits, the compiler generates specialized functions using Metal's vector types (uint2, uint3, uint4, etc.). These functions implement multi-word arithmetic, shifts, and comparisons. The functions are generated on-demand for each required width and are emitted into the generated Metal shader source code.
+
+### Software Floating Point
+Metal does not support native double-precision floating point on all hardware. The compiler implements IEEE 754 double precision using software emulation with 64-bit integer operations (`gpga_double` typedef). This enables Verilog `real` type support across all Metal-capable GPUs.

@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.7+ — **Verilog frontend complete** + **GPU runtime functional** + **VCD waveform generation**: parsing, elaboration, and MSL codegen for ~95% of Verilog-2005, plus Metal runtime with GPU execution and industry-standard VCD waveform output. Includes **IEEE 754 real number arithmetic**, User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, procedural part-select assignment, and **dynamic repeat loops**. Full **VCD debugging support** with `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), and `$readmemh`/`$readmemb`. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **377 total test files** validate the compiler. **VCD smoke test passes ✅**. **Next: Full test suite validation on GPU (v1.0).**
+**Current Status**: v0.7+ — **Verilog frontend 100% complete** + **GPU runtime functional** + **VCD waveform generation** + **Wide integer support**: Full Verilog-2005 parsing, elaboration, and MSL codegen, plus Metal runtime with GPU execution and industry-standard VCD waveform output. Includes **software double-precision float** (IEEE 754), **wide integers** (128-bit, 256-bit, arbitrary width), User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, procedural part-select assignment, and **dynamic repeat loops**. Full **VCD debugging support** with `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), and `$readmemh`/`$readmemb`. **14 file I/O functions** including `$fopen`, `$fseek`, `$fread`, `$ungetc`, `$ferror`. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **393 total test files** validate the compiler. **VCD smoke test passes ✅**. **Next: Full test suite validation on GPU (v1.0).**
 
 ## What is this?
 
@@ -113,6 +113,10 @@ The compiler produces:
 - Concatenation: `{a, b, c}`
 - Replication: `{4{1'b0}}`
 - String literals: `"Hello"` - Converted to packed ASCII bit values (little-endian, up to 8 characters/64 bits)
+- **Wide integers**: Arbitrary-width literals and operations (128-bit, 256-bit, etc.) via concatenation-based decomposition
+  - Wide literals: `128'hDEADBEEF_CAFEBABE`, `256'd12345`, etc.
+  - Wide arithmetic: Multi-word add/sub with carry/borrow propagation
+  - Wide shifts: Dynamic shifts across 64-bit boundaries (128-bit << 65)
 - Memory arrays: `reg [7:0] mem [0:255]` (multi-dimensional supported)
 - Parameters and localparams with expressions (including port widths)
 - Width mismatches (automatic extension/truncation)
@@ -128,7 +132,7 @@ The compiler produces:
   - Formatting: `$timeformat`, `$printtimescale` - Time formatting
   - Memory I/O: `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - Memory initialization and dump
   - Waveform: `$dumpfile`, `$dumpvars`, `$dumpall`, `$dumpon`, `$dumpoff`, `$dumpflush`, `$dumplimit` - Full VCD waveform generation with dump control
-  - File I/O: `$fopen`, `$fclose`, `$fgetc`, `$fgets`, `$feof`, `$fscanf`, `$sscanf` - File operations (infrastructure in place, runtime execution pending)
+  - File I/O: `$fopen`, `$fclose`, `$fgetc`, `$fgets`, `$feof`, `$ftell`, `$rewind`, `$fseek`, `$fread`, `$ungetc`, `$ferror`, `$fflush`, `$fscanf`, `$sscanf` - File operations (14 functions, infrastructure complete, runtime execution pending)
   - String: `$sformat` - String formatting
   - Math/Type: `$signed`, `$unsigned`, `$clog2`, `$bits` - Type casting and utility functions
 - Tasks (procedural `task` blocks with inputs/outputs)
@@ -147,17 +151,19 @@ The compiler produces:
   - Sequential UDPs (state machines with current/next state)
   - Edge-sensitive UDPs (posedge/negedge detection)
   - Level-sensitive UDPs (transparent latches)
-- Real number arithmetic (IEEE 754 double-precision):
+- **Real number arithmetic** (IEEE 754 double-precision via software emulation):
   - `real` data type for floating-point variables
+  - **Software double-precision**: Implemented using `ulong` (Metal GPUs lack native double hardware)
   - Real literals: `3.14`, `1.5e-10`, `.5`, `5.`
   - Real arrays: `real voltage[0:15];`
   - Real parameters: `parameter real PI = 3.14159;`
-  - Arithmetic operators: `+`, `-`, `*`, `/`, `**` (power)
+  - Arithmetic operators: `+`, `-`, `*`, `/`, `**` (power, partial support)
   - Comparison operators: `<`, `>`, `<=`, `>=`, `==`, `!=`
   - Type conversion: `$itor()` (int→real), `$rtoi()` (real→int with truncation)
   - Bit conversion: `$realtobits()`, `$bitstoreal()` (for real storage in 4-state)
   - Mixed integer/real arithmetic with automatic promotion
   - Real constant expressions in parameters and generate blocks
+  - Special values: NaN, Infinity, ±0, denormals fully supported
 
 ### 🧪 Implemented with runtime validation in progress
 
@@ -189,9 +195,9 @@ The Metal runtime infrastructure is fully functional (smoke test passes on GPU).
 
 ## Test Suite
 
-**377 total test files** across the test suite:
+**393 total test files** across the test suite:
 - **13 files** in `verilog/` (smoke tests including VCD tests, for quick validation)
-- **365 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
+- **379 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
 - **18 files** in `verilog/systemverilog/` (SystemVerilog features, expected to fail)
 
 The test suite validates parsing, elaboration, MSL codegen output quality, semantic correctness, and VCD waveform generation. Tests cover all major Verilog-2005 features including edge cases and advanced semantics.
@@ -200,7 +206,9 @@ The test suite validates parsing, elaboration, MSL codegen output quality, seman
 
 **Test coverage includes**:
 - **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
-- **Real number arithmetic**: All IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
+- **Real number arithmetic**: Software double-precision float, all IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
+- **Wide integers** (5 tests): 128-bit/256-bit literals, wide arithmetic with carry propagation, wide shifts across 64-bit boundaries, wide casez/X/Z matching
+- **File I/O** (14 functions, 9+ tests): $fopen, $fseek, $fread, $ftell, $rewind, $ungetc, $ferror, $fflush, $fscanf/$sscanf with wide values
 - **casez/casex pattern matching** (16 tests): Don't-care case statements, wildcard matching, priority encoding, state machines with X/Z tolerance
 - **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy, generate block instances
 - **Generate blocks** (23 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation, scoping edge cases, multi-dimensional unrolling
@@ -214,10 +222,10 @@ The test suite validates parsing, elaboration, MSL codegen output quality, seman
 - **4-state logic**: X/Z propagation, full 4-state operator semantics
 - **VCD waveform generation** (12 tests): `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), hierarchical signals, 4-state encoding, timing/edge detection, FSM visualization
 - **Dynamic repeat loops** (1 test): Runtime-evaluated repeat counts with non-constant expressions
-- **System tasks**: $display, $monitor, $time, $finish, $readmemh/b, $dumpvars, $dumpoff, $dumpon, etc.
-- **Memory operations**: Single and multi-dimensional arrays, hierarchical indexing, part-select with array access
+- **System tasks**: $display, $monitor, $time, $stime, $finish, $readmemh/b, $writememh/b, $dumpvars, $dumpoff, $dumpon, etc.
+- **Memory operations**: Single and multi-dimensional arrays, hierarchical indexing, part-select with array access, wide memory ($readmemh with 128-bit values)
 - **Advanced net types**: tri, trireg, wand, wor, supply0/1
-- **System functions**: File I/O ($fopen, $fclose, $fscanf, $fwrite, etc.), random ($random, $urandom), bit manipulation ($bits, $size, $dimensions)
+- **System functions**: File I/O ($fopen, $fclose, $fseek, $fread, $fscanf, etc.), random ($random, $urandom), bit manipulation ($bits, $size, $dimensions)
 
 ### Running Tests
 
@@ -269,13 +277,17 @@ The compiler detects and reports:
 ### Technical References
 - [4-State Logic Plan](docs/4STATE.md) - X/Z support design document
 - [4-State API Reference](docs/gpga_4state_api.md) - Complete MSL library documentation (100+ functions)
+- [Software Double Implementation](docs/SOFTFLOAT64_IMPLEMENTATION.md) - IEEE 754 double-precision emulation on Metal GPUs
 - [GPGA Keywords Reference](docs/GPGA_KEYWORDS.md) - All `gpga_*` and `__gpga_*` keywords used in generated MSL
+- [App Bundling Vision](docs/APP_BUNDLING.md) - HDL-to-native macOS applications
 - [Bit Packing Strategy](docs/bit_packing_strategy.md) - GPU memory optimization techniques
 - [Verilog Reference](docs/VERILOG_REFERENCE.md) - Language reference
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ### Revision History
-- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV30)
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV32)
+  - [REV32](docs/diff/REV32.md) - Wide integer support & complete file I/O (v0.7+)
+  - [REV31](docs/diff/REV31.md) - Software double-precision float & extended file I/O (v0.7)
   - [REV30](docs/diff/REV30.md) - File I/O & string literals (v0.7)
   - [REV29](docs/diff/REV29.md) - Enhanced VCD & dynamic repeat (v0.7+)
   - [REV28](docs/diff/REV28.md) - VCD writer & service record integration (v0.7)

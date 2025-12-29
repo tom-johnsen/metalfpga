@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -31,7 +32,11 @@ void PrintUsage(const char* argv0) {
             << " [--dump-flat] [--top <module>] [--4state] [--auto]"
             << " [--run] [--count N] [--service-capacity N]"
             << " [--max-steps N] [--max-proc-steps N]"
-            << " [--vcd-dir <path>] [--vcd-steps N]\n";
+            << " [--dispatch-timeout-ms N]"
+            << " [--run-verbose]"
+            << " [--source-bindings]"
+            << " [--vcd-dir <path>] [--vcd-steps N]"
+            << " [+ARG[=VALUE] ...]\n";
 }
 
 bool WriteFile(const std::string& path, const std::string& content,
@@ -125,7 +130,8 @@ bool IsFileSystemFunctionName(const std::string& name) {
   return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
          name == "$fgets" || name == "$feof" || name == "$fscanf" ||
          name == "$sscanf" || name == "$ftell" || name == "$fseek" ||
-         name == "$ferror" || name == "$ungetc" || name == "$fread";
+         name == "$ferror" || name == "$ungetc" || name == "$fread" ||
+         name == "$test$plusargs" || name == "$value$plusargs";
 }
 
 void AddString(SysTaskInfo* info, const std::string& value) {
@@ -169,6 +175,9 @@ void CollectSystemFunctionExpr(const gpga::Expr& expr, SysTaskInfo* info) {
               treat_ident = true;
             }
           } else if (expr.ident == "$fopen") {
+            treat_ident = true;
+          } else if (expr.ident == "$test$plusargs" ||
+                     expr.ident == "$value$plusargs") {
             treat_ident = true;
           }
           if (treat_ident) {
@@ -1018,6 +1027,27 @@ bool ReadTokenFromString(const std::string& input, size_t* pos,
   }
   *pos = i;
   return !token->empty();
+}
+
+std::string PlusargPrefix(const std::string& format) {
+  size_t pos = format.find('%');
+  if (pos == std::string::npos) {
+    return format;
+  }
+  return format.substr(0, pos);
+}
+
+bool FindPlusargMatch(const std::vector<std::string>& plusargs,
+                      const std::string& prefix, std::string* value_out) {
+  for (const auto& arg : plusargs) {
+    if (arg.rfind(prefix, 0) == 0) {
+      if (value_out) {
+        *value_out = arg.substr(prefix.size());
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 bool ParseTokenValue(const std::string& token, char spec, uint64_t* out_value,
@@ -2976,6 +3006,7 @@ bool HandleServiceRecords(
     const std::string& timescale,
     bool four_state, uint32_t instance_count, uint32_t gid,
     uint32_t proc_count, FileTable* files,
+    const std::vector<std::string>& plusargs,
     std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
     VcdWriter* vcd, gpga::ServiceDrainResult* result,
     std::string* dumpfile, std::string* error) {
@@ -3264,6 +3295,79 @@ bool HandleServiceRecords(
         }
         std::cout << "Time scale of " << target << " is " << display_timescale
                   << "\n";
+        break;
+      }
+      case gpga::ServiceKind::kTestPlusargs: {
+        std::string pattern =
+            (rec.format_id != 0xFFFFFFFFu)
+                ? ResolveString(strings, rec.format_id)
+                : std::string();
+        if (pattern.empty() && !rec.args.empty()) {
+          pattern = resolve_string_or_ident(rec.args.front());
+        }
+        bool found = (!pattern.empty() &&
+                      FindPlusargMatch(plusargs, pattern, nullptr));
+        resume_if_waiting(rec, record_index, found ? 1u : 0u);
+        break;
+      }
+      case gpga::ServiceKind::kValuePlusargs: {
+        std::string format =
+            (rec.format_id != 0xFFFFFFFFu)
+                ? ResolveString(strings, rec.format_id)
+                : std::string();
+        if (format.empty() && !rec.args.empty()) {
+          format = resolve_string_or_ident(rec.args.front());
+        }
+        if (format.empty()) {
+          resume_if_waiting(rec, record_index, 0u);
+          break;
+        }
+        std::string prefix = PlusargPrefix(format);
+        std::string payload;
+        if (!FindPlusargMatch(plusargs, prefix, &payload)) {
+          resume_if_waiting(rec, record_index, 0u);
+          break;
+        }
+        std::vector<FormatSpec> specs = ParseFormatSpecs(format);
+        if (specs.empty()) {
+          resume_if_waiting(rec, record_index, 0u);
+          break;
+        }
+        size_t arg_index = 0;
+        size_t pos = 0;
+        int assigned = 0;
+        for (const auto& spec : specs) {
+          std::string token;
+          if (!ReadTokenFromString(payload, &pos, &token)) {
+            break;
+          }
+          if (spec.suppress) {
+            continue;
+          }
+          while (arg_index < rec.args.size() &&
+                 rec.args[arg_index].kind != gpga::ServiceArgKind::kIdent) {
+            ++arg_index;
+          }
+          if (arg_index >= rec.args.size()) {
+            break;
+          }
+          uint32_t width = rec.args[arg_index].width;
+          if (width == 0u) {
+            width = 64u;
+          }
+          std::vector<uint64_t> words;
+          std::string str_value;
+          if (!ParseTokenWords(token, spec.spec, width, &words, &str_value)) {
+            break;
+          }
+          uint64_t value = words.empty() ? 0ull : words[0];
+          const std::vector<uint64_t>* wide_words =
+              (width > 64u) ? &words : nullptr;
+          write_output_arg(rec.args[arg_index], value, str_value, wide_words);
+          ++assigned;
+          ++arg_index;
+        }
+        resume_if_waiting(rec, record_index, assigned > 0 ? 1u : 0u);
         break;
       }
       case gpga::ServiceKind::kFdisplay:
@@ -4040,11 +4144,25 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
               const std::unordered_map<std::string, std::string>& flat_to_hier,
               bool enable_4state, uint32_t count, uint32_t service_capacity,
               uint32_t max_steps, uint32_t max_proc_steps,
+              uint32_t dispatch_timeout_ms,
+              bool run_verbose,
+              bool source_bindings,
               const std::string& vcd_dir, uint32_t vcd_steps,
+              const std::vector<std::string>& plusargs,
               std::string* error) {
   gpga::MetalRuntime runtime;
+  runtime.SetPreferSourceBindings(source_bindings);
+  if (run_verbose) {
+    std::cerr << "Compiling Metal source (" << msl.size() << " bytes)...\n";
+  }
+  auto compile_start = std::chrono::steady_clock::now();
   if (!runtime.CompileSource(msl, {"include"}, error)) {
     return false;
+  }
+  if (run_verbose) {
+    auto compile_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - compile_start);
+    std::cerr << "Compile finished in " << compile_ms.count() << " ms\n";
   }
 
   gpga::SchedulerConstants sched;
@@ -4062,19 +4180,31 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   gpga::MetalKernel sched_kernel;
 
   if (has_sched) {
+    if (run_verbose) {
+      std::cerr << "Creating scheduler kernel...\n";
+    }
     if (!runtime.CreateKernel(base + "_sched_step", &sched_kernel, error)) {
       return false;
     }
   } else {
+    if (run_verbose) {
+      std::cerr << "Creating combinational kernel...\n";
+    }
     if (!runtime.CreateKernel(base, &comb_kernel, error)) {
       return false;
     }
     if (has_init) {
+      if (run_verbose) {
+        std::cerr << "Creating init kernel...\n";
+      }
       if (!runtime.CreateKernel(base + "_init", &init_kernel, error)) {
         return false;
       }
     }
     if (has_tick) {
+      if (run_verbose) {
+        std::cerr << "Creating tick kernel...\n";
+      }
       if (!runtime.CreateKernel(base + "_tick", &tick_kernel, error)) {
         return false;
       }
@@ -4157,13 +4287,25 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     const uint32_t kStatusFinished = 2u;
     const uint32_t kStatusError = 3u;
     const uint32_t kStatusStopped = 4u;
+    const uint32_t kStatusIdle = 1u;
     const uint32_t max_iters = 100000u;
     for (uint32_t iter = 0; iter < max_iters; ++iter) {
       if (sched_params && has_dumpvars) {
         sched_params->max_steps = vcd.active() ? vcd_step_budget : 1u;
       }
-      if (!runtime.Dispatch(sched_kernel, bindings, count, error)) {
+      if (run_verbose && (iter == 0u || (iter % 1000u) == 0u)) {
+        std::cerr << "Dispatch iter " << iter << "\n";
+      }
+      auto dispatch_start = std::chrono::steady_clock::now();
+      if (!runtime.Dispatch(sched_kernel, bindings, count, error,
+                            dispatch_timeout_ms)) {
         return false;
+      }
+      if (run_verbose && (iter == 0u || (iter % 1000u) == 0u)) {
+        auto dispatch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - dispatch_start);
+        std::cerr << "Dispatch iter " << iter << " took "
+                  << dispatch_ms.count() << " ms\n";
       }
       bool saw_finish = false;
       if (sched_kernel.HasBuffer("sched_service") &&
@@ -4201,8 +4343,8 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
                                       &flat_to_hier, module.timescale,
                                       enable_4state, count, gid,
                                       sched.proc_count, &file_tables[gid],
-                                      &buffers, &vcd, &result, &dumpfile,
-                                      error)) {
+                                      plusargs, &buffers, &vcd, &result,
+                                      &dumpfile, error)) {
               return false;
             }
             if (result.saw_finish || result.saw_stop || result.saw_error) {
@@ -4228,7 +4370,8 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
         break;
       }
       if (status[0] == kStatusFinished || status[0] == kStatusStopped ||
-          status[0] == kStatusError || saw_finish) {
+          status[0] == kStatusError || saw_finish ||
+          status[0] == kStatusIdle) {
         vcd.FinalSnapshot(buffers);
         vcd.Close();
         break;
@@ -4244,11 +4387,13 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       if (!BuildBindings(init_kernel, buffers, &init_bindings, error)) {
         return false;
       }
-      if (!runtime.Dispatch(init_kernel, init_bindings, count, error)) {
+      if (!runtime.Dispatch(init_kernel, init_bindings, count, error,
+                            dispatch_timeout_ms)) {
         return false;
       }
     }
-    if (!runtime.Dispatch(comb_kernel, bindings, count, error)) {
+    if (!runtime.Dispatch(comb_kernel, bindings, count, error,
+                          dispatch_timeout_ms)) {
       return false;
     }
     if (has_tick) {
@@ -4256,7 +4401,8 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       if (!BuildBindings(tick_kernel, buffers, &tick_bindings, error)) {
         return false;
       }
-      if (!runtime.Dispatch(tick_kernel, tick_bindings, count, error)) {
+      if (!runtime.Dispatch(tick_kernel, tick_bindings, count, error,
+                            dispatch_timeout_ms)) {
         return false;
       }
       SwapNextBuffers(&buffers);
@@ -5187,12 +5333,16 @@ int main(int argc, char** argv) {
   bool enable_4state = false;
   bool auto_discover = false;
   bool run = false;
+  bool run_verbose = false;
+  bool run_source_bindings = false;
   uint32_t run_count = 1u;
   uint32_t run_service_capacity = 32u;
   uint32_t run_max_steps = 1024u;
   uint32_t run_max_proc_steps = 64u;
+  uint32_t run_dispatch_timeout_ms = 0u;
   std::string vcd_dir;
   uint32_t vcd_steps = 0u;
+  std::vector<std::string> plusargs;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -5222,6 +5372,10 @@ int main(int argc, char** argv) {
       auto_discover = true;
     } else if (arg == "--run") {
       run = true;
+    } else if (arg == "--run-verbose") {
+      run_verbose = true;
+    } else if (arg == "--source-bindings") {
+      run_source_bindings = true;
     } else if (arg == "--count") {
       if (i + 1 >= argc) {
         PrintUsage(argv[0]);
@@ -5252,6 +5406,13 @@ int main(int argc, char** argv) {
         return 2;
       }
       run_max_proc_steps = static_cast<uint32_t>(std::stoul(argv[++i]));
+    } else if (arg == "--dispatch-timeout-ms") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      run_dispatch_timeout_ms =
+          static_cast<uint32_t>(std::stoul(argv[++i]));
     } else if (arg == "--vcd-dir" || arg == "--vcr-dir") {
       if (i + 1 >= argc) {
         PrintUsage(argv[0]);
@@ -5264,6 +5425,8 @@ int main(int argc, char** argv) {
         return 2;
       }
       vcd_steps = static_cast<uint32_t>(std::stoul(argv[++i]));
+    } else if (!arg.empty() && arg[0] == '+') {
+      plusargs.push_back(arg.substr(1));
     } else if (!arg.empty() && arg[0] == '-') {
       PrintUsage(argv[0]);
       return 2;
@@ -5407,7 +5570,8 @@ int main(int argc, char** argv) {
     if (!RunMetal(design.top, msl, design.flat_to_hier, enable_4state,
                   run_count,
                   run_service_capacity, run_max_steps, run_max_proc_steps,
-                  vcd_dir, vcd_steps, &error)) {
+                  run_dispatch_timeout_ms, run_verbose, run_source_bindings,
+                  vcd_dir, vcd_steps, plusargs, &error)) {
       std::cerr << "Run failed: " << error << "\n";
       return 1;
     }

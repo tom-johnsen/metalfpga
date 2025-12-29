@@ -26,16 +26,16 @@ Emits host-side runtime scaffolding
 .PP
 .B Current Status:
 v0.7+ -
-.B Verilog frontend complete + GPU runtime functional + VCD waveform generation:
-parsing, elaboration, and MSL codegen for ~95% of Verilog-2005, plus Metal runtime
+.B Verilog frontend 100% complete + GPU runtime functional + VCD waveform generation + Wide integer support:
+Full Verilog-2005 parsing, elaboration, and MSL codegen, plus Metal runtime
 with GPU execution and industry-standard VCD waveform output. Includes
-IEEE 754 real number arithmetic, User-Defined Primitives (UDPs), match-3
-operators (===, !==, ==?, !=?), power operator (**), multi-dimensional arrays,
-procedural part-select assignment, and dynamic repeat loops. Full VCD debugging
-support with $dumpfile, $dumpvars, dump control ($dumpoff/$dumpon), and
-$readmemh/$readmemb. Extensive support for generate blocks,
-4-state logic, signed arithmetic, system tasks, timing controls, and switch-level
-primitives. 377 total test files validate the compiler pipeline.
+software double-precision float (IEEE 754), wide integers (128-bit, 256-bit, arbitrary width),
+User-Defined Primitives (UDPs), match-3 operators (===, !==, ==?, !=?), power operator (**),
+multi-dimensional arrays, procedural part-select assignment, and dynamic repeat loops.
+Full VCD debugging support with $dumpfile, $dumpvars, dump control ($dumpoff/$dumpon),
+and $readmemh/$readmemb. 14 file I/O functions including $fopen, $fseek, $fread, $ungetc, $ferror.
+Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks,
+timing controls, and switch-level primitives. 393 total test files validate the compiler pipeline.
 .B Next phase: Full test suite validation on GPU (v1.0).
 .SH OPTIONS
 .TP
@@ -177,6 +177,8 @@ Concatenation: {a, b, c}
 Replication: {4{1'b0}}
 .IP \[bu]
 String literals: "Hello" - Converted to packed ASCII bit values (little-endian, up to 8 characters/64 bits)
+.IP \[bu]
+Wide integers: Arbitrary-width literals and operations (128-bit, 256-bit, etc.) - Wide literals (128'hDEADBEEF), multi-word arithmetic with carry/borrow, dynamic shifts across 64-bit boundaries
 .SS System Functions and Tasks
 .IP \[bu] 2
 Type casting: $signed(...), $unsigned(...)
@@ -189,7 +191,7 @@ Monitoring: $monitor - Continuous value watching
 .IP \[bu]
 Control: $finish, $stop - Simulation control
 .IP \[bu]
-Time: $time, $stime, $realtime - Time retrieval
+Time: $time (64-bit), $stime (32-bit), $realtime - Time retrieval
 .IP \[bu]
 Formatting: $timeformat, $printtimescale
 .IP \[bu]
@@ -197,7 +199,7 @@ Memory I/O: $readmemh, $readmemb, $writememh, $writememb - Memory initialization
 .IP \[bu]
 Waveform: $dumpfile, $dumpvars, $dumpall, $dumpon, $dumpoff, $dumpflush, $dumplimit - Full VCD waveform generation with dump control
 .IP \[bu]
-File I/O: $fopen, $fclose, $fgetc, $fgets, $feof, $fscanf, $sscanf - File operations (infrastructure in place, runtime execution pending)
+File I/O: $fopen, $fclose, $fgetc, $fgets, $feof, $ftell, $rewind, $fseek, $fread, $ungetc, $ferror, $fflush, $fscanf, $sscanf - File operations (14 functions, infrastructure complete, runtime execution pending)
 .IP \[bu]
 String: $sformat - String formatting
 .IP \[bu]
@@ -224,7 +226,7 @@ Edge-sensitive UDPs (posedge/negedge detection)
 Level-sensitive UDPs (transparent latches)
 .SS Real Number Arithmetic
 .IP \[bu] 2
-real data type for IEEE 754 double-precision floating-point
+real data type for IEEE 754 double-precision floating-point (software emulation using ulong - Metal GPUs lack native double hardware)
 .IP \[bu]
 Real literals: 3.14, 1.5e-10, .5, 5.
 .IP \[bu]
@@ -235,6 +237,8 @@ Arithmetic operators: +, -, *, /, ** (power)
 Comparison operators: <, >, <=, >=, ==, !=
 .IP \[bu]
 Mixed integer/real arithmetic with automatic promotion
+.IP \[bu]
+Special values: NaN, Infinity, ±0, denormals fully supported
 .SS Switch-Level Modeling
 .IP \[bu] 2
 Transmission gates: tran, tranif0, tranif1, rtran, rtranif0, rtranif1
@@ -336,7 +340,7 @@ for different testing scenarios.
 Quick smoke test (1 file, ~2 seconds) - For rapid development iteration
 .TP
 .B ./test_runner.sh \-\-full
-Comprehensive test suite (364 files, ~3 minutes) - For regression testing
+Comprehensive test suite (393 files, ~3 minutes) - For regression testing
 .TP
 .B ./test_runner.sh \-\-4state
 Force 4-state mode for all tests - Tests X/Z logic paths
@@ -369,7 +373,7 @@ Invalid command-line arguments
 Smoke test for quick validation (1 file, runs in ~2 seconds)
 .TP
 .I verilog/pass/*.v
-Comprehensive test suite (365 files, requires --full flag, runs in ~3 minutes)
+Comprehensive test suite (393 files, requires --full flag, runs in ~3 minutes)
 .TP
 .I verilog/systemverilog/*.v
 SystemVerilog test suite (18 files, expected to fail)
@@ -392,30 +396,43 @@ Complete MSL 4-state library reference (100+ functions)
 .I docs/GPGA_KEYWORDS.md
 GPGA keywords reference - All gpga_* and __gpga_* keywords used in generated MSL
 .TP
+.I docs/SOFTFLOAT64_IMPLEMENTATION.md
+Software double-precision float implementation (IEEE 754 emulation, 29 functions)
+.TP
+.I docs/APP_BUNDLING.md
+Vision for compiling HDL to native macOS applications
+.TP
 .I docs/diff/
-REV documents tracking commit-by-commit changes (REV0-REV30)
+REV documents tracking commit-by-commit changes (REV0-REV32)
 .TP
 .I verilog/test_vcd_*.v
 VCD waveform generation tests (12 files)
 .TP
 .I verilog/test_repeat_dynamic.v
 Dynamic repeat loop test
+.TP
+.I verilog/test_wide_*.v
+Wide integer tests (128-bit, 256-bit, 5 files)
+.TP
+.I verilog/test_system_*.v
+File I/O system task tests (9+ files)
 .SH NOTES
 .SS Test Suite Status
-377 total test files validate the compiler pipeline. The test suite validates
+393 total test files validate the compiler pipeline. The test suite validates
 parsing, elaboration, MSL codegen output quality, semantic correctness, and
 VCD waveform generation.
 Test coverage includes UDPs (4 tests), real number arithmetic (12 tests),
 casez/casex pattern matching (16 tests), defparam hierarchical override (9 tests),
 generate blocks (23 tests), timing semantics (14 tests), switch-level primitives
 (23 tests), VCD waveform generation (12 tests), dynamic repeat loops (1 test),
+wide integers (5 tests), file I/O (14 functions, 9+ tests),
 match-3 operators, part-select assignment, reduction operators,
 signed arithmetic, 4-state logic, system tasks, multi-dimensional arrays, and
 advanced net types.
 .PP
 The default test run (./test_runner.sh) executes a single smoke test for rapid
 iteration during development. Use ./test_runner.sh --full for comprehensive
-regression testing (365 files).
+regression testing (393 files).
 .SS Frontend Status
 .B Complete:
 The Verilog frontend is feature-complete. The compiler successfully parses,
@@ -424,8 +441,10 @@ emitted MSL is structurally sound and implements intended semantics.
 .PP
 .B Runtime Status:
 The Metal runtime infrastructure is fully functional. VCD waveform generation
-is complete and working with full dump control support. $readmemh/$readmemb
-file I/O is implemented.
+is complete and working with full dump control support. Software double-precision
+float (IEEE 754) is implemented using ulong emulation. File I/O infrastructure
+is complete with all 14 functions implemented ($readmemh/$readmemb, $fopen/$fclose,
+$fseek/$ftell/$rewind, $fread/$fgetc/$fgets, $ungetc, $ferror/$fflush, $fscanf/$sscanf).
 Features awaiting full validation include:
 .IP \[bu] 2
 Event scheduling behavior under GPU dispatch
@@ -460,16 +479,20 @@ verilog/
   test_v1_ready_do_not_move.v  Smoke test (1 file, default run)
   test_vcd_*.v                 VCD waveform tests (12 files)
   test_repeat_dynamic.v        Dynamic repeat test
-  pass/           Comprehensive test suite (365 files, --full flag)
+  test_wide_*.v                Wide integer tests (128-bit, 256-bit, 5 files)
+  test_system_*.v              File I/O tests (9+ files)
+  pass/           Comprehensive test suite (393 files, --full flag)
   systemverilog/  SystemVerilog tests (18 files, expected to fail)
 docs/
-  gpga/                 Core documentation
-  diff/                 REV documents (REV0-REV29 commit changelogs)
-  4STATE.md             4-state logic implementation
-  gpga_4state_api.md    Complete MSL 4-state library reference
-  VERILOG_REFERENCE.md  Language reference
-  ASYNC_DEBUGGING.md    Async circuit debugging
-  bit_packing_strategy.md  GPU memory optimization
+  gpga/                      Core documentation
+  diff/                      REV documents (REV0-REV32 commit changelogs)
+  4STATE.md                  4-state logic implementation
+  gpga_4state_api.md         Complete MSL 4-state library reference
+  SOFTFLOAT64_IMPLEMENTATION.md  Software double-precision float (IEEE 754)
+  APP_BUNDLING.md            HDL-to-macOS apps vision
+  VERILOG_REFERENCE.md       Language reference
+  ASYNC_DEBUGGING.md         Async circuit debugging
+  bit_packing_strategy.md    GPU memory optimization
 artifacts/        Test run outputs (generated, gitignored)
 .fi
 .SH BUGS
