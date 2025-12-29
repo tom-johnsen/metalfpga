@@ -555,7 +555,7 @@ std::string EmitHostStub(const Module& module) {
   out << "        auto* counts = static_cast<uint32_t*>(buffers[\"sched_service_count\"].contents());\n";
   out << "        auto* records = static_cast<uint8_t*>(buffers[\"sched_service\"].contents());\n";
   out << "        if (counts && records) {\n";
-  out << "          size_t stride = gpga::ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args), module.four_state);\n";
+  out << "          size_t stride = gpga::ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args), sched.service_wide_words, module.four_state);\n";
   out << "          for (uint32_t gid = 0; gid < count; ++gid) {\n";
   out << "            uint32_t used = counts[gid];\n";
   out << "            if (used > service_capacity) {\n";
@@ -567,7 +567,7 @@ std::string EmitHostStub(const Module& module) {
   out << "            const uint8_t* rec_base = records + (gid * service_capacity * stride);\n";
   out << "            gpga::ServiceDrainResult result = gpga::DrainSchedulerServices(\n";
   out << "                rec_base, used, std::max<uint32_t>(1, sched.service_max_args),\n";
-  out << "                module.four_state, strings, std::cout);\n";
+  out << "                sched.service_wide_words, module.four_state, strings, std::cout);\n";
   out << "            if (result.saw_finish || result.saw_stop || result.saw_error) {\n";
   out << "              saw_finish = true;\n";
   out << "            }\n";

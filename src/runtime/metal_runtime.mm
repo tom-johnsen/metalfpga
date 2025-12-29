@@ -138,6 +138,134 @@ std::string FormatBits(uint64_t value, uint64_t xz, uint32_t width, int base,
   return out;
 }
 
+bool WideHasXz(const std::vector<uint64_t>& words) {
+  for (uint64_t word : words) {
+    if (word != 0u) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool WideBit(const std::vector<uint64_t>& words, uint32_t bit) {
+  size_t word_index = bit / 64u;
+  if (word_index >= words.size()) {
+    return false;
+  }
+  uint32_t shift = bit % 64u;
+  return ((words[word_index] >> shift) & 1ull) != 0ull;
+}
+
+std::vector<uint64_t> MaskWideWords(std::vector<uint64_t> words,
+                                    uint32_t width) {
+  if (width == 0u || words.empty()) {
+    return words;
+  }
+  uint32_t word_count = (width + 63u) / 64u;
+  if (words.size() > word_count) {
+    words.resize(word_count);
+  }
+  uint32_t rem = width % 64u;
+  if (rem != 0u && !words.empty()) {
+    uint64_t mask = (1ull << rem) - 1ull;
+    words.back() &= mask;
+  }
+  return words;
+}
+
+std::string FormatWideBits(const std::vector<uint64_t>& value_words,
+                           const std::vector<uint64_t>& xz_words,
+                           uint32_t width, int base, bool has_xz) {
+  if (width == 0u) {
+    width = 1u;
+  }
+  int group = 1;
+  if (base == 16) {
+    group = 4;
+  } else if (base == 8) {
+    group = 3;
+  }
+  int digits = static_cast<int>((width + group - 1u) / group);
+  std::string out;
+  out.reserve(static_cast<size_t>(digits));
+  for (int i = digits - 1; i >= 0; --i) {
+    int shift = i * group;
+    bool group_xz = false;
+    uint64_t digit = 0;
+    for (int bit = 0; bit < group; ++bit) {
+      int bit_index = shift + bit;
+      if (bit_index >= static_cast<int>(width)) {
+        continue;
+      }
+      if (has_xz && WideBit(xz_words, static_cast<uint32_t>(bit_index))) {
+        group_xz = true;
+      }
+      if (WideBit(value_words, static_cast<uint32_t>(bit_index))) {
+        digit |= (1ull << bit);
+      }
+    }
+    if (has_xz && group_xz) {
+      out.push_back('x');
+      continue;
+    }
+    if (base == 16) {
+      out.push_back("0123456789abcdef"[digit & 0xF]);
+    } else if (base == 8) {
+      out.push_back("01234567"[digit & 0x7]);
+    } else {
+      out.push_back((digit & 1ull) ? '1' : '0');
+    }
+  }
+  return out;
+}
+
+std::string FormatWideUnsigned(std::vector<uint64_t> words, uint32_t width) {
+  words = MaskWideWords(std::move(words), width);
+  while (!words.empty() && words.back() == 0u) {
+    words.pop_back();
+  }
+  if (words.empty()) {
+    return "0";
+  }
+  std::string out;
+  while (!words.empty()) {
+    unsigned __int128 rem = 0;
+    for (size_t i = words.size(); i-- > 0;) {
+      unsigned __int128 cur = (rem << 64) | words[i];
+      words[i] = static_cast<uint64_t>(cur / 10u);
+      rem = cur % 10u;
+    }
+    out.push_back(static_cast<char>('0' + static_cast<uint32_t>(rem)));
+    while (!words.empty() && words.back() == 0u) {
+      words.pop_back();
+    }
+  }
+  std::reverse(out.begin(), out.end());
+  return out;
+}
+
+std::string FormatWideSigned(std::vector<uint64_t> words, uint32_t width) {
+  words = MaskWideWords(std::move(words), width);
+  if (width == 0u || words.empty()) {
+    return "0";
+  }
+  bool sign = WideBit(words, width - 1u);
+  if (!sign) {
+    return FormatWideUnsigned(words, width);
+  }
+  for (auto& word : words) {
+    word = ~word;
+  }
+  words = MaskWideWords(std::move(words), width);
+  uint64_t carry = 1u;
+  for (auto& word : words) {
+    uint64_t prev = word;
+    word += carry;
+    carry = (word < prev) ? 1u : 0u;
+  }
+  return "-" + FormatWideUnsigned(words, width);
+}
+
 std::string ApplyPadding(std::string text, int width, bool zero_pad) {
   if (width <= 0 || static_cast<int>(text.size()) >= width) {
     return text;
@@ -151,6 +279,27 @@ std::string ApplyPadding(std::string text, int width, bool zero_pad) {
 }
 
 std::string FormatNumeric(const ServiceArgView& arg, char spec, bool has_xz) {
+  if (arg.kind == ServiceArgKind::kWide && !arg.wide_value.empty()) {
+    const std::vector<uint64_t>& val = arg.wide_value;
+    const std::vector<uint64_t>& xz = arg.wide_xz;
+    if (has_xz && WideHasXz(xz) &&
+        (spec == 'd' || spec == 'u' || spec == 't')) {
+      return "x";
+    }
+    if (spec == 'b') {
+      return FormatWideBits(val, xz, arg.width, 2, has_xz);
+    }
+    if (spec == 'o') {
+      return FormatWideBits(val, xz, arg.width, 8, has_xz);
+    }
+    if (spec == 'h' || spec == 'x') {
+      return FormatWideBits(val, xz, arg.width, 16, has_xz);
+    }
+    if (spec == 'u' || spec == 't') {
+      return FormatWideUnsigned(val, arg.width);
+    }
+    return FormatWideSigned(val, arg.width);
+  }
   if (has_xz && arg.xz != 0u &&
       (spec == 'd' || spec == 'u' || spec == 't')) {
     return "x";
@@ -832,6 +981,8 @@ bool ParseSchedulerConstants(const std::string& source,
   ParseUintConst(source, "GPGA_SCHED_MONITOR_MAX_ARGS", &info.monitor_max_args);
   ParseUintConst(source, "GPGA_SCHED_STROBE_COUNT", &info.strobe_count);
   ParseUintConst(source, "GPGA_SCHED_SERVICE_MAX_ARGS", &info.service_max_args);
+  ParseUintConst(source, "GPGA_SCHED_SERVICE_WIDE_WORDS",
+                 &info.service_wide_words);
   ParseUintConst(source, "GPGA_SCHED_STRING_COUNT", &info.string_count);
   info.has_scheduler = info.proc_count > 0;
   info.has_services = info.service_max_args > 0;
@@ -858,7 +1009,12 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
     if (signal.is_real && width < 64u) {
       width = 64u;
     }
-    return (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
+    if (width == 0u) {
+      width = 1u;
+    }
+    size_t word_size = (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
+    size_t word_count = (width <= 64u) ? 1u : ((width + 63u) / 64u);
+    return word_size * word_count;
   };
   auto signal_elements = [&](const SignalInfo& signal) -> size_t {
     uint32_t array_size = signal.array_size > 0 ? signal.array_size : 1u;
@@ -936,6 +1092,16 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
                  name == "sched_monitor_xz") {
         spec.length = sizeof(uint64_t) * instance_count * sched.monitor_count *
                       sched.monitor_max_args;
+      } else if (name == "sched_monitor_wide_val" ||
+                 name == "sched_monitor_wide_xz") {
+        if (sched.service_wide_words == 0u) {
+          if (error) {
+            *error = "scheduler wide monitor buffer requested without wide words";
+          }
+          return false;
+        }
+        spec.length = sizeof(uint64_t) * instance_count * sched.monitor_count *
+                      sched.monitor_max_args * sched.service_wide_words;
       } else if (name == "sched_strobe_pending") {
         spec.length = sizeof(uint32_t) * instance_count * sched.strobe_count;
       } else if (name == "sched_service_count") {
@@ -943,7 +1109,7 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       } else if (name == "sched_service") {
         size_t stride =
             ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args),
-                                module.four_state);
+                                sched.service_wide_words, module.four_state);
         spec.length = stride * instance_count * service_capacity;
       } else {
         if (error) {
@@ -981,24 +1147,29 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
   return true;
 }
 
-size_t ServiceRecordStride(uint32_t max_args, bool has_xz) {
+size_t ServiceRecordStride(uint32_t max_args, uint32_t wide_words,
+                           bool has_xz) {
   size_t header = sizeof(uint32_t) * 4u;
   size_t arg_kind = sizeof(uint32_t) * max_args;
   size_t arg_width = sizeof(uint32_t) * max_args;
   size_t arg_val = sizeof(uint64_t) * max_args;
   size_t arg_xz = has_xz ? sizeof(uint64_t) * max_args : 0u;
-  return header + arg_kind + arg_width + arg_val + arg_xz;
+  size_t arg_wide_val = sizeof(uint64_t) * max_args * wide_words;
+  size_t arg_wide_xz = has_xz ? sizeof(uint64_t) * max_args * wide_words : 0u;
+  return header + arg_kind + arg_width + arg_val + arg_xz + arg_wide_val +
+         arg_wide_xz;
 }
 
 ServiceDrainResult DrainSchedulerServices(
     const void* records, uint32_t record_count, uint32_t max_args,
-    bool has_xz, const ServiceStringTable& strings, std::ostream& out) {
+    uint32_t wide_words, bool has_xz, const ServiceStringTable& strings,
+    std::ostream& out) {
   ServiceDrainResult result;
   if (!records || record_count == 0 || max_args == 0) {
     return result;
   }
   const auto* base = static_cast<const uint8_t*>(records);
-  const size_t stride = ServiceRecordStride(max_args, has_xz);
+  const size_t stride = ServiceRecordStride(max_args, wide_words, has_xz);
   for (uint32_t i = 0; i < record_count; ++i) {
     const uint8_t* rec = base + (stride * i);
     uint32_t kind_raw = ReadU32(rec, 0);
@@ -1016,6 +1187,11 @@ ServiceDrainResult DrainSchedulerServices(
     const size_t arg_val_offset =
         arg_width_offset + sizeof(uint32_t) * max_args;
     const size_t arg_xz_offset = arg_val_offset + sizeof(uint64_t) * max_args;
+    const size_t arg_wide_val_offset =
+        arg_xz_offset + (has_xz ? sizeof(uint64_t) * max_args : 0u);
+    const size_t arg_wide_xz_offset =
+        arg_wide_val_offset +
+        sizeof(uint64_t) * max_args * static_cast<size_t>(wide_words);
 
     auto read_arg = [&](uint32_t index) -> ServiceArgView {
       ServiceArgView arg;
@@ -1026,6 +1202,27 @@ ServiceDrainResult DrainSchedulerServices(
       arg.value = ReadU64(rec, arg_val_offset + sizeof(uint64_t) * index);
       if (has_xz) {
         arg.xz = ReadU64(rec, arg_xz_offset + sizeof(uint64_t) * index);
+      }
+      if (arg.kind == ServiceArgKind::kWide && wide_words > 0u) {
+        uint32_t word_count = (arg.width + 63u) / 64u;
+        size_t base =
+            arg_wide_val_offset +
+            sizeof(uint64_t) * (static_cast<size_t>(index) * wide_words);
+        arg.wide_value.resize(word_count, 0ull);
+        for (uint32_t w = 0; w < word_count; ++w) {
+          arg.wide_value[w] =
+              ReadU64(rec, base + sizeof(uint64_t) * w);
+        }
+        if (has_xz) {
+          size_t xz_base =
+              arg_wide_xz_offset +
+              sizeof(uint64_t) * (static_cast<size_t>(index) * wide_words);
+          arg.wide_xz.resize(word_count, 0ull);
+          for (uint32_t w = 0; w < word_count; ++w) {
+            arg.wide_xz[w] =
+                ReadU64(rec, xz_base + sizeof(uint64_t) * w);
+          }
+        }
       }
       return arg;
     };
@@ -1047,6 +1244,7 @@ ServiceDrainResult DrainSchedulerServices(
         out << "$stop (pid=" << pid << ")\n";
         break;
       case ServiceKind::kDisplay:
+      case ServiceKind::kWrite:
       case ServiceKind::kMonitor:
       case ServiceKind::kStrobe: {
         std::string fmt = (format_id != 0xFFFFFFFFu)
@@ -1062,9 +1260,21 @@ ServiceDrainResult DrainSchedulerServices(
             fmt.empty() ? FormatDefaultArgs(args, strings, has_xz)
                         : FormatWithSpec(fmt, args, start_index, strings,
                                          has_xz);
-        out << line << "\n";
+        out << line;
+        if (kind != ServiceKind::kWrite) {
+          out << "\n";
+        }
         break;
       }
+      case ServiceKind::kSformat:
+        out << "$sformat (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kTimeformat:
+        out << "$timeformat (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kPrinttimescale:
+        out << "$printtimescale (pid=" << pid << ")\n";
+        break;
       case ServiceKind::kDumpfile: {
         std::string filename = ResolveString(strings, format_id);
         out << "$dumpfile \"" << filename << "\" (pid=" << pid << ")\n";
@@ -1111,6 +1321,21 @@ ServiceDrainResult DrainSchedulerServices(
         break;
       case ServiceKind::kRewind:
         out << "$rewind (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kFseek:
+        out << "$fseek (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kFflush:
+        out << "$fflush (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kFerror:
+        out << "$ferror (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kFungetc:
+        out << "$ungetc (pid=" << pid << ")\n";
+        break;
+      case ServiceKind::kFread:
+        out << "$fread (pid=" << pid << ")\n";
         break;
       case ServiceKind::kReadmemh:
       case ServiceKind::kReadmemb: {

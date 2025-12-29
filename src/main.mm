@@ -1,10 +1,12 @@
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -77,13 +79,53 @@ bool IsSystemTask(const std::string& name) {
 
 bool IdentAsString(const std::string& name) {
   return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
-         name == "$writememh" || name == "$writememb";
+         name == "$writememh" || name == "$writememb" ||
+         name == "$printtimescale";
+}
+
+std::vector<char> ExtractFormatSpecs(const std::string& format) {
+  std::vector<char> specs;
+  for (size_t i = 0; i < format.size(); ++i) {
+    if (format[i] != '%') {
+      continue;
+    }
+    if (i + 1 < format.size() && format[i + 1] == '%') {
+      ++i;
+      continue;
+    }
+    size_t j = i + 1;
+    if (j < format.size() && format[j] == '0') {
+      ++j;
+    }
+    while (j < format.size() &&
+           std::isdigit(static_cast<unsigned char>(format[j]))) {
+      ++j;
+    }
+    if (j < format.size() && format[j] == '.') {
+      ++j;
+      while (j < format.size() &&
+             std::isdigit(static_cast<unsigned char>(format[j]))) {
+        ++j;
+      }
+    }
+    if (j >= format.size()) {
+      break;
+    }
+    char spec = format[j];
+    if (spec >= 'A' && spec <= 'Z') {
+      spec = static_cast<char>(spec - 'A' + 'a');
+    }
+    specs.push_back(spec);
+    i = j;
+  }
+  return specs;
 }
 
 bool IsFileSystemFunctionName(const std::string& name) {
   return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
          name == "$fgets" || name == "$feof" || name == "$fscanf" ||
-         name == "$sscanf" || name == "$ftell";
+         name == "$sscanf" || name == "$ftell" || name == "$fseek" ||
+         name == "$ferror" || name == "$ungetc" || name == "$fread";
 }
 
 void AddString(SysTaskInfo* info, const std::string& value) {
@@ -118,6 +160,8 @@ void CollectSystemFunctionExpr(const gpga::Expr& expr, SysTaskInfo* info) {
         if (arg->kind == gpga::ExprKind::kIdentifier) {
           bool treat_ident = false;
           if (expr.ident == "$fgets") {
+            treat_ident = (i == 0);
+          } else if (expr.ident == "$fread") {
             treat_ident = (i == 0);
           } else if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
             treat_ident = (i >= 2);
@@ -352,15 +396,47 @@ void CollectTasks(const gpga::Statement& stmt, SysTaskInfo* info) {
       info->has_dumpvars = true;
     }
     info->max_args = std::max(info->max_args, stmt.task_args.size());
+    size_t format_arg_start = 0;
+    if (stmt.task_name == "$fdisplay" || stmt.task_name == "$fwrite") {
+      format_arg_start = 1;
+    } else if (stmt.task_name == "$sformat") {
+      format_arg_start = 1;
+    }
+    std::vector<char> format_specs;
+    bool has_format_specs =
+        stmt.task_args.size() > format_arg_start &&
+        stmt.task_args[format_arg_start] &&
+        stmt.task_args[format_arg_start]->kind == gpga::ExprKind::kString;
+    if (has_format_specs) {
+      format_specs =
+          ExtractFormatSpecs(stmt.task_args[format_arg_start]->string_value);
+    }
+    size_t format_arg_index = 0;
+    if (stmt.task_name == "$sformat" && !stmt.task_args.empty() &&
+        stmt.task_args[0] &&
+        stmt.task_args[0]->kind == gpga::ExprKind::kIdentifier) {
+      AddString(info, stmt.task_args[0]->ident);
+    }
     bool treat_ident = IdentAsString(stmt.task_name);
-    for (const auto& arg : stmt.task_args) {
+    for (size_t i = 0; i < stmt.task_args.size(); ++i) {
+      const auto& arg = stmt.task_args[i];
       if (!arg) {
         continue;
       }
+      bool is_format_literal = has_format_specs && i == format_arg_start &&
+                               arg->kind == gpga::ExprKind::kString;
       if (arg->kind == gpga::ExprKind::kString) {
         AddString(info, arg->string_value);
       } else if (treat_ident && arg->kind == gpga::ExprKind::kIdentifier) {
         AddString(info, arg->ident);
+      } else if (has_format_specs && !is_format_literal &&
+                 format_arg_index < format_specs.size() &&
+                 format_specs[format_arg_index] == 's' &&
+                 arg->kind == gpga::ExprKind::kIdentifier) {
+        AddString(info, arg->ident);
+      }
+      if (has_format_specs && !is_format_literal) {
+        ++format_arg_index;
       }
     }
   }
@@ -568,36 +644,70 @@ gpga::MetalBuffer* FindBufferMutable(
   return nullptr;
 }
 
-size_t SignalElementSize(const gpga::SignalInfo& sig) {
+uint32_t SignalBitWidth(const gpga::SignalInfo& sig) {
   uint32_t width = sig.is_real ? 64u : sig.width;
-  return (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
+  return width == 0u ? 1u : width;
 }
 
-bool ReadSignalValue(const gpga::SignalInfo& sig, uint32_t gid,
-                     const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
-                     uint64_t* value_out) {
-  if (!value_out) {
+size_t SignalWordSize(const gpga::SignalInfo& sig) {
+  return (SignalBitWidth(sig) > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
+}
+
+size_t SignalWordCount(const gpga::SignalInfo& sig) {
+  uint32_t width = SignalBitWidth(sig);
+  if (width <= 64u) {
+    return 1u;
+  }
+  return (width + 63u) / 64u;
+}
+
+size_t SignalElementCount(const gpga::SignalInfo& sig,
+                          const gpga::MetalBuffer& buffer) {
+  size_t word_size = SignalWordSize(sig);
+  size_t word_count = SignalWordCount(sig);
+  size_t stride = word_size * word_count;
+  if (stride == 0) {
+    return 0;
+  }
+  return buffer.length() / stride;
+}
+
+bool ReadSignalWordFromBuffer(const gpga::SignalInfo& sig, uint32_t gid,
+                              uint64_t array_index,
+                              const gpga::MetalBuffer& buffer,
+                              size_t word_index, uint64_t* value_out) {
+  if (!value_out || !buffer.contents()) {
     return false;
   }
-  const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.name, "_val");
-  if (!val_buf || !val_buf->contents()) {
+  size_t word_count = SignalWordCount(sig);
+  if (word_index >= word_count) {
     return false;
   }
-  size_t elem_size = SignalElementSize(sig);
   size_t array_size = sig.array_size > 0 ? sig.array_size : 1u;
-  size_t offset = elem_size * (static_cast<size_t>(gid) * array_size);
-  if (val_buf->length() < offset + elem_size) {
+  if (array_index >= array_size) {
+    return false;
+  }
+  size_t element_count = SignalElementCount(sig, buffer);
+  if (element_count == 0) {
+    return false;
+  }
+  size_t element_index =
+      static_cast<size_t>(gid) * array_size + static_cast<size_t>(array_index);
+  if (element_index >= element_count) {
+    return false;
+  }
+  size_t word_size = SignalWordSize(sig);
+  size_t offset = (element_index * word_count + word_index) * word_size;
+  if (buffer.length() < offset + word_size) {
     return false;
   }
   uint64_t value = 0;
-  if (elem_size == sizeof(uint64_t)) {
-    std::memcpy(&value,
-                static_cast<const uint8_t*>(val_buf->contents()) + offset,
+  if (word_size == sizeof(uint64_t)) {
+    std::memcpy(&value, static_cast<const uint8_t*>(buffer.contents()) + offset,
                 sizeof(uint64_t));
   } else {
     uint32_t tmp = 0;
-    std::memcpy(&tmp,
-                static_cast<const uint8_t*>(val_buf->contents()) + offset,
+    std::memcpy(&tmp, static_cast<const uint8_t*>(buffer.contents()) + offset,
                 sizeof(uint32_t));
     value = tmp;
   }
@@ -605,9 +715,22 @@ bool ReadSignalValue(const gpga::SignalInfo& sig, uint32_t gid,
   return true;
 }
 
-bool WriteSignalValue(const gpga::SignalInfo& sig, uint32_t gid, uint64_t value,
-                      uint64_t xz, bool four_state,
-                      std::unordered_map<std::string, gpga::MetalBuffer>* buffers) {
+bool ReadSignalWord(const gpga::SignalInfo& sig, uint32_t gid,
+                    uint64_t array_index,
+                    const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
+                    size_t word_index, uint64_t* value_out) {
+  const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.name, "_val");
+  if (!val_buf) {
+    return false;
+  }
+  return ReadSignalWordFromBuffer(sig, gid, array_index, *val_buf, word_index,
+                                  value_out);
+}
+
+bool WriteSignalWord(const gpga::SignalInfo& sig, uint32_t gid,
+                     uint64_t array_index, size_t word_index, uint64_t value,
+                     uint64_t xz, bool four_state,
+                     std::unordered_map<std::string, gpga::MetalBuffer>* buffers) {
   gpga::MetalBuffer* val_buf = FindBufferMutable(buffers, sig.name, "_val");
   if (!val_buf || !val_buf->contents()) {
     return false;
@@ -616,17 +739,33 @@ bool WriteSignalValue(const gpga::SignalInfo& sig, uint32_t gid, uint64_t value,
   if (four_state) {
     xz_buf = FindBufferMutable(buffers, sig.name, "_xz");
   }
-  size_t elem_size = SignalElementSize(sig);
-  size_t array_size = sig.array_size > 0 ? sig.array_size : 1u;
-  size_t offset = elem_size * (static_cast<size_t>(gid) * array_size);
-  if (val_buf->length() < offset + elem_size) {
+  size_t word_count = SignalWordCount(sig);
+  if (word_index >= word_count) {
     return false;
   }
-  if (elem_size == sizeof(uint64_t)) {
+  size_t array_size = sig.array_size > 0 ? sig.array_size : 1u;
+  if (array_index >= array_size) {
+    return false;
+  }
+  size_t element_count = SignalElementCount(sig, *val_buf);
+  if (element_count == 0) {
+    return false;
+  }
+  size_t element_index =
+      static_cast<size_t>(gid) * array_size + static_cast<size_t>(array_index);
+  if (element_index >= element_count) {
+    return false;
+  }
+  size_t word_size = SignalWordSize(sig);
+  size_t offset = (element_index * word_count + word_index) * word_size;
+  if (val_buf->length() < offset + word_size) {
+    return false;
+  }
+  if (word_size == sizeof(uint64_t)) {
     std::memcpy(static_cast<uint8_t*>(val_buf->contents()) + offset, &value,
                 sizeof(uint64_t));
     if (four_state && xz_buf && xz_buf->contents() &&
-        xz_buf->length() >= offset + elem_size) {
+        xz_buf->length() >= offset + word_size) {
       std::memcpy(static_cast<uint8_t*>(xz_buf->contents()) + offset, &xz,
                   sizeof(uint64_t));
     }
@@ -635,7 +774,7 @@ bool WriteSignalValue(const gpga::SignalInfo& sig, uint32_t gid, uint64_t value,
     std::memcpy(static_cast<uint8_t*>(val_buf->contents()) + offset, &tmp,
                 sizeof(uint32_t));
     if (four_state && xz_buf && xz_buf->contents() &&
-        xz_buf->length() >= offset + elem_size) {
+        xz_buf->length() >= offset + word_size) {
       uint32_t tmp_xz = static_cast<uint32_t>(xz);
       std::memcpy(static_cast<uint8_t*>(xz_buf->contents()) + offset, &tmp_xz,
                   sizeof(uint32_t));
@@ -644,15 +783,54 @@ bool WriteSignalValue(const gpga::SignalInfo& sig, uint32_t gid, uint64_t value,
   return true;
 }
 
+bool ReadSignalValue(const gpga::SignalInfo& sig, uint32_t gid,
+                     const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
+                     uint64_t* value_out) {
+  return ReadSignalWord(sig, gid, 0u, buffers, 0u, value_out);
+}
+
+bool WriteSignalValue(const gpga::SignalInfo& sig, uint32_t gid, uint64_t value,
+                      uint64_t xz, bool four_state,
+                      std::unordered_map<std::string, gpga::MetalBuffer>* buffers) {
+  size_t word_count = SignalWordCount(sig);
+  if (!WriteSignalWord(sig, gid, 0u, 0u, value, xz, four_state, buffers)) {
+    return false;
+  }
+  for (size_t i = 1; i < word_count; ++i) {
+    if (!WriteSignalWord(sig, gid, 0u, i, 0ull, 0ull, four_state, buffers)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool WriteSignalValueAtIndex(const gpga::SignalInfo& sig, uint32_t gid,
+                             uint64_t index, uint64_t value, uint64_t xz,
+                             bool four_state,
+                             std::unordered_map<std::string, gpga::MetalBuffer>* buffers) {
+  size_t word_count = SignalWordCount(sig);
+  if (!WriteSignalWord(sig, gid, index, 0u, value, xz, four_state, buffers)) {
+    return false;
+  }
+  for (size_t i = 1; i < word_count; ++i) {
+    if (!WriteSignalWord(sig, gid, index, i, 0ull, 0ull, four_state, buffers)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 uint64_t PackStringBits(const std::string& value, size_t max_bytes) {
   uint64_t bits = 0;
   size_t count = std::min(max_bytes, sizeof(uint64_t));
+  if (value.size() < count) {
+    count = value.size();
+  }
+  size_t start = value.size() > count ? (value.size() - count) : 0;
   for (size_t i = 0; i < count; ++i) {
-    if (i >= value.size()) {
-      break;
-    }
+    size_t pos = count - 1u - i;
     bits |= (static_cast<uint64_t>(
-                 static_cast<unsigned char>(value[i])) << (8u * i));
+                 static_cast<unsigned char>(value[start + i])) << (8u * pos));
   }
   return bits;
 }
@@ -660,8 +838,17 @@ uint64_t PackStringBits(const std::string& value, size_t max_bytes) {
 std::string UnpackStringBits(uint64_t bits, size_t max_bytes) {
   std::string out;
   out.reserve(max_bytes);
-  for (size_t i = 0; i < max_bytes; ++i) {
-    char c = static_cast<char>((bits >> (8u * i)) & 0xFFu);
+  size_t start = 0;
+  for (; start < max_bytes; ++start) {
+    size_t pos = max_bytes - 1u - start;
+    char c = static_cast<char>((bits >> (8u * pos)) & 0xFFu);
+    if (c != '\0') {
+      break;
+    }
+  }
+  for (size_t i = start; i < max_bytes; ++i) {
+    size_t pos = max_bytes - 1u - i;
+    char c = static_cast<char>((bits >> (8u * pos)) & 0xFFu);
     if (c == '\0') {
       break;
     }
@@ -670,16 +857,77 @@ std::string UnpackStringBits(uint64_t bits, size_t max_bytes) {
   return out;
 }
 
-std::string ReadSignalString(const gpga::SignalInfo& sig, uint32_t gid,
-                             const std::unordered_map<std::string, gpga::MetalBuffer>& buffers) {
-  uint64_t value = 0;
-  if (!ReadSignalValue(sig, gid, buffers, &value)) {
+std::vector<uint64_t> PackStringWords(const std::string& value,
+                                      size_t max_bytes) {
+  size_t word_count = std::max<size_t>(1u, (max_bytes + 7u) / 8u);
+  size_t byte_count = word_count * 8u;
+  std::vector<uint8_t> bytes(byte_count, 0u);
+  size_t usable_start = byte_count > max_bytes ? byte_count - max_bytes : 0u;
+  size_t count = std::min(value.size(), max_bytes);
+  size_t src_start = value.size() > count ? (value.size() - count) : 0u;
+  size_t dest_start = usable_start + (max_bytes - count);
+  for (size_t i = 0; i < count; ++i) {
+    bytes[dest_start + i] =
+        static_cast<uint8_t>(value[src_start + i]);
+  }
+  std::vector<uint64_t> words(word_count, 0ull);
+  for (size_t word_index = 0; word_index < word_count; ++word_index) {
+    size_t byte_base = byte_count - (word_index + 1u) * 8u;
+    uint64_t word = 0;
+    for (size_t b = 0; b < 8u; ++b) {
+      word |=
+          static_cast<uint64_t>(bytes[byte_base + b]) << (8u * (7u - b));
+    }
+    words[word_index] = word;
+  }
+  return words;
+}
+
+std::string UnpackStringWords(const std::vector<uint64_t>& words,
+                              size_t max_bytes) {
+  if (words.empty() || max_bytes == 0u) {
     return {};
   }
-  size_t max_bytes = (sig.width + 7u) / 8u;
-  size_t elem_bytes = SignalElementSize(sig);
-  max_bytes = std::min(max_bytes, elem_bytes);
-  return UnpackStringBits(value, max_bytes);
+  size_t word_count = words.size();
+  size_t byte_count = word_count * 8u;
+  std::vector<uint8_t> bytes(byte_count, 0u);
+  for (size_t word_index = 0; word_index < word_count; ++word_index) {
+    size_t byte_base = byte_count - (word_index + 1u) * 8u;
+    uint64_t word = words[word_index];
+    for (size_t b = 0; b < 8u; ++b) {
+      bytes[byte_base + b] =
+          static_cast<uint8_t>((word >> (8u * (7u - b))) & 0xFFu);
+    }
+  }
+  size_t usable_start = byte_count > max_bytes ? byte_count - max_bytes : 0u;
+  size_t start = usable_start;
+  for (; start < byte_count; ++start) {
+    if (bytes[start] != 0u) {
+      break;
+    }
+  }
+  std::string out;
+  out.reserve(byte_count - start);
+  for (size_t i = start; i < byte_count; ++i) {
+    if (bytes[i] == 0u) {
+      break;
+    }
+    out.push_back(static_cast<char>(bytes[i]));
+  }
+  return out;
+}
+
+std::string ReadSignalString(const gpga::SignalInfo& sig, uint32_t gid,
+                             const std::unordered_map<std::string, gpga::MetalBuffer>& buffers) {
+  size_t max_bytes = (SignalBitWidth(sig) + 7u) / 8u;
+  size_t word_count = SignalWordCount(sig);
+  std::vector<uint64_t> words(word_count, 0ull);
+  for (size_t i = 0; i < word_count; ++i) {
+    if (!ReadSignalWord(sig, gid, 0u, buffers, i, &words[i])) {
+      return {};
+    }
+  }
+  return UnpackStringWords(words, max_bytes);
 }
 
 struct FormatSpec {
@@ -834,6 +1082,132 @@ bool ParseTokenValue(const std::string& token, char spec, uint64_t* out_value,
   return true;
 }
 
+bool ParseTokenWords(const std::string& token_in, char spec, uint32_t width,
+                     std::vector<uint64_t>* out_words,
+                     std::string* out_string) {
+  if (!out_words) {
+    return false;
+  }
+  out_words->clear();
+  if (spec == 's') {
+    if (out_string) {
+      *out_string = token_in;
+    }
+    return true;
+  }
+  if (width == 0u) {
+    width = 1u;
+  }
+  size_t word_count = (width + 63u) / 64u;
+  out_words->assign(word_count, 0ull);
+  if (spec == 'c') {
+    unsigned char ch =
+        token_in.empty() ? 0u : static_cast<unsigned char>(token_in[0]);
+    (*out_words)[0] = static_cast<uint64_t>(ch);
+  } else if (spec == 'f' || spec == 'e' || spec == 'g') {
+    char* end = nullptr;
+    double val = std::strtod(token_in.c_str(), &end);
+    if (end == token_in.c_str()) {
+      return false;
+    }
+    uint64_t bits = 0;
+    std::memcpy(&bits, &val, sizeof(bits));
+    (*out_words)[0] = bits;
+  } else {
+    std::string token;
+    token.reserve(token_in.size());
+    for (char c : token_in) {
+      if (c != '_') {
+        token.push_back(c);
+      }
+    }
+    if (token.empty()) {
+      return false;
+    }
+    bool allow_sign = (spec == 'd' || spec == 'i');
+    bool negative = false;
+    if (!token.empty() && (token[0] == '+' || token[0] == '-')) {
+      if (!allow_sign) {
+        return false;
+      }
+      negative = (token[0] == '-');
+      token.erase(token.begin());
+    }
+    int base = 10;
+    if (spec == 'h' || spec == 'x') {
+      base = 16;
+    } else if (spec == 'o') {
+      base = 8;
+    } else if (spec == 'b') {
+      base = 2;
+    } else if (spec == 'i') {
+      if (token.size() >= 2 && token[0] == '0' &&
+          (token[1] == 'x' || token[1] == 'X')) {
+        base = 16;
+        token = token.substr(2);
+      } else if (token.size() >= 2 && token[0] == '0' &&
+                 (token[1] == 'b' || token[1] == 'B')) {
+        base = 2;
+        token = token.substr(2);
+      } else if (token.size() > 1 && token[0] == '0') {
+        base = 8;
+        token = token.substr(1);
+      }
+    } else {
+      if (base == 16 && token.size() >= 2 && token[0] == '0' &&
+          (token[1] == 'x' || token[1] == 'X')) {
+        token = token.substr(2);
+      } else if (base == 2 && token.size() >= 2 && token[0] == '0' &&
+                 (token[1] == 'b' || token[1] == 'B')) {
+        token = token.substr(2);
+      }
+    }
+    if (token.empty()) {
+      return false;
+    }
+    for (char c : token) {
+      int digit = -1;
+      if (c >= '0' && c <= '9') {
+        digit = c - '0';
+      } else if (c >= 'a' && c <= 'f') {
+        digit = 10 + (c - 'a');
+      } else if (c >= 'A' && c <= 'F') {
+        digit = 10 + (c - 'A');
+      }
+      if (digit < 0 || digit >= base) {
+        return false;
+      }
+      uint64_t carry = static_cast<uint64_t>(digit);
+      for (size_t i = 0; i < out_words->size(); ++i) {
+        unsigned __int128 prod =
+            static_cast<unsigned __int128>((*out_words)[i]) *
+                static_cast<unsigned __int128>(base) +
+            carry;
+        (*out_words)[i] = static_cast<uint64_t>(prod);
+        carry = static_cast<uint64_t>(prod >> 64);
+      }
+    }
+    if (negative) {
+      for (auto& word : *out_words) {
+        word = ~word;
+      }
+      uint64_t carry = 1u;
+      for (size_t i = 0; i < out_words->size(); ++i) {
+        unsigned __int128 sum =
+            static_cast<unsigned __int128>((*out_words)[i]) + carry;
+        (*out_words)[i] = static_cast<uint64_t>(sum);
+        carry = static_cast<uint64_t>(sum >> 64);
+      }
+    }
+  }
+  uint32_t tail_bits = width % 64u;
+  if (tail_bits != 0u) {
+    uint64_t mask = (1ull << tail_bits) - 1ull;
+    (*out_words)[out_words->size() - 1u] &= mask;
+  }
+  return true;
+}
+
 uint32_t ReadU32(const uint8_t* base, size_t offset) {
   uint32_t value = 0;
   std::memcpy(&value, base + offset, sizeof(value));
@@ -877,6 +1251,76 @@ int64_t SignExtend(uint64_t value, uint32_t width) {
   return static_cast<int64_t>(masked);
 }
 
+struct TimeFormatState {
+  bool active = false;
+  int units = 0;
+  int precision = 0;
+  std::string suffix;
+  int min_width = 0;
+};
+
+TimeFormatState g_time_format;
+int g_timescale_exp = -9;
+
+std::string TrimString(const std::string& value) {
+  size_t start = 0;
+  while (start < value.size() &&
+         std::isspace(static_cast<unsigned char>(value[start]))) {
+    ++start;
+  }
+  size_t end = value.size();
+  while (end > start &&
+         std::isspace(static_cast<unsigned char>(value[end - 1u]))) {
+    --end;
+  }
+  return value.substr(start, end - start);
+}
+
+int ParseTimescaleExponent(const std::string& timescale) {
+  std::string token = TrimString(timescale);
+  size_t slash = token.find('/');
+  if (slash != std::string::npos) {
+    token = TrimString(token.substr(0, slash));
+  }
+  if (token.empty()) {
+    return -9;
+  }
+  size_t pos = 0;
+  while (pos < token.size() &&
+         std::isdigit(static_cast<unsigned char>(token[pos]))) {
+    ++pos;
+  }
+  int magnitude = 1;
+  if (pos > 0) {
+    magnitude = std::atoi(token.substr(0, pos).c_str());
+  }
+  std::string unit = TrimString(token.substr(pos));
+  for (auto& ch : unit) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  int unit_exp = -9;
+  if (unit == "s") {
+    unit_exp = 0;
+  } else if (unit == "ms") {
+    unit_exp = -3;
+  } else if (unit == "us") {
+    unit_exp = -6;
+  } else if (unit == "ns") {
+    unit_exp = -9;
+  } else if (unit == "ps") {
+    unit_exp = -12;
+  } else if (unit == "fs") {
+    unit_exp = -15;
+  }
+  int mag_exp = 0;
+  if (magnitude == 10) {
+    mag_exp = 1;
+  } else if (magnitude == 100) {
+    mag_exp = 2;
+  }
+  return unit_exp + mag_exp;
+}
+
 std::string FormatBits(uint64_t value, uint64_t xz, uint32_t width, int base,
                        bool has_xz) {
   if (width == 0u) {
@@ -917,6 +1361,134 @@ std::string FormatBits(uint64_t value, uint64_t xz, uint32_t width, int base,
   return out;
 }
 
+bool WideHasXz(const std::vector<uint64_t>& words) {
+  for (uint64_t word : words) {
+    if (word != 0u) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool WideBit(const std::vector<uint64_t>& words, uint32_t bit) {
+  size_t word_index = bit / 64u;
+  if (word_index >= words.size()) {
+    return false;
+  }
+  uint32_t shift = bit % 64u;
+  return ((words[word_index] >> shift) & 1ull) != 0ull;
+}
+
+std::vector<uint64_t> MaskWideWords(std::vector<uint64_t> words,
+                                    uint32_t width) {
+  if (width == 0u || words.empty()) {
+    return words;
+  }
+  uint32_t word_count = (width + 63u) / 64u;
+  if (words.size() > word_count) {
+    words.resize(word_count);
+  }
+  uint32_t rem = width % 64u;
+  if (rem != 0u && !words.empty()) {
+    uint64_t mask = (1ull << rem) - 1ull;
+    words.back() &= mask;
+  }
+  return words;
+}
+
+std::string FormatWideBits(const std::vector<uint64_t>& value_words,
+                           const std::vector<uint64_t>& xz_words,
+                           uint32_t width, int base, bool has_xz) {
+  if (width == 0u) {
+    width = 1u;
+  }
+  int group = 1;
+  if (base == 16) {
+    group = 4;
+  } else if (base == 8) {
+    group = 3;
+  }
+  int digits = static_cast<int>((width + group - 1u) / group);
+  std::string out;
+  out.reserve(static_cast<size_t>(digits));
+  for (int i = digits - 1; i >= 0; --i) {
+    int shift = i * group;
+    bool group_xz = false;
+    uint64_t digit = 0;
+    for (int bit = 0; bit < group; ++bit) {
+      int bit_index = shift + bit;
+      if (bit_index >= static_cast<int>(width)) {
+        continue;
+      }
+      if (has_xz && WideBit(xz_words, static_cast<uint32_t>(bit_index))) {
+        group_xz = true;
+      }
+      if (WideBit(value_words, static_cast<uint32_t>(bit_index))) {
+        digit |= (1ull << bit);
+      }
+    }
+    if (has_xz && group_xz) {
+      out.push_back('x');
+      continue;
+    }
+    if (base == 16) {
+      out.push_back("0123456789abcdef"[digit & 0xF]);
+    } else if (base == 8) {
+      out.push_back("01234567"[digit & 0x7]);
+    } else {
+      out.push_back((digit & 1ull) ? '1' : '0');
+    }
+  }
+  return out;
+}
+
+std::string FormatWideUnsigned(std::vector<uint64_t> words, uint32_t width) {
+  words = MaskWideWords(std::move(words), width);
+  while (!words.empty() && words.back() == 0u) {
+    words.pop_back();
+  }
+  if (words.empty()) {
+    return "0";
+  }
+  std::string out;
+  while (!words.empty()) {
+    unsigned __int128 rem = 0;
+    for (size_t i = words.size(); i-- > 0;) {
+      unsigned __int128 cur = (rem << 64) | words[i];
+      words[i] = static_cast<uint64_t>(cur / 10u);
+      rem = cur % 10u;
+    }
+    out.push_back(static_cast<char>('0' + static_cast<uint32_t>(rem)));
+    while (!words.empty() && words.back() == 0u) {
+      words.pop_back();
+    }
+  }
+  std::reverse(out.begin(), out.end());
+  return out;
+}
+
+std::string FormatWideSigned(std::vector<uint64_t> words, uint32_t width) {
+  words = MaskWideWords(std::move(words), width);
+  if (width == 0u || words.empty()) {
+    return "0";
+  }
+  bool sign = WideBit(words, width - 1u);
+  if (!sign) {
+    return FormatWideUnsigned(words, width);
+  }
+  for (auto& word : words) {
+    word = ~word;
+  }
+  words = MaskWideWords(std::move(words), width);
+  uint64_t carry = 1u;
+  for (auto& word : words) {
+    uint64_t prev = word;
+    word += carry;
+    carry = (word < prev) ? 1u : 0u;
+  }
+  return "-" + FormatWideUnsigned(words, width);
+}
+
 std::string ApplyPadding(std::string text, int width, bool zero_pad) {
   if (width <= 0 || static_cast<int>(text.size()) >= width) {
     return text;
@@ -931,6 +1503,27 @@ std::string ApplyPadding(std::string text, int width, bool zero_pad) {
 
 std::string FormatNumeric(const gpga::ServiceArgView& arg, char spec,
                           bool has_xz) {
+  if (arg.kind == gpga::ServiceArgKind::kWide && !arg.wide_value.empty()) {
+    const std::vector<uint64_t>& val = arg.wide_value;
+    const std::vector<uint64_t>& xz = arg.wide_xz;
+    if (has_xz && WideHasXz(xz) &&
+        (spec == 'd' || spec == 'u' || spec == 't')) {
+      return "x";
+    }
+    if (spec == 'b') {
+      return FormatWideBits(val, xz, arg.width, 2, has_xz);
+    }
+    if (spec == 'o') {
+      return FormatWideBits(val, xz, arg.width, 8, has_xz);
+    }
+    if (spec == 'h' || spec == 'x') {
+      return FormatWideBits(val, xz, arg.width, 16, has_xz);
+    }
+    if (spec == 'u' || spec == 't') {
+      return FormatWideUnsigned(val, arg.width);
+    }
+    return FormatWideSigned(val, arg.width);
+  }
   if (has_xz && arg.xz != 0u &&
       (spec == 'd' || spec == 'u' || spec == 't')) {
     return "x";
@@ -946,7 +1539,21 @@ std::string FormatNumeric(const gpga::ServiceArgView& arg, char spec,
     return FormatBits(arg.value, arg.xz, width, 16, has_xz);
   }
   if (spec == 't') {
-    return std::to_string(arg.value);
+    if (!g_time_format.active) {
+      return std::to_string(arg.value);
+    }
+    if (has_xz && arg.xz != 0u) {
+      return "x";
+    }
+    double scaled = static_cast<double>(arg.value) *
+                    std::pow(10.0,
+                             static_cast<double>(g_timescale_exp -
+                                                 g_time_format.units));
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(g_time_format.precision) << scaled;
+    std::string text = oss.str();
+    text = ApplyPadding(text, g_time_format.min_width, false);
+    return text + g_time_format.suffix;
   }
   if (spec == 'u') {
     uint64_t mask = MaskForWidth(width);
@@ -1001,7 +1608,10 @@ std::string FormatWithSpec(const std::string& fmt,
                            const std::vector<gpga::ServiceArgView>& args,
                            size_t start_index,
                            const gpga::ServiceStringTable& strings,
-                           bool has_xz) {
+                           bool has_xz,
+                           const gpga::ModuleInfo* module,
+                           const std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
+                           uint32_t gid) {
   std::ostringstream oss;
   size_t arg_index = start_index;
   for (size_t i = 0; i < fmt.size(); ++i) {
@@ -1047,8 +1657,33 @@ std::string FormatWithSpec(const std::string& fmt,
       oss << ApplyPadding("<missing>", width, false);
       continue;
     }
-    std::string text =
-        FormatArg(args[arg_index], spec, precision, strings, has_xz);
+    std::string text;
+    if (spec == 's') {
+      const auto& arg = args[arg_index];
+      if (arg.kind == gpga::ServiceArgKind::kIdent && module && buffers) {
+        std::string name =
+            ResolveString(strings, static_cast<uint32_t>(arg.value));
+        const gpga::SignalInfo* sig = FindSignalInfo(*module, name);
+        if (sig) {
+          text = ReadSignalString(*sig, gid, *buffers);
+        } else {
+          text = name;
+        }
+      } else if (arg.kind == gpga::ServiceArgKind::kString ||
+                 arg.kind == gpga::ServiceArgKind::kIdent) {
+        text = ResolveString(strings, static_cast<uint32_t>(arg.value));
+      } else if (arg.kind == gpga::ServiceArgKind::kWide &&
+                 !arg.wide_value.empty()) {
+        size_t max_bytes = (arg.width + 7u) / 8u;
+        text = UnpackStringWords(arg.wide_value, max_bytes);
+      } else {
+        size_t max_bytes = (arg.width + 7u) / 8u;
+        max_bytes = std::min(max_bytes, sizeof(uint64_t));
+        text = UnpackStringBits(arg.value, max_bytes);
+      }
+    } else {
+      text = FormatArg(args[arg_index], spec, precision, strings, has_xz);
+    }
     ++arg_index;
     oss << ApplyPadding(std::move(text), width, zero_pad);
   }
@@ -1084,7 +1719,7 @@ struct DecodedServiceRecord {
 };
 
 void DecodeServiceRecords(const void* records, uint32_t record_count,
-                          uint32_t max_args, bool has_xz,
+                          uint32_t max_args, uint32_t wide_words, bool has_xz,
                           std::vector<DecodedServiceRecord>* out) {
   if (!out) {
     return;
@@ -1094,7 +1729,8 @@ void DecodeServiceRecords(const void* records, uint32_t record_count,
     return;
   }
   const auto* base = static_cast<const uint8_t*>(records);
-  const size_t stride = gpga::ServiceRecordStride(max_args, has_xz);
+  const size_t stride =
+      gpga::ServiceRecordStride(max_args, wide_words, has_xz);
   out->reserve(record_count);
   for (uint32_t i = 0; i < record_count; ++i) {
     const uint8_t* rec = base + (stride * i);
@@ -1115,6 +1751,11 @@ void DecodeServiceRecords(const void* records, uint32_t record_count,
     const size_t arg_val_offset =
         arg_width_offset + sizeof(uint32_t) * max_args;
     const size_t arg_xz_offset = arg_val_offset + sizeof(uint64_t) * max_args;
+    const size_t arg_wide_val_offset =
+        arg_xz_offset + (has_xz ? sizeof(uint64_t) * max_args : 0u);
+    const size_t arg_wide_xz_offset =
+        arg_wide_val_offset +
+        sizeof(uint64_t) * max_args * static_cast<size_t>(wide_words);
 
     record.args.reserve(arg_count);
     for (uint32_t a = 0; a < arg_count; ++a) {
@@ -1125,6 +1766,27 @@ void DecodeServiceRecords(const void* records, uint32_t record_count,
       arg.value = ReadU64(rec, arg_val_offset + sizeof(uint64_t) * a);
       if (has_xz) {
         arg.xz = ReadU64(rec, arg_xz_offset + sizeof(uint64_t) * a);
+      }
+      if (arg.kind == gpga::ServiceArgKind::kWide && wide_words > 0u) {
+        uint32_t word_count = (arg.width + 63u) / 64u;
+        size_t base =
+            arg_wide_val_offset +
+            sizeof(uint64_t) * (static_cast<size_t>(a) * wide_words);
+        arg.wide_value.resize(word_count, 0ull);
+        for (uint32_t w = 0; w < word_count; ++w) {
+          arg.wide_value[w] =
+              ReadU64(rec, base + sizeof(uint64_t) * w);
+        }
+        if (has_xz) {
+          size_t xz_base =
+              arg_wide_xz_offset +
+              sizeof(uint64_t) * (static_cast<size_t>(a) * wide_words);
+          arg.wide_xz.resize(word_count, 0ull);
+          for (uint32_t w = 0; w < word_count; ++w) {
+            arg.wide_xz[w] =
+                ReadU64(rec, xz_base + sizeof(uint64_t) * w);
+          }
+        }
       }
       record.args.push_back(arg);
     }
@@ -1150,12 +1812,15 @@ struct VcdSignal {
   std::string id;
   std::string base_name;
   uint32_t width = 1;
+  uint32_t word_count = 1;
   uint32_t array_size = 1;
   uint32_t array_index = 0;
   uint32_t instance_index = 0;
   bool is_real = false;
   uint64_t last_val = 0;
   uint64_t last_xz = 0;
+  std::vector<uint64_t> last_val_words;
+  std::vector<uint64_t> last_xz_words;
   bool has_value = false;
 };
 
@@ -1318,6 +1983,8 @@ class VcdWriter {
           entry.instance_index = inst;
           entry.is_real = sig.is_real;
           entry.width = sig.is_real ? 64u : std::max<uint32_t>(1u, sig.width);
+          entry.word_count = entry.width <= 64u ? 1u :
+              static_cast<uint32_t>((entry.width + 63u) / 64u);
           entry.id = VcdIdForIndex(index++);
           if (array_size > 1u) {
             entry.name = display_name + "[" + std::to_string(i) + "]";
@@ -1522,15 +2189,27 @@ class VcdWriter {
       const std::unordered_map<std::string, gpga::MetalBuffer>& buffers) {
     out_ << "#0\n";
     for (auto& sig : signals_) {
-      uint64_t val = 0;
-      uint64_t xz = 0;
-      if (!ReadSignal(sig, buffers, &val, &xz)) {
+      if (sig.word_count <= 1u) {
+        uint64_t val = 0;
+        uint64_t xz = 0;
+        if (!ReadSignal(sig, buffers, &val, &xz)) {
+          continue;
+        }
+        sig.last_val = val;
+        sig.last_xz = xz;
+        sig.has_value = true;
+        EmitValue(sig, val, xz);
         continue;
       }
-      sig.last_val = val;
-      sig.last_xz = xz;
+      std::vector<uint64_t> val_words;
+      std::vector<uint64_t> xz_words;
+      if (!ReadSignalWords(sig, buffers, &val_words, &xz_words)) {
+        continue;
+      }
+      sig.last_val_words = val_words;
+      sig.last_xz_words = xz_words;
       sig.has_value = true;
-      EmitValue(sig, val, xz);
+      EmitValueWords(sig, val_words, xz_words);
     }
     last_time_ = 0;
     has_time_ = true;
@@ -1552,22 +2231,61 @@ class VcdWriter {
     if (!val_buf) {
       return false;
     }
-    uint32_t width = sig.is_real ? 64u : sig.width;
-    size_t elem_size = (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
-    size_t offset = elem_size * (static_cast<size_t>(sig.instance_index) *
-                                     sig.array_size +
-                                 sig.array_index);
-    if (!val_buf->contents() || val_buf->length() < offset + elem_size) {
+    gpga::SignalInfo info;
+    info.name = sig.base_name;
+    info.width = sig.width;
+    info.array_size = sig.array_size;
+    info.is_real = sig.is_real;
+    uint64_t val_word = 0;
+    if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                  *val_buf, 0u, &val_word)) {
       return false;
     }
-    std::memcpy(val, static_cast<const uint8_t*>(val_buf->contents()) + offset,
-                elem_size);
+    *val = val_word;
     if (four_state_ && xz_buf && xz_buf->contents() &&
-        xz_buf->length() >= offset + elem_size) {
-      std::memcpy(xz, static_cast<const uint8_t*>(xz_buf->contents()) + offset,
-                  elem_size);
+        ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                 *xz_buf, 0u, xz)) {
+      return true;
     } else {
       *xz = 0;
+    }
+    return true;
+  }
+
+  bool ReadSignalWords(
+      const VcdSignal& sig,
+      const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
+      std::vector<uint64_t>* val_words,
+      std::vector<uint64_t>* xz_words) const {
+    if (!val_words || !xz_words) {
+      return false;
+    }
+    const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.base_name, "_val");
+    const gpga::MetalBuffer* xz_buf = nullptr;
+    if (four_state_) {
+      xz_buf = FindBuffer(buffers, sig.base_name, "_xz");
+    }
+    if (!val_buf) {
+      return false;
+    }
+    gpga::SignalInfo info;
+    info.name = sig.base_name;
+    info.width = sig.width;
+    info.array_size = sig.array_size;
+    info.is_real = sig.is_real;
+    val_words->assign(sig.word_count, 0ull);
+    xz_words->assign(sig.word_count, 0ull);
+    for (uint32_t word = 0; word < sig.word_count; ++word) {
+      if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                    *val_buf, word, &(*val_words)[word])) {
+        return false;
+      }
+      if (four_state_ && xz_buf && xz_buf->contents()) {
+        if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                      *xz_buf, word, &(*xz_words)[word])) {
+          return false;
+        }
+      }
     }
     return true;
   }
@@ -1616,6 +2334,38 @@ class VcdWriter {
     }
   }
 
+  void EmitValueWords(const VcdSignal& sig,
+                      const std::vector<uint64_t>& val_words,
+                      const std::vector<uint64_t>& xz_words) {
+    if (sig.is_real) {
+      EmitValue(sig, val_words.empty() ? 0ull : val_words[0],
+                xz_words.empty() ? 0ull : xz_words[0]);
+      return;
+    }
+    std::string bits;
+    bits.reserve(sig.width);
+    for (int i = static_cast<int>(sig.width) - 1; i >= 0; --i) {
+      uint32_t bit_index = static_cast<uint32_t>(i);
+      uint32_t word_index = bit_index / 64u;
+      uint32_t word_bit = bit_index % 64u;
+      uint64_t mask = 1ull << word_bit;
+      bool bit_xz = word_index < xz_words.size() &&
+                    (xz_words[word_index] & mask) != 0ull;
+      bool bit_val = word_index < val_words.size() &&
+                     (val_words[word_index] & mask) != 0ull;
+      if (bit_xz) {
+        bits.push_back(bit_val ? 'x' : 'z');
+      } else {
+        bits.push_back(bit_val ? '1' : '0');
+      }
+    }
+    if (sig.width == 1u) {
+      out_ << bits[0] << sig.id << "\n";
+    } else {
+      out_ << "b" << bits << " " << sig.id << "\n";
+    }
+  }
+
   void EmitSnapshot(
       uint64_t time,
       const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
@@ -1638,19 +2388,37 @@ class VcdWriter {
       last_time_had_values_ = false;
     }
     for (auto& sig : signals_) {
-      uint64_t val = 0;
-      uint64_t xz = 0;
-      if (!ReadSignal(sig, buffers, &val, &xz)) {
+      if (sig.word_count <= 1u) {
+        uint64_t val = 0;
+        uint64_t xz = 0;
+        if (!ReadSignal(sig, buffers, &val, &xz)) {
+          continue;
+        }
+        if (!force_values && sig.has_value && sig.last_val == val &&
+            sig.last_xz == xz) {
+          continue;
+        }
+        sig.last_val = val;
+        sig.last_xz = xz;
+        sig.has_value = true;
+        EmitValue(sig, val, xz);
+        last_time_had_values_ = true;
         continue;
       }
-      if (!force_values && sig.has_value && sig.last_val == val &&
-          sig.last_xz == xz) {
+      std::vector<uint64_t> val_words;
+      std::vector<uint64_t> xz_words;
+      if (!ReadSignalWords(sig, buffers, &val_words, &xz_words)) {
         continue;
       }
-      sig.last_val = val;
-      sig.last_xz = xz;
+      if (!force_values && sig.has_value &&
+          sig.last_val_words == val_words &&
+          sig.last_xz_words == xz_words) {
+        continue;
+      }
+      sig.last_val_words = val_words;
+      sig.last_xz_words = xz_words;
       sig.has_value = true;
-      EmitValue(sig, val, xz);
+      EmitValueWords(sig, val_words, xz_words);
       last_time_had_values_ = true;
     }
     CheckDumpLimit();
@@ -1794,6 +2562,89 @@ bool ParseMemValue(const std::string& token_in, bool is_hex, uint32_t width,
   return true;
 }
 
+bool ParseMemValueWords(const std::string& token_in, bool is_hex,
+                        uint32_t width, std::vector<uint64_t>* val_words,
+                        std::vector<uint64_t>* xz_words) {
+  if (!val_words || !xz_words) {
+    return false;
+  }
+  if (width == 0u) {
+    width = 1u;
+  }
+  const uint32_t word_count = (width + 63u) / 64u;
+  val_words->assign(word_count, 0ull);
+  xz_words->assign(word_count, 0ull);
+  std::string token = NormalizeToken(token_in);
+  if (token.size() >= 2 && token[0] == '0' &&
+      (token[1] == 'x' || token[1] == 'X')) {
+    is_hex = true;
+    token = token.substr(2);
+  } else if (token.size() >= 2 && token[0] == '0' &&
+             (token[1] == 'b' || token[1] == 'B')) {
+    is_hex = false;
+    token = token.substr(2);
+  }
+  auto set_bit = [&](std::vector<uint64_t>* words, uint32_t bit) {
+    size_t word_index = bit / 64u;
+    if (word_index >= words->size()) {
+      return;
+    }
+    uint32_t word_bit = bit % 64u;
+    (*words)[word_index] |= (1ull << word_bit);
+  };
+  uint32_t bit_pos = 0;
+  if (is_hex) {
+    for (int i = static_cast<int>(token.size()) - 1;
+         i >= 0 && bit_pos < width; --i) {
+      char c = token[static_cast<size_t>(i)];
+      uint8_t nibble = 0;
+      bool is_x = false;
+      bool is_z = false;
+      if (c >= '0' && c <= '9') {
+        nibble = static_cast<uint8_t>(c - '0');
+      } else if (c >= 'a' && c <= 'f') {
+        nibble = static_cast<uint8_t>(10 + (c - 'a'));
+      } else if (c >= 'A' && c <= 'F') {
+        nibble = static_cast<uint8_t>(10 + (c - 'A'));
+      } else if (c == 'x' || c == 'X') {
+        is_x = true;
+      } else if (c == 'z' || c == 'Z') {
+        is_z = true;
+      } else {
+        return false;
+      }
+      for (int b = 0; b < 4 && bit_pos < width; ++b, ++bit_pos) {
+        if (is_x || is_z) {
+          set_bit(xz_words, bit_pos);
+          if (is_x) {
+            set_bit(val_words, bit_pos);
+          }
+        } else if (nibble & (1u << b)) {
+          set_bit(val_words, bit_pos);
+        }
+      }
+    }
+  } else {
+    for (int i = static_cast<int>(token.size()) - 1;
+         i >= 0 && bit_pos < width; --i, ++bit_pos) {
+      char c = token[static_cast<size_t>(i)];
+      if (c == '1') {
+        set_bit(val_words, bit_pos);
+      } else if (c == '0') {
+        continue;
+      } else if (c == 'x' || c == 'X') {
+        set_bit(xz_words, bit_pos);
+        set_bit(val_words, bit_pos);
+      } else if (c == 'z' || c == 'Z') {
+        set_bit(xz_words, bit_pos);
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool ApplyReadmem(const std::string& filename, bool is_hex,
                   const gpga::SignalInfo& signal, bool four_state,
                   std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
@@ -1820,19 +2671,10 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
     }
     return false;
   }
-  gpga::MetalBuffer* val_buf = &it_val->second;
-  gpga::MetalBuffer* xz_buf = nullptr;
-  if (four_state) {
-    auto it_xz = buffers->find(base + "_xz");
-    if (it_xz != buffers->end()) {
-      xz_buf = &it_xz->second;
-    }
-  }
   uint32_t width = signal.is_real ? 64u : signal.width;
   if (width == 0u) {
     width = 1u;
   }
-  size_t elem_size = (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
   uint32_t array_size = signal.array_size > 0 ? signal.array_size : 1u;
   if (end == std::numeric_limits<uint64_t>::max()) {
     end = (array_size > 0) ? static_cast<uint64_t>(array_size - 1u) : 0u;
@@ -1866,34 +2708,114 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
       if (address > end) {
         return true;
       }
-      uint64_t val = 0;
-      uint64_t xz = 0;
-      if (!ParseMemValue(token, is_hex, width, &val, &xz)) {
-        if (error) {
-          *error = "invalid readmem value: " + token;
-        }
-        return false;
-      }
       if (address >= array_size) {
         address++;
         continue;
       }
-      for (uint32_t gid = 0; gid < instance_count; ++gid) {
-        size_t offset = (static_cast<size_t>(gid) * array_size + address) *
-                        elem_size;
-        if (val_buf->length() >= offset + elem_size) {
-          std::memcpy(static_cast<uint8_t*>(val_buf->contents()) + offset,
-                      &val, elem_size);
+      if (width <= 64u) {
+        uint64_t val = 0;
+        uint64_t xz = 0;
+        if (!ParseMemValue(token, is_hex, width, &val, &xz)) {
+          if (error) {
+            *error = "invalid readmem value: " + token;
+          }
+          return false;
         }
-        if (four_state && xz_buf && xz_buf->length() >= offset + elem_size) {
-          std::memcpy(static_cast<uint8_t*>(xz_buf->contents()) + offset,
-                      &xz, elem_size);
+        for (uint32_t gid = 0; gid < instance_count; ++gid) {
+          WriteSignalValueAtIndex(signal, gid, address, val, xz, four_state,
+                                  buffers);
+        }
+      } else {
+        std::vector<uint64_t> val_words;
+        std::vector<uint64_t> xz_words;
+        if (!ParseMemValueWords(token, is_hex, width, &val_words,
+                                &xz_words)) {
+          if (error) {
+            *error = "invalid readmem value: " + token;
+          }
+          return false;
+        }
+        for (uint32_t gid = 0; gid < instance_count; ++gid) {
+          size_t word_count = SignalWordCount(signal);
+          for (size_t word = 0; word < word_count; ++word) {
+            uint64_t val = (word < val_words.size()) ? val_words[word] : 0ull;
+            uint64_t xz = (word < xz_words.size()) ? xz_words[word] : 0ull;
+            WriteSignalWord(signal, gid, address, word, val, xz, four_state,
+                            buffers);
+          }
         }
       }
       address++;
     }
   }
   return true;
+}
+
+std::string FormatMemWords(const std::vector<uint64_t>& val_words,
+                           const std::vector<uint64_t>& xz_words,
+                           uint32_t width, bool is_hex, bool four_state) {
+  if (width == 0u) {
+    width = 1u;
+  }
+  auto get_bit = [&](const std::vector<uint64_t>& words,
+                     uint32_t bit) -> bool {
+    size_t word_index = bit / 64u;
+    if (word_index >= words.size()) {
+      return false;
+    }
+    uint32_t word_bit = bit % 64u;
+    return (words[word_index] & (1ull << word_bit)) != 0ull;
+  };
+  if (!is_hex) {
+    std::string out;
+    out.reserve(width);
+    for (int bit = static_cast<int>(width) - 1; bit >= 0; --bit) {
+      uint32_t bit_index = static_cast<uint32_t>(bit);
+      bool bit_xz = four_state && get_bit(xz_words, bit_index);
+      bool bit_val = get_bit(val_words, bit_index);
+      if (!bit_xz) {
+        out.push_back(bit_val ? '1' : '0');
+      } else {
+        out.push_back(bit_val ? 'x' : 'z');
+      }
+    }
+    return out;
+  }
+  uint32_t digits = (width + 3u) / 4u;
+  std::string out;
+  out.reserve(digits);
+  for (uint32_t d = 0; d < digits; ++d) {
+    int start_bit = static_cast<int>(width) - 1 - static_cast<int>(d * 4u);
+    uint32_t nibble_val = 0u;
+    uint32_t nibble_xz = 0u;
+    uint32_t nibble_mask = 0u;
+    for (int b = 0; b < 4; ++b) {
+      int bit_index = start_bit - b;
+      if (bit_index < 0) {
+        continue;
+      }
+      uint32_t nibble_bit = 1u << (3 - b);
+      nibble_mask |= nibble_bit;
+      uint32_t bit_u = static_cast<uint32_t>(bit_index);
+      if (get_bit(val_words, bit_u)) {
+        nibble_val |= nibble_bit;
+      }
+      if (four_state && get_bit(xz_words, bit_u)) {
+        nibble_xz |= nibble_bit;
+      }
+    }
+    if (four_state && nibble_xz != 0u) {
+      if (nibble_xz == nibble_mask && nibble_val == 0u) {
+        out.push_back('z');
+      } else {
+        out.push_back('x');
+      }
+    } else {
+      static const char kDigits[] = "0123456789abcdef";
+      out.push_back(kDigits[nibble_val & 0xFu]);
+    }
+  }
+  return out;
 }
 
 std::string FormatMemWord(uint64_t val, uint64_t xz, uint32_t width,
@@ -1992,7 +2914,6 @@ bool ApplyWritemem(const std::string& filename, bool is_hex,
   if (width == 0u) {
     width = 1u;
   }
-  size_t elem_size = (width > 32u) ? sizeof(uint64_t) : sizeof(uint32_t);
   uint32_t array_size = signal.array_size > 0 ? signal.array_size : 1u;
   if (end == std::numeric_limits<uint64_t>::max()) {
     end = (array_size > 0) ? static_cast<uint64_t>(array_size - 1u) : 0u;
@@ -2005,38 +2926,38 @@ bool ApplyWritemem(const std::string& filename, bool is_hex,
   }
   uint64_t limit_end = std::min<uint64_t>(end, array_size - 1u);
   for (uint64_t addr = start; addr <= limit_end; ++addr) {
-    size_t offset = static_cast<size_t>(addr) * elem_size;
-    if (val_buf->length() < offset + elem_size) {
-      break;
-    }
-    uint64_t val = 0;
-    uint64_t xz = 0;
-    if (elem_size == sizeof(uint64_t)) {
-      std::memcpy(&val,
-                  static_cast<uint8_t*>(val_buf->contents()) + offset,
-                  sizeof(uint64_t));
-      if (four_state && xz_buf && xz_buf->contents() &&
-          xz_buf->length() >= offset + elem_size) {
-        std::memcpy(&xz,
-                    static_cast<uint8_t*>(xz_buf->contents()) + offset,
-                    sizeof(uint64_t));
+    if (width <= 64u) {
+      uint64_t val = 0;
+      uint64_t xz = 0;
+      if (!ReadSignalWordFromBuffer(signal, 0u, addr, *val_buf, 0u, &val)) {
+        break;
       }
+      if (four_state && xz_buf) {
+        ReadSignalWordFromBuffer(signal, 0u, addr, *xz_buf, 0u, &xz);
+      }
+      out << FormatMemWord(val, xz, width, is_hex, four_state) << "\n";
     } else {
-      uint32_t tmp = 0;
-      std::memcpy(&tmp,
-                  static_cast<uint8_t*>(val_buf->contents()) + offset,
-                  sizeof(uint32_t));
-      val = tmp;
-      if (four_state && xz_buf && xz_buf->contents() &&
-          xz_buf->length() >= offset + elem_size) {
-        uint32_t tmp_xz = 0;
-        std::memcpy(&tmp_xz,
-                    static_cast<uint8_t*>(xz_buf->contents()) + offset,
-                    sizeof(uint32_t));
-        xz = tmp_xz;
+      const size_t word_count = SignalWordCount(signal);
+      std::vector<uint64_t> val_words(word_count, 0ull);
+      std::vector<uint64_t> xz_words(word_count, 0ull);
+      bool ok = true;
+      for (size_t word = 0; word < word_count; ++word) {
+        if (!ReadSignalWordFromBuffer(signal, 0u, addr, *val_buf, word,
+                                      &val_words[word])) {
+          ok = false;
+          break;
+        }
+        if (four_state && xz_buf) {
+          ReadSignalWordFromBuffer(signal, 0u, addr, *xz_buf, word,
+                                   &xz_words[word]);
+        }
       }
+      if (!ok) {
+        break;
+      }
+      out << FormatMemWords(val_words, xz_words, width, is_hex, four_state)
+          << "\n";
     }
-    out << FormatMemWord(val, xz, width, is_hex, four_state) << "\n";
     if (!out) {
       if (error) {
         *error = "failed to write writemem file: " + filename;
@@ -2066,6 +2987,7 @@ bool HandleServiceRecords(
     result->saw_stop = false;
     result->saw_error = false;
   }
+  g_timescale_exp = ParseTimescaleExponent(timescale);
   auto current_time = [&]() -> uint64_t {
     auto time_it = buffers->find("sched_time");
     if (time_it != buffers->end() && time_it->second.contents()) {
@@ -2129,8 +3051,10 @@ bool HandleServiceRecords(
     }
     return {};
   };
-  auto write_output_arg = [&](const gpga::ServiceArgView& arg, uint64_t value,
-                              const std::string& str_value) -> bool {
+  auto write_output_arg =
+      [&](const gpga::ServiceArgView& arg, uint64_t value,
+          const std::string& str_value,
+          const std::vector<uint64_t>* wide_words) -> bool {
     if (arg.kind != gpga::ServiceArgKind::kIdent) {
       return false;
     }
@@ -2140,17 +3064,51 @@ bool HandleServiceRecords(
       return false;
     }
     if (!str_value.empty()) {
-      size_t max_bytes = (sig->width + 7u) / 8u;
-      size_t elem_bytes = SignalElementSize(*sig);
-      max_bytes = std::min(max_bytes, elem_bytes);
-      uint64_t packed = PackStringBits(str_value, max_bytes);
-      return WriteSignalValue(*sig, gid, packed, 0ull, four_state, buffers);
+      size_t max_bytes = (SignalBitWidth(*sig) + 7u) / 8u;
+      std::vector<uint64_t> words = PackStringWords(str_value, max_bytes);
+      for (size_t i = 0; i < words.size(); ++i) {
+        if (!WriteSignalWord(*sig, gid, 0u, i, words[i], 0ull, four_state,
+                             buffers)) {
+          return false;
+        }
+      }
+      return true;
     }
     uint32_t width = arg.width > 0 ? arg.width : sig->width;
+    if (width > 64u && wide_words && !wide_words->empty()) {
+      size_t word_count = SignalWordCount(*sig);
+      for (size_t i = 0; i < word_count; ++i) {
+        uint64_t word = (i < wide_words->size()) ? (*wide_words)[i] : 0ull;
+        if (!WriteSignalWord(*sig, gid, 0u, i, word, 0ull, four_state,
+                             buffers)) {
+          return false;
+        }
+      }
+      return true;
+    }
     uint64_t masked = value & MaskForWidth(width);
     return WriteSignalValue(*sig, gid, masked, 0ull, four_state, buffers);
   };
-  for (const auto& rec : records) {
+  std::unordered_map<uint32_t, size_t> last_record_for_pid;
+  last_record_for_pid.reserve(records.size());
+  for (size_t i = 0; i < records.size(); ++i) {
+    last_record_for_pid[records[i].pid] = i;
+  }
+  auto should_resume = [&](const DecodedServiceRecord& rec,
+                           size_t record_index) -> bool {
+    auto it = last_record_for_pid.find(rec.pid);
+    return it != last_record_for_pid.end() && it->second == record_index;
+  };
+  auto resume_if_waiting = [&](const DecodedServiceRecord& rec,
+                               size_t record_index, uint64_t value) -> void {
+    if (!should_resume(rec, record_index)) {
+      return;
+    }
+    resume_service(rec.pid, value);
+  };
+  for (size_t record_index = 0; record_index < records.size();
+       ++record_index) {
+    const auto& rec = records[record_index];
     switch (rec.kind) {
       case gpga::ServiceKind::kDumpfile: {
         *dumpfile = ResolveString(strings, rec.format_id);
@@ -2209,6 +3167,7 @@ bool HandleServiceRecords(
         break;
       }
       case gpga::ServiceKind::kDisplay:
+      case gpga::ServiceKind::kWrite:
       case gpga::ServiceKind::kMonitor:
       case gpga::ServiceKind::kStrobe: {
         std::string fmt = (rec.format_id != 0xFFFFFFFFu)
@@ -2224,8 +3183,87 @@ bool HandleServiceRecords(
         std::string line =
             fmt.empty() ? FormatDefaultArgs(rec.args, strings, four_state)
                         : FormatWithSpec(fmt, rec.args, start_index, strings,
-                                         four_state);
-        std::cout << line << "\n";
+                                         four_state, &module, buffers, gid);
+        std::cout << line;
+        if (rec.kind != gpga::ServiceKind::kWrite) {
+          std::cout << "\n";
+        }
+        break;
+      }
+      case gpga::ServiceKind::kSformat: {
+        if (rec.args.empty() ||
+            rec.args.front().kind != gpga::ServiceArgKind::kIdent) {
+          break;
+        }
+        std::vector<gpga::ServiceArgView> fmt_args;
+        if (rec.args.size() > 1) {
+          fmt_args.assign(rec.args.begin() + 1, rec.args.end());
+        }
+        std::string fmt = (rec.format_id != 0xFFFFFFFFu)
+                              ? ResolveString(strings, rec.format_id)
+                              : "";
+        size_t start_index = 0;
+        if (!fmt.empty() && !fmt_args.empty() &&
+            fmt_args.front().kind == gpga::ServiceArgKind::kString &&
+            fmt_args.front().value ==
+                static_cast<uint64_t>(rec.format_id)) {
+          start_index = 1;
+        }
+        std::string line =
+            fmt.empty() ? FormatDefaultArgs(fmt_args, strings, four_state)
+                        : FormatWithSpec(fmt, fmt_args, start_index, strings,
+                                         four_state, &module, buffers, gid);
+        write_output_arg(rec.args.front(), 0, line, nullptr);
+        break;
+      }
+      case gpga::ServiceKind::kTimeformat: {
+        if (rec.args.size() < 4) {
+          break;
+        }
+        int units = 0;
+        int precision = 0;
+        int min_width = 0;
+        std::string suffix;
+        if (rec.args[0].kind == gpga::ServiceArgKind::kValue) {
+          units =
+              static_cast<int>(SignExtend(rec.args[0].value, rec.args[0].width));
+        }
+        if (rec.args[1].kind == gpga::ServiceArgKind::kValue) {
+          precision =
+              static_cast<int>(SignExtend(rec.args[1].value, rec.args[1].width));
+        }
+        suffix = resolve_string_or_ident(rec.args[2]);
+        if (rec.args[3].kind == gpga::ServiceArgKind::kValue) {
+          min_width =
+              static_cast<int>(SignExtend(rec.args[3].value, rec.args[3].width));
+        }
+        if (precision < 0) {
+          precision = 0;
+        }
+        if (min_width < 0) {
+          min_width = 0;
+        }
+        g_time_format.active = true;
+        g_time_format.units = units;
+        g_time_format.precision = precision;
+        g_time_format.suffix = std::move(suffix);
+        g_time_format.min_width = min_width;
+        break;
+      }
+      case gpga::ServiceKind::kPrinttimescale: {
+        std::string target = module.name;
+        if (!rec.args.empty() &&
+            (rec.args.front().kind == gpga::ServiceArgKind::kString ||
+             rec.args.front().kind == gpga::ServiceArgKind::kIdent)) {
+          target = ResolveString(strings,
+                                 static_cast<uint32_t>(rec.args.front().value));
+        }
+        std::string display_timescale = TrimString(timescale);
+        if (display_timescale.empty()) {
+          display_timescale = "1ns";
+        }
+        std::cout << "Time scale of " << target << " is " << display_timescale
+                  << "\n";
         break;
       }
       case gpga::ServiceKind::kFdisplay:
@@ -2256,7 +3294,7 @@ bool HandleServiceRecords(
         std::string line =
             fmt.empty() ? FormatDefaultArgs(fmt_args, strings, four_state)
                         : FormatWithSpec(fmt, fmt_args, start_index, strings,
-                                         four_state);
+                                         four_state, &module, buffers, gid);
         std::fwrite(line.data(), 1, line.size(), file_it->second.file);
         if (rec.kind == gpga::ServiceKind::kFdisplay) {
           std::fputc('\n', file_it->second.file);
@@ -2285,7 +3323,7 @@ bool HandleServiceRecords(
             handle = id;
           }
         }
-        resume_service(rec.pid, handle);
+        resume_if_waiting(rec, record_index, handle);
         break;
       }
       case gpga::ServiceKind::kFclose: {
@@ -2301,13 +3339,28 @@ bool HandleServiceRecords(
           }
           files->handles.erase(file_it);
         }
-        resume_service(rec.pid, 0);
+        resume_if_waiting(rec, record_index, 0);
+        break;
+      }
+      case gpga::ServiceKind::kFflush: {
+        if (rec.args.empty()) {
+          std::fflush(nullptr);
+          break;
+        }
+        if (rec.args.front().kind != gpga::ServiceArgKind::kValue) {
+          break;
+        }
+        uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
+        auto file_it = files->handles.find(fd);
+        if (file_it != files->handles.end() && file_it->second.file) {
+          std::fflush(file_it->second.file);
+        }
         break;
       }
       case gpga::ServiceKind::kRewind: {
         if (rec.args.empty() ||
             rec.args.front().kind != gpga::ServiceArgKind::kValue) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
@@ -2315,13 +3368,13 @@ bool HandleServiceRecords(
         if (file_it != files->handles.end() && file_it->second.file) {
           std::rewind(file_it->second.file);
         }
-        resume_service(rec.pid, 0);
+        resume_if_waiting(rec, record_index, 0);
         break;
       }
       case gpga::ServiceKind::kFgetc: {
         if (rec.args.empty() ||
             rec.args.front().kind != gpga::ServiceArgKind::kValue) {
-          resume_service(rec.pid, 0xFFFFFFFFull);
+          resume_if_waiting(rec, record_index, 0xFFFFFFFFull);
           break;
         }
         uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
@@ -2333,14 +3386,14 @@ bool HandleServiceRecords(
             value = static_cast<uint32_t>(static_cast<unsigned char>(ch));
           }
         }
-        resume_service(rec.pid, value);
+        resume_if_waiting(rec, record_index, value);
         break;
       }
       case gpga::ServiceKind::kFgets: {
         if (rec.args.size() < 2 ||
             rec.args[0].kind != gpga::ServiceArgKind::kIdent ||
             rec.args[1].kind != gpga::ServiceArgKind::kValue) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         std::string target =
@@ -2349,12 +3402,12 @@ bool HandleServiceRecords(
         uint32_t fd = static_cast<uint32_t>(rec.args[1].value);
         auto file_it = files->handles.find(fd);
         if (!sig || file_it == files->handles.end() || !file_it->second.file) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         size_t max_bytes = (sig->width + 7u) / 8u;
         if (max_bytes == 0) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         std::vector<char> buffer(max_bytes + 1, '\0');
@@ -2362,18 +3415,18 @@ bool HandleServiceRecords(
                                   static_cast<int>(buffer.size()),
                                   file_it->second.file);
         if (!result) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         std::string line(buffer.data());
-        write_output_arg(rec.args[0], 0, line);
-        resume_service(rec.pid, static_cast<uint64_t>(line.size()));
+        write_output_arg(rec.args[0], 0, line, nullptr);
+        resume_if_waiting(rec, record_index, static_cast<uint64_t>(line.size()));
         break;
       }
       case gpga::ServiceKind::kFeof: {
         if (rec.args.empty() ||
             rec.args.front().kind != gpga::ServiceArgKind::kValue) {
-          resume_service(rec.pid, 1);
+          resume_if_waiting(rec, record_index, 1);
           break;
         }
         uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
@@ -2382,13 +3435,219 @@ bool HandleServiceRecords(
         if (file_it != files->handles.end() && file_it->second.file) {
           value = std::feof(file_it->second.file) ? 1u : 0u;
         }
-        resume_service(rec.pid, value);
+        resume_if_waiting(rec, record_index, value);
+        break;
+      }
+      case gpga::ServiceKind::kFerror: {
+        if (rec.args.empty() ||
+            rec.args.front().kind != gpga::ServiceArgKind::kValue) {
+          resume_if_waiting(rec, record_index, 1);
+          break;
+        }
+        uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
+        auto file_it = files->handles.find(fd);
+        uint64_t value = 1;
+        if (file_it != files->handles.end() && file_it->second.file) {
+          value = std::ferror(file_it->second.file) ? 1u : 0u;
+        }
+        resume_if_waiting(rec, record_index, value);
+        break;
+      }
+      case gpga::ServiceKind::kFseek: {
+        if (rec.args.size() < 3 ||
+            rec.args[0].kind != gpga::ServiceArgKind::kValue ||
+            rec.args[1].kind != gpga::ServiceArgKind::kValue ||
+            rec.args[2].kind != gpga::ServiceArgKind::kValue) {
+          resume_if_waiting(rec, record_index, 1);
+          break;
+        }
+        uint32_t fd = static_cast<uint32_t>(rec.args[0].value);
+        int64_t offset = SignExtend(rec.args[1].value, rec.args[1].width);
+        int origin = static_cast<int>(rec.args[2].value);
+        auto file_it = files->handles.find(fd);
+        uint64_t value = 1;
+        if (file_it != files->handles.end() && file_it->second.file) {
+          int rc = std::fseek(file_it->second.file, static_cast<long>(offset),
+                              origin);
+          value = (rc == 0) ? 0u : 1u;
+        }
+        resume_if_waiting(rec, record_index, value);
+        break;
+      }
+      case gpga::ServiceKind::kFungetc: {
+        if (rec.args.size() < 2 ||
+            rec.args[0].kind != gpga::ServiceArgKind::kValue ||
+            rec.args[1].kind != gpga::ServiceArgKind::kValue) {
+          resume_if_waiting(rec, record_index, 0xFFFFFFFFull);
+          break;
+        }
+        uint64_t ch = rec.args[0].value & 0xFFu;
+        uint32_t fd = static_cast<uint32_t>(rec.args[1].value);
+        auto file_it = files->handles.find(fd);
+        uint64_t value = 0xFFFFFFFFull;
+        if (file_it != files->handles.end() && file_it->second.file) {
+          int rc = std::ungetc(static_cast<unsigned char>(ch),
+                               file_it->second.file);
+          if (rc != EOF) {
+            value = static_cast<uint32_t>(static_cast<unsigned char>(rc));
+          }
+        }
+        resume_if_waiting(rec, record_index, value);
+        break;
+      }
+      case gpga::ServiceKind::kFread: {
+        if (rec.args.size() < 2 ||
+            rec.args[0].kind != gpga::ServiceArgKind::kIdent ||
+            rec.args[1].kind != gpga::ServiceArgKind::kValue) {
+          resume_if_waiting(rec, record_index, 0);
+          break;
+        }
+        std::string target =
+            ResolveString(strings, static_cast<uint32_t>(rec.args[0].value));
+        const gpga::SignalInfo* sig = FindSignalInfo(module, target);
+        if (!sig) {
+          if (error) {
+            *error = "fread target not found: " + target;
+          }
+          return false;
+        }
+        uint32_t fd = static_cast<uint32_t>(rec.args[1].value);
+        auto file_it = files->handles.find(fd);
+        if (file_it == files->handles.end() || !file_it->second.file) {
+          resume_if_waiting(rec, record_index, 0);
+          break;
+        }
+        uint32_t width = sig->is_real ? 64u : sig->width;
+        if (width == 0u) {
+          width = 1u;
+        }
+        size_t elem_bytes = (width + 7u) / 8u;
+        size_t word_count = SignalWordCount(*sig);
+        if (elem_bytes == 0) {
+          resume_if_waiting(rec, record_index, 0);
+          break;
+        }
+        auto read_element =
+            [&](std::vector<uint64_t>* out_val_words,
+                std::vector<uint64_t>* out_xz_words) -> size_t {
+          if (!out_val_words || !out_xz_words) {
+            return 0;
+          }
+          std::vector<unsigned char> buffer(elem_bytes, 0);
+          size_t bytes_read =
+              std::fread(buffer.data(), 1, elem_bytes, file_it->second.file);
+          if (bytes_read == 0) {
+            return 0;
+          }
+          out_val_words->assign(word_count, 0ull);
+          out_xz_words->assign(word_count, 0ull);
+          size_t start_pos = elem_bytes - bytes_read;
+          for (size_t i = 0; i < bytes_read; ++i) {
+            size_t pos = start_pos + (bytes_read - 1u - i);
+            uint32_t bit_pos = static_cast<uint32_t>(pos * 8u);
+            uint32_t word_index = bit_pos / 64u;
+            uint32_t word_bit = bit_pos % 64u;
+            uint64_t byte_val = static_cast<uint64_t>(buffer[i]);
+            if (word_index < out_val_words->size()) {
+              (*out_val_words)[word_index] |= (byte_val << word_bit);
+            }
+            if (word_bit > 56u && word_index + 1u < out_val_words->size()) {
+              (*out_val_words)[word_index + 1u] |=
+                  (byte_val >> (64u - word_bit));
+            }
+          }
+          if (four_state && bytes_read < elem_bytes) {
+            for (size_t pos = 0; pos < start_pos; ++pos) {
+              uint32_t bit_pos = static_cast<uint32_t>(pos * 8u);
+              uint32_t word_index = bit_pos / 64u;
+              uint32_t word_bit = bit_pos % 64u;
+              uint64_t byte_mask = 0xFFull;
+              if (word_index < out_xz_words->size()) {
+                (*out_xz_words)[word_index] |= (byte_mask << word_bit);
+              }
+              if (word_bit > 56u && word_index + 1u < out_xz_words->size()) {
+                (*out_xz_words)[word_index + 1u] |=
+                    (byte_mask >> (64u - word_bit));
+              }
+            }
+          }
+          uint32_t tail_bits = width % 64u;
+          if (tail_bits != 0u && !out_val_words->empty()) {
+            uint64_t mask = (1ull << tail_bits) - 1ull;
+            (*out_val_words)[out_val_words->size() - 1u] &= mask;
+            (*out_xz_words)[out_xz_words->size() - 1u] &= mask;
+          }
+          return bytes_read;
+        };
+
+        size_t array_size = sig->array_size > 0 ? sig->array_size : 1u;
+        if (array_size <= 1u) {
+          std::vector<uint64_t> val_words;
+          std::vector<uint64_t> xz_words;
+          size_t bytes_read = read_element(&val_words, &xz_words);
+          if (bytes_read == 0) {
+            resume_if_waiting(rec, record_index, 0);
+            break;
+          }
+          for (size_t w = 0; w < word_count; ++w) {
+            uint64_t word = w < val_words.size() ? val_words[w] : 0ull;
+            uint64_t xz_word = w < xz_words.size() ? xz_words[w] : 0ull;
+            WriteSignalWord(*sig, gid, 0u, w, word, xz_word, four_state,
+                            buffers);
+          }
+          resume_if_waiting(rec, record_index, static_cast<uint64_t>(bytes_read));
+          break;
+        }
+
+        int64_t start = 0;
+        int64_t count = -1;
+        if (rec.args.size() >= 3 &&
+            rec.args[2].kind == gpga::ServiceArgKind::kValue) {
+          start = SignExtend(rec.args[2].value, rec.args[2].width);
+        }
+        if (rec.args.size() >= 4 &&
+            rec.args[3].kind == gpga::ServiceArgKind::kValue) {
+          count = SignExtend(rec.args[3].value, rec.args[3].width);
+        }
+        if (start < 0 || count == 0) {
+          resume_if_waiting(rec, record_index, 0);
+          break;
+        }
+        uint64_t start_index = static_cast<uint64_t>(start);
+        if (start_index >= array_size) {
+          resume_if_waiting(rec, record_index, 0);
+          break;
+        }
+        uint64_t max_elements = array_size - start_index;
+        if (count > 0) {
+          max_elements = std::min<uint64_t>(max_elements, count);
+        }
+        uint64_t total_read = 0;
+        for (uint64_t i = 0; i < max_elements; ++i) {
+          std::vector<uint64_t> val_words;
+          std::vector<uint64_t> xz_words;
+          size_t bytes_read = read_element(&val_words, &xz_words);
+          if (bytes_read == 0) {
+            break;
+          }
+          for (size_t w = 0; w < word_count; ++w) {
+            uint64_t word = w < val_words.size() ? val_words[w] : 0ull;
+            uint64_t xz_word = w < xz_words.size() ? xz_words[w] : 0ull;
+            WriteSignalWord(*sig, gid, start_index + i, w, word, xz_word,
+                            four_state, buffers);
+          }
+          total_read += bytes_read;
+          if (bytes_read < elem_bytes) {
+            break;
+          }
+        }
+        resume_if_waiting(rec, record_index, total_read);
         break;
       }
       case gpga::ServiceKind::kFtell: {
         if (rec.args.empty() ||
             rec.args.front().kind != gpga::ServiceArgKind::kValue) {
-          resume_service(rec.pid, 0xFFFFFFFFFFFFFFFFull);
+          resume_if_waiting(rec, record_index, 0xFFFFFFFFFFFFFFFFull);
           break;
         }
         uint32_t fd = static_cast<uint32_t>(rec.args.front().value);
@@ -2400,19 +3659,19 @@ bool HandleServiceRecords(
             value = static_cast<uint64_t>(pos);
           }
         }
-        resume_service(rec.pid, value);
+        resume_if_waiting(rec, record_index, value);
         break;
       }
       case gpga::ServiceKind::kFscanf: {
         if (rec.args.size() < 2 ||
             rec.args[0].kind != gpga::ServiceArgKind::kValue) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         uint32_t fd = static_cast<uint32_t>(rec.args[0].value);
         auto file_it = files->handles.find(fd);
         if (file_it == files->handles.end() || !file_it->second.file) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         std::string fmt = (rec.format_id != 0xFFFFFFFFu)
@@ -2430,12 +3689,13 @@ bool HandleServiceRecords(
             eof_before = token_eof && (assigned == 0);
             break;
           }
-          uint64_t value = 0;
-          std::string str_value;
-          if (!ParseTokenValue(token, spec.spec, &value, &str_value)) {
-            break;
-          }
           if (spec.suppress) {
+            std::vector<uint64_t> ignored_words;
+            std::string ignored_str;
+            if (!ParseTokenWords(token, spec.spec, 64u, &ignored_words,
+                                 &ignored_str)) {
+              break;
+            }
             continue;
           }
           while (arg_index < rec.args.size() &&
@@ -2445,24 +3705,37 @@ bool HandleServiceRecords(
           if (arg_index >= rec.args.size()) {
             break;
           }
-          write_output_arg(rec.args[arg_index], value, str_value);
+          uint32_t target_width = rec.args[arg_index].width;
+          if (target_width == 0u) {
+            target_width = 64u;
+          }
+          std::vector<uint64_t> words;
+          std::string str_value;
+          if (!ParseTokenWords(token, spec.spec, target_width, &words,
+                               &str_value)) {
+            break;
+          }
+          uint64_t value = words.empty() ? 0ull : words[0];
+          const std::vector<uint64_t>* wide_words =
+              (target_width > 64u) ? &words : nullptr;
+          write_output_arg(rec.args[arg_index], value, str_value, wide_words);
           assigned++;
           ++arg_index;
         }
         if (specs.empty()) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         if (eof_before) {
-          resume_service(rec.pid, 0xFFFFFFFFull);
+          resume_if_waiting(rec, record_index, 0xFFFFFFFFull);
         } else {
-          resume_service(rec.pid, static_cast<uint64_t>(assigned));
+          resume_if_waiting(rec, record_index, static_cast<uint64_t>(assigned));
         }
         break;
       }
       case gpga::ServiceKind::kSscanf: {
         if (rec.args.size() < 2) {
-          resume_service(rec.pid, 0);
+          resume_if_waiting(rec, record_index, 0);
           break;
         }
         std::string input = resolve_string_or_ident(rec.args[0]);
@@ -2477,16 +3750,18 @@ bool HandleServiceRecords(
           const FormatSpec& spec = specs[spec_index];
           std::string token;
           if (!ReadTokenFromString(input, &pos, &token)) {
-            resume_service(rec.pid, static_cast<uint64_t>(assigned));
-            break;
-          }
-          uint64_t value = 0;
-          std::string str_value;
-          if (!ParseTokenValue(token, spec.spec, &value, &str_value)) {
-            resume_service(rec.pid, static_cast<uint64_t>(assigned));
+            resume_if_waiting(rec, record_index, static_cast<uint64_t>(assigned));
             break;
           }
           if (spec.suppress) {
+            std::vector<uint64_t> ignored_words;
+            std::string ignored_str;
+            if (!ParseTokenWords(token, spec.spec, 64u, &ignored_words,
+                                 &ignored_str)) {
+              resume_if_waiting(rec, record_index,
+                                static_cast<uint64_t>(assigned));
+              break;
+            }
             continue;
           }
           while (arg_index < rec.args.size() &&
@@ -2496,11 +3771,26 @@ bool HandleServiceRecords(
           if (arg_index >= rec.args.size()) {
             break;
           }
-          write_output_arg(rec.args[arg_index], value, str_value);
+          uint32_t target_width = rec.args[arg_index].width;
+          if (target_width == 0u) {
+            target_width = 64u;
+          }
+          std::vector<uint64_t> words;
+          std::string str_value;
+          if (!ParseTokenWords(token, spec.spec, target_width, &words,
+                               &str_value)) {
+            resume_if_waiting(rec, record_index,
+                              static_cast<uint64_t>(assigned));
+            break;
+          }
+          uint64_t value = words.empty() ? 0ull : words[0];
+          const std::vector<uint64_t>* wide_words =
+              (target_width > 64u) ? &words : nullptr;
+          write_output_arg(rec.args[arg_index], value, str_value, wide_words);
           assigned++;
           ++arg_index;
         }
-        resume_service(rec.pid, static_cast<uint64_t>(assigned));
+        resume_if_waiting(rec, record_index, static_cast<uint64_t>(assigned));
         break;
       }
       case gpga::ServiceKind::kDumpoff: {
@@ -2886,7 +4176,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           size_t stride =
               gpga::ServiceRecordStride(
                   std::max<uint32_t>(1u, sched.service_max_args),
-                  enable_4state);
+                  sched.service_wide_words, enable_4state);
           for (uint32_t gid = 0; gid < count; ++gid) {
             uint32_t used = counts[gid];
             if (used > service_capacity) {
@@ -2904,7 +4194,8 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
             DecodeServiceRecords(rec_base, used,
                                  std::max<uint32_t>(1u,
                                                     sched.service_max_args),
-                                 enable_4state, &decoded);
+                                 sched.service_wide_words, enable_4state,
+                                 &decoded);
             gpga::ServiceDrainResult result;
             if (!HandleServiceRecords(decoded, strings, info, vcd_dir,
                                       &flat_to_hier, module.timescale,
@@ -3046,7 +4337,8 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       }
       return MinimalWidth(expr.number);
     case gpga::ExprKind::kString:
-      return 0;
+      return std::max<int>(
+          1, static_cast<int>(expr.string_value.size() * 8));
     case gpga::ExprKind::kUnary:
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
           expr.unary_op == '|' || expr.unary_op == '^') {

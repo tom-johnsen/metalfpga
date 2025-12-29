@@ -221,9 +221,9 @@ bool EvalConstExpr4State(const Expr& expr,
     case ExprKind::kNumber: {
       int width = expr.has_width && expr.number_width > 0
                       ? expr.number_width
-                      : std::max({MinimalWidth(expr.value_bits),
-                                  MinimalWidth(expr.x_bits),
-                                  MinimalWidth(expr.z_bits)});
+                      : std::max(32, std::max({MinimalWidth(expr.value_bits),
+                                               MinimalWidth(expr.x_bits),
+                                               MinimalWidth(expr.z_bits)}));
       FourStateValue out;
       out.width = width;
       out.value_bits = expr.value_bits;

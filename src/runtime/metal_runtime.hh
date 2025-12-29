@@ -15,6 +15,7 @@ enum class ServiceArgKind : uint32_t {
   kIdent = 1u,
   kString = 2u,
   kReal = 3u,
+  kWide = 4u,
 };
 
 enum class ServiceKind : uint32_t {
@@ -45,6 +46,15 @@ enum class ServiceKind : uint32_t {
   kRewind = 24u,
   kWritememh = 25u,
   kWritememb = 26u,
+  kFseek = 27u,
+  kFflush = 28u,
+  kFerror = 29u,
+  kFungetc = 30u,
+  kFread = 31u,
+  kWrite = 32u,
+  kSformat = 33u,
+  kTimeformat = 34u,
+  kPrinttimescale = 35u,
 };
 
 struct ServiceStringTable {
@@ -56,6 +66,8 @@ struct ServiceArgView {
   uint32_t width = 0;
   uint64_t value = 0;
   uint64_t xz = 0;
+  std::vector<uint64_t> wide_value;
+  std::vector<uint64_t> wide_xz;
 };
 
 struct ServiceRecordView {
@@ -71,11 +83,12 @@ struct ServiceDrainResult {
   bool saw_error = false;
 };
 
-size_t ServiceRecordStride(uint32_t max_args, bool has_xz);
+size_t ServiceRecordStride(uint32_t max_args, uint32_t wide_words, bool has_xz);
 
 ServiceDrainResult DrainSchedulerServices(
     const void* records, uint32_t record_count, uint32_t max_args,
-    bool has_xz, const ServiceStringTable& strings, std::ostream& out);
+    uint32_t wide_words, bool has_xz, const ServiceStringTable& strings,
+    std::ostream& out);
 
 struct GpgaParams {
   uint32_t count = 0;
@@ -115,6 +128,7 @@ struct SchedulerConstants {
   uint32_t monitor_max_args = 0;
   uint32_t strobe_count = 0;
   uint32_t service_max_args = 0;
+  uint32_t service_wide_words = 0;
   uint32_t string_count = 0;
   bool has_services = false;
 };

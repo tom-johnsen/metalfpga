@@ -7648,6 +7648,13 @@ class Parser {
           allow_string_literals_ = true;
           if (!MatchSymbol(")")) {
             while (true) {
+              if (name == "$fread" &&
+                  Peek().kind == TokenKind::kSymbol &&
+                  Peek().text == ",") {
+                call->call_args.push_back(MakeNumberExpr(0u));
+                MatchSymbol(",");
+                continue;
+              }
               auto arg = ParseExpr();
               if (!arg) {
                 allow_string_literals_ = prev_allow;
@@ -7678,6 +7685,8 @@ class Parser {
       char op = 0;
       if (MatchKeyword("time")) {
         expr = parse_system_call("$time", true);
+      } else if (MatchKeyword("stime")) {
+        expr = parse_system_call("$stime", true);
       } else if (MatchKeyword("random")) {
         expr = parse_system_call("$random", true);
       } else if (MatchKeyword("urandom_range")) {
@@ -7716,6 +7725,14 @@ class Parser {
         expr = parse_system_call("$feof", false);
       } else if (MatchKeyword("ftell")) {
         expr = parse_system_call("$ftell", false);
+      } else if (MatchKeyword("fseek")) {
+        expr = parse_system_call("$fseek", false);
+      } else if (MatchKeyword("ferror")) {
+        expr = parse_system_call("$ferror", false);
+      } else if (MatchKeyword("ungetc")) {
+        expr = parse_system_call("$ungetc", false);
+      } else if (MatchKeyword("fread")) {
+        expr = parse_system_call("$fread", false);
       } else if (MatchKeyword("fgets")) {
         expr = parse_system_call("$fgets", false);
       } else if (MatchKeyword("fscanf")) {
@@ -8193,6 +8210,110 @@ class Parser {
     if (has_xz && base_char == 'd') {
       ErrorHere("x/z digits not allowed in decimal literal");
       return nullptr;
+    }
+
+    if (base_char != 'd' && bits_per_digit > 0) {
+      const size_t digit_count = cleaned.size();
+      const uint64_t total_bits =
+          static_cast<uint64_t>(digit_count) * bits_per_digit;
+      if (size == 0 && has_xz) {
+        size = total_bits;
+      }
+      const uint64_t target_bits = (size > 0) ? size : total_bits;
+      if (target_bits > 64 || total_bits > 64) {
+        const size_t digits_per_chunk =
+            static_cast<size_t>(64 / bits_per_digit);
+        const size_t needed_digits =
+            static_cast<size_t>((target_bits + bits_per_digit - 1) /
+                                bits_per_digit);
+        std::string padded;
+        if (digit_count >= needed_digits) {
+          padded = cleaned.substr(digit_count - needed_digits);
+        } else {
+          padded.assign(needed_digits - digit_count, '0');
+          padded += cleaned;
+        }
+        uint64_t msb_bits = target_bits;
+        if (needed_digits > 0) {
+          msb_bits -=
+              static_cast<uint64_t>(needed_digits - 1) * bits_per_digit;
+        }
+        int leading_drop = bits_per_digit - static_cast<int>(msb_bits);
+
+        auto make_chunk = [&](const std::string& chunk_digits,
+                              uint64_t chunk_bits)
+            -> std::unique_ptr<Expr> {
+          uint64_t value_bits = 0;
+          uint64_t x_bits = 0;
+          uint64_t z_bits = 0;
+          for (size_t i = 0; i < chunk_digits.size(); ++i) {
+            char c = chunk_digits[i];
+            const int shift = static_cast<int>(
+                (chunk_digits.size() - 1 - i) * bits_per_digit);
+            if (shift >= 64) {
+              continue;
+            }
+            uint64_t mask = ((1ull << bits_per_digit) - 1ull) << shift;
+            if (c == 'x' || c == 'X') {
+              value_bits |= mask;
+              x_bits |= mask;
+              continue;
+            }
+            if (c == 'z' || c == 'Z' || c == '?') {
+              z_bits |= mask;
+              continue;
+            }
+            int digit = 0;
+            if (c >= '0' && c <= '9') {
+              digit = c - '0';
+            } else if (c >= 'a' && c <= 'f') {
+              digit = 10 + (c - 'a');
+            } else if (c >= 'A' && c <= 'F') {
+              digit = 10 + (c - 'A');
+            } else {
+              digit = 0;
+            }
+            value_bits |= (static_cast<uint64_t>(digit) << shift);
+          }
+          if (chunk_bits < 64) {
+            uint64_t mask = (chunk_bits == 0)
+                                ? 0ull
+                                : ((1ull << chunk_bits) - 1ull);
+            value_bits &= mask;
+            x_bits &= mask;
+            z_bits &= mask;
+          }
+          auto expr = std::make_unique<Expr>();
+          expr->kind = ExprKind::kNumber;
+          expr->number = value_bits;
+          expr->value_bits = value_bits;
+          expr->x_bits = x_bits;
+          expr->z_bits = z_bits;
+          expr->has_base = true;
+          expr->base_char = base_char;
+          expr->is_signed = false;
+          expr->has_width = true;
+          expr->number_width = static_cast<int>(chunk_bits);
+          return expr;
+        };
+
+        auto concat = std::make_unique<Expr>();
+        concat->kind = ExprKind::kConcat;
+        concat->repeat = 1;
+        size_t pos = 0;
+        while (pos < padded.size()) {
+          size_t len = std::min(digits_per_chunk, padded.size() - pos);
+          std::string chunk = padded.substr(pos, len);
+          uint64_t chunk_bits =
+              static_cast<uint64_t>(len) * bits_per_digit;
+          if (pos == 0 && leading_drop > 0) {
+            chunk_bits -= static_cast<uint64_t>(leading_drop);
+          }
+          concat->elements.push_back(make_chunk(chunk, chunk_bits));
+          pos += len;
+        }
+        return concat;
+      }
     }
 
     uint64_t value_bits = 0;

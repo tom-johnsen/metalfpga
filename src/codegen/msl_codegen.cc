@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -46,6 +47,8 @@ const Task* FindTask(const Module& module, const std::string& name) {
 const std::unordered_map<std::string, int>* g_task_arg_widths = nullptr;
 const std::unordered_map<std::string, bool>* g_task_arg_signed = nullptr;
 const std::unordered_map<std::string, bool>* g_task_arg_real = nullptr;
+
+int ExprWidth(const Expr& expr, const Module& module);
 
 int SignalWidth(const Module& module, const std::string& name) {
   if (g_task_arg_widths) {
@@ -282,14 +285,60 @@ uint64_t MaskForWidth64(int width) {
 uint64_t StringLiteralBits(const std::string& value) {
   uint64_t bits = 0;
   size_t count = std::min<size_t>(8, value.size());
+  size_t start = value.size() > count ? (value.size() - count) : 0;
   for (size_t i = 0; i < count; ++i) {
+    size_t pos = count - 1u - i;
     bits |= (static_cast<uint64_t>(
-                 static_cast<unsigned char>(value[i])) << (i * 8));
+                 static_cast<unsigned char>(value[start + i])) << (pos * 8u));
   }
   return bits;
 }
 
+std::vector<uint64_t> StringLiteralWords(const std::string& value, int width) {
+  if (width <= 0) {
+    width = 1;
+  }
+  size_t max_bytes = static_cast<size_t>((width + 7) / 8);
+  size_t word_count = std::max<size_t>(1u, (max_bytes + 7u) / 8u);
+  size_t byte_count = word_count * 8u;
+  std::vector<uint8_t> bytes(byte_count, 0u);
+  size_t usable_start = byte_count > max_bytes ? byte_count - max_bytes : 0u;
+  size_t count = std::min(value.size(), max_bytes);
+  size_t src_start = value.size() > count ? (value.size() - count) : 0u;
+  size_t dest_start = usable_start + (max_bytes - count);
+  for (size_t i = 0; i < count; ++i) {
+    bytes[dest_start + i] = static_cast<uint8_t>(value[src_start + i]);
+  }
+  std::vector<uint64_t> words(word_count, 0ull);
+  for (size_t word_index = 0; word_index < word_count; ++word_index) {
+    size_t byte_base = byte_count - (word_index + 1u) * 8u;
+    uint64_t word = 0;
+    for (size_t b = 0; b < 8u; ++b) {
+      word |= static_cast<uint64_t>(bytes[byte_base + b]) << (8u * (7u - b));
+    }
+    words[word_index] = word;
+  }
+  return words;
+}
+
+std::string WideLiteralExpr(const std::string& value, int width) {
+  std::vector<uint64_t> words = StringLiteralWords(value, width);
+  std::ostringstream out;
+  out << "gpga_wide_from_words_" << width << "(";
+  for (size_t i = 0; i < words.size(); ++i) {
+    if (i > 0) {
+      out << ", ";
+    }
+    out << words[i] << "ul";
+  }
+  out << ")";
+  return out.str();
+}
+
 std::string TypeForWidth(int width) {
+  if (width > 64) {
+    return "GpgaWide" + std::to_string(width);
+  }
   return (width > 32) ? "ulong" : "uint";
 }
 
@@ -298,18 +347,30 @@ std::string SignedTypeForWidth(int width) {
 }
 
 std::string ZeroForWidth(int width) {
+  if (width > 64) {
+    return "gpga_wide_zero_" + std::to_string(width) + "()";
+  }
   return (width > 32) ? "0ul" : "0u";
 }
 
 std::string CastForWidth(int width) {
+  if (width > 64) {
+    return "";
+  }
   return (width > 32) ? "(ulong)" : "";
 }
 
 std::string SignedCastForWidth(int width) {
+  if (width > 64) {
+    return "";
+  }
   return (width > 32) ? "(long)" : "(int)";
 }
 
 std::string UnsignedCastForWidth(int width) {
+  if (width > 64) {
+    return "";
+  }
   return (width > 32) ? "(ulong)" : "(uint)";
 }
 
@@ -466,6 +527,9 @@ bool IsZeroLiteral(const std::string& expr) {
 }
 
 std::string MaskForWidthExpr(const std::string& expr, int width) {
+  if (width > 64) {
+    return "gpga_wide_mask_" + std::to_string(width) + "(" + expr + ")";
+  }
   if (width >= 64) {
     return expr;
   }
@@ -496,6 +560,9 @@ std::string MaskForWidthExpr(const std::string& expr, int width) {
 }
 
 std::string MaskLiteralForWidth(int width) {
+  if (width > 64) {
+    return "gpga_wide_mask_const_" + std::to_string(width) + "()";
+  }
   if (width >= 64) {
     return "0xFFFFFFFFFFFFFFFFul";
   }
@@ -527,6 +594,25 @@ std::string StrengthLiteral(Strength strength) {
 std::string ExtendExpr(const std::string& expr, int expr_width,
                        int target_width) {
   std::string masked = MaskForWidthExpr(expr, expr_width);
+  if (target_width > 64) {
+    if (expr_width > 64) {
+      if (expr_width == target_width) {
+        return masked;
+      }
+      return "gpga_wide_resize_" + std::to_string(target_width) + "_from_" +
+             std::to_string(expr_width) + "(" + masked + ")";
+    }
+    return "gpga_wide_from_u64_" + std::to_string(target_width) + "(" + masked +
+           ")";
+  }
+  if (expr_width > 64) {
+    std::string low =
+        "gpga_wide_to_u64_" + std::to_string(expr_width) + "(" + masked + ")";
+    if (target_width <= 32) {
+      return "(uint)" + MaskForWidthExpr(low, target_width);
+    }
+    return MaskForWidthExpr(low, target_width);
+  }
   if (target_width > 32 && expr_width <= 32) {
     return "(ulong)" + masked;
   }
@@ -540,6 +626,35 @@ std::string SignExtendExpr(const std::string& expr, int expr_width,
                            int target_width) {
   if (expr_width <= 0) {
     return SignedCastForWidth(target_width) + ZeroForWidth(target_width);
+  }
+  if (target_width > 64) {
+    if (expr_width > 64) {
+      if (expr_width == target_width) {
+        return expr;
+      }
+      if (expr_width > target_width) {
+        return "gpga_wide_resize_" + std::to_string(target_width) + "_from_" +
+               std::to_string(expr_width) + "(" + expr + ")";
+      }
+      return "gpga_wide_sext_" + std::to_string(target_width) + "_from_" +
+             std::to_string(expr_width) + "(" + expr + ")";
+    }
+    return "gpga_wide_sext_from_u64_" + std::to_string(target_width) + "(" +
+           expr + ", " + std::to_string(expr_width) + "u)";
+  }
+  if (expr_width > 64) {
+    std::string low =
+        "gpga_wide_to_u64_" + std::to_string(expr_width) + "(" + expr + ")";
+    std::string masked = MaskForWidthExpr(low, std::min(expr_width, 64));
+    int width = std::max(std::min(expr_width, 64), target_width);
+    int shift = width - std::min(expr_width, 64);
+    std::string cast = SignedCastForWidth(width);
+    if (shift == 0) {
+      return cast + masked;
+    }
+    std::string widened = cast + masked;
+    return "(" + cast + "(" + widened + " << " + std::to_string(shift) +
+           "u) >> " + std::to_string(shift) + "u)";
   }
   int width = std::max(expr_width, target_width);
   int shift = width - expr_width;
@@ -706,7 +821,8 @@ bool IsSystemTaskName(const std::string& name) {
 bool IsFileSystemFunctionName(const std::string& name) {
   return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
          name == "$fgets" || name == "$feof" || name == "$fscanf" ||
-         name == "$sscanf" || name == "$ftell";
+         name == "$sscanf" || name == "$ftell" || name == "$fseek" ||
+         name == "$ferror" || name == "$ungetc" || name == "$fread";
 }
 
 bool ExtractFeofCondition(const Expr& expr, const Expr** fd_expr,
@@ -738,7 +854,46 @@ bool ExtractFeofCondition(const Expr& expr, const Expr** fd_expr,
 
 bool TaskTreatsIdentifierAsString(const std::string& name) {
   return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
-         name == "$writememh" || name == "$writememb";
+         name == "$writememh" || name == "$writememb" ||
+         name == "$printtimescale";
+}
+
+std::vector<char> ExtractFormatSpecs(const std::string& format) {
+  std::vector<char> specs;
+  for (size_t i = 0; i < format.size(); ++i) {
+    if (format[i] != '%') {
+      continue;
+    }
+    if (i + 1 < format.size() && format[i + 1] == '%') {
+      ++i;
+      continue;
+    }
+    size_t j = i + 1;
+    if (j < format.size() && format[j] == '0') {
+      ++j;
+    }
+    while (j < format.size() &&
+           std::isdigit(static_cast<unsigned char>(format[j]))) {
+      ++j;
+    }
+    if (j < format.size() && format[j] == '.') {
+      ++j;
+      while (j < format.size() &&
+             std::isdigit(static_cast<unsigned char>(format[j]))) {
+        ++j;
+      }
+    }
+    if (j >= format.size()) {
+      break;
+    }
+    char spec = format[j];
+    if (spec >= 'A' && spec <= 'Z') {
+      spec = static_cast<char>(spec - 'A' + 'a');
+    }
+    specs.push_back(spec);
+    i = j;
+  }
+  return specs;
 }
 
 uint32_t AddSystemTaskString(SystemTaskInfo* info,
@@ -773,6 +928,8 @@ void CollectSystemFunctionExpr(const Expr& expr, SystemTaskInfo* info) {
         if (arg->kind == ExprKind::kIdentifier) {
           bool treat_ident = false;
           if (expr.ident == "$fgets") {
+            treat_ident = (i == 0);
+          } else if (expr.ident == "$fread") {
             treat_ident = (i == 0);
           } else if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
             treat_ident = (i >= 2);
@@ -996,6 +1153,406 @@ void CollectSystemFunctionInfo(const Statement& stmt, SystemTaskInfo* info) {
   }
 }
 
+void CollectWideWidthsExpr(const Expr& expr, const Module& module,
+                            std::unordered_set<int>* widths) {
+  if (!widths) {
+    return;
+  }
+  int width = ExprWidth(expr, module);
+  if (width > 64) {
+    widths->insert(width);
+  }
+  switch (expr.kind) {
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return;
+    case ExprKind::kUnary:
+      if (expr.operand) {
+        CollectWideWidthsExpr(*expr.operand, module, widths);
+      }
+      return;
+    case ExprKind::kBinary:
+      if (expr.lhs) {
+        CollectWideWidthsExpr(*expr.lhs, module, widths);
+      }
+      if (expr.rhs) {
+        CollectWideWidthsExpr(*expr.rhs, module, widths);
+      }
+      return;
+    case ExprKind::kTernary:
+      if (expr.condition) {
+        CollectWideWidthsExpr(*expr.condition, module, widths);
+      }
+      if (expr.then_expr) {
+        CollectWideWidthsExpr(*expr.then_expr, module, widths);
+      }
+      if (expr.else_expr) {
+        CollectWideWidthsExpr(*expr.else_expr, module, widths);
+      }
+      return;
+    case ExprKind::kSelect:
+      if (expr.base) {
+        CollectWideWidthsExpr(*expr.base, module, widths);
+      }
+      if (expr.msb_expr) {
+        CollectWideWidthsExpr(*expr.msb_expr, module, widths);
+      }
+      if (expr.lsb_expr) {
+        CollectWideWidthsExpr(*expr.lsb_expr, module, widths);
+      }
+      return;
+    case ExprKind::kIndex:
+      if (expr.base) {
+        CollectWideWidthsExpr(*expr.base, module, widths);
+      }
+      if (expr.index) {
+        CollectWideWidthsExpr(*expr.index, module, widths);
+      }
+      return;
+    case ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        if (arg) {
+          CollectWideWidthsExpr(*arg, module, widths);
+        }
+      }
+      return;
+    case ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        if (element) {
+          CollectWideWidthsExpr(*element, module, widths);
+        }
+      }
+      if (expr.repeat_expr) {
+        CollectWideWidthsExpr(*expr.repeat_expr, module, widths);
+      }
+      return;
+  }
+}
+
+void CollectWideWidthsInfo(const Statement& stmt, const Module& module,
+                           std::unordered_set<int>* widths) {
+  if (!widths) {
+    return;
+  }
+  if (stmt.kind == StatementKind::kAssign ||
+      stmt.kind == StatementKind::kForce ||
+      stmt.kind == StatementKind::kRelease) {
+    if (stmt.assign.rhs) {
+      CollectWideWidthsExpr(*stmt.assign.rhs, module, widths);
+    }
+    if (stmt.assign.lhs_index) {
+      CollectWideWidthsExpr(*stmt.assign.lhs_index, module, widths);
+    }
+    for (const auto& index : stmt.assign.lhs_indices) {
+      if (index) {
+        CollectWideWidthsExpr(*index, module, widths);
+      }
+    }
+    if (stmt.assign.lhs_msb_expr) {
+      CollectWideWidthsExpr(*stmt.assign.lhs_msb_expr, module, widths);
+    }
+    if (stmt.assign.lhs_lsb_expr) {
+      CollectWideWidthsExpr(*stmt.assign.lhs_lsb_expr, module, widths);
+    }
+    if (stmt.assign.delay) {
+      CollectWideWidthsExpr(*stmt.assign.delay, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    if (stmt.condition) {
+      CollectWideWidthsExpr(*stmt.condition, module, widths);
+    }
+    for (const auto& inner : stmt.then_branch) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    for (const auto& inner : stmt.else_branch) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    if (stmt.case_expr) {
+      CollectWideWidthsExpr(*stmt.case_expr, module, widths);
+    }
+    for (const auto& item : stmt.case_items) {
+      for (const auto& label : item.labels) {
+        if (label) {
+          CollectWideWidthsExpr(*label, module, widths);
+        }
+      }
+      for (const auto& inner : item.body) {
+        CollectWideWidthsInfo(inner, module, widths);
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    if (stmt.for_init_rhs) {
+      CollectWideWidthsExpr(*stmt.for_init_rhs, module, widths);
+    }
+    if (stmt.for_condition) {
+      CollectWideWidthsExpr(*stmt.for_condition, module, widths);
+    }
+    if (stmt.for_step_rhs) {
+      CollectWideWidthsExpr(*stmt.for_step_rhs, module, widths);
+    }
+    for (const auto& inner : stmt.for_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    if (stmt.while_condition) {
+      CollectWideWidthsExpr(*stmt.while_condition, module, widths);
+    }
+    for (const auto& inner : stmt.while_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    if (stmt.repeat_count) {
+      CollectWideWidthsExpr(*stmt.repeat_count, module, widths);
+    }
+    for (const auto& inner : stmt.repeat_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    if (stmt.delay) {
+      CollectWideWidthsExpr(*stmt.delay, module, widths);
+    }
+    for (const auto& inner : stmt.delay_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    if (stmt.event_expr) {
+      CollectWideWidthsExpr(*stmt.event_expr, module, widths);
+    }
+    for (const auto& item : stmt.event_items) {
+      if (item.expr) {
+        CollectWideWidthsExpr(*item.expr, module, widths);
+      }
+    }
+    for (const auto& inner : stmt.event_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    if (stmt.wait_condition) {
+      CollectWideWidthsExpr(*stmt.wait_condition, module, widths);
+    }
+    for (const auto& inner : stmt.wait_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectWideWidthsInfo(inner, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& branch : stmt.fork_branches) {
+      CollectWideWidthsInfo(branch, module, widths);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kTaskCall) {
+    for (const auto& arg : stmt.task_args) {
+      if (arg) {
+        CollectWideWidthsExpr(*arg, module, widths);
+      }
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kForce ||
+      stmt.kind == StatementKind::kRelease) {
+    if (stmt.assign.rhs) {
+      CollectWideWidthsExpr(*stmt.assign.rhs, module, widths);
+    }
+    return;
+  }
+}
+
+void CollectServiceArgWidthsInfo(const Statement& stmt, const Module& module,
+                                 int* max_width) {
+  if (!max_width) {
+    return;
+  }
+  if (stmt.kind == StatementKind::kTaskCall &&
+      IsSystemTaskName(stmt.task_name)) {
+    for (const auto& arg : stmt.task_args) {
+      if (!arg || arg->kind == ExprKind::kString) {
+        continue;
+      }
+      bool is_real = ExprIsRealValue(*arg, module);
+      int width = is_real ? 64 : ExprWidth(*arg, module);
+      if (width > *max_width) {
+        *max_width = width;
+      }
+    }
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    for (const auto& inner : stmt.then_branch) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    for (const auto& inner : stmt.else_branch) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    for (const auto& item : stmt.case_items) {
+      for (const auto& inner : item.body) {
+        CollectServiceArgWidthsInfo(inner, module, max_width);
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    for (const auto& inner : stmt.for_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    for (const auto& inner : stmt.while_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    for (const auto& inner : stmt.repeat_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    for (const auto& inner : stmt.delay_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    for (const auto& inner : stmt.event_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    for (const auto& inner : stmt.wait_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectServiceArgWidthsInfo(inner, module, max_width);
+    }
+    return;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& branch : stmt.fork_branches) {
+      CollectServiceArgWidthsInfo(branch, module, max_width);
+    }
+    return;
+  }
+}
+
+uint32_t CollectServiceWideWordCount(const Module& module) {
+  int max_width = 0;
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      CollectServiceArgWidthsInfo(stmt, module, &max_width);
+    }
+  }
+  for (const auto& func : module.functions) {
+    for (const auto& stmt : func.body) {
+      CollectServiceArgWidthsInfo(stmt, module, &max_width);
+    }
+  }
+  for (const auto& task : module.tasks) {
+    for (const auto& stmt : task.body) {
+      CollectServiceArgWidthsInfo(stmt, module, &max_width);
+    }
+  }
+  if (max_width <= 64) {
+    return 0u;
+  }
+  return static_cast<uint32_t>((max_width + 63) / 64);
+}
+
+std::vector<int> CollectWideWidths(const Module& module) {
+  std::unordered_set<int> widths;
+  for (const auto& port : module.ports) {
+    if (port.width > 64) {
+      widths.insert(port.width);
+    }
+  }
+  for (const auto& net : module.nets) {
+    if (net.width > 64) {
+      widths.insert(net.width);
+    }
+  }
+  for (const auto& param : module.parameters) {
+    if (param.value) {
+      CollectWideWidthsExpr(*param.value, module, &widths);
+    }
+  }
+  for (const auto& assign : module.assigns) {
+    if (assign.rhs) {
+      CollectWideWidthsExpr(*assign.rhs, module, &widths);
+    }
+  }
+  for (const auto& block : module.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      CollectWideWidthsInfo(stmt, module, &widths);
+    }
+  }
+  for (const auto& func : module.functions) {
+    if (func.body_expr) {
+      CollectWideWidthsExpr(*func.body_expr, module, &widths);
+    }
+    for (const auto& stmt : func.body) {
+      CollectWideWidthsInfo(stmt, module, &widths);
+    }
+  }
+  for (const auto& task : module.tasks) {
+    for (const auto& stmt : task.body) {
+      CollectWideWidthsInfo(stmt, module, &widths);
+    }
+  }
+  std::vector<int> result(widths.begin(), widths.end());
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
 void CollectSystemTaskInfo(const Statement& stmt, SystemTaskInfo* info) {
   if (!info) {
     return;
@@ -1004,6 +1561,22 @@ void CollectSystemTaskInfo(const Statement& stmt, SystemTaskInfo* info) {
       IsSystemTaskName(stmt.task_name)) {
     info->has_system_tasks = true;
     info->max_args = std::max(info->max_args, stmt.task_args.size());
+    size_t format_arg_start = 0;
+    if (stmt.task_name == "$fdisplay" || stmt.task_name == "$fwrite") {
+      format_arg_start = 1;
+    } else if (stmt.task_name == "$sformat") {
+      format_arg_start = 1;
+    }
+    std::vector<char> format_specs;
+    bool has_format_specs =
+        stmt.task_args.size() > format_arg_start &&
+        stmt.task_args[format_arg_start] &&
+        stmt.task_args[format_arg_start]->kind == ExprKind::kString;
+    if (has_format_specs) {
+      format_specs =
+          ExtractFormatSpecs(stmt.task_args[format_arg_start]->string_value);
+    }
+    size_t format_arg_index = 0;
     if (stmt.task_name == "$monitor") {
       info->monitor_max_args =
           std::max(info->monitor_max_args, stmt.task_args.size());
@@ -1014,15 +1587,31 @@ void CollectSystemTaskInfo(const Statement& stmt, SystemTaskInfo* info) {
           std::max(info->strobe_max_args, stmt.task_args.size());
       info->strobe_stmts.push_back(&stmt);
     }
+    if (stmt.task_name == "$sformat" && !stmt.task_args.empty() &&
+        stmt.task_args[0] &&
+        stmt.task_args[0]->kind == ExprKind::kIdentifier) {
+      AddSystemTaskString(info, stmt.task_args[0]->ident);
+    }
     bool ident_as_string = TaskTreatsIdentifierAsString(stmt.task_name);
-    for (const auto& arg : stmt.task_args) {
+    for (size_t i = 0; i < stmt.task_args.size(); ++i) {
+      const auto& arg = stmt.task_args[i];
       if (!arg) {
         continue;
       }
+      bool is_format_literal = has_format_specs && i == format_arg_start &&
+                               arg->kind == ExprKind::kString;
       if (arg->kind == ExprKind::kString) {
         AddSystemTaskString(info, arg->string_value);
       } else if (ident_as_string && arg->kind == ExprKind::kIdentifier) {
         AddSystemTaskString(info, arg->ident);
+      } else if (has_format_specs && !is_format_literal &&
+                 format_arg_index < format_specs.size() &&
+                 format_specs[format_arg_index] == 's' &&
+                 arg->kind == ExprKind::kIdentifier) {
+        AddSystemTaskString(info, arg->ident);
+      }
+      if (has_format_specs && !is_format_literal) {
+        ++format_arg_index;
       }
     }
   }
@@ -1222,7 +1811,8 @@ int ExprWidth(const Expr& expr, const Module& module) {
       }
       return std::max(32, MinimalWidth(expr.number));
     case ExprKind::kString:
-      return 0;
+      return std::max<int>(
+          1, static_cast<int>(expr.string_value.size() * 8));
     case ExprKind::kUnary:
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
           expr.unary_op == '|' || expr.unary_op == '^') {
@@ -1274,6 +1864,9 @@ int ExprWidth(const Expr& expr, const Module& module) {
     case ExprKind::kCall: {
       if (expr.ident == "$time") {
         return 64;
+      }
+      if (expr.ident == "$stime") {
+        return 32;
       }
       if (expr.ident == "$realtobits") {
         return 64;
@@ -1346,6 +1939,11 @@ std::string EmitExprSized(const Expr& expr, int target_width,
   int expr_width = ExprWidth(expr, module);
   if (expr_width == target_width) {
     return raw;
+  }
+  if (expr_width > 64 && target_width <= 64) {
+    std::string low =
+        "gpga_wide_to_u64_" + std::to_string(expr_width) + "(" + raw + ")";
+    return MaskForWidthExpr(low, target_width);
   }
   if (expr_width < target_width) {
     if (ExprSigned(expr, module)) {
@@ -1537,6 +2135,9 @@ std::string EmitCondExpr(const Expr& expr, const Module& module,
   }
   std::string raw = EmitExpr(expr, module, locals, regs);
   int width = ExprWidth(expr, module);
+  if (width > 64) {
+    return "gpga_wide_any_" + std::to_string(width) + "(" + raw + ")";
+  }
   std::string masked = MaskForWidthExpr(raw, width);
   std::string zero = ZeroForWidth(width);
   return "(" + masked + " != " + zero + ")";
@@ -1555,7 +2156,32 @@ std::string EmitConcatExpr(const Expr& expr, const Module& module,
   }
   bool wide = total_width > 32;
   if (total_width > 64) {
-    return "/*concat_trunc*/0u";
+    int shift = total_width;
+    std::string acc = ZeroForWidth(total_width);
+    int repeats = std::max(1, expr.repeat);
+    for (int r = 0; r < repeats; ++r) {
+      for (const auto& element : expr.elements) {
+        int width = ExprWidth(*element, module);
+        shift -= width;
+        if (shift < 0) {
+          shift = 0;
+        }
+        std::string part = EmitExpr(*element, module, locals, regs);
+        std::string part_ext;
+        if (width > 64) {
+          part_ext = ExtendExpr(part, width, total_width);
+        } else {
+          part_ext = "gpga_wide_from_u64_" + std::to_string(total_width) + "(" +
+                     MaskForWidthExpr(part, width) + ")";
+        }
+        std::string shifted =
+            "gpga_wide_shl_" + std::to_string(total_width) + "(" + part_ext +
+            ", " + std::to_string(shift) + "u)";
+        acc = "gpga_wide_or_" + std::to_string(total_width) + "(" + acc + ", " +
+              shifted + ")";
+      }
+    }
+    return acc;
   }
   int shift = total_width;
   std::string acc = wide ? "0ul" : "0u";
@@ -2609,6 +3235,11 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       return expr.ident;
     }
     case ExprKind::kNumber:
+      if (expr.has_width && expr.number_width > 64) {
+        std::string literal = std::to_string(expr.number) + "ul";
+        return "gpga_wide_from_u64_" + std::to_string(expr.number_width) +
+               "(" + literal + ")";
+      }
       if ((expr.has_width && expr.number_width > 32) ||
           expr.number > 0xFFFFFFFFull) {
         std::string literal = std::to_string(expr.number) + "ul";
@@ -2625,17 +3256,65 @@ std::string EmitExpr(const Expr& expr, const Module& module,
         return literal;
       }
     case ExprKind::kString: {
+      int width = static_cast<int>(expr.string_value.size() * 8);
+      if (width <= 0) {
+        width = 1;
+      }
+      if (width > 64) {
+        return WideLiteralExpr(expr.string_value, width);
+      }
       uint64_t bits = StringLiteralBits(expr.string_value);
       std::string literal = (bits > 0xFFFFFFFFull)
                                 ? std::to_string(bits) + "ul"
                                 : std::to_string(bits) + "u";
-      return literal;
+      return MaskForWidthExpr(literal, width);
     }
     case ExprKind::kUnary: {
       int width = expr.operand ? ExprWidth(*expr.operand, module) : 32;
       std::string operand =
           expr.operand ? EmitExpr(*expr.operand, module, locals, regs)
                        : ZeroForWidth(width);
+      if (width > 64) {
+        std::string masked = MaskForWidthExpr(operand, width);
+        if (expr.unary_op == 'S' || expr.unary_op == 'U') {
+          return masked;
+        }
+        if (expr.unary_op == '+') {
+          return masked;
+        }
+        if (expr.unary_op == '-') {
+          return "gpga_wide_sub_" + std::to_string(width) + "(" +
+                 ZeroForWidth(width) + ", " + masked + ")";
+        }
+        if (expr.unary_op == '~') {
+          return "gpga_wide_not_" + std::to_string(width) + "(" + masked + ")";
+        }
+        if (expr.unary_op == '&') {
+          return "gpga_wide_red_and_" + std::to_string(width) + "(" + masked +
+                 ")";
+        }
+        if (expr.unary_op == '|') {
+          return "gpga_wide_red_or_" + std::to_string(width) + "(" + masked +
+                 ")";
+        }
+        if (expr.unary_op == '^') {
+          return "gpga_wide_red_xor_" + std::to_string(width) + "(" + masked +
+                 ")";
+        }
+        if (expr.unary_op == '!') {
+          std::string cond =
+              expr.operand ? EmitCondExpr(*expr.operand, module, locals, regs)
+                           : "false";
+          return "((" + cond + ") ? 0u : 1u)";
+        }
+        if (expr.unary_op == 'B') {
+          std::string cond =
+              expr.operand ? EmitCondExpr(*expr.operand, module, locals, regs)
+                           : "false";
+          return "((" + cond + ") ? 1u : 0u)";
+        }
+        return masked;
+      }
       operand = MaskForWidthExpr(operand, width);
       if (expr.unary_op == 'S' || expr.unary_op == 'U') {
         return operand;
@@ -2693,6 +3372,21 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       }
       if (expr.op == 'l' || expr.op == 'r' || expr.op == 'R') {
         int width = lhs_width;
+        if (width > 64) {
+          std::string rhs_shift =
+              EmitExprSized(*expr.rhs, 32, module, locals, regs);
+          std::string lhs_ext =
+              ExprSigned(*expr.lhs, module)
+                  ? SignExtendExpr(lhs, lhs_width, width)
+                  : ExtendExpr(lhs, lhs_width, width);
+          std::string func = "gpga_wide_shr_" + std::to_string(width);
+          if (expr.op == 'l') {
+            func = "gpga_wide_shl_" + std::to_string(width);
+          } else if (expr.op == 'R' && lhs_signed) {
+            func = "gpga_wide_sar_" + std::to_string(width);
+          }
+          return func + "(" + lhs_ext + ", uint(" + rhs_shift + "))";
+        }
         std::string zero = ZeroForWidth(width);
         std::string lhs_masked = MaskForWidthExpr(lhs, width);
         std::string cast = CastForWidth(width);
@@ -2716,6 +3410,19 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       if (expr.op == 'p') {
         int target_width = lhs_width;
         bool signed_op = lhs_signed && rhs_signed;
+        if (target_width > 64) {
+          std::string lhs_ext = signed_op
+                                    ? SignExtendExpr(lhs, lhs_width, target_width)
+                                    : ExtendExpr(lhs, lhs_width, target_width);
+          std::string rhs_ext = signed_op
+                                    ? SignExtendExpr(rhs, rhs_width, target_width)
+                                    : ExtendExpr(rhs, rhs_width, target_width);
+          std::string func = "gpga_wide_pow_u_" + std::to_string(target_width);
+          if (signed_op) {
+            func = "gpga_wide_pow_s_" + std::to_string(target_width);
+          }
+          return func + "(" + lhs_ext + ", " + rhs_ext + ")";
+        }
         std::string lhs_ext = signed_op
                                   ? SignExtendExpr(lhs, lhs_width, target_width)
                                   : ExtendExpr(lhs, lhs_width, target_width);
@@ -2771,6 +3478,26 @@ std::string EmitExpr(const Expr& expr, const Module& module,
         std::string rhs_ext = signed_op
                                   ? SignExtendExpr(rhs, rhs_width, target_width)
                                   : ExtendExpr(rhs, rhs_width, target_width);
+        if (target_width > 64) {
+          std::string func = "gpga_wide_eq_" + std::to_string(target_width);
+          if (expr.op == 'N' || expr.op == 'c' || expr.op == 'w') {
+            func = "gpga_wide_ne_" + std::to_string(target_width);
+          } else if (expr.op == '<') {
+            func = (signed_op ? "gpga_wide_lt_s_" : "gpga_wide_lt_u_") +
+                   std::to_string(target_width);
+          } else if (expr.op == '>') {
+            func = (signed_op ? "gpga_wide_gt_s_" : "gpga_wide_gt_u_") +
+                   std::to_string(target_width);
+          } else if (expr.op == 'L') {
+            func = (signed_op ? "gpga_wide_le_s_" : "gpga_wide_le_u_") +
+                   std::to_string(target_width);
+          } else if (expr.op == 'G') {
+            func = (signed_op ? "gpga_wide_ge_s_" : "gpga_wide_ge_u_") +
+                   std::to_string(target_width);
+          }
+          return "((" + func + "(" + lhs_ext + ", " + rhs_ext +
+                 ")) ? 1u : 0u)";
+        }
         return "((" + lhs_ext + " " + BinaryOpString(expr.op) + " " + rhs_ext +
                ") ? 1u : 0u)";
       }
@@ -2780,6 +3507,39 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       std::string rhs_ext = signed_op
                                 ? SignExtendExpr(rhs, rhs_width, target_width)
                                 : ExtendExpr(rhs, rhs_width, target_width);
+      if (target_width > 64) {
+        std::string func = "gpga_wide_add_" + std::to_string(target_width);
+        switch (expr.op) {
+          case '+':
+            func = "gpga_wide_add_" + std::to_string(target_width);
+            break;
+          case '-':
+            func = "gpga_wide_sub_" + std::to_string(target_width);
+            break;
+          case '*':
+            func = "gpga_wide_mul_" + std::to_string(target_width);
+            break;
+          case '/':
+            func = "gpga_wide_div_" + std::to_string(target_width);
+            break;
+          case '%':
+            func = "gpga_wide_mod_" + std::to_string(target_width);
+            break;
+          case '&':
+            func = "gpga_wide_and_" + std::to_string(target_width);
+            break;
+          case '|':
+            func = "gpga_wide_or_" + std::to_string(target_width);
+            break;
+          case '^':
+            func = "gpga_wide_xor_" + std::to_string(target_width);
+            break;
+          default:
+            func = "gpga_wide_add_" + std::to_string(target_width);
+            break;
+        }
+        return func + "(" + lhs_ext + ", " + rhs_ext + ")";
+      }
       std::string raw =
           "(" + lhs_ext + " " + BinaryOpString(expr.op) + " " + rhs_ext + ")";
       return MaskForWidthExpr(raw, target_width);
@@ -2789,17 +3549,66 @@ std::string EmitExpr(const Expr& expr, const Module& module,
                              ? EmitCondExpr(*expr.condition, module, locals,
                                             regs)
                              : "false";
+      int then_width =
+          expr.then_expr ? ExprWidth(*expr.then_expr, module) : 32;
+      int else_width =
+          expr.else_expr ? ExprWidth(*expr.else_expr, module) : 32;
+      int target_width = std::max(then_width, else_width);
       std::string then_expr =
           expr.then_expr ? EmitExpr(*expr.then_expr, module, locals, regs) : "0u";
       std::string else_expr =
           expr.else_expr ? EmitExpr(*expr.else_expr, module, locals, regs) : "0u";
+      if (target_width > 64) {
+        std::string then_ext = ExtendExpr(then_expr, then_width, target_width);
+        std::string else_ext = ExtendExpr(else_expr, else_width, target_width);
+        return "((" + cond + ") ? (" + then_ext + ") : (" + else_ext + "))";
+      }
       return "((" + cond + ") ? (" + then_expr + ") : (" + else_expr + "))";
     }
     case ExprKind::kSelect: {
       std::string base = EmitExpr(*expr.base, module, locals, regs);
+      int base_width = ExprWidth(*expr.base, module);
+      if (base_width > 64) {
+        if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
+          int width = expr.indexed_width;
+          std::string shift =
+              EmitExprSized(*expr.lsb_expr, 32, module, locals, regs);
+          std::string shift_val = "uint(" + shift + ")";
+          std::string shifted =
+              "gpga_wide_shr_" + std::to_string(base_width) + "(" + base +
+              ", " + shift_val + ")";
+          std::string zero = ZeroForWidth(width);
+          if (width > 64) {
+            std::string resized =
+                "gpga_wide_resize_" + std::to_string(width) + "_from_" +
+                std::to_string(base_width) + "(" + shifted + ")";
+            return "((" + shift_val + ") >= " + std::to_string(base_width) +
+                   "u ? " + zero + " : " + resized + ")";
+          }
+          std::string low =
+              "gpga_wide_to_u64_" + std::to_string(base_width) + "(" +
+              shifted + ")";
+          std::string masked = MaskForWidthExpr(low, width);
+          return "((" + shift_val + ") >= " + std::to_string(base_width) +
+                 "u ? " + zero + " : " + masked + ")";
+        }
+        int lo = std::min(expr.msb, expr.lsb);
+        int hi = std::max(expr.msb, expr.lsb);
+        int width = hi - lo + 1;
+        std::string shifted =
+            "gpga_wide_shr_" + std::to_string(base_width) + "(" + base +
+            ", " + std::to_string(lo) + "u)";
+        if (width > 64) {
+          return "gpga_wide_resize_" + std::to_string(width) + "_from_" +
+                 std::to_string(base_width) + "(" + shifted + ")";
+        }
+        std::string low =
+            "gpga_wide_to_u64_" + std::to_string(base_width) + "(" + shifted +
+            ")";
+        return MaskForWidthExpr(low, width);
+      }
       if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
         int width = expr.indexed_width;
-        int base_width = ExprWidth(*expr.base, module);
         std::string shift =
             EmitExpr(*expr.lsb_expr, module, locals, regs);
         std::string shift_val = "uint(" + shift + ")";
@@ -2812,7 +3621,6 @@ std::string EmitExpr(const Expr& expr, const Module& module,
       int lo = std::min(expr.msb, expr.lsb);
       int hi = std::max(expr.msb, expr.lsb);
       int width = hi - lo + 1;
-      int base_width = ExprWidth(*expr.base, module);
       if (width == 32) {
         std::string shifted =
             "(" + base + " >> " + std::to_string(lo) + "u)";
@@ -2848,8 +3656,14 @@ std::string EmitExpr(const Expr& expr, const Module& module,
         }
       }
       std::string base = EmitExpr(*expr.base, module, locals, regs);
-      std::string index = EmitExpr(*expr.index, module, locals, regs);
       int base_width = ExprWidth(*expr.base, module);
+      if (base_width > 64) {
+        std::string index =
+            EmitExprSized(*expr.index, 32, module, locals, regs);
+        return "gpga_wide_get_bit_" + std::to_string(base_width) + "(" + base +
+               ", uint(" + index + "))";
+      }
+      std::string index = EmitExpr(*expr.index, module, locals, regs);
       std::string one = (base_width > 32) ? "1ul" : "1u";
       std::string cast = CastForWidth(base_width);
       std::string masked = MaskForWidthExpr(base, base_width);
@@ -2858,6 +3672,9 @@ std::string EmitExpr(const Expr& expr, const Module& module,
     case ExprKind::kCall:
       if (expr.ident == "$time") {
         return "__gpga_time";
+      }
+      if (expr.ident == "$stime") {
+        return "uint(__gpga_time)";
       }
       if (expr.ident == "$fopen") {
         return "0u";
@@ -2875,6 +3692,18 @@ std::string EmitExpr(const Expr& expr, const Module& module,
         return "1u";
       }
       if (expr.ident == "$ftell") {
+        return "0u";
+      }
+      if (expr.ident == "$fseek") {
+        return "0u";
+      }
+      if (expr.ident == "$ferror") {
+        return "0u";
+      }
+      if (expr.ident == "$ungetc") {
+        return "4294967295u";
+      }
+      if (expr.ident == "$fread") {
         return "0u";
       }
       if (expr.ident == "$fscanf" || expr.ident == "$sscanf") {
@@ -3137,6 +3966,12 @@ std::string EmitBitSelectUpdate(const std::string& base_expr,
                                 const std::string& index_expr,
                                 int base_width,
                                 const std::string& rhs_expr) {
+  if (base_width > 64) {
+    std::string idx = "uint(" + index_expr + ")";
+    std::string rhs_masked = MaskForWidthExpr(rhs_expr, 1);
+    return "gpga_wide_set_bit_" + std::to_string(base_width) + "(" + base_expr +
+           ", " + idx + ", uint(" + rhs_masked + "))";
+  }
   std::string idx = "uint(" + index_expr + ")";
   std::string one = (base_width > 32) ? "1ul" : "1u";
   std::string cast = CastForWidth(base_width);
@@ -3150,6 +3985,41 @@ std::string EmitRangeSelectUpdate(const std::string& base_expr,
                                   const std::string& index_expr,
                                   int base_width, int slice_width,
                                   const std::string& rhs_expr) {
+  if (base_width > 64) {
+    std::string idx = "uint(" + index_expr + ")";
+    std::string rhs_ext;
+    if (slice_width > 64) {
+      rhs_ext = "gpga_wide_resize_" + std::to_string(base_width) + "_from_" +
+                std::to_string(slice_width) + "(" + rhs_expr + ")";
+    } else {
+      rhs_ext = "gpga_wide_from_u64_" + std::to_string(base_width) + "(" +
+                MaskForWidthExpr(rhs_expr, slice_width) + ")";
+    }
+    std::string mask;
+    if (slice_width > 64) {
+      mask = "gpga_wide_resize_" + std::to_string(base_width) + "_from_" +
+             std::to_string(slice_width) + "(gpga_wide_mask_const_" +
+             std::to_string(slice_width) + "())";
+    } else {
+      uint64_t slice_mask = MaskForWidth64(slice_width);
+      mask = "gpga_wide_from_u64_" + std::to_string(base_width) + "(" +
+             std::to_string(slice_mask) + "ul)";
+    }
+    std::string shifted_mask =
+        "gpga_wide_shl_" + std::to_string(base_width) + "(" + mask + ", " +
+        idx + ")";
+    std::string clear =
+        "gpga_wide_not_" + std::to_string(base_width) + "(" + shifted_mask +
+        ")";
+    std::string set =
+        "gpga_wide_shl_" + std::to_string(base_width) + "(" + rhs_ext + ", " +
+        idx + ")";
+    std::string cleared =
+        "gpga_wide_and_" + std::to_string(base_width) + "(" + base_expr + ", " +
+        clear + ")";
+    return "gpga_wide_or_" + std::to_string(base_width) + "(" + cleared + ", " +
+           set + ")";
+  }
   std::string idx = "uint(" + index_expr + ")";
   std::string cast = CastForWidth(base_width);
   uint64_t slice_mask = MaskForWidth64(slice_width);
@@ -3174,6 +4044,472 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   out << "using namespace metal;\n\n";
   if (four_state) {
     out << "#include \"gpga_4state.h\"\n\n";
+  }
+  std::vector<int> wide_widths = CollectWideWidths(module);
+  if (!wide_widths.empty()) {
+    out << "// Wide (>64-bit) helpers.\n";
+    for (int width : wide_widths) {
+      int words = (width + 63) / 64;
+      uint64_t last_mask =
+          (width % 64 == 0) ? 0xFFFFFFFFFFFFFFFFull
+                            : ((1ull << (width % 64)) - 1ull);
+      std::string type = "GpgaWide" + std::to_string(width);
+      out << "struct " << type << " { ulong w[" << words << "]; };\n";
+      out << "inline " << type << " gpga_wide_zero_" << width << "() {\n";
+      out << "  " << type << " out;\n";
+      out << "  for (uint i = 0u; i < " << words
+          << "u; ++i) { out.w[i] = 0ul; }\n";
+      out << "  return out;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_mask_const_" << width << "() {\n";
+      out << "  " << type << " out;\n";
+      out << "  for (uint i = 0u; i < " << words
+          << "u; ++i) { out.w[i] = 0xFFFFFFFFFFFFFFFFul; }\n";
+      if (last_mask != 0xFFFFFFFFFFFFFFFFull) {
+        out << "  out.w[" << (words - 1) << "] = " << last_mask << "ul;\n";
+      }
+      out << "  return out;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_from_u64_" << width
+          << "(ulong value) {\n";
+      out << "  " << type << " out = gpga_wide_zero_" << width << "();\n";
+      out << "  out.w[0] = value;\n";
+      out << "  return out;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_from_words_" << width << "(";
+      for (int i = 0; i < words; ++i) {
+        if (i > 0) {
+          out << ", ";
+        }
+        out << "ulong w" << i;
+      }
+      out << ") {\n";
+      out << "  " << type << " out;\n";
+      for (int i = 0; i < words; ++i) {
+        out << "  out.w[" << i << "] = w" << i << ";\n";
+      }
+      if (last_mask != 0xFFFFFFFFFFFFFFFFull) {
+        out << "  out.w[" << (words - 1) << "] &= " << last_mask << "ul;\n";
+      }
+      out << "  return out;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_mask_" << width << "(" << type
+          << " v) {\n";
+      if (last_mask != 0xFFFFFFFFFFFFFFFFull) {
+        out << "  v.w[" << (words - 1) << "] &= " << last_mask << "ul;\n";
+      }
+      out << "  return v;\n";
+      out << "}\n";
+      out << "inline ulong gpga_wide_to_u64_" << width << "(" << type
+          << " v) {\n";
+      out << "  return v.w[0];\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_any_" << width << "(" << type << " v) {\n";
+      if (words > 1) {
+        out << "  for (uint i = 0u; i < " << (words - 1)
+            << "u; ++i) {\n";
+        out << "    if (v.w[i] != 0ul) return true;\n";
+        out << "  }\n";
+      }
+      out << "  return (v.w[" << (words - 1) << "] & " << last_mask
+          << "ul) != 0ul;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_select_" << width
+          << "(bool cond, " << type << " a, " << type << " b) {\n";
+      out << "  if (cond) return a;\n";
+      out << "  return b;\n";
+      out << "}\n";
+      out << "inline uint gpga_wide_get_bit_" << width << "(" << type
+          << " v, uint idx) {\n";
+      out << "  if (idx >= " << width << "u) return 0u;\n";
+      out << "  uint word = idx >> 6u;\n";
+      out << "  uint bit = idx & 63u;\n";
+      out << "  return uint((v.w[word] >> bit) & 1ul);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_set_bit_" << width << "(" << type
+          << " v, uint idx, uint bit) {\n";
+      out << "  if (idx >= " << width << "u) return v;\n";
+      out << "  uint word = idx >> 6u;\n";
+      out << "  uint shift = idx & 63u;\n";
+      out << "  ulong mask = (1ul << shift);\n";
+      out << "  if (bit != 0u) {\n";
+      out << "    v.w[word] |= mask;\n";
+      out << "  } else {\n";
+      out << "    v.w[word] &= ~mask;\n";
+      out << "  }\n";
+      out << "  return v;\n";
+      out << "}\n";
+      out << "inline uint gpga_wide_signbit_" << width << "(" << type
+          << " v) {\n";
+      out << "  return gpga_wide_get_bit_" << width << "(v, "
+          << (width - 1) << "u);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_not_" << width << "(" << type
+          << " a) {\n";
+      out << "  " << type << " out;\n";
+      out << "  for (uint i = 0u; i < " << words
+          << "u; ++i) { out.w[i] = ~a.w[i]; }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_and_" << width << "(" << type
+          << " a, " << type << " b) {\n";
+      out << "  " << type << " out;\n";
+      out << "  for (uint i = 0u; i < " << words
+          << "u; ++i) { out.w[i] = a.w[i] & b.w[i]; }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_or_" << width << "(" << type
+          << " a, " << type << " b) {\n";
+      out << "  " << type << " out;\n";
+      out << "  for (uint i = 0u; i < " << words
+          << "u; ++i) { out.w[i] = a.w[i] | b.w[i]; }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_xor_" << width << "(" << type
+          << " a, " << type << " b) {\n";
+      out << "  " << type << " out;\n";
+      out << "  for (uint i = 0u; i < " << words
+          << "u; ++i) { out.w[i] = a.w[i] ^ b.w[i]; }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_add_" << width << "(" << type
+          << " a, " << type << " b) {\n";
+      out << "  " << type << " out;\n";
+      out << "  ulong carry = 0ul;\n";
+      out << "  for (uint i = 0u; i < " << words << "u; ++i) {\n";
+      out << "    ulong ai = a.w[i];\n";
+      out << "    ulong bi = b.w[i];\n";
+      out << "    ulong sum = ai + bi;\n";
+      out << "    ulong carry1 = (sum < ai) ? 1ul : 0ul;\n";
+      out << "    sum += carry;\n";
+      out << "    ulong carry2 = (sum < carry) ? 1ul : 0ul;\n";
+      out << "    carry = (carry1 | carry2);\n";
+      out << "    out.w[i] = sum;\n";
+      out << "  }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_sub_" << width << "(" << type
+          << " a, " << type << " b) {\n";
+      out << "  " << type << " out;\n";
+      out << "  ulong borrow = 0ul;\n";
+      out << "  for (uint i = 0u; i < " << words << "u; ++i) {\n";
+      out << "    ulong ai = a.w[i];\n";
+      out << "    ulong bi = b.w[i];\n";
+      out << "    ulong diff = ai - bi;\n";
+      out << "    ulong borrow1 = (ai < bi) ? 1ul : 0ul;\n";
+      out << "    ulong diff2 = diff - borrow;\n";
+      out << "    ulong borrow2 = (diff < borrow) ? 1ul : 0ul;\n";
+      out << "    borrow = (borrow1 | borrow2);\n";
+      out << "    out.w[i] = diff2;\n";
+      out << "  }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_shl_" << width << "(" << type
+          << " a, uint shift) {\n";
+      out << "  if (shift >= " << width << "u) return gpga_wide_zero_" << width
+          << "();\n";
+      out << "  uint word_shift = shift >> 6u;\n";
+      out << "  uint bit_shift = shift & 63u;\n";
+      out << "  " << type << " out = gpga_wide_zero_" << width << "();\n";
+      out << "  for (int i = " << (words - 1) << "; i >= 0; --i) {\n";
+      out << "    int src = i - int(word_shift);\n";
+      out << "    if (src < 0) continue;\n";
+      out << "    ulong val = a.w[src] << bit_shift;\n";
+      out << "    if (bit_shift != 0u && src > 0) {\n";
+      out << "      val |= (a.w[src - 1] >> (64u - bit_shift));\n";
+      out << "    }\n";
+      out << "    out.w[i] = val;\n";
+      out << "  }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_shr_" << width << "(" << type
+          << " a, uint shift) {\n";
+      out << "  if (shift >= " << width << "u) return gpga_wide_zero_" << width
+          << "();\n";
+      out << "  uint word_shift = shift >> 6u;\n";
+      out << "  uint bit_shift = shift & 63u;\n";
+      out << "  " << type << " out = gpga_wide_zero_" << width << "();\n";
+      out << "  for (uint i = 0u; i < " << words << "u; ++i) {\n";
+      out << "    uint src = i + word_shift;\n";
+      out << "    if (src >= " << words << "u) continue;\n";
+      out << "    ulong val = a.w[src] >> bit_shift;\n";
+      out << "    if (bit_shift != 0u && (src + 1u) < " << words << "u) {\n";
+      out << "      val |= (a.w[src + 1u] << (64u - bit_shift));\n";
+      out << "    }\n";
+      out << "    out.w[i] = val;\n";
+      out << "  }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_sar_" << width << "(" << type
+          << " a, uint shift) {\n";
+      out << "  uint sign = gpga_wide_signbit_" << width << "(a);\n";
+      out << "  if (shift >= " << width << "u) {\n";
+      out << "    return sign ? gpga_wide_mask_const_" << width
+          << "() : gpga_wide_zero_" << width << "();\n";
+      out << "  }\n";
+      out << "  " << type << " out = gpga_wide_shr_" << width << "(a, shift);\n";
+      out << "  if (sign == 0u || shift == 0u) {\n";
+      out << "    return out;\n";
+      out << "  }\n";
+      out << "  uint fill_start = " << width << "u - shift;\n";
+      out << "  uint word = fill_start >> 6u;\n";
+      out << "  uint bit = fill_start & 63u;\n";
+      out << "  for (uint i = word + 1u; i < " << words
+          << "u; ++i) {\n";
+      out << "    out.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
+      out << "  }\n";
+      out << "  if (word < " << words << "u) {\n";
+      out << "    ulong mask = (bit == 0u) ? 0xFFFFFFFFFFFFFFFFul : (0xFFFFFFFFFFFFFFFFul << bit);\n";
+      out << "    out.w[word] |= mask;\n";
+      out << "  }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_eq_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  for (uint i = 0u; i < " << words << "u; ++i) {\n";
+      if (last_mask != 0xFFFFFFFFFFFFFFFFull) {
+        out << "    ulong aw = a.w[i];\n";
+        out << "    ulong bw = b.w[i];\n";
+        out << "    if (i == " << (words - 1) << "u) {\n";
+        out << "      aw &= " << last_mask << "ul;\n";
+        out << "      bw &= " << last_mask << "ul;\n";
+        out << "    }\n";
+        out << "    if (aw != bw) return false;\n";
+      } else {
+        out << "    if (a.w[i] != b.w[i]) return false;\n";
+      }
+      out << "  }\n";
+      out << "  return true;\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_ne_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return !gpga_wide_eq_" << width << "(a, b);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_lt_u_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  for (int i = " << (words - 1) << "; i >= 0; --i) {\n";
+      if (last_mask != 0xFFFFFFFFFFFFFFFFull) {
+        out << "    ulong aw = a.w[i];\n";
+        out << "    ulong bw = b.w[i];\n";
+        out << "    if (i == " << (words - 1) << ") {\n";
+        out << "      aw &= " << last_mask << "ul;\n";
+        out << "      bw &= " << last_mask << "ul;\n";
+        out << "    }\n";
+        out << "    if (aw < bw) return true;\n";
+        out << "    if (aw > bw) return false;\n";
+      } else {
+        out << "    if (a.w[i] < b.w[i]) return true;\n";
+        out << "    if (a.w[i] > b.w[i]) return false;\n";
+      }
+      out << "  }\n";
+      out << "  return false;\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_gt_u_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return gpga_wide_lt_u_" << width << "(b, a);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_le_u_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return gpga_wide_lt_u_" << width << "(a, b) || gpga_wide_eq_"
+          << width << "(a, b);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_ge_u_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return gpga_wide_lt_u_" << width << "(b, a) || gpga_wide_eq_"
+          << width << "(a, b);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_lt_s_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  uint sa = gpga_wide_signbit_" << width << "(a);\n";
+      out << "  uint sb = gpga_wide_signbit_" << width << "(b);\n";
+      out << "  if (sa != sb) return sa > sb;\n";
+      out << "  return gpga_wide_lt_u_" << width << "(a, b);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_gt_s_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return gpga_wide_lt_s_" << width << "(b, a);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_le_s_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return gpga_wide_lt_s_" << width << "(a, b) || gpga_wide_eq_"
+          << width << "(a, b);\n";
+      out << "}\n";
+      out << "inline bool gpga_wide_ge_s_" << width << "(" << type << " a, "
+          << type << " b) {\n";
+      out << "  return gpga_wide_lt_s_" << width << "(b, a) || gpga_wide_eq_"
+          << width << "(a, b);\n";
+      out << "}\n";
+      out << "inline uint gpga_wide_red_and_" << width << "(" << type << " a) {\n";
+      out << "  return gpga_wide_eq_" << width << "(gpga_wide_mask_" << width
+          << "(a), gpga_wide_mask_const_" << width << "()) ? 1u : 0u;\n";
+      out << "}\n";
+      out << "inline uint gpga_wide_red_or_" << width << "(" << type << " a) {\n";
+      out << "  return gpga_wide_any_" << width << "(a) ? 1u : 0u;\n";
+      out << "}\n";
+      out << "inline uint gpga_wide_red_xor_" << width << "(" << type << " a) {\n";
+      out << "  uint parity = 0u;\n";
+      out << "  for (uint i = 0u; i < " << words << "u; ++i) {\n";
+      out << "    ulong word = a.w[i];\n";
+      if (last_mask != 0xFFFFFFFFFFFFFFFFull) {
+        out << "    if (i == " << (words - 1) << "u) word &= " << last_mask
+            << "ul;\n";
+      }
+      out << "    uint lo = uint(word);\n";
+      out << "    uint hi = uint(word >> 32u);\n";
+      out << "    parity ^= (popcount(lo) + popcount(hi)) & 1u;\n";
+      out << "  }\n";
+      out << "  return parity & 1u;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_mul_" << width << "(" << type
+          << " a, " << type << " b) {\n";
+      out << "  " << type << " result = gpga_wide_zero_" << width << "();\n";
+      out << "  " << type << " temp = a;\n";
+      out << "  for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
+      out << "    if (gpga_wide_get_bit_" << width << "(b, bit)) {\n";
+      out << "      result = gpga_wide_add_" << width << "(result, temp);\n";
+      out << "    }\n";
+      out << "    temp = gpga_wide_shl_" << width << "(temp, 1u);\n";
+      out << "  }\n";
+      out << "  return result;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_div_" << width << "(" << type
+          << " num, " << type << " den) {\n";
+      out << "  if (!gpga_wide_any_" << width << "(den)) return gpga_wide_zero_"
+          << width << "();\n";
+      out << "  " << type << " quotient = gpga_wide_zero_" << width << "();\n";
+      out << "  " << type << " rem = gpga_wide_zero_" << width << "();\n";
+      out << "  for (int bit = " << (width - 1) << "; bit >= 0; --bit) {\n";
+      out << "    rem = gpga_wide_shl_" << width << "(rem, 1u);\n";
+      out << "    if (gpga_wide_get_bit_" << width << "(num, uint(bit)) != 0u) {\n";
+      out << "      rem = gpga_wide_set_bit_" << width << "(rem, 0u, 1u);\n";
+      out << "    }\n";
+      out << "    if (!gpga_wide_lt_u_" << width << "(rem, den)) {\n";
+      out << "      rem = gpga_wide_sub_" << width << "(rem, den);\n";
+      out << "      quotient = gpga_wide_set_bit_" << width
+          << "(quotient, uint(bit), 1u);\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  return quotient;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_mod_" << width << "(" << type
+          << " num, " << type << " den) {\n";
+      out << "  if (!gpga_wide_any_" << width << "(den)) return gpga_wide_zero_"
+          << width << "();\n";
+      out << "  " << type << " rem = gpga_wide_zero_" << width << "();\n";
+      out << "  for (int bit = " << (width - 1) << "; bit >= 0; --bit) {\n";
+      out << "    rem = gpga_wide_shl_" << width << "(rem, 1u);\n";
+      out << "    if (gpga_wide_get_bit_" << width << "(num, uint(bit)) != 0u) {\n";
+      out << "      rem = gpga_wide_set_bit_" << width << "(rem, 0u, 1u);\n";
+      out << "    }\n";
+      out << "    if (!gpga_wide_lt_u_" << width << "(rem, den)) {\n";
+      out << "      rem = gpga_wide_sub_" << width << "(rem, den);\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  return rem;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_pow_u_" << width << "(" << type
+          << " base, " << type << " exp) {\n";
+      out << "  ulong exp_u = gpga_wide_to_u64_" << width << "(exp);\n";
+      out << "  " << type << " result = gpga_wide_from_u64_" << width
+          << "(1ul);\n";
+      out << "  " << type << " cur = base;\n";
+      out << "  while (exp_u != 0ul) {\n";
+      out << "    if (exp_u & 1ul) {\n";
+      out << "      result = gpga_wide_mul_" << width << "(result, cur);\n";
+      out << "    }\n";
+      out << "    cur = gpga_wide_mul_" << width << "(cur, cur);\n";
+      out << "    exp_u >>= 1ul;\n";
+      out << "  }\n";
+      out << "  return result;\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_pow_s_" << width << "(" << type
+          << " base, " << type << " exp) {\n";
+      out << "  long exp_s = (long)gpga_wide_to_u64_" << width << "(exp);\n";
+      out << "  if (exp_s < 0) return gpga_wide_zero_" << width << "();\n";
+      out << "  return gpga_wide_pow_u_" << width << "(base, exp);\n";
+      out << "}\n";
+      out << "inline " << type << " gpga_wide_sext_from_u64_" << width
+          << "(ulong value, uint src_width) {\n";
+      out << "  if (src_width == 0u) return gpga_wide_zero_" << width << "();\n";
+      out << "  " << type << " out = gpga_wide_zero_" << width << "();\n";
+      out << "  out.w[0] = value;\n";
+      out << "  if (src_width < 64u) {\n";
+      out << "    ulong sign_mask = 1ul << (src_width - 1u);\n";
+      out << "    if ((value & sign_mask) != 0ul) {\n";
+      out << "      ulong upper = ~((1ul << src_width) - 1ul);\n";
+      out << "      out.w[0] |= upper;\n";
+      if (words > 1) {
+        out << "      for (uint i = 1u; i < " << words
+            << "u; ++i) { out.w[i] = 0xFFFFFFFFFFFFFFFFul; }\n";
+      }
+      out << "    }\n";
+      out << "  }\n";
+      out << "  return gpga_wide_mask_" << width << "(out);\n";
+      out << "}\n";
+    }
+    for (int dst : wide_widths) {
+      int dst_words = (dst + 63) / 64;
+      uint64_t dst_last_mask =
+          (dst % 64 == 0) ? 0xFFFFFFFFFFFFFFFFull
+                          : ((1ull << (dst % 64)) - 1ull);
+      std::string dst_type = "GpgaWide" + std::to_string(dst);
+      for (int src : wide_widths) {
+        std::string src_type = "GpgaWide" + std::to_string(src);
+        int src_words = (src + 63) / 64;
+        int min_words = std::min(dst_words, src_words);
+        out << "inline " << dst_type << " gpga_wide_resize_" << dst
+            << "_from_" << src << "(" << src_type << " v) {\n";
+        out << "  " << dst_type << " out = gpga_wide_zero_" << dst << "();\n";
+        out << "  for (uint i = 0u; i < " << min_words
+            << "u; ++i) { out.w[i] = v.w[i]; }\n";
+        if (dst_last_mask != 0xFFFFFFFFFFFFFFFFull) {
+          out << "  out.w[" << (dst_words - 1) << "] &= " << dst_last_mask
+              << "ul;\n";
+        }
+        out << "  return out;\n";
+        out << "}\n";
+        out << "inline " << dst_type << " gpga_wide_sext_" << dst
+            << "_from_" << src << "(" << src_type << " v) {\n";
+        if (dst <= src) {
+          out << "  return gpga_wide_resize_" << dst << "_from_" << src
+              << "(v);\n";
+        } else {
+          int src_words_calc = (src + 63) / 64;
+          int src_mod = src % 64;
+          out << "  " << dst_type << " out = gpga_wide_resize_" << dst
+              << "_from_" << src << "(v);\n";
+          out << "  uint sign = gpga_wide_get_bit_" << src << "(v, "
+              << (src - 1) << "u);\n";
+          out << "  if (sign != 0u) {\n";
+          if (src_mod != 0) {
+            uint64_t upper_mask =
+                (src_mod == 64) ? 0ull : (~((1ull << src_mod) - 1ull));
+            out << "    out.w[" << (src_words_calc - 1) << "] |= "
+                << upper_mask << "ul;\n";
+          }
+          if (dst_words > src_words_calc) {
+            out << "    for (uint i = " << src_words_calc << "u; i < "
+                << dst_words
+                << "u; ++i) { out.w[i] = 0xFFFFFFFFFFFFFFFFul; }\n";
+          }
+          out << "  }\n";
+          if (dst_last_mask != 0xFFFFFFFFFFFFFFFFull) {
+            out << "  out.w[" << (dst_words - 1) << "] &= " << dst_last_mask
+                << "ul;\n";
+          }
+          out << "  return out;\n";
+        }
+        out << "}\n";
+      }
+    }
+    if (four_state) {
+      for (int width : wide_widths) {
+        std::string type = "GpgaWide" + std::to_string(width);
+        out << "struct GpgaWideFs" << width << " { " << type << " val; " << type
+            << " xz; };\n";
+      }
+    }
+    out << "\n";
   }
   const bool uses_power = ModuleUsesPower(module);
   const bool uses_real = ModuleUsesReal(module);
@@ -3724,14 +5060,22 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   out << "// Placeholder MSL emitted by GPGA.\n\n";
   const bool needs_scheduler = ModuleNeedsScheduler(module);
   const SystemTaskInfo system_task_info = BuildSystemTaskInfo(module);
+  const uint32_t service_wide_words = CollectServiceWideWordCount(module);
   if (four_state) {
     auto suffix_for_width = [](int width) -> std::string {
       return (width > 32) ? "ul" : "u";
     };
     auto literal_for_width = [&](uint64_t value, int width) -> std::string {
+      if (width > 64) {
+        return "gpga_wide_from_u64_" + std::to_string(width) + "(" +
+               std::to_string(value) + "ul)";
+      }
       return std::to_string(value) + suffix_for_width(width);
     };
     auto mask_literal = [&](int width) -> std::string {
+      if (width > 64) {
+        return "gpga_wide_mask_const_" + std::to_string(width) + "()";
+      }
       uint64_t mask = MaskForWidth64(width);
       return std::to_string(mask) + suffix_for_width(width);
     };
@@ -3740,6 +5084,75 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
     auto drive_zero = [&](int width) -> std::string {
       return literal_for_width(0, width);
+    };
+    auto wide_not = [&](const std::string& expr, int width) -> std::string {
+      return "gpga_wide_not_" + std::to_string(width) + "(" + expr + ")";
+    };
+    auto wide_and = [&](const std::string& lhs, const std::string& rhs,
+                        int width) -> std::string {
+      return "gpga_wide_and_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto wide_or = [&](const std::string& lhs, const std::string& rhs,
+                       int width) -> std::string {
+      return "gpga_wide_or_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto wide_xor = [&](const std::string& lhs, const std::string& rhs,
+                        int width) -> std::string {
+      return "gpga_wide_xor_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto wide_shl = [&](const std::string& lhs, const std::string& rhs,
+                        int width) -> std::string {
+      return "gpga_wide_shl_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto wide_shr = [&](const std::string& lhs, const std::string& rhs,
+                        int width) -> std::string {
+      return "gpga_wide_shr_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto wide_sar = [&](const std::string& lhs, const std::string& rhs,
+                        int width) -> std::string {
+      return "gpga_wide_sar_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto wide_any = [&](const std::string& expr, int width) -> std::string {
+      return "gpga_wide_any_" + std::to_string(width) + "(" + expr + ")";
+    };
+    auto wide_eq = [&](const std::string& lhs, const std::string& rhs,
+                       int width) -> std::string {
+      return "gpga_wide_eq_" + std::to_string(width) + "(" + lhs + ", " + rhs +
+             ")";
+    };
+    auto to_u64 = [&](const std::string& expr, int width) -> std::string {
+      if (width > 64) {
+        return "gpga_wide_to_u64_" + std::to_string(width) + "(" + expr + ")";
+      }
+      return expr;
+    };
+    auto to_uint = [&](const std::string& expr, int width) -> std::string {
+      return "uint(" + to_u64(expr, width) + ")";
+    };
+    auto xz_is_zero = [&](const std::string& expr, int width) -> std::string {
+      if (width > 64) {
+        return "(!" + wide_any(expr, width) + ")";
+      }
+      return "(" + expr + " == " + literal_for_width(0, width) + ")";
+    };
+    auto val_is_zero = [&](const std::string& expr, int width) -> std::string {
+      if (width > 64) {
+        return "(!" + wide_any(expr, width) + ")";
+      }
+      return "(" + expr + " == " + literal_for_width(0, width) + ")";
+    };
+    auto val_is_nonzero = [&](const std::string& expr,
+                              int width) -> std::string {
+      if (width > 64) {
+        return wide_any(expr, width);
+      }
+      return "(" + expr + " != " + literal_for_width(0, width) + ")";
     };
     auto val_name = [](const std::string& name) { return name + "_val"; };
     auto xz_name = [](const std::string& name) { return name + "_xz"; };
@@ -3842,14 +5255,31 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out.const_val = val_bits & mask;
       out.const_xz = xz_bits & mask;
       out.const_drive = drive_bits & mask;
-      out.is_const = true;
+      out.is_const = width <= 64;
       out.val = literal_for_width(out.const_val, width);
       out.xz = literal_for_width(out.const_xz, width);
-      out.drive = literal_for_width(out.const_drive, width);
+      if (width > 64) {
+        std::string drive = literal_for_width(out.const_drive, width);
+        std::string upper_mask = wide_and(
+            mask_literal(width),
+            wide_not(literal_for_width(0xFFFFFFFFFFFFFFFFull, width), width),
+            width);
+        out.drive = wide_or(drive, upper_mask, width);
+      } else {
+        out.drive = literal_for_width(out.const_drive, width);
+      }
       return out;
     };
 
     auto fs_make_expr = [&](const FsExpr& expr, int width) -> std::string {
+      if (width > 64) {
+        if (!expr.full.empty() && expr.width == width) {
+          return expr.full;
+        }
+        return "GpgaWideFs" + std::to_string(width) + "{" +
+               MaskForWidthExpr(expr.val, width) + ", " +
+               MaskForWidthExpr(expr.xz, width) + "}";
+      }
       if (expr.is_const && expr.width == width) {
         std::string type = (width > 32) ? "FourState64" : "FourState32";
         return type + "{" + literal_for_width(expr.const_val, width) + ", " +
@@ -3872,9 +5302,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return expr.drive;
       }
       if (width < expr.width) {
+        if (width > 64 || expr.width > 64) {
+          return ExtendExpr(expr.drive, expr.width, width);
+        }
         return MaskForWidthExpr(expr.drive, width);
       }
       std::string widened = ExtendExpr(expr.drive, expr.width, width);
+      if (width > 64) {
+        std::string lower_mask = ExtendExpr(mask_literal(expr.width),
+                                            expr.width, width);
+        std::string upper_mask = wide_and(
+            mask_literal(width), wide_not(lower_mask, width), width);
+        if (!sign_extend || expr.width <= 0) {
+          return wide_or(widened, upper_mask, width);
+        }
+        std::string sign_bit =
+            "gpga_wide_get_bit_" + std::to_string(width) + "(" + widened +
+            ", " + std::to_string(expr.width - 1) + "u)";
+        std::string upper_drive =
+            "(" + sign_bit + " != 0u ? " + upper_mask + " : " +
+            drive_zero(width) + ")";
+        return wide_or(widened, upper_drive, width);
+      }
       uint64_t upper_mask_value =
           MaskForWidth64(width) & ~MaskForWidth64(expr.width);
       std::string upper_mask = literal_for_width(upper_mask_value, width);
@@ -3891,7 +5340,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     auto fs_const_extend = [&](const FsExpr& expr, int width,
                                bool sign_extend) -> FsExpr {
-      if (!expr.is_const) {
+      if (!expr.is_const || expr.width > 64 || width > 64) {
         return expr;
       }
       if (width <= 0) {
@@ -3928,8 +5377,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (expr.width == width) {
         return expr;
       }
-      if (expr.is_const) {
+      if (expr.is_const && expr.width <= 64 && width <= 64) {
         return fs_const_extend(expr, width, false);
+      }
+      if (width > 64 || expr.width > 64) {
+        FsExpr out;
+        out.width = width;
+        out.val = ExtendExpr(expr.val, expr.width, width);
+        out.xz = ExtendExpr(expr.xz, expr.width, width);
+        out.drive = fs_resize_drive(expr, width, false);
+        return out;
       }
       std::string func = (width > 32) ? "fs_resize64" : "fs_resize32";
       std::string base = func + "(" + fs_make_expr(expr, expr.width) + ", " +
@@ -3942,8 +5399,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (expr.width >= width) {
         return fs_resize_expr(expr, width);
       }
-      if (expr.is_const) {
+      if (expr.is_const && expr.width <= 64 && width <= 64) {
         return fs_const_extend(expr, width, true);
+      }
+      if (width > 64 || expr.width > 64) {
+        FsExpr out;
+        out.width = width;
+        out.val = SignExtendExpr(expr.val, expr.width, width);
+        out.xz = SignExtendExpr(expr.xz, expr.width, width);
+        out.drive = fs_resize_drive(expr, width, true);
+        return out;
       }
       std::string func = (width > 32) ? "fs_sext64" : "fs_sext32";
       std::string base =
@@ -3962,11 +5427,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     auto fs_allx_expr = [&](int width) -> FsExpr {
+      if (width > 64) {
+        return FsExpr{drive_zero(width), mask_literal(width),
+                      mask_literal(width), width};
+      }
       uint64_t mask = MaskForWidth64(width);
       return fs_const_expr(0u, mask, mask, width);
     };
 
     auto fs_unary = [&](const char* op, const FsExpr& arg, int width) -> FsExpr {
+      if (width > 64) {
+        std::string aval = MaskForWidthExpr(arg.val, width);
+        std::string ax = MaskForWidthExpr(arg.xz, width);
+        if (std::strcmp(op, "not") == 0) {
+          return FsExpr{wide_not(aval, width), ax, drive_full(width), width};
+        }
+        return fs_allx_expr(width);
+      }
       std::string func =
           std::string("fs_") + op + (width > 32 ? "64" : "32");
       std::string base =
@@ -3979,6 +5456,116 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                          bool signed_op) -> FsExpr {
       lhs = fs_extend_expr(lhs, width, signed_op);
       rhs = fs_extend_expr(rhs, width, signed_op);
+      if (width > 64) {
+        std::string mask = mask_literal(width);
+        std::string lhs_val = MaskForWidthExpr(lhs.val, width);
+        std::string rhs_val = MaskForWidthExpr(rhs.val, width);
+        std::string lhs_xz = MaskForWidthExpr(lhs.xz, width);
+        std::string rhs_xz = MaskForWidthExpr(rhs.xz, width);
+        std::string any_xz =
+            wide_any(wide_or(lhs_xz, rhs_xz, width), width);
+        if (std::strcmp(op, "eq") == 0 || std::strcmp(op, "ne") == 0 ||
+            std::strcmp(op, "lt") == 0 || std::strcmp(op, "gt") == 0 ||
+            std::strcmp(op, "le") == 0 || std::strcmp(op, "ge") == 0 ||
+            std::strcmp(op, "slt") == 0 || std::strcmp(op, "sgt") == 0 ||
+            std::strcmp(op, "sle") == 0 || std::strcmp(op, "sge") == 0) {
+          std::string pred;
+          if (std::strcmp(op, "eq") == 0) {
+            pred = wide_eq(lhs_val, rhs_val, width);
+          } else if (std::strcmp(op, "ne") == 0) {
+            pred = "!" + wide_eq(lhs_val, rhs_val, width);
+          } else if (std::strcmp(op, "lt") == 0) {
+            pred = "gpga_wide_lt_u_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else if (std::strcmp(op, "gt") == 0) {
+            pred = "gpga_wide_gt_u_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else if (std::strcmp(op, "le") == 0) {
+            pred = "gpga_wide_le_u_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else if (std::strcmp(op, "ge") == 0) {
+            pred = "gpga_wide_ge_u_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else if (std::strcmp(op, "slt") == 0) {
+            pred = "gpga_wide_lt_s_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else if (std::strcmp(op, "sgt") == 0) {
+            pred = "gpga_wide_gt_s_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else if (std::strcmp(op, "sle") == 0) {
+            pred = "gpga_wide_le_s_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          } else {
+            pred = "gpga_wide_ge_s_" + std::to_string(width) + "(" + lhs_val +
+                   ", " + rhs_val + ")";
+          }
+          std::string val =
+              "((" + any_xz + ") ? 0u : ((" + pred + ") ? 1u : 0u))";
+          std::string xz = "((" + any_xz + ") ? 1u : 0u)";
+          return FsExpr{val, xz, drive_full(1), 1};
+        }
+        if (std::strcmp(op, "and") == 0 || std::strcmp(op, "or") == 0 ||
+            std::strcmp(op, "xor") == 0) {
+          std::string ax = lhs_xz;
+          std::string bx = rhs_xz;
+          std::string a0 = wide_and(
+              wide_and(wide_not(lhs_val, width), wide_not(ax, width), width),
+              mask, width);
+          std::string b0 = wide_and(
+              wide_and(wide_not(rhs_val, width), wide_not(bx, width), width),
+              mask, width);
+          std::string a1 =
+              wide_and(wide_and(lhs_val, wide_not(ax, width), width), mask,
+                       width);
+          std::string b1 =
+              wide_and(wide_and(rhs_val, wide_not(bx, width), width), mask,
+                       width);
+          if (std::strcmp(op, "and") == 0) {
+            std::string known0 = wide_or(a0, b0, width);
+            std::string known1 = wide_and(a1, b1, width);
+            std::string unknown =
+                wide_and(mask, wide_not(wide_or(known0, known1, width), width),
+                         width);
+            return FsExpr{known1, unknown, drive_full(width), width};
+          }
+          if (std::strcmp(op, "or") == 0) {
+            std::string known1 = wide_or(a1, b1, width);
+            std::string known0 = wide_and(a0, b0, width);
+            std::string unknown =
+                wide_and(mask, wide_not(wide_or(known0, known1, width), width),
+                         width);
+            return FsExpr{known1, unknown, drive_full(width), width};
+          }
+          std::string unknown = wide_and(wide_or(ax, bx, width), mask, width);
+          std::string val =
+              wide_and(wide_xor(lhs_val, rhs_val, width),
+                       wide_not(unknown, width), width);
+          return FsExpr{val, unknown, drive_full(width), width};
+        }
+        std::string func = "gpga_wide_add_" + std::to_string(width);
+        if (std::strcmp(op, "sub") == 0) {
+          func = "gpga_wide_sub_" + std::to_string(width);
+        } else if (std::strcmp(op, "mul") == 0) {
+          func = "gpga_wide_mul_" + std::to_string(width);
+        } else if (std::strcmp(op, "div") == 0) {
+          func = "gpga_wide_div_" + std::to_string(width);
+        } else if (std::strcmp(op, "mod") == 0) {
+          func = "gpga_wide_mod_" + std::to_string(width);
+        } else if (std::strcmp(op, "pow") == 0) {
+          func = "gpga_wide_pow_u_" + std::to_string(width);
+        } else if (std::strcmp(op, "spow") == 0) {
+          func = "gpga_wide_pow_s_" + std::to_string(width);
+        }
+        std::string val = func + "(" + lhs_val + ", " + rhs_val + ")";
+        std::string xz = "((" + any_xz + ") ? " + mask + " : " +
+                         drive_zero(width) + ")";
+        if (std::strcmp(op, "div") == 0 || std::strcmp(op, "mod") == 0) {
+          std::string rhs_zero = "!" + wide_any(rhs_val, width);
+          std::string bad = "(" + any_xz + " || " + rhs_zero + ")";
+          xz = "((" + bad + ") ? " + mask + " : " + drive_zero(width) + ")";
+        }
+        return FsExpr{val, xz, drive_full(width), width};
+      }
       std::string func =
           std::string("fs_") + op + (width > 32 ? "64" : "32");
       std::string base =
@@ -3991,6 +5578,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                         int width) -> FsExpr {
       if (lhs.width != width) {
         lhs = fs_resize_expr(lhs, width);
+      }
+      if (width > 64) {
+        std::string rhs_xz = (rhs.width > 64)
+                                 ? wide_any(rhs.xz, rhs.width)
+                                 : "(" + rhs.xz + " != " +
+                                       literal_for_width(0, rhs.width) + ")";
+        std::string shift_val =
+            (rhs.width > 64)
+                ? "uint(gpga_wide_to_u64_" + std::to_string(rhs.width) + "(" +
+                      rhs.val + "))"
+                : "uint(" + rhs.val + ")";
+        std::string mask = mask_literal(width);
+        std::string xz_any =
+            rhs_xz + " || " + wide_any(lhs.xz, width);
+        std::string val;
+        std::string xz;
+        if (std::strcmp(op, "shl") == 0) {
+          val = wide_shl(lhs.val, shift_val, width);
+          xz = wide_shl(lhs.xz, shift_val, width);
+        } else if (std::strcmp(op, "shr") == 0) {
+          val = wide_shr(lhs.val, shift_val, width);
+          xz = wide_shr(lhs.xz, shift_val, width);
+        } else {
+          std::string sign_xz =
+              "gpga_wide_get_bit_" + std::to_string(width) + "(" + lhs.xz +
+              ", " + std::to_string(width - 1) + "u)";
+          xz_any = "(" + xz_any + " || " + sign_xz + " != 0u)";
+          val = wide_sar(lhs.val, shift_val, width);
+          xz = wide_shr(lhs.xz, shift_val, width);
+        }
+        std::string xz_out =
+            "((" + xz_any + ") ? " + mask + " : " + xz + ")";
+        return FsExpr{val, xz_out, drive_full(width), width};
       }
       int rhs_width = rhs.width;
       if (width > 32) {
@@ -4222,8 +5842,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return expr;
       }
       std::string name = "__gpga_fs_tmp" + std::to_string(fs_temp_index++);
-      std::string type = (expr.width > 32) ? "FourState64" : "FourState32";
-      std::string dtype = (expr.width > 32) ? "ulong" : "uint";
+      std::string type = (expr.width > 64)
+                             ? ("GpgaWideFs" + std::to_string(expr.width))
+                             : ((expr.width > 32) ? "FourState64"
+                                                  : "FourState32");
+      std::string dtype = (expr.width > 64)
+                              ? ("GpgaWide" + std::to_string(expr.width))
+                              : ((expr.width > 32) ? "ulong" : "uint");
       std::string pad(state->indent, ' ');
       out << pad << type << " " << name << " = "
           << fs_make_expr(expr, expr.width) << ";\n";
@@ -4234,6 +5859,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     std::function<FsExpr(const Expr&)> emit_expr4;
     std::function<FsExpr(const Expr&)> emit_expr4_impl;
+    std::function<FsExpr(FsExpr, FsExpr, int)> fs_merge_expr;
     std::function<FsExpr(const Expr&)> emit_concat4;
     std::function<std::string(const Expr&)> emit_real_value4;
     std::function<FsExpr(const FsExpr&, int, bool, bool)> maybe_hoist_full;
@@ -4264,6 +5890,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     emit_concat4 = [&](const Expr& expr) -> FsExpr {
       int total_width = ExprWidth(expr, module);
+      if (total_width > 64) {
+        std::string acc_val = drive_zero(total_width);
+        std::string acc_xz = drive_zero(total_width);
+        std::string acc_drive = drive_zero(total_width);
+        int repeats = std::max(1, expr.repeat);
+        int shift = total_width;
+        for (int rep = 0; rep < repeats; ++rep) {
+          for (const auto& element : expr.elements) {
+            FsExpr part = emit_expr4(*element);
+            int width = ExprWidth(*element, module);
+            shift -= width;
+            std::string masked_val = MaskForWidthExpr(part.val, width);
+            std::string masked_xz = MaskForWidthExpr(part.xz, width);
+            std::string masked_drive = MaskForWidthExpr(part.drive, width);
+            std::string part_val = ExtendExpr(masked_val, width, total_width);
+            std::string part_xz = ExtendExpr(masked_xz, width, total_width);
+            std::string part_drive =
+                ExtendExpr(masked_drive, width, total_width);
+            std::string shift_amount = std::to_string(shift) + "u";
+            acc_val = wide_or(acc_val,
+                              wide_shl(part_val, shift_amount, total_width),
+                              total_width);
+            acc_xz = wide_or(acc_xz,
+                             wide_shl(part_xz, shift_amount, total_width),
+                             total_width);
+            acc_drive =
+                wide_or(acc_drive,
+                        wide_shl(part_drive, shift_amount, total_width),
+                        total_width);
+          }
+        }
+        return FsExpr{acc_val, acc_xz, acc_drive, total_width};
+      }
       std::string acc_val = (total_width > 32) ? "0ul" : "0u";
       std::string acc_xz = (total_width > 32) ? "0ul" : "0u";
       std::string acc_drive = (total_width > 32) ? "0ul" : "0u";
@@ -4287,6 +5946,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       }
       return FsExpr{acc_val, acc_xz, acc_drive, total_width};
+    };
+
+    auto wide_extract = [&](const std::string& expr, int expr_width,
+                            int out_width,
+                            const std::string& shift) -> std::string {
+      std::string shifted = wide_shr(expr, shift, expr_width);
+      if (out_width > 64) {
+        return "gpga_wide_resize_" + std::to_string(out_width) + "_from_" +
+               std::to_string(expr_width) + "(" + shifted + ")";
+      }
+      std::string low = "gpga_wide_to_u64_" + std::to_string(expr_width) +
+                        "(" + shifted + ")";
+      return MaskForWidthExpr(low, out_width);
     };
 
     auto emit_real_bits4 = [&](const Expr& expr) -> std::string {
@@ -4437,16 +6109,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               if (active_cse) {
                 idx = maybe_hoist_full(idx, active_cse->indent, false, false);
               }
-              std::string idx_val = idx.val;
+              std::string idx_u = to_uint(idx.val, idx.width);
               std::string idx_xz = idx.xz;
-              std::string bounds = "(" + idx_val + " < " +
+              std::string bounds = "(" + idx_u + " < " +
                                    std::to_string(array_size) + "u)";
-              std::string xguard =
-                  "(" + idx_xz + " == " +
-                  literal_for_width(0, idx.width) + ")";
+              std::string xguard = xz_is_zero(idx_xz, idx.width);
               std::string base =
-                  "(gid * " + std::to_string(array_size) + "u) + uint(" +
-                  idx_val + ")";
+                  "(gid * " + std::to_string(array_size) + "u) + " + idx_u;
               return "((" + xguard + ") ? ((" + bounds + ") ? " +
                      "gpga_bits_to_real(" + val_name(expr.base->ident) + "[" +
                      base + "]) : gpga_bits_to_real(0ul)) : gpga_bits_to_real(0ul))";
@@ -4518,9 +6187,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return fs_const_expr(expr.value_bits, xz_bits, drive_bits, width);
         }
         case ExprKind::kString: {
+          int width = static_cast<int>(expr.string_value.size() * 8);
+          if (width <= 0) {
+            width = 1;
+          }
+          if (width > 64) {
+            std::string val = WideLiteralExpr(expr.string_value, width);
+            return FsExpr{val, literal_for_width(0, width), drive_full(width),
+                          width};
+          }
           uint64_t bits = StringLiteralBits(expr.string_value);
-          int width = std::max<int>(
-              1, std::min<int>(64, static_cast<int>(expr.string_value.size() * 8)));
           uint64_t drive_bits = MaskForWidth64(width);
           return fs_const_expr(bits, 0, drive_bits, width);
         }
@@ -4550,6 +6226,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
+            if (width > 64) {
+              std::string ax = MaskForWidthExpr(operand.xz, width);
+              std::string aval = MaskForWidthExpr(operand.val, width);
+              std::string known1 = wide_and(aval, wide_not(ax, width), width);
+              std::string a_true = wide_any(known1, width);
+              std::string a_false =
+                  "(!" + wide_any(ax, width) + " && !" +
+                  wide_any(aval, width) + ")";
+              std::string val =
+                  "((" + a_true + ") ? 0u : ((" + a_false + ") ? 1u : 0u))";
+              std::string xz =
+                  "((" + a_true + " || " + a_false + ") ? 0u : 1u)";
+              return FsExpr{val, xz, drive_full(1), 1};
+            }
             std::string func = (width > 32) ? "fs_log_not64" : "fs_log_not32";
             std::string base =
                 func + "(" + fs_make_expr(operand, width) + ", " +
@@ -4563,13 +6253,57 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
-            std::string zero = literal_for_width(0, width);
-            std::string val = "((" + operand.xz + " == " + zero + " && " +
-                              operand.val + " != " + zero + ") ? 1u : 0u)";
+            std::string val;
+            if (width > 64) {
+              std::string known = "(!" + wide_any(operand.xz, width) + ")";
+              std::string non_zero = wide_any(operand.val, width);
+              val = "((" + known + " && " + non_zero + ") ? 1u : 0u)";
+            } else {
+              std::string zero = literal_for_width(0, width);
+              val = "((" + operand.xz + " == " + zero + " && " + operand.val +
+                    " != " + zero + ") ? 1u : 0u)";
+            }
             return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
           }
           if (expr.unary_op == '&' || expr.unary_op == '|' ||
               expr.unary_op == '^') {
+            if (width > 64) {
+              std::string mask = mask_literal(width);
+              std::string ax = MaskForWidthExpr(operand.xz, width);
+              std::string aval = MaskForWidthExpr(operand.val, width);
+              std::string a0 = wide_and(
+                  wide_and(wide_not(aval, width), wide_not(ax, width), width),
+                  mask, width);
+              std::string a1 =
+                  wide_and(wide_and(aval, wide_not(ax, width), width), mask,
+                           width);
+              if (expr.unary_op == '^') {
+                std::string any_xz = wide_any(ax, width);
+                std::string parity =
+                    "gpga_wide_red_xor_" + std::to_string(width) + "(" +
+                    MaskForWidthExpr(operand.val, width) + ")";
+                std::string val =
+                    "((" + any_xz + ") ? 0u : " + parity + ")";
+                std::string xz = "((" + any_xz + ") ? 1u : 0u)";
+                return FsExpr{val, xz, drive_full(1), 1};
+              }
+              if (expr.unary_op == '&') {
+                std::string a0_any = wide_any(a0, width);
+                std::string a1_all = wide_eq(a1, mask, width);
+                std::string val =
+                    "((" + a0_any + ") ? 0u : ((" + a1_all + ") ? 1u : 0u))";
+                std::string xz =
+                    "((" + a0_any + " || " + a1_all + ") ? 0u : 1u)";
+                return FsExpr{val, xz, drive_full(1), 1};
+              }
+              std::string a1_any = wide_any(a1, width);
+              std::string a0_all = wide_eq(a0, mask, width);
+              std::string val =
+                  "((" + a1_any + ") ? 1u : ((" + a0_all + ") ? 0u : 0u))";
+              std::string xz =
+                  "((" + a1_any + " || " + a0_all + ") ? 0u : 1u)";
+              return FsExpr{val, xz, drive_full(1), 1};
+            }
             std::string func = "fs_red_and";
             if (expr.unary_op == '|') {
               func = "fs_red_or";
@@ -4603,6 +6337,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 return "(!gpga_double_is_zero(gpga_bits_to_real(" + value.val +
                        ")))";
               }
+              if (value.width > 64) {
+                return "(!" + wide_any(value.xz, value.width) + " && " +
+                       wide_any(value.val, value.width) + ")";
+              }
               return "(" + value.xz + " == " +
                      literal_for_width(0, value.width) + " && " + value.val +
                      " != " + literal_for_width(0, value.width) + ")";
@@ -4619,6 +6357,44 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             int width = std::max(lhs.width, rhs.width);
             lhs = fs_resize_expr(lhs, width);
             rhs = fs_resize_expr(rhs, width);
+            if (width > 64) {
+              std::string ax = MaskForWidthExpr(lhs.xz, width);
+              std::string bx = MaskForWidthExpr(rhs.xz, width);
+              std::string aval = MaskForWidthExpr(lhs.val, width);
+              std::string bval = MaskForWidthExpr(rhs.val, width);
+              std::string a_known1 =
+                  wide_and(aval, wide_not(ax, width), width);
+              std::string b_known1 =
+                  wide_and(bval, wide_not(bx, width), width);
+              std::string a_true = wide_any(a_known1, width);
+              std::string b_true = wide_any(b_known1, width);
+              std::string a_false =
+                  "(!" + wide_any(ax, width) + " && !" +
+                  wide_any(aval, width) + ")";
+              std::string b_false =
+                  "(!" + wide_any(bx, width) + " && !" +
+                  wide_any(bval, width) + ")";
+              std::string val;
+              std::string xz;
+              if (expr.op == 'A') {
+                val =
+                    "((" + a_false + " || " + b_false +
+                    ") ? 0u : ((" + a_true + " && " + b_true +
+                    ") ? 1u : 0u))";
+                xz =
+                    "((" + a_false + " || " + b_false + " || (" + a_true +
+                    " && " + b_true + ")) ? 0u : 1u)";
+              } else {
+                val =
+                    "((" + a_true + " || " + b_true +
+                    ") ? 1u : ((" + a_false + " && " + b_false +
+                    ") ? 0u : 0u))";
+                xz =
+                    "((" + a_true + " || " + b_true + " || (" + a_false +
+                    " && " + b_false + ")) ? 0u : 1u)";
+              }
+              return FsExpr{val, xz, drive_full(1), 1};
+            }
             std::string func = (width > 32)
                                    ? (expr.op == 'A' ? "fs_log_and64"
                                                     : "fs_log_or64")
@@ -4656,7 +6432,37 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             rhs = fs_extend_expr(rhs, width, signed_op);
             std::string func;
             std::string pred;
-            if (expr.op == 'C' || expr.op == 'c') {
+            if (width > 64) {
+              std::string mask = mask_literal(width);
+              if (expr.op == 'C' || expr.op == 'c') {
+                std::string ax = MaskForWidthExpr(lhs.xz, width);
+                std::string bx = MaskForWidthExpr(rhs.xz, width);
+                std::string diff = wide_xor(ax, bx, width);
+                std::string known = wide_and(
+                    wide_not(wide_or(ax, bx, width), width), mask, width);
+                std::string val_diff = wide_and(
+                    wide_xor(lhs.val, rhs.val, width), known, width);
+                pred = "(!" + wide_any(diff, width) + " && !" +
+                       wide_any(val_diff, width) + ")";
+              } else if (expr.op == 'W' || expr.op == 'w') {
+                std::string ignore = MaskForWidthExpr(rhs.xz, width);
+                std::string cared =
+                    wide_and(wide_not(ignore, width), mask, width);
+                std::string ax = MaskForWidthExpr(lhs.xz, width);
+                std::string bad = wide_and(ax, cared, width);
+                std::string val_diff = wide_and(
+                    wide_xor(lhs.val, rhs.val, width), cared, width);
+                pred = "(!" + wide_any(bad, width) + " && !" +
+                       wide_any(val_diff, width) + ")";
+              } else {
+                std::string cared = wide_and(
+                    wide_not(wide_or(lhs.xz, rhs.xz, width), width), mask,
+                    width);
+                std::string val_diff = wide_and(
+                    wide_xor(lhs.val, rhs.val, width), cared, width);
+                pred = "(!" + wide_any(val_diff, width) + ")";
+              }
+            } else if (expr.op == 'C' || expr.op == 'c') {
               func = (width > 32) ? "fs_case_eq64" : "fs_case_eq32";
               pred = func + "(" + fs_make_expr(lhs, width) + ", " +
                      fs_make_expr(rhs, width) + ", " +
@@ -4776,18 +6582,55 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           int width = std::max(then_expr.width, else_expr.width);
           FsExpr then_resized = fs_resize_expr(then_expr, width);
           FsExpr else_resized = fs_resize_expr(else_expr, width);
+          if (width > 64) {
+            FsExpr merged = fs_merge_expr(then_resized, else_resized, width);
+            std::string cond_known =
+                (cond.width > 64)
+                    ? ("!" + wide_any(cond.xz, cond.width))
+                    : ("(" + cond.xz + " == " +
+                       literal_for_width(0, cond.width) + ")");
+            std::string cond_true =
+                (cond.width > 64)
+                    ? ("(" + cond_known + " && " +
+                       wide_any(cond.val, cond.width) + ")")
+                    : ("(" + cond_known + " && " + cond.val + " != " +
+                       literal_for_width(0, cond.width) + ")");
+            std::string cond_false =
+                (cond.width > 64)
+                    ? ("(" + cond_known + " && !" +
+                       wide_any(cond.val, cond.width) + ")")
+                    : ("(" + cond_known + " && " + cond.val + " == " +
+                       literal_for_width(0, cond.width) + ")");
+            std::string select_fn =
+                "gpga_wide_select_" + std::to_string(width);
+            std::string val = select_fn + "(" + cond_true + ", " +
+                              then_resized.val + ", " + select_fn + "(" +
+                              cond_false + ", " + else_resized.val + ", " +
+                              merged.val + "))";
+            std::string xz = select_fn + "(" + cond_true + ", " +
+                             then_resized.xz + ", " + select_fn + "(" +
+                             cond_false + ", " + else_resized.xz + ", " +
+                             merged.xz + "))";
+            std::string merge_drive =
+                wide_or(then_resized.drive, else_resized.drive, width);
+            std::string drive = select_fn + "(" + cond_true + ", " +
+                                then_resized.drive + ", " + select_fn + "(" +
+                                cond_false + ", " + else_resized.drive + ", " +
+                                merge_drive + "))";
+            return FsExpr{val, xz, drive, width};
+          }
           std::string func = (width > 32) ? "fs_mux64" : "fs_mux32";
           std::string base =
               func + "(" + fs_make_expr(cond, cond.width) + ", " +
               fs_make_expr(then_resized, width) + ", " +
               fs_make_expr(else_resized, width) + ", " +
               std::to_string(width) + "u)";
-          std::string cond_zero = literal_for_width(0, cond.width);
-          std::string cond_known = "(" + cond.xz + " == " + cond_zero + ")";
-          std::string cond_true =
-              "(" + cond_known + " && " + cond.val + " != " + cond_zero + ")";
+          std::string cond_known = xz_is_zero(cond.xz, cond.width);
+          std::string cond_true = "(" + cond_known + " && " +
+                                  val_is_nonzero(cond.val, cond.width) + ")";
           std::string cond_false =
-              "(" + cond_known + " && " + cond.val + " == " + cond_zero + ")";
+              "(" + cond_known + " && " + val_is_zero(cond.val, cond.width) +
+              ")";
           std::string drive =
               "(" + cond_true + " ? " + then_resized.drive + " : (" +
               cond_false + " ? " + else_resized.drive + " : (" +
@@ -4803,6 +6646,63 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               shift = maybe_hoist_full(shift, active_cse->indent, false, false);
             }
             std::string mask = mask_literal(width);
+            if (base.width > 64) {
+              if (shift.is_const) {
+                if (shift.const_xz != 0) {
+                  return fs_allx_expr(width);
+                }
+                uint32_t idx_val =
+                    static_cast<uint32_t>(shift.const_val);
+                if (idx_val >= static_cast<uint32_t>(base.width)) {
+                  return fs_const_expr(0u, 0u, MaskForWidth64(width), width);
+                }
+                std::string idx = std::to_string(idx_val) + "u";
+                std::string val =
+                    wide_extract(base.val, base.width, width, idx);
+                std::string xz =
+                    wide_extract(base.xz, base.width, width, idx);
+                std::string drive =
+                    wide_extract(base.drive, base.width, width, idx);
+                return FsExpr{val, xz, drive, width};
+              }
+              std::string idx = to_uint(shift.val, shift.width);
+              std::string xguard = xz_is_zero(shift.xz, shift.width);
+              std::string bounds =
+                  "(" + idx + " < " + std::to_string(base.width) + "u)";
+              std::string zero = drive_zero(width);
+              std::string val =
+                  wide_extract(base.val, base.width, width, idx);
+              std::string xz =
+                  wide_extract(base.xz, base.width, width, idx);
+              std::string drive =
+                  wide_extract(base.drive, base.width, width, idx);
+              if (width > 64) {
+                std::string select_fn =
+                    "gpga_wide_select_" + std::to_string(width);
+                std::string val_sel =
+                    select_fn + "(" + xguard + " && " + bounds + ", " + val +
+                    ", " + zero + ")";
+                std::string xz_sel =
+                    select_fn + "(" + xguard + ", " +
+                    select_fn + "(" + bounds + ", " + xz + ", " + zero + "), " +
+                    mask + ")";
+                std::string drive_sel =
+                    select_fn + "(" + xguard + ", " +
+                    select_fn + "(" + bounds + ", " + drive + ", " + mask +
+                    "), " + mask + ")";
+                return FsExpr{val_sel, xz_sel, drive_sel, width};
+              }
+              std::string val_sel =
+                  "((" + xguard + ") ? ((" + bounds + ") ? " + val + " : " +
+                  zero + ") : " + zero + ")";
+              std::string xz_sel =
+                  "((" + xguard + ") ? ((" + bounds + ") ? " + xz + " : " +
+                  zero + ") : " + mask + ")";
+              std::string drive_sel =
+                  "((" + xguard + ") ? ((" + bounds + ") ? " + drive + " : " +
+                  mask + ") : " + mask + ")";
+              return FsExpr{val_sel, xz_sel, drive_sel, width};
+            }
             if (shift.is_const) {
               if (shift.const_xz != 0) {
                 return fs_allx_expr(width);
@@ -4829,11 +6729,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   "((" + base.drive + " >> " + idx + ") & " + mask + ")";
               return FsExpr{val, xz, drive, width};
             }
-            std::string idx = "uint(" + shift.val + ")";
+            std::string idx = to_uint(shift.val, shift.width);
             std::string zero = literal_for_width(0, width);
-            std::string xguard =
-                "(" + shift.xz + " == " + literal_for_width(0, shift.width) +
-                ")";
+            std::string xguard = xz_is_zero(shift.xz, shift.width);
             std::string bounds =
                 "(" + idx + " < " + std::to_string(base.width) + "u)";
             std::string val =
@@ -4853,6 +6751,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           int lo = std::min(expr.msb, expr.lsb);
           int hi = std::max(expr.msb, expr.lsb);
           int width = hi - lo + 1;
+          if (base.width > 64) {
+            std::string idx = std::to_string(lo) + "u";
+            std::string val = wide_extract(base.val, base.width, width, idx);
+            std::string xz = wide_extract(base.xz, base.width, width, idx);
+            std::string drive =
+                wide_extract(base.drive, base.width, width, idx);
+            return FsExpr{val, xz, drive, width};
+          }
           std::string mask = mask_literal(width);
           std::string val = "((" + base.val + " >> " +
                             std::to_string(lo) + "u) & " + mask + ")";
@@ -4875,7 +6781,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               if (active_cse) {
                 idx = maybe_hoist_full(idx, active_cse->indent, false, false);
               }
-              std::string idx_val = idx.val;
               std::string idx_xz = idx.xz;
               if (idx.is_const) {
                 if (idx.const_xz != 0) {
@@ -4885,18 +6790,36 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   return fs_const_expr(0u, 0u, MaskForWidth64(element_width),
                                        element_width);
                 }
-                std::string base = "(gid * " + std::to_string(array_size) +
-                                   "u) + uint(" + idx_val + ")";
+                std::string base =
+                    "(gid * " + std::to_string(array_size) + "u) + " +
+                    to_uint(idx.val, idx.width);
                 return FsExpr{val_name(expr.base->ident) + "[" + base + "]",
                               xz_name(expr.base->ident) + "[" + base + "]",
                               drive_full(element_width), element_width};
               }
-              std::string guard = "(" + idx_val + " < " +
+              std::string idx_u = to_uint(idx.val, idx.width);
+              std::string guard = "(" + idx_u + " < " +
                                   std::to_string(array_size) + "u)";
-              std::string xguard = "(" + idx_xz + " == " +
-                                   literal_for_width(0, idx.width) + ")";
-              std::string base = "(gid * " + std::to_string(array_size) +
-                                 "u) + uint(" + idx_val + ")";
+              std::string xguard = xz_is_zero(idx_xz, idx.width);
+              std::string base =
+                  "(gid * " + std::to_string(array_size) + "u) + " + idx_u;
+              if (element_width > 64) {
+                std::string zero = drive_zero(element_width);
+                std::string mask = mask_literal(element_width);
+                std::string select_fn =
+                    "gpga_wide_select_" + std::to_string(element_width);
+                std::string val =
+                    select_fn + "(" + xguard + " && " + guard + ", " +
+                    val_name(expr.base->ident) + "[" + base + "], " + zero +
+                    ")";
+                std::string xz =
+                    select_fn + "(" + xguard + ", " +
+                    select_fn + "(" + guard + ", " +
+                    xz_name(expr.base->ident) + "[" + base + "], " + zero +
+                    "), " + mask + ")";
+                return FsExpr{val, xz, drive_full(element_width),
+                              element_width};
+              }
               std::string val =
                   "((" + xguard + ") ? ((" + guard + ") ? " +
                   val_name(expr.base->ident) + "[" + base +
@@ -4921,7 +6844,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (index.const_xz != 0) {
               return fs_allx_expr(width);
             }
-            std::string idx = index.val;
+            if (base.width > 64) {
+              std::string idx = std::to_string(index.const_val) + "u";
+            std::string val =
+                "gpga_wide_get_bit_" + std::to_string(base.width) + "(" +
+                base.val + ", " + idx + ")";
+              std::string xz =
+                  "gpga_wide_get_bit_" + std::to_string(base.width) + "(" +
+                  base.xz + ", " + idx + ")";
+            std::string drive =
+                "gpga_wide_get_bit_" + std::to_string(base.width) + "(" +
+                base.drive + ", " + idx + ")";
+            return FsExpr{val, xz, drive, width};
+          }
+            std::string idx = std::to_string(index.const_val) + "u";
             std::string val = "(((" + base.val + " >> " + idx + ") & " +
                               literal_for_width(1, 1) + "))";
             std::string xz = "(((" + base.xz + " >> " + idx + ") & " +
@@ -4930,16 +6866,30 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  literal_for_width(1, 1) + "))";
             return FsExpr{val, xz, drive, width};
           }
-          std::string cond = "(" + index.xz + " == " +
-                             literal_for_width(0, index.width) + ")";
-          std::string val = "((" + cond + ") ? (((" + base.val + " >> " +
-                            index.val + ") & " + literal_for_width(1, 1) +
-                            ")) : 0u)";
-          std::string xz = "((" + cond + ") ? (((" + base.xz + " >> " +
-                           index.val + ") & " + literal_for_width(1, 1) +
-                           ")) : 1u)";
+          std::string cond = xz_is_zero(index.xz, index.width);
+          if (base.width > 64) {
+            std::string idx = to_uint(index.val, index.width);
+            std::string val =
+                "((" + cond + ") ? gpga_wide_get_bit_" +
+                std::to_string(base.width) + "(" + base.val + ", " + idx +
+                ") : 0u)";
+            std::string xz =
+                "((" + cond + ") ? gpga_wide_get_bit_" +
+                std::to_string(base.width) + "(" + base.xz + ", " + idx +
+                ") : 1u)";
+            std::string drive =
+                "((" + cond + ") ? gpga_wide_get_bit_" +
+                std::to_string(base.width) + "(" + base.drive + ", " + idx +
+                ") : 1u)";
+            return FsExpr{val, xz, drive, width};
+          }
+          std::string idx = to_uint(index.val, index.width);
+          std::string val = "((" + cond + ") ? (((" + base.val + " >> " + idx +
+                            ") & " + literal_for_width(1, 1) + ")) : 0u)";
+          std::string xz = "((" + cond + ") ? (((" + base.xz + " >> " + idx +
+                           ") & " + literal_for_width(1, 1) + ")) : 1u)";
           std::string drive = "((" + cond + ") ? (((" + base.drive + " >> " +
-                              index.val + ") & " + literal_for_width(1, 1) +
+                              idx + ") & " + literal_for_width(1, 1) +
                               ")) : 1u)";
           return FsExpr{val, xz, drive, width};
         }
@@ -4975,6 +6925,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                           drive_full(width), width};
           }
           if (expr.ident == "$ftell") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fseek") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$ferror") {
+            int width = 32;
+            return FsExpr{"0u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$ungetc") {
+            int width = 32;
+            return FsExpr{"4294967295u", literal_for_width(0, width),
+                          drive_full(width), width};
+          }
+          if (expr.ident == "$fread") {
             int width = 32;
             return FsExpr{"0u", literal_for_width(0, width),
                           drive_full(width), width};
@@ -5018,6 +6988,48 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       int width = std::max(case_expr.width, label.width);
       FsExpr case_w = fs_resize_expr(case_expr, width);
       FsExpr label_w = fs_resize_expr(label, width);
+      if (width > 64) {
+        std::string mask = mask_literal(width);
+        std::string ax = MaskForWidthExpr(case_w.xz, width);
+        std::string bx = MaskForWidthExpr(label_w.xz, width);
+        auto case_eq_pred = [&]() -> std::string {
+          std::string diff = wide_xor(ax, bx, width);
+          std::string known = wide_and(
+              wide_not(wide_or(ax, bx, width), width), mask, width);
+          std::string val_diff = wide_and(
+              wide_xor(case_w.val, label_w.val, width), known, width);
+          return "(!" + wide_any(diff, width) + " && !" +
+                 wide_any(val_diff, width) + ")";
+        };
+        if (case_kind == CaseKind::kCaseZ) {
+          if (label_expr.kind != ExprKind::kNumber) {
+            return case_eq_pred();
+          }
+          if (label_expr.x_bits != 0) {
+            return "false";
+          }
+          uint64_t ignore_bits = label_expr.z_bits;
+          if (case_expr_src && case_expr_src->kind == ExprKind::kNumber) {
+            ignore_bits |= case_expr_src->z_bits;
+          }
+          std::string ignore = literal_for_width(ignore_bits, width);
+          std::string cared =
+              wide_and(wide_not(ignore, width), mask, width);
+          std::string bad = wide_and(ax, cared, width);
+          std::string val_diff = wide_and(
+              wide_xor(case_w.val, label_w.val, width), cared, width);
+          return "(!" + wide_any(bad, width) + " && !" +
+                 wide_any(val_diff, width) + ")";
+        }
+        if (case_kind == CaseKind::kCaseX) {
+          std::string cared = wide_and(
+              wide_not(wide_or(ax, bx, width), width), mask, width);
+          std::string val_diff = wide_and(
+              wide_xor(case_w.val, label_w.val, width), cared, width);
+          return "(!" + wide_any(val_diff, width) + ")";
+        }
+        return case_eq_pred();
+      }
       std::string func_suffix = (width > 32) ? "64" : "32";
       std::string func = "fs_case_eq" + func_suffix;
       if (case_kind == CaseKind::kCaseZ) {
@@ -5114,8 +7126,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return expr;
       }
       std::string name = "__gpga_fs_tmp" + std::to_string(fs_temp_index++);
-      std::string type = (expr.width > 32) ? "FourState64" : "FourState32";
-      std::string dtype = (expr.width > 32) ? "ulong" : "uint";
+      std::string type = (expr.width > 64)
+                             ? ("GpgaWideFs" + std::to_string(expr.width))
+                             : ((expr.width > 32) ? "FourState64"
+                                                  : "FourState32");
+      std::string dtype = (expr.width > 64)
+                              ? ("GpgaWide" + std::to_string(expr.width))
+                              : ((expr.width > 32) ? "ulong" : "uint");
       std::string pad(indent, ' ');
       out << pad << type << " " << name << " = " << expr.full << ";\n";
       std::string drive_expr = expr.drive;
@@ -5302,14 +7319,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                : (linear_const * dims[i] + idx.const_val);
           } else {
             all_const = false;
+            std::string idx_u = to_uint(idx.val, idx.width);
             std::string cond =
-                "(" + idx.xz + " == " +
-                literal_for_width(0, idx.width) + " && " + idx.val + " < " +
-                std::to_string(dims[i]) + "u)";
+                "(" + xz_is_zero(idx.xz, idx.width) + " && " + idx_u +
+                " < " + std::to_string(dims[i]) + "u)";
             guard =
                 guard.empty() ? cond : "(" + guard + " && " + cond + ")";
           }
-          std::string idx_u = "uint(" + idx.val + ")";
+          std::string idx_u = to_uint(idx.val, idx.width);
           if (linear.empty()) {
             linear = idx_u;
           } else {
@@ -5346,16 +7363,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               return out;
             }
           } else {
+            std::string bit_idx_u = to_uint(bit_idx.val, bit_idx.width);
             std::string bit_guard =
-                "(" + bit_idx.xz + " == " +
-                literal_for_width(0, bit_idx.width) + " && " + bit_idx.val +
-                " < " + std::to_string(element_width) + "u)";
+                "(" + xz_is_zero(bit_idx.xz, bit_idx.width) + " && " +
+                bit_idx_u + " < " + std::to_string(element_width) + "u)";
             guard = guard.empty() ? bit_guard
                                   : "(" + guard + " && " + bit_guard + ")";
           }
           out.guard = guard;
           out.base_width = element_width;
-          out.bit_index_val = bit_idx.val;
+          out.bit_index_val = to_u64(bit_idx.val, bit_idx.width);
           out.bit_index_xz = bit_idx.xz;
           out.width = 1;
           out.is_bit_select = true;
@@ -5392,7 +7409,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           FsExpr idx = emit_expr4(*assign.lhs_lsb_expr);
           idx = maybe_hoist_full(idx, indent, false, false);
           int width = assign.lhs_indexed_width;
-          out.range_index_val = idx.val;
+          out.range_index_val = to_u64(idx.val, idx.width);
           out.range_index_xz = idx.xz;
           out.width = width;
           out.is_indexed_range = true;
@@ -5407,9 +7424,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           } else {
             if (out.base_width >= width) {
               int limit = out.base_width - width;
-              out.guard = "(" + idx.xz + " == " +
-                          literal_for_width(0, idx.width) + " && " + idx.val +
-                          " <= " + std::to_string(limit) + "u)";
+              std::string idx_u = to_uint(idx.val, idx.width);
+              out.guard =
+                  "(" + xz_is_zero(idx.xz, idx.width) + " && " + idx_u +
+                  " <= " + std::to_string(limit) + "u)";
             } else {
               out.guard = "false";
             }
@@ -5439,7 +7457,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           FsExpr idx = emit_expr4(*assign.lhs_index);
           idx = maybe_hoist_full(idx, indent, false, false);
-          std::string idx_val = idx.val;
+          std::string idx_val = to_u64(idx.val, idx.width);
           std::string idx_xz = idx.xz;
           int base_width = SignalWidth(module, assign.lhs);
           if (idx.is_const) {
@@ -5450,9 +7468,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               return out;
             }
           } else {
-            out.guard = "(" + idx_xz + " == " +
-                        literal_for_width(0, idx.width) + " && " + idx_val +
-                        " < " + std::to_string(base_width) + "u)";
+            std::string idx_u = to_uint(idx.val, idx.width);
+            out.guard =
+                "(" + xz_is_zero(idx_xz, idx.width) + " && " + idx_u + " < " +
+                std::to_string(base_width) + "u)";
           }
           out.val = base_val;
           out.xz = base_xz;
@@ -5466,7 +7485,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         FsExpr idx = emit_expr4(*assign.lhs_index);
         idx = maybe_hoist_full(idx, indent, false, false);
-        std::string idx_val = idx.val;
+        std::string idx_val = to_u64(idx.val, idx.width);
         std::string idx_xz = idx.xz;
         if (idx.is_const) {
           if (idx.const_xz != 0) {
@@ -5476,12 +7495,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return out;
           }
         } else {
-          out.guard = "(" + idx_xz + " == " +
-                      literal_for_width(0, idx.width) + " && " + idx_val +
-                      " < " + std::to_string(array_size) + "u)";
+          std::string idx_u = to_uint(idx.val, idx.width);
+          out.guard =
+              "(" + xz_is_zero(idx_xz, idx.width) + " && " + idx_u + " < " +
+              std::to_string(array_size) + "u)";
         }
-        std::string base = "(gid * " + std::to_string(array_size) +
-                           "u) + uint(" + idx_val + ")";
+        std::string base = "(gid * " + std::to_string(array_size) + "u) + " +
+                           to_uint(idx.val, idx.width);
         std::string name = assign.lhs;
         if (use_next) {
           name += "_next";
@@ -5754,15 +7774,47 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         int slice_width = hi - lo + 1;
         FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, slice_width, 2);
         rhs = maybe_hoist_full(rhs, 2, true, true);
-        std::string mask = mask_literal(slice_width);
-        std::string cast = CastForWidth(lhs_width);
-        out << "  " << type << " " << info.val << " = ((" << cast << rhs.val
-            << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
-        out << "  " << type << " " << info.xz << " = ((" << cast << rhs.xz
-            << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
-        out << "  " << type << " " << info.drive << " = ((" << cast
-            << rhs.drive << " & " << mask << ") << " << std::to_string(lo)
-            << "u);\n";
+        if (lhs_width > 64) {
+          std::string idx = std::to_string(lo) + "u";
+          std::string rhs_val_ext;
+          std::string rhs_xz_ext;
+          std::string rhs_drive_ext;
+          if (slice_width > 64) {
+            rhs_val_ext =
+                "gpga_wide_resize_" + std::to_string(lhs_width) + "_from_" +
+                std::to_string(slice_width) + "(" + rhs.val + ")";
+            rhs_xz_ext =
+                "gpga_wide_resize_" + std::to_string(lhs_width) + "_from_" +
+                std::to_string(slice_width) + "(" + rhs.xz + ")";
+            rhs_drive_ext =
+                "gpga_wide_resize_" + std::to_string(lhs_width) + "_from_" +
+                std::to_string(slice_width) + "(" + rhs.drive + ")";
+          } else {
+            rhs_val_ext = "gpga_wide_from_u64_" + std::to_string(lhs_width) +
+                          "(" + rhs.val + ")";
+            rhs_xz_ext = "gpga_wide_from_u64_" + std::to_string(lhs_width) +
+                         "(" + rhs.xz + ")";
+            rhs_drive_ext =
+                "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" +
+                rhs.drive + ")";
+          }
+          out << "  " << type << " " << info.val << " = "
+              << wide_shl(rhs_val_ext, idx, lhs_width) << ";\n";
+          out << "  " << type << " " << info.xz << " = "
+              << wide_shl(rhs_xz_ext, idx, lhs_width) << ";\n";
+          out << "  " << type << " " << info.drive << " = "
+              << wide_shl(rhs_drive_ext, idx, lhs_width) << ";\n";
+        } else {
+          std::string mask = mask_literal(slice_width);
+          std::string cast = CastForWidth(lhs_width);
+          out << "  " << type << " " << info.val << " = ((" << cast << rhs.val
+              << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
+          out << "  " << type << " " << info.xz << " = ((" << cast << rhs.xz
+              << " & " << mask << ") << " << std::to_string(lo) << "u);\n";
+          out << "  " << type << " " << info.drive << " = ((" << cast
+              << rhs.drive << " & " << mask << ") << " << std::to_string(lo)
+              << "u);\n";
+        }
         return;
       }
       FsExpr rhs = lhs_real ? emit_real_expr4(*assign.rhs)
@@ -5785,7 +7837,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       bool is_trireg = IsTriregNet(net_type);
       int lhs_width = SignalWidth(module, name);
       std::string type = TypeForWidth(lhs_width);
-      std::string one = (lhs_width > 32) ? "1ul" : "1u";
       std::string zero = drive_zero(lhs_width);
       std::string resolved_val = "__gpga_res_" + name + "_val";
       std::string resolved_xz = "__gpga_res_" + name + "_xz";
@@ -5793,6 +7844,178 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  " << type << " " << resolved_val << " = " << zero << ";\n";
       out << "  " << type << " " << resolved_xz << " = " << zero << ";\n";
       out << "  " << type << " " << resolved_drive << " = " << zero << ";\n";
+      if (lhs_width > 64) {
+        out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
+        if (wired_and || wired_or) {
+          out << "    bool has0 = false;\n";
+          out << "    bool has1 = false;\n";
+          out << "    bool hasx = false;\n";
+          for (size_t idx : indices) {
+            const auto& info = driver_info[idx];
+            out << "    if (gpga_wide_get_bit_" << lhs_width << "("
+                << info.drive << ", bit) != 0u) {\n";
+            out << "      if (gpga_wide_get_bit_" << lhs_width << "("
+                << info.xz << ", bit) != 0u) {\n";
+            out << "        hasx = true;\n";
+            out << "      } else if (gpga_wide_get_bit_" << lhs_width << "("
+                << info.val << ", bit) != 0u) {\n";
+            out << "        has1 = true;\n";
+            out << "      } else {\n";
+            out << "        has0 = true;\n";
+            out << "      }\n";
+            out << "    }\n";
+          }
+          out << "    if (!has0 && !has1 && !hasx) {\n";
+          out << "      " << resolved_xz << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_xz << ", bit, 1u);\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    " << resolved_drive << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_drive << ", bit, 1u);\n";
+          if (wired_and) {
+            out << "    if (has0) {\n";
+            out << "      // 0 dominates wired-AND\n";
+            out << "    } else if (hasx) {\n";
+            out << "      " << resolved_xz << " = gpga_wide_set_bit_"
+                << lhs_width << "(" << resolved_xz << ", bit, 1u);\n";
+            out << "    } else {\n";
+            out << "      " << resolved_val << " = gpga_wide_set_bit_"
+                << lhs_width << "(" << resolved_val << ", bit, 1u);\n";
+            out << "    }\n";
+          } else {
+            out << "    if (has1) {\n";
+            out << "      " << resolved_val << " = gpga_wide_set_bit_"
+                << lhs_width << "(" << resolved_val << ", bit, 1u);\n";
+            out << "    } else if (hasx) {\n";
+            out << "      " << resolved_xz << " = gpga_wide_set_bit_"
+                << lhs_width << "(" << resolved_xz << ", bit, 1u);\n";
+            out << "    } else {\n";
+            out << "      // 0 dominates wired-OR\n";
+            out << "    }\n";
+          }
+          out << "    continue;\n";
+        } else {
+          out << "    uint best0 = 0u;\n";
+          out << "    uint best1 = 0u;\n";
+          out << "    uint bestx = 0u;\n";
+          for (size_t idx : indices) {
+            const auto& info = driver_info[idx];
+            out << "    if (gpga_wide_get_bit_" << lhs_width << "("
+                << info.drive << ", bit) != 0u) {\n";
+            out << "      if (gpga_wide_get_bit_" << lhs_width << "("
+                << info.xz << ", bit) != 0u) {\n";
+            if (info.strength0 == info.strength1) {
+              out << "        uint x_strength = " << info.strength0 << ";\n";
+            } else {
+              out << "        uint x_strength = (" << info.strength0 << " > "
+                  << info.strength1 << ") ? " << info.strength0 << " : "
+                  << info.strength1 << ";\n";
+            }
+            out << "        bestx = (bestx > x_strength) ? bestx : x_strength;\n";
+            out << "      } else if (gpga_wide_get_bit_" << lhs_width << "("
+                << info.val << ", bit) != 0u) {\n";
+            out << "        best1 = (best1 > " << info.strength1 << ") ? best1 : "
+                << info.strength1 << ";\n";
+            out << "      } else {\n";
+            out << "        best0 = (best0 > " << info.strength0 << ") ? best0 : "
+                << info.strength0 << ";\n";
+            out << "      }\n";
+            out << "    }\n";
+          }
+          out << "    if (best0 == 0u && best1 == 0u && bestx == 0u) {\n";
+          out << "      " << resolved_xz << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_xz << ", bit, 1u);\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    " << resolved_drive << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_drive << ", bit, 1u);\n";
+          out << "    uint max01 = (best0 > best1) ? best0 : best1;\n";
+          out << "    if ((bestx >= max01) && max01 != 0u) {\n";
+          out << "      " << resolved_xz << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_xz << ", bit, 1u);\n";
+          out << "    } else if (best0 > best1) {\n";
+          out << "      // 0 wins\n";
+          out << "    } else if (best1 > best0) {\n";
+          out << "      " << resolved_val << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_val << ", bit, 1u);\n";
+          out << "    } else {\n";
+          out << "      " << resolved_xz << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_xz << ", bit, 1u);\n";
+          out << "    }\n";
+        }
+        out << "  }\n";
+
+        if (switch_nets.count(name) > 0) {
+          ensure_drive_declared(name, lhs_width, drive_zero(lhs_width));
+          out << "  " << drive_var_name(name) << " = " << resolved_drive
+              << ";\n";
+        }
+
+        bool is_output =
+            IsOutputPort(module, name) || regs_ctx.count(name) > 0;
+        bool is_local =
+            locals_ctx.count(name) > 0 && !is_output && regs_ctx.count(name) == 0;
+        if (is_output) {
+          if (is_trireg) {
+            std::string decay_ref = decay_name(name) + "[gid]";
+            std::string decay_delay = trireg_decay_delay(name);
+            std::string drive_flag = "__gpga_trireg_drive_" + name;
+            std::string decay_flag = "__gpga_trireg_decay_" + name;
+            out << "  bool " << drive_flag << " = "
+                << wide_any(resolved_drive, lhs_width) << ";\n";
+            out << "  if (" << drive_flag << ") {\n";
+            out << "    " << decay_ref << " = __gpga_time + " << decay_delay
+                << ";\n";
+            out << "  }\n";
+            out << "  if (!" << drive_flag << " && " << decay_ref
+                << " == 0ul) {\n";
+            out << "    " << decay_ref << " = __gpga_time + " << decay_delay
+                << ";\n";
+            out << "  }\n";
+            out << "  bool " << decay_flag << " = (!" << drive_flag << " && "
+                << decay_ref << " != 0ul && __gpga_time >= " << decay_ref
+                << ");\n";
+            out << "  " << val_name(name) << "[gid] = "
+                << wide_or(wide_and(val_name(name) + "[gid]",
+                                    wide_not(resolved_drive, lhs_width),
+                                    lhs_width),
+                           wide_and(resolved_val, resolved_drive, lhs_width),
+                           lhs_width)
+                << ";\n";
+            out << "  " << xz_name(name) << "[gid] = "
+                << wide_or(wide_and(xz_name(name) + "[gid]",
+                                    wide_not(resolved_drive, lhs_width),
+                                    lhs_width),
+                           wide_and(resolved_xz, resolved_drive, lhs_width),
+                           lhs_width)
+                << ";\n";
+            out << "  if (" << decay_flag << ") {\n";
+            out << "    " << xz_name(name) << "[gid] = "
+                << wide_or(xz_name(name) + "[gid]",
+                           drive_full(lhs_width), lhs_width)
+                << ";\n";
+            out << "  }\n";
+          } else {
+            out << "  " << val_name(name) << "[gid] = " << resolved_val
+                << ";\n";
+            out << "  " << xz_name(name) << "[gid] = " << resolved_xz << ";\n";
+          }
+        } else if (is_local) {
+          if (declared_ctx && declared_ctx->count(name) == 0) {
+            out << "  " << type << " " << val_name(name) << ";\n";
+            out << "  " << type << " " << xz_name(name) << ";\n";
+            if (declared_ctx) {
+              declared_ctx->insert(name);
+            }
+          }
+          out << "  " << val_name(name) << " = " << resolved_val << ";\n";
+          out << "  " << xz_name(name) << " = " << resolved_xz << ";\n";
+        } else {
+          out << "  // Unmapped resolved assign: " << name << "\n";
+        }
+        return;
+      }
+      std::string one = (lhs_width > 32) ? "1ul" : "1u";
       out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
       out << "    " << type << " mask = (" << one << " << bit);\n";
       if (wired_and || wired_or) {
@@ -6060,20 +8283,87 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               FsExpr rhs =
                   emit_expr4_sized_with_cse(*assign->rhs, slice_width, 2);
               rhs = maybe_hoist_full(rhs, 2, false, true);
-              std::string mask = mask_literal(slice_width);
-              std::string shifted_mask =
-                  "(" + mask + " << " + std::to_string(lo) + "u)";
-              std::string cast = CastForWidth(lhs_width);
-              out << "  " << temp_val << " = (" << temp_val << " & ~"
-                  << shifted_mask << ") | ((" << cast << rhs.val << " & "
-                  << mask << ") << " << std::to_string(lo) << "u);\n";
-              out << "  " << temp_xz << " = (" << temp_xz << " & ~"
-                  << shifted_mask << ") | ((" << cast << rhs.xz << " & "
-                  << mask << ") << " << std::to_string(lo) << "u);\n";
-              if (track_drive) {
-                out << "  " << temp_drive << " = (" << temp_drive << " & ~"
-                    << shifted_mask << ") | ((" << cast << rhs.drive << " & "
+              if (lhs_width > 64) {
+                std::string mask;
+                if (slice_width > 64) {
+                  mask = "gpga_wide_resize_" + std::to_string(lhs_width) +
+                         "_from_" + std::to_string(slice_width) +
+                         "(gpga_wide_mask_const_" +
+                         std::to_string(slice_width) + "())";
+                } else {
+                  uint64_t slice_mask = MaskForWidth64(slice_width);
+                  mask =
+                      "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" +
+                      std::to_string(slice_mask) + "ul)";
+                }
+                std::string idx = std::to_string(lo) + "u";
+                std::string shifted_mask =
+                    wide_shl(mask, idx, lhs_width);
+                std::string clear_mask =
+                    wide_not(shifted_mask, lhs_width);
+                std::string rhs_val_ext;
+                std::string rhs_xz_ext;
+                std::string rhs_drive_ext;
+                if (slice_width > 64) {
+                  rhs_val_ext =
+                      "gpga_wide_resize_" + std::to_string(lhs_width) +
+                      "_from_" + std::to_string(slice_width) + "(" + rhs.val +
+                      ")";
+                  rhs_xz_ext =
+                      "gpga_wide_resize_" + std::to_string(lhs_width) +
+                      "_from_" + std::to_string(slice_width) + "(" + rhs.xz +
+                      ")";
+                  rhs_drive_ext =
+                      "gpga_wide_resize_" + std::to_string(lhs_width) +
+                      "_from_" + std::to_string(slice_width) + "(" +
+                      rhs.drive + ")";
+                } else {
+                  rhs_val_ext =
+                      "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" +
+                      rhs.val + ")";
+                  rhs_xz_ext =
+                      "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" +
+                      rhs.xz + ")";
+                  rhs_drive_ext =
+                      "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" +
+                      rhs.drive + ")";
+                }
+                std::string shifted_val =
+                    wide_shl(rhs_val_ext, idx, lhs_width);
+                std::string shifted_xz =
+                    wide_shl(rhs_xz_ext, idx, lhs_width);
+                out << "  " << temp_val << " = "
+                    << wide_or(wide_and(temp_val, clear_mask, lhs_width),
+                               shifted_val, lhs_width)
+                    << ";\n";
+                out << "  " << temp_xz << " = "
+                    << wide_or(wide_and(temp_xz, clear_mask, lhs_width),
+                               shifted_xz, lhs_width)
+                    << ";\n";
+                if (track_drive) {
+                  std::string shifted_drive =
+                      wide_shl(rhs_drive_ext, idx, lhs_width);
+                  out << "  " << temp_drive << " = "
+                      << wide_or(wide_and(temp_drive, clear_mask, lhs_width),
+                                 shifted_drive, lhs_width)
+                      << ";\n";
+                }
+              } else {
+                std::string mask = mask_literal(slice_width);
+                std::string shifted_mask =
+                    "(" + mask + " << " + std::to_string(lo) + "u)";
+                std::string cast = CastForWidth(lhs_width);
+                out << "  " << temp_val << " = (" << temp_val << " & ~"
+                    << shifted_mask << ") | ((" << cast << rhs.val << " & "
                     << mask << ") << " << std::to_string(lo) << "u);\n";
+                out << "  " << temp_xz << " = (" << temp_xz << " & ~"
+                    << shifted_mask << ") | ((" << cast << rhs.xz << " & "
+                    << mask << ") << " << std::to_string(lo) << "u);\n";
+                if (track_drive) {
+                  out << "  " << temp_drive << " = (" << temp_drive << " & ~"
+                      << shifted_mask << ") | ((" << cast << rhs.drive << " & "
+                      << mask << ") << " << std::to_string(lo) << "u);\n";
+                }
               }
             }
             if (!target_is_local) {
@@ -6139,6 +8429,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (expr.is_real) {
         return "(!gpga_double_is_zero(gpga_bits_to_real(" + expr.val + ")))";
       }
+      if (expr.width > 64) {
+        return "(!" + wide_any(expr.xz, expr.width) + " && " +
+               wide_any(expr.val, expr.width) + ")";
+      }
       return "(" + expr.xz + " == " + literal_for_width(0, expr.width) +
              " && " + expr.val + " != " + literal_for_width(0, expr.width) +
              ")";
@@ -6160,9 +8454,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return true;
     };
 
-    auto fs_merge_expr = [&](FsExpr lhs, FsExpr rhs, int width) -> FsExpr {
+    fs_merge_expr = [&](FsExpr lhs, FsExpr rhs, int width) -> FsExpr {
       lhs = fs_resize_expr(lhs, width);
       rhs = fs_resize_expr(rhs, width);
+      if (width > 64) {
+        std::string mask = mask_literal(width);
+        std::string ax = MaskForWidthExpr(lhs.xz, width);
+        std::string bx = MaskForWidthExpr(rhs.xz, width);
+        std::string ak = wide_and(wide_not(ax, width), mask, width);
+        std::string bk = wide_and(wide_not(bx, width), mask, width);
+        std::string same = wide_and(
+            wide_and(wide_not(wide_xor(lhs.val, rhs.val, width), width), ak,
+                     width),
+            bk, width);
+        std::string val = wide_and(lhs.val, same, width);
+        std::string xz = wide_and(mask, wide_not(same, width), width);
+        return FsExpr{val, xz, drive_full(width), width};
+      }
       std::string func = (width > 32) ? "fs_merge64" : "fs_merge32";
       std::string base =
           func + "(" + fs_make_expr(lhs, width) + ", " +
@@ -6198,17 +8506,27 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                 const std::string& target_xz, int indent) {
       std::string pad(indent, ' ');
       std::string idx = "uint(" + lhs.bit_index_val + ")";
-      std::string one = (lhs.base_width > 32) ? "1ul" : "1u";
-      std::string cast = CastForWidth(lhs.base_width);
-      std::string mask = "(" + one + " << " + idx + ")";
       std::string rhs_val_masked = MaskForWidthExpr(rhs.val, 1);
       std::string rhs_xz_masked = MaskForWidthExpr(rhs.xz, 1);
-      std::string update_val =
-          "(" + target_val + " & ~" + mask + ") | ((" + cast + rhs_val_masked +
-          ") << " + idx + ")";
-      std::string update_xz =
-          "(" + target_xz + " & ~" + mask + ") | ((" + cast + rhs_xz_masked +
-          ") << " + idx + ")";
+      std::string update_val;
+      std::string update_xz;
+      if (lhs.base_width > 64) {
+        update_val = "gpga_wide_set_bit_" + std::to_string(lhs.base_width) +
+                     "(" + target_val + ", " + idx + ", " + rhs_val_masked +
+                     ")";
+        update_xz = "gpga_wide_set_bit_" + std::to_string(lhs.base_width) +
+                    "(" + target_xz + ", " + idx + ", " + rhs_xz_masked + ")";
+      } else {
+        std::string one = (lhs.base_width > 32) ? "1ul" : "1u";
+        std::string cast = CastForWidth(lhs.base_width);
+        std::string mask = "(" + one + " << " + idx + ")";
+        update_val =
+            "(" + target_val + " & ~" + mask + ") | ((" + cast +
+            rhs_val_masked + ") << " + idx + ")";
+        update_xz =
+            "(" + target_xz + " & ~" + mask + ") | ((" + cast +
+            rhs_xz_masked + ") << " + idx + ")";
+      }
       if (!lhs.guard.empty()) {
         out << pad << "if " << lhs.guard << " {\n";
         out << pad << "  " << target_val << " = " << update_val << ";\n";
@@ -6226,22 +8544,66 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string idx = lhs.is_indexed_range
                             ? "uint(" + lhs.range_index_val + ")"
                             : std::to_string(lhs.range_lsb) + "u";
-      uint64_t slice_mask = MaskForWidth64(lhs.width);
-      uint64_t base_mask = MaskForWidth64(lhs.base_width);
-      std::string suffix = (lhs.base_width > 32) ? "ul" : "u";
-      std::string slice_literal = std::to_string(slice_mask) + suffix;
-      std::string base_literal = std::to_string(base_mask) + suffix;
-      std::string cast = CastForWidth(lhs.base_width);
       std::string rhs_val_masked = MaskForWidthExpr(rhs.val, lhs.width);
       std::string rhs_xz_masked = MaskForWidthExpr(rhs.xz, lhs.width);
-      std::string mask =
-          "((" + slice_literal + " << " + idx + ") & " + base_literal + ")";
-      std::string update_val =
-          "(" + target_val + " & ~" + mask + ") | ((" + cast +
-          rhs_val_masked + " & " + slice_literal + ") << " + idx + ")";
-      std::string update_xz =
-          "(" + target_xz + " & ~" + mask + ") | ((" + cast +
-          rhs_xz_masked + " & " + slice_literal + ") << " + idx + ")";
+      std::string update_val;
+      std::string update_xz;
+      if (lhs.base_width > 64) {
+        std::string mask;
+        if (lhs.width > 64) {
+          mask = "gpga_wide_resize_" + std::to_string(lhs.base_width) +
+                 "_from_" + std::to_string(lhs.width) +
+                 "(gpga_wide_mask_const_" + std::to_string(lhs.width) + "())";
+        } else {
+          uint64_t slice_mask = MaskForWidth64(lhs.width);
+          mask = "gpga_wide_from_u64_" + std::to_string(lhs.base_width) + "(" +
+                 std::to_string(slice_mask) + "ul)";
+        }
+        std::string shifted_mask =
+            wide_shl(mask, idx, lhs.base_width);
+        std::string clear_mask =
+            wide_not(shifted_mask, lhs.base_width);
+        std::string rhs_val_ext;
+        std::string rhs_xz_ext;
+        if (lhs.width > 64) {
+          rhs_val_ext = "gpga_wide_resize_" + std::to_string(lhs.base_width) +
+                        "_from_" + std::to_string(lhs.width) + "(" +
+                        rhs_val_masked + ")";
+          rhs_xz_ext = "gpga_wide_resize_" + std::to_string(lhs.base_width) +
+                       "_from_" + std::to_string(lhs.width) + "(" +
+                       rhs_xz_masked + ")";
+        } else {
+          rhs_val_ext = "gpga_wide_from_u64_" + std::to_string(lhs.base_width) +
+                        "(" + rhs_val_masked + ")";
+          rhs_xz_ext = "gpga_wide_from_u64_" + std::to_string(lhs.base_width) +
+                       "(" + rhs_xz_masked + ")";
+        }
+        std::string shifted_val =
+            wide_shl(rhs_val_ext, idx, lhs.base_width);
+        std::string shifted_xz =
+            wide_shl(rhs_xz_ext, idx, lhs.base_width);
+        update_val = wide_or(
+            wide_and(target_val, clear_mask, lhs.base_width),
+            shifted_val, lhs.base_width);
+        update_xz = wide_or(
+            wide_and(target_xz, clear_mask, lhs.base_width),
+            shifted_xz, lhs.base_width);
+      } else {
+        uint64_t slice_mask = MaskForWidth64(lhs.width);
+        uint64_t base_mask = MaskForWidth64(lhs.base_width);
+        std::string suffix = (lhs.base_width > 32) ? "ul" : "u";
+        std::string slice_literal = std::to_string(slice_mask) + suffix;
+        std::string base_literal = std::to_string(base_mask) + suffix;
+        std::string cast = CastForWidth(lhs.base_width);
+        std::string mask =
+            "((" + slice_literal + " << " + idx + ") & " + base_literal + ")";
+        update_val =
+            "(" + target_val + " & ~" + mask + ") | ((" + cast +
+            rhs_val_masked + " & " + slice_literal + ") << " + idx + ")";
+        update_xz =
+            "(" + target_xz + " & ~" + mask + ") | ((" + cast +
+            rhs_xz_masked + " & " + slice_literal + ") << " + idx + ")";
+      }
       if (!lhs.guard.empty()) {
         out << pad << "if " << lhs.guard << " {\n";
         out << pad << "  " << target_val << " = " << update_val << ";\n";
@@ -6511,13 +8873,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                           literal_for_width(0, 1),
                                           drive_full(1), 1};
         cond = hoist_full_for_use(cond, 2);
-        std::string zero = literal_for_width(0, cond.width);
-        std::string known =
-            "(" + cond.xz + " == " + literal_for_width(0, cond.width) + ")";
-        std::string is_zero = "(" + cond.val + " == " + zero + ")";
-        std::string is_one = "(" + cond.val + " != " + zero + ")";
-        cond_unknown = "(" + cond.xz + " != " +
-                       literal_for_width(0, cond.width) + ")";
+        std::string known = xz_is_zero(cond.xz, cond.width);
+        std::string is_zero = val_is_zero(cond.val, cond.width);
+        std::string is_one = val_is_nonzero(cond.val, cond.width);
+        cond_unknown = "!(" + known + ")";
         if (sw.kind == SwitchKind::kTranif1) {
           cond_false = known + " && " + is_zero;
         } else {
@@ -6535,12 +8894,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         cond = hoist_full_for_use(cond, 2);
         cond_n = hoist_full_for_use(cond_n, 2);
         std::string known =
-            "(" + cond.xz + " == " + literal_for_width(0, cond.width) + " && " +
-            cond_n.xz + " == " + literal_for_width(0, cond_n.width) + ")";
+            "(" + xz_is_zero(cond.xz, cond.width) + " && " +
+            xz_is_zero(cond_n.xz, cond_n.width) + ")";
         std::string on =
-            "(" + cond.val + " != " + literal_for_width(0, cond.width) +
-            " && " + cond_n.val + " == " + literal_for_width(0, cond_n.width) +
-            ")";
+            "(" + val_is_nonzero(cond.val, cond.width) + " && " +
+            val_is_zero(cond_n.val, cond_n.width) + ")";
         cond_unknown = "!(" + known + ")";
         cond_false = known + " && !" + on;
       }
@@ -8482,6 +10840,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           size_t max_args = std::max<size_t>(1, system_task_info.max_args);
           out << "constant constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
               << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_SERVICE_WIDE_WORDS = "
+              << service_wide_words << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_STRING_COUNT = "
               << system_task_info.string_table.size() << "u;\n";
           out << "constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
@@ -8489,6 +10849,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
           out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
           out << "constant constexpr uint GPGA_SERVICE_ARG_REAL = 3u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_ARG_WIDE = 4u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
@@ -8516,6 +10877,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "constant constexpr uint GPGA_SERVICE_KIND_REWIND = 24u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMH = 25u;\n";
           out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMB = 26u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FSEEK = 27u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FFLUSH = 28u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FERROR = 29u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FUNGETC = 30u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_FREAD = 31u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_WRITE = 32u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_SFORMAT = 33u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_TIMEFORMAT = 34u;\n";
+          out << "constant constexpr uint GPGA_SERVICE_KIND_PRINTTIMESCALE = 35u;\n";
           out << "struct GpgaServiceRecord {\n";
           out << "  uint kind;\n";
           out << "  uint pid;\n";
@@ -8525,6 +10895,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "  uint arg_width[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
           out << "  ulong arg_val[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
           out << "  ulong arg_xz[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+          if (service_wide_words > 0u) {
+            out << "  ulong arg_wide_val[GPGA_SCHED_SERVICE_MAX_ARGS * "
+                   "GPGA_SCHED_SERVICE_WIDE_WORDS];\n";
+            out << "  ulong arg_wide_xz[GPGA_SCHED_SERVICE_MAX_ARGS * "
+                   "GPGA_SCHED_SERVICE_WIDE_WORDS];\n";
+          }
           out << "};\n";
         }
         out << "inline uint gpga_sched_index(uint gid, uint pid) {\n";
@@ -8696,6 +11072,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device ulong* sched_monitor_xz [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
+        if (service_wide_words > 0u) {
+          emit_param("  device ulong* sched_monitor_wide_val [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_monitor_wide_xz [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
       }
         if (!system_task_info.strobe_stmts.empty()) {
           emit_param("  device uint* sched_strobe_pending [[buffer(" +
@@ -8756,6 +11138,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "        uint offset = ((gid * GPGA_SCHED_MONITOR_COUNT) + m) * GPGA_SCHED_MONITOR_MAX_ARGS + a;\n";
         out << "        sched_monitor_val[offset] = 0ul;\n";
         out << "        sched_monitor_xz[offset] = 0ul;\n";
+        if (service_wide_words > 0u) {
+          out << "        uint wide_offset = offset * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+          out << "        for (uint w = 0u; w < GPGA_SCHED_SERVICE_WIDE_WORDS; ++w) {\n";
+          out << "          sched_monitor_wide_val[wide_offset + w] = 0ul;\n";
+          out << "          sched_monitor_wide_xz[wide_offset + w] = 0ul;\n";
+          out << "        }\n";
+        }
         out << "      }\n";
         out << "    }\n";
       }
@@ -9146,6 +11535,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           int width = 0;
           std::string val;
           std::string xz;
+          bool wide = false;
         };
 
         auto string_id_for = [&](const std::string& value,
@@ -9181,6 +11571,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             *format_id_expr = std::to_string(id) + "u";
           }
 
+          std::vector<char> format_specs;
+          bool has_format_specs =
+              stmt.task_args.size() > arg_start &&
+              stmt.task_args[arg_start] &&
+              stmt.task_args[arg_start]->kind == ExprKind::kString;
+          if (has_format_specs) {
+            format_specs =
+                ExtractFormatSpecs(stmt.task_args[arg_start]->string_value);
+          }
+          size_t format_arg_index = 0;
+
           bool requires_string =
               name == "$dumpfile" || name == "$readmemh" ||
               name == "$readmemb" || name == "$writememh" ||
@@ -9200,6 +11601,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!arg) {
               continue;
             }
+            bool is_format_literal = has_format_specs && i == arg_start &&
+                                     arg->kind == ExprKind::kString;
+            char spec = '\0';
+            if (has_format_specs && !is_format_literal) {
+              if (format_arg_index < format_specs.size()) {
+                spec = format_specs[format_arg_index];
+              }
+              ++format_arg_index;
+            }
             if (arg->kind == ExprKind::kString) {
               uint32_t id = 0;
               if (!string_id_for(arg->string_value, &id)) {
@@ -9218,10 +11628,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                           std::to_string(id) + "ul", "0ul"});
               continue;
             }
+            if (spec == 's' && arg->kind == ExprKind::kIdentifier) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              int width = SignalWidth(module, arg->ident);
+              if (width <= 0) {
+                width = 1;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                          std::to_string(id) + "ul", "0ul"});
+              continue;
+            }
             if (arg->kind == ExprKind::kCall && arg->ident == "$time") {
               args->push_back(
                   ServiceArg{"GPGA_SERVICE_ARG_VALUE", 64, "__gpga_time",
                              "0ul"});
+              continue;
+            }
+            if (arg->kind == ExprKind::kCall && arg->ident == "$stime") {
+              args->push_back(
+                  ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32, "uint(__gpga_time)",
+                             "0u"});
               continue;
             }
             bool is_real = ExprIsRealValue(*arg, module);
@@ -9230,10 +11659,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               width = 1;
             }
             FsExpr value = emit_expr4_sized(*arg, width);
-            args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
-                                               : "GPGA_SERVICE_ARG_VALUE",
-                                        width, to_ulong(value.val, width),
-                                        to_ulong(value.xz, width)});
+            bool wide = !is_real && width > 64;
+            std::string kind = is_real
+                                   ? "GPGA_SERVICE_ARG_REAL"
+                                   : (wide ? "GPGA_SERVICE_ARG_WIDE"
+                                           : "GPGA_SERVICE_ARG_VALUE");
+            std::string val = wide ? value.val : to_ulong(value.val, width);
+            std::string xz = wide ? value.xz : to_ulong(value.xz, width);
+            args->push_back(ServiceArg{kind, width, val, xz, wide});
           }
           return true;
         };
@@ -9253,22 +11686,38 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!arg) {
               continue;
             }
-            if (name == "$fgets" && i == 0) {
-              if (arg->kind != ExprKind::kIdentifier) {
-                return false;
-              }
-              uint32_t id = 0;
-              if (!string_id_for(arg->ident, &id)) {
-                return false;
-              }
-              int width = SignalWidth(module, arg->ident);
-              if (width <= 0) {
-                width = 1;
-              }
-              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
-                                          std::to_string(id) + "ul", "0ul"});
-              continue;
+          if (name == "$fgets" && i == 0) {
+            if (arg->kind != ExprKind::kIdentifier) {
+              return false;
             }
+            uint32_t id = 0;
+            if (!string_id_for(arg->ident, &id)) {
+              return false;
+            }
+            int width = SignalWidth(module, arg->ident);
+            if (width <= 0) {
+              width = 1;
+            }
+            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                        std::to_string(id) + "ul", "0ul"});
+            continue;
+          }
+          if (name == "$fread" && i == 0) {
+            if (arg->kind != ExprKind::kIdentifier) {
+              return false;
+            }
+            uint32_t id = 0;
+            if (!string_id_for(arg->ident, &id)) {
+              return false;
+            }
+            int width = SignalWidth(module, arg->ident);
+            if (width <= 0) {
+              width = 1;
+            }
+            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                        std::to_string(id) + "ul", "0ul"});
+            continue;
+          }
             if ((name == "$fscanf" || name == "$sscanf") && i >= 2) {
               if (arg->kind != ExprKind::kIdentifier) {
                 return false;
@@ -9348,12 +11797,60 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               width = 1;
             }
             FsExpr value = emit_expr4_sized(*arg, width);
-            args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
-                                               : "GPGA_SERVICE_ARG_VALUE",
-                                        width, to_ulong(value.val, width),
-                                        to_ulong(value.xz, width)});
+            bool wide = !is_real && width > 64;
+            std::string kind = is_real
+                                   ? "GPGA_SERVICE_ARG_REAL"
+                                   : (wide ? "GPGA_SERVICE_ARG_WIDE"
+                                           : "GPGA_SERVICE_ARG_VALUE");
+            std::string val = wide ? value.val : to_ulong(value.val, width);
+            std::string xz = wide ? value.xz : to_ulong(value.xz, width);
+            args->push_back(ServiceArg{kind, width, val, xz, wide});
           }
           return true;
+        };
+
+        auto emit_service_args =
+            [&](const std::vector<ServiceArg>& args, int indent) -> void {
+          std::string pad(indent, ' ');
+          for (size_t i = 0; i < args.size(); ++i) {
+            out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
+                << "] = " << args[i].kind << ";\n";
+            out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
+                << "] = " << args[i].width << "u;\n";
+            if (args[i].wide) {
+              std::string type = TypeForWidth(args[i].width);
+              out << pad << "    " << type << " __gpga_wide_val" << i << " = "
+                  << args[i].val << ";\n";
+              out << pad << "    " << type << " __gpga_wide_xz" << i << " = "
+                  << args[i].xz << ";\n";
+              out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
+                  << "] = gpga_wide_to_u64_" << args[i].width
+                  << "(__gpga_wide_val" << i << ");\n";
+              out << pad << "    sched_service[__gpga_svc_offset].arg_xz[" << i
+                  << "] = gpga_wide_to_u64_" << args[i].width
+                  << "(__gpga_wide_xz" << i << ");\n";
+              int word_count = (args[i].width + 63) / 64;
+              out << pad << "    uint __gpga_wide_base" << i << " = " << i
+                  << "u * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+              out << pad << "    for (uint __gpga_wide_word = 0u; "
+                         "__gpga_wide_word < "
+                  << word_count << "u; ++__gpga_wide_word) {\n";
+              out << pad << "      sched_service[__gpga_svc_offset].arg_wide_val"
+                         "[__gpga_wide_base"
+                  << i << " + __gpga_wide_word] = __gpga_wide_val" << i
+                  << ".w[__gpga_wide_word];\n";
+              out << pad << "      sched_service[__gpga_svc_offset].arg_wide_xz"
+                         "[__gpga_wide_base"
+                  << i << " + __gpga_wide_word] = __gpga_wide_xz" << i
+                  << ".w[__gpga_wide_word];\n";
+              out << pad << "    }\n";
+            } else {
+              out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
+                  << "] = " << args[i].val << ";\n";
+              out << pad << "    sched_service[__gpga_svc_offset].arg_xz[" << i
+                  << "] = " << args[i].xz << ";\n";
+            }
+          }
         };
 
         auto emit_service_record =
@@ -9378,16 +11875,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << format_id_expr << ";\n";
           out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
               << args.size() << "u;\n";
-          for (size_t i = 0; i < args.size(); ++i) {
-            out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
-                << "] = " << args[i].kind << ";\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
-                << "] = " << args[i].width << "u;\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
-                << "] = " << args[i].val << ";\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_xz[" << i
-                << "] = " << args[i].xz << ";\n";
-          }
+          emit_service_args(args, indent);
           out << pad << "  }\n";
           out << pad << "}\n";
         };
@@ -9415,16 +11903,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << format_id_expr << ";\n";
           out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
               << args.size() << "u;\n";
-          for (size_t i = 0; i < args.size(); ++i) {
-            out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
-                << "] = " << args[i].kind << ";\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
-                << "] = " << args[i].width << "u;\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
-                << "] = " << args[i].val << ";\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_xz[" << i
-                << "] = " << args[i].xz << ";\n";
-          }
+          emit_service_args(args, indent);
           out << pad << "  }\n";
           out << pad << "}\n";
         };
@@ -9453,16 +11932,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << format_id_expr << ";\n";
           out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
               << args.size() << "u;\n";
-          for (size_t i = 0; i < args.size(); ++i) {
-            out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
-                << "] = " << args[i].kind << ";\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
-                << "] = " << args[i].width << "u;\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
-                << "] = " << args[i].val << ";\n";
-            out << pad << "    sched_service[__gpga_svc_offset].arg_xz[" << i
-                << "] = " << args[i].xz << ";\n";
-          }
+          emit_service_args(args, indent);
           out << pad << "  }\n";
           out << pad << "}\n";
         };
@@ -9506,6 +11976,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_FEOF";
           } else if (call.ident == "$ftell") {
             kind_expr = "GPGA_SERVICE_KIND_FTELL";
+          } else if (call.ident == "$fseek") {
+            kind_expr = "GPGA_SERVICE_KIND_FSEEK";
+          } else if (call.ident == "$ferror") {
+            kind_expr = "GPGA_SERVICE_KIND_FERROR";
+          } else if (call.ident == "$ungetc") {
+            kind_expr = "GPGA_SERVICE_KIND_FUNGETC";
+          } else if (call.ident == "$fread") {
+            kind_expr = "GPGA_SERVICE_KIND_FREAD";
           } else if (call.ident == "$fscanf") {
             kind_expr = "GPGA_SERVICE_KIND_FSCANF";
           } else if (call.ident == "$sscanf") {
@@ -9560,7 +12038,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << (force_emit ? "true" : "false") << ";\n";
           for (size_t i = 0; i < args.size(); ++i) {
             if (args[i].kind != "GPGA_SERVICE_ARG_VALUE" &&
-                args[i].kind != "GPGA_SERVICE_ARG_REAL") {
+                args[i].kind != "GPGA_SERVICE_ARG_REAL" &&
+                args[i].kind != "GPGA_SERVICE_ARG_WIDE") {
               continue;
             }
             int width = args[i].width;
@@ -9569,10 +12048,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             uint64_t mask = MaskForWidth64(width);
             std::string mask_literal = std::to_string(mask) + "ul";
+            std::string val_expr = args[i].val;
+            std::string xz_expr = args[i].xz;
+            if (args[i].wide) {
+              val_expr = "gpga_wide_to_u64_" + std::to_string(width) + "(" +
+                         args[i].val + ")";
+              xz_expr = "gpga_wide_to_u64_" + std::to_string(width) + "(" +
+                        args[i].xz + ")";
+            }
             out << pad << "ulong " << prefix << "_val" << i << " = ("
-                << args[i].val << ") & " << mask_literal << ";\n";
+                << val_expr << ") & " << mask_literal << ";\n";
             out << pad << "ulong " << prefix << "_xz" << i << " = ("
-                << args[i].xz << ") & " << mask_literal << ";\n";
+                << xz_expr << ") & " << mask_literal << ";\n";
             out << pad << "uint " << prefix << "_slot" << i << " = "
                 << prefix << "_base + " << i << "u;\n";
             out << pad << "if ((((sched_monitor_val[" << prefix << "_slot" << i
@@ -9585,6 +12072,52 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 << "] = " << prefix << "_val" << i << ";\n";
             out << pad << "sched_monitor_xz[" << prefix << "_slot" << i
                 << "] = " << prefix << "_xz" << i << ";\n";
+            if (args[i].wide && service_wide_words > 0u) {
+              int word_count = (width + 63) / 64;
+              int last_bits = width - (word_count - 1) * 64;
+              uint64_t last_mask = MaskForWidth64(last_bits);
+              std::string type = TypeForWidth(width);
+              out << pad << type << " " << prefix << "_wide_val" << i << " = "
+                  << args[i].val << ";\n";
+              out << pad << type << " " << prefix << "_wide_xz" << i << " = "
+                  << args[i].xz << ";\n";
+              out << pad << "uint " << prefix << "_wbase" << i << " = "
+                  << prefix << "_slot" << i
+                  << " * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+              out << pad << "for (uint __gpga_wide_word" << i
+                  << " = 0u; __gpga_wide_word" << i << " < " << word_count
+                  << "u; ++__gpga_wide_word" << i << ") {\n";
+              out << pad << "  ulong __gpga_wide_mask" << i
+                  << " = 0xFFFFFFFFFFFFFFFFul;\n";
+              if (last_bits < 64) {
+                out << pad << "  if (__gpga_wide_word" << i << " == "
+                    << (word_count - 1) << "u) {\n";
+                out << pad << "    __gpga_wide_mask" << i << " = "
+                    << std::to_string(last_mask) << "ul;\n";
+                out << pad << "  }\n";
+              }
+              out << pad << "  ulong __gpga_wide_val" << i << "_w = "
+                  << prefix << "_wide_val" << i << ".w[__gpga_wide_word" << i
+                  << "] & __gpga_wide_mask" << i << ";\n";
+              out << pad << "  ulong __gpga_wide_xz" << i << "_w = "
+                  << prefix << "_wide_xz" << i << ".w[__gpga_wide_word" << i
+                  << "] & __gpga_wide_mask" << i << ";\n";
+              out << pad << "  uint __gpga_wide_slot" << i << " = "
+                  << prefix << "_wbase" << i
+                  << " + __gpga_wide_word" << i << ";\n";
+              out << pad << "  if ((((sched_monitor_wide_val[__gpga_wide_slot"
+                  << i << "] ^ __gpga_wide_val" << i
+                  << "_w) | (sched_monitor_wide_xz[__gpga_wide_slot" << i
+                  << "] ^ __gpga_wide_xz" << i << "_w)) & __gpga_wide_mask"
+                  << i << ") != 0ul) {\n";
+              out << pad << "    " << changed << " = true;\n";
+              out << pad << "  }\n";
+              out << pad << "  sched_monitor_wide_val[__gpga_wide_slot" << i
+                  << "] = __gpga_wide_val" << i << "_w;\n";
+              out << pad << "  sched_monitor_wide_xz[__gpga_wide_slot" << i
+                  << "] = __gpga_wide_xz" << i << "_w;\n";
+              out << pad << "}\n";
+            }
           }
           return changed;
         };
@@ -9623,6 +12156,47 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 << "GPGA_SCHED_STROBE_COUNT) + " << strobe_id << "u] += 1u;\n";
             return;
           }
+          if (name == "$sformat") {
+            if (stmt.task_args.size() < 2 || !stmt.task_args[0]) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            const Expr* target = stmt.task_args[0].get();
+            if (!target || target->kind != ExprKind::kIdentifier) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            std::string format_id_expr;
+            std::vector<ServiceArg> args;
+            if (!build_service_args(stmt, name, 1, &format_id_expr, &args) ||
+                format_id_expr == "GPGA_SERVICE_INVALID_ID") {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            uint32_t target_id = 0;
+            if (!string_id_for(target->ident, &target_id)) {
+              out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+              out << std::string(indent, ' ')
+                  << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            int width = SignalWidth(module, target->ident);
+            if (width <= 0) {
+              width = 1;
+            }
+            ServiceArg target_arg{"GPGA_SERVICE_ARG_IDENT", width,
+                                  std::to_string(target_id) + "ul", "0ul"};
+            args.insert(args.begin(), target_arg);
+            emit_service_record("GPGA_SERVICE_KIND_SFORMAT", format_id_expr,
+                                args, indent);
+            return;
+          }
           const char* kind_expr = nullptr;
           size_t arg_start = 0;
           bool guard_file_fd = false;
@@ -9630,6 +12204,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           bool has_fd_expr = false;
           if (name == "$display") {
             kind_expr = "GPGA_SERVICE_KIND_DISPLAY";
+          } else if (name == "$write") {
+            kind_expr = "GPGA_SERVICE_KIND_WRITE";
           } else if (name == "$fdisplay") {
             kind_expr = "GPGA_SERVICE_KIND_FDISPLAY";
             arg_start = 1;
@@ -9644,12 +12220,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_FWRITE";
             arg_start = 1;
             guard_file_fd = true;
-          } else if (name == "$fclose") {
-            kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
-            guard_file_fd = true;
-          } else if (name == "$ftell") {
-            kind_expr = "GPGA_SERVICE_KIND_FTELL";
-            guard_file_fd = true;
+        } else if (name == "$fclose") {
+          kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+          guard_file_fd = true;
+        } else if (name == "$fflush") {
+          kind_expr = "GPGA_SERVICE_KIND_FFLUSH";
+          guard_file_fd = !stmt.task_args.empty();
+        } else if (name == "$ftell") {
+          kind_expr = "GPGA_SERVICE_KIND_FTELL";
+          guard_file_fd = true;
           } else if (name == "$rewind") {
             kind_expr = "GPGA_SERVICE_KIND_REWIND";
             guard_file_fd = true;
@@ -9675,6 +12254,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_DUMPALL";
           } else if (name == "$dumplimit") {
             kind_expr = "GPGA_SERVICE_KIND_DUMPLIMIT";
+          } else if (name == "$timeformat") {
+            kind_expr = "GPGA_SERVICE_KIND_TIMEFORMAT";
+          } else if (name == "$printtimescale") {
+            kind_expr = "GPGA_SERVICE_KIND_PRINTTIMESCALE";
           } else {
             out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
             out << std::string(indent, ' ')
@@ -10326,8 +12909,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   }
                   FsExpr idx = emit_expr4(*idx_expr);
                   idx = maybe_hoist_full(idx, 18, false, false);
-                  idx_val = idx.val;
-                  idx_xz = idx.xz;
+                  if (idx.width > 64) {
+                    idx_val = to_u64(idx.val, idx.width);
+                    idx_xz =
+                        "(" + wide_any(idx.xz, idx.width) + " ? 1u : 0u)";
+                  } else {
+                    idx_val = idx.val;
+                    idx_xz = idx.xz;
+                  }
                 }
                 out << "                  uint __gpga_didx_val = uint("
                     << idx_val << ");\n";
@@ -11622,6 +14211,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
 
   auto literal_for_width = [](uint64_t value, int width) -> std::string {
+    if (width > 64) {
+      return "gpga_wide_from_u64_" + std::to_string(width) + "(" +
+             std::to_string(value) + "ul)";
+    }
     std::string suffix = (width > 32) ? "ul" : "u";
     return std::to_string(value) + suffix;
   };
@@ -11867,6 +14460,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     uint64_t mask = MaskForWidth64(width);
     if (expr.kind == ExprKind::kNumber) {
       uint64_t drive_bits = mask & ~expr.z_bits;
+      if (width > 64) {
+        std::string drive = literal_for_width(drive_bits, width);
+        std::string upper_mask =
+            "gpga_wide_and_" + std::to_string(width) + "(" +
+            MaskLiteralForWidth(width) + ", gpga_wide_not_" +
+            std::to_string(width) + "(" +
+            literal_for_width(0xFFFFFFFFFFFFFFFFull, width) + "))";
+        return "gpga_wide_or_" + std::to_string(width) + "(" + drive + ", " +
+               upper_mask + ")";
+      }
       return literal_for_width(drive_bits, width);
     }
     if (expr.kind == ExprKind::kTernary && expr.condition &&
@@ -11898,15 +14501,40 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string rhs =
           EmitExprSized(*assign.rhs, slice_width, module, locals, regs);
       std::string drive = emit_drive_expr(*assign.rhs, slice_width);
-      uint64_t mask = MaskForWidth64(slice_width);
-      std::string mask_literal = literal_for_width(mask, lhs_width);
-      std::string cast = CastForWidth(lhs_width);
-      out << "  " << type << " " << info.val << " = ((" << cast << rhs
-          << " & " << mask_literal << ") << " << std::to_string(lo)
-          << "u);\n";
-      out << "  " << type << " " << info.drive << " = ((" << cast << drive
-          << " & " << mask_literal << ") << " << std::to_string(lo)
-          << "u);\n";
+      if (lhs_width > 64) {
+        std::string idx = std::to_string(lo) + "u";
+        std::string rhs_ext;
+        std::string drive_ext;
+        if (slice_width > 64) {
+          rhs_ext =
+              "gpga_wide_resize_" + std::to_string(lhs_width) + "_from_" +
+              std::to_string(slice_width) + "(" + rhs + ")";
+          drive_ext =
+              "gpga_wide_resize_" + std::to_string(lhs_width) + "_from_" +
+              std::to_string(slice_width) + "(" + drive + ")";
+        } else {
+          rhs_ext =
+              "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" + rhs +
+              ")";
+          drive_ext =
+              "gpga_wide_from_u64_" + std::to_string(lhs_width) + "(" + drive +
+              ")";
+        }
+        out << "  " << type << " " << info.val << " = gpga_wide_shl_"
+            << lhs_width << "(" << rhs_ext << ", " << idx << ");\n";
+        out << "  " << type << " " << info.drive << " = gpga_wide_shl_"
+            << lhs_width << "(" << drive_ext << ", " << idx << ");\n";
+      } else {
+        uint64_t mask = MaskForWidth64(slice_width);
+        std::string mask_literal = literal_for_width(mask, lhs_width);
+        std::string cast = CastForWidth(lhs_width);
+        out << "  " << type << " " << info.val << " = ((" << cast << rhs
+            << " & " << mask_literal << ") << " << std::to_string(lo)
+            << "u);\n";
+        out << "  " << type << " " << info.drive << " = ((" << cast << drive
+            << " & " << mask_literal << ") << " << std::to_string(lo)
+            << "u);\n";
+      }
       return;
     }
     std::string rhs = lhs_real ? EmitRealBitsExpr(*assign.rhs, module, locals,
@@ -11931,12 +14559,129 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     bool is_trireg = IsTriregNet(net_type);
     int lhs_width = SignalWidth(module, name);
     std::string type = TypeForWidth(lhs_width);
-    std::string one = (lhs_width > 32) ? "1ul" : "1u";
     std::string zero = ZeroForWidth(lhs_width);
     std::string resolved_val = "__gpga_res_" + name + "_val";
     std::string resolved_drive = "__gpga_res_" + name + "_drive";
     out << "  " << type << " " << resolved_val << " = " << zero << ";\n";
     out << "  " << type << " " << resolved_drive << " = " << zero << ";\n";
+    if (lhs_width > 64) {
+      out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
+      if (wired_and || wired_or) {
+        out << "    bool has0 = false;\n";
+        out << "    bool has1 = false;\n";
+        for (size_t idx : indices) {
+          const auto& info = driver_info[idx];
+          out << "    if (gpga_wide_get_bit_" << lhs_width << "(" << info.drive
+              << ", bit) != 0u) {\n";
+          out << "      if (gpga_wide_get_bit_" << lhs_width << "(" << info.val
+              << ", bit) != 0u) {\n";
+          out << "        has1 = true;\n";
+          out << "      } else {\n";
+          out << "        has0 = true;\n";
+          out << "      }\n";
+          out << "    }\n";
+        }
+        out << "    if (!has0 && !has1) {\n";
+        out << "      continue;\n";
+        out << "    }\n";
+        out << "    " << resolved_drive << " = gpga_wide_set_bit_"
+            << lhs_width << "(" << resolved_drive << ", bit, 1u);\n";
+        if (wired_and) {
+          out << "    if (!has0) {\n";
+          out << "      " << resolved_val << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_val << ", bit, 1u);\n";
+          out << "    }\n";
+        } else {
+          out << "    if (has1) {\n";
+          out << "      " << resolved_val << " = gpga_wide_set_bit_"
+              << lhs_width << "(" << resolved_val << ", bit, 1u);\n";
+          out << "    }\n";
+        }
+        out << "    continue;\n";
+      } else {
+        out << "    uint best0 = 0u;\n";
+        out << "    uint best1 = 0u;\n";
+        for (size_t idx : indices) {
+          const auto& info = driver_info[idx];
+          out << "    if (gpga_wide_get_bit_" << lhs_width << "(" << info.drive
+              << ", bit) != 0u) {\n";
+          out << "      if (gpga_wide_get_bit_" << lhs_width << "(" << info.val
+              << ", bit) != 0u) {\n";
+          out << "        best1 = (best1 > " << info.strength1
+              << ") ? best1 : " << info.strength1 << ";\n";
+          out << "      } else {\n";
+          out << "        best0 = (best0 > " << info.strength0
+              << ") ? best0 : " << info.strength0 << ";\n";
+          out << "      }\n";
+          out << "    }\n";
+        }
+        out << "    if (best0 == 0u && best1 == 0u) {\n";
+        out << "      continue;\n";
+        out << "    }\n";
+        out << "    " << resolved_drive << " = gpga_wide_set_bit_"
+            << lhs_width << "(" << resolved_drive << ", bit, 1u);\n";
+        out << "    if (best1 > best0) {\n";
+        out << "      " << resolved_val << " = gpga_wide_set_bit_"
+            << lhs_width << "(" << resolved_val << ", bit, 1u);\n";
+        out << "    }\n";
+      }
+      out << "  }\n";
+
+      if (switch_nets.count(name) > 0) {
+        ensure_drive_declared(name, lhs_width, ZeroForWidth(lhs_width));
+        out << "  " << drive_var_name(name) << " = " << resolved_drive
+            << ";\n";
+      }
+
+      bool is_output = IsOutputPort(module, name) || regs_ctx.count(name) > 0;
+      bool is_local = locals_ctx.count(name) > 0 && !is_output &&
+                      regs_ctx.count(name) == 0;
+      if (is_output) {
+        if (is_trireg) {
+          std::string decay_ref = decay_name(name) + "[gid]";
+          std::string decay_delay = trireg_decay_delay(name);
+          std::string drive_flag = "__gpga_trireg_drive_" + name;
+          std::string decay_flag = "__gpga_trireg_decay_" + name;
+          out << "  bool " << drive_flag << " = gpga_wide_any_" << lhs_width
+              << "(" << resolved_drive << ");\n";
+          out << "  if (" << drive_flag << ") {\n";
+          out << "    " << decay_ref << " = __gpga_time + " << decay_delay
+              << ";\n";
+          out << "  }\n";
+          out << "  if (!" << drive_flag << " && " << decay_ref
+              << " == 0ul) {\n";
+          out << "    " << decay_ref << " = __gpga_time + " << decay_delay
+              << ";\n";
+          out << "  }\n";
+          out << "  bool " << decay_flag << " = (!" << drive_flag << " && "
+              << decay_ref << " != 0ul && __gpga_time >= " << decay_ref
+              << ");\n";
+          out << "  " << name << "[gid] = "
+              << "gpga_wide_or_" << lhs_width << "(gpga_wide_and_" << lhs_width
+              << "(" << name << "[gid], gpga_wide_not_" << lhs_width << "("
+              << resolved_drive << ")), gpga_wide_and_" << lhs_width << "("
+              << resolved_val << ", " << resolved_drive << "));\n";
+          out << "  if (" << decay_flag << ") {\n";
+          out << "    " << name << "[gid] = gpga_wide_or_" << lhs_width << "("
+              << name << "[gid], " << MaskLiteralForWidth(lhs_width) << ");\n";
+          out << "  }\n";
+        } else {
+          out << "  " << name << "[gid] = " << resolved_val << ";\n";
+        }
+      } else if (is_local) {
+        if (declared_ctx && declared_ctx->count(name) == 0) {
+          out << "  " << type << " " << name << ";\n";
+          if (declared_ctx) {
+            declared_ctx->insert(name);
+          }
+        }
+        out << "  " << name << " = " << resolved_val << ";\n";
+      } else {
+        out << "  // Unmapped resolved assign: " << name << "\n";
+      }
+      return;
+    }
+    std::string one = (lhs_width > 32) ? "1ul" : "1u";
     out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
     out << "    " << type << " mask = (" << one << " << bit);\n";
     if (wired_and || wired_or) {
@@ -14116,6 +16861,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         size_t max_args = std::max<size_t>(1, system_task_info.max_args);
         out << "constant constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
             << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_SERVICE_WIDE_WORDS = "
+            << service_wide_words << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_STRING_COUNT = "
             << system_task_info.string_table.size() << "u;\n";
         out << "constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
@@ -14123,6 +16870,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
         out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
         out << "constant constexpr uint GPGA_SERVICE_ARG_REAL = 3u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_ARG_WIDE = 4u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
@@ -14150,6 +16898,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_KIND_REWIND = 24u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMH = 25u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMB = 26u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FSEEK = 27u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FFLUSH = 28u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FERROR = 29u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FUNGETC = 30u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_FREAD = 31u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_WRITE = 32u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_SFORMAT = 33u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_TIMEFORMAT = 34u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_PRINTTIMESCALE = 35u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -14158,6 +16915,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  uint arg_kind[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
         out << "  uint arg_width[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
         out << "  ulong arg_val[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+        if (service_wide_words > 0u) {
+          out << "  ulong arg_wide_val[GPGA_SCHED_SERVICE_MAX_ARGS * "
+                 "GPGA_SCHED_SERVICE_WIDE_WORDS];\n";
+        }
         out << "};\n";
       }
       out << "inline uint gpga_sched_index(uint gid, uint pid) {\n";
@@ -14301,6 +17062,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device ulong* sched_monitor_val [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
+        if (service_wide_words > 0u) {
+          emit_param("  device ulong* sched_monitor_wide_val [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+      }
+      if (!system_task_info.strobe_stmts.empty()) {
+        emit_param("  device uint* sched_strobe_pending [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
       }
       if (system_task_info.has_system_tasks) {
         emit_param("  device uint* sched_service_count [[buffer(" +
@@ -14354,7 +17123,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "      for (uint a = 0u; a < GPGA_SCHED_MONITOR_MAX_ARGS; ++a) {\n";
       out << "        uint offset = ((gid * GPGA_SCHED_MONITOR_COUNT) + m) * GPGA_SCHED_MONITOR_MAX_ARGS + a;\n";
       out << "        sched_monitor_val[offset] = 0ul;\n";
+      if (service_wide_words > 0u) {
+        out << "        uint wide_offset = offset * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+        out << "        for (uint w = 0u; w < GPGA_SCHED_SERVICE_WIDE_WORDS; ++w) {\n";
+        out << "          sched_monitor_wide_val[wide_offset + w] = 0ul;\n";
+        out << "        }\n";
+      }
       out << "      }\n";
+      out << "    }\n";
+    }
+    if (!system_task_info.strobe_stmts.empty()) {
+      out << "    for (uint s = 0u; s < GPGA_SCHED_STROBE_COUNT; ++s) {\n";
+      out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
       out << "    }\n";
     }
     out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
@@ -14752,6 +17532,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string kind;
         int width = 0;
         std::string val;
+        bool wide = false;
       };
 
         auto build_service_args =
@@ -14771,12 +17552,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             *format_id_expr = std::to_string(id) + "u";
           }
 
+          std::vector<char> format_specs;
+          bool has_format_specs =
+              stmt.task_args.size() > arg_start &&
+              stmt.task_args[arg_start] &&
+              stmt.task_args[arg_start]->kind == ExprKind::kString;
+          if (has_format_specs) {
+            format_specs =
+                ExtractFormatSpecs(stmt.task_args[arg_start]->string_value);
+          }
+          size_t format_arg_index = 0;
+
           bool requires_string =
               name == "$dumpfile" || name == "$readmemh" ||
               name == "$readmemb" || name == "$writememh" ||
               name == "$writememb";
-        if (requires_string &&
-            *format_id_expr == "GPGA_SERVICE_INVALID_ID") {
+          if (requires_string &&
+              *format_id_expr == "GPGA_SERVICE_INVALID_ID") {
           return false;
         }
 
@@ -14790,43 +17582,107 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!arg) {
               continue;
             }
-          if (arg->kind == ExprKind::kString) {
-            uint32_t id = 0;
-            if (!string_id_for(arg->string_value, &id)) {
-              return false;
+            bool is_format_literal = has_format_specs && i == arg_start &&
+                                     arg->kind == ExprKind::kString;
+            char spec = '\0';
+            if (has_format_specs && !is_format_literal) {
+              if (format_arg_index < format_specs.size()) {
+                spec = format_specs[format_arg_index];
+              }
+              ++format_arg_index;
             }
-            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
-                                       std::to_string(id) + "ul"});
-            continue;
-          }
-          if (ident_as_string && arg->kind == ExprKind::kIdentifier) {
-            uint32_t id = 0;
-            if (!string_id_for(arg->ident, &id)) {
-              return false;
+            if (arg->kind == ExprKind::kString) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->string_value, &id)) {
+                return false;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_STRING", 0,
+                                          std::to_string(id) + "ul"});
+              continue;
             }
-            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", 0,
-                                       std::to_string(id) + "ul"});
-            continue;
-          }
-          if (arg->kind == ExprKind::kCall && arg->ident == "$time") {
-            args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 64,
-                                       "__gpga_time"});
-            continue;
-          }
+            if (ident_as_string && arg->kind == ExprKind::kIdentifier) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", 0,
+                                          std::to_string(id) + "ul"});
+              continue;
+            }
+            if (spec == 's' && arg->kind == ExprKind::kIdentifier) {
+              uint32_t id = 0;
+              if (!string_id_for(arg->ident, &id)) {
+                return false;
+              }
+              int width = SignalWidth(module, arg->ident);
+              if (width <= 0) {
+                width = 1;
+              }
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_IDENT", width,
+                                          std::to_string(id) + "ul"});
+              continue;
+            }
+            if (arg->kind == ExprKind::kCall && arg->ident == "$time") {
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 64,
+                                         "__gpga_time"});
+              continue;
+            }
+            if (arg->kind == ExprKind::kCall && arg->ident == "$stime") {
+              args->push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                         "uint(__gpga_time)"});
+              continue;
+            }
           bool is_real = ExprIsRealValue(*arg, module);
           int width = is_real ? 64 : ExprWidth(*arg, module);
           if (width <= 0) {
             width = 1;
           }
+          bool wide = !is_real && width > 64;
           std::string value =
               is_real
                   ? EmitRealBitsExpr(*arg, module, sched_locals, sched_regs)
                   : EmitExprSized(*arg, width, module, sched_locals, sched_regs);
-          args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
-                                             : "GPGA_SERVICE_ARG_VALUE",
-                                     width, to_ulong(value, width)});
+          std::string kind = is_real
+                                 ? "GPGA_SERVICE_ARG_REAL"
+                                 : (wide ? "GPGA_SERVICE_ARG_WIDE"
+                                         : "GPGA_SERVICE_ARG_VALUE");
+          std::string val = wide ? value : to_ulong(value, width);
+          args->push_back(ServiceArg{kind, width, val, wide});
         }
         return true;
+      };
+
+      auto emit_service_args =
+          [&](const std::vector<ServiceArg>& args, int indent) -> void {
+        std::string pad(indent, ' ');
+        for (size_t i = 0; i < args.size(); ++i) {
+          out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
+              << "] = " << args[i].kind << ";\n";
+          out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
+              << "] = " << args[i].width << "u;\n";
+          if (args[i].wide) {
+            std::string type = TypeForWidth(args[i].width);
+            out << pad << "    " << type << " __gpga_wide_val" << i << " = "
+                << args[i].val << ";\n";
+            out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
+                << "] = gpga_wide_to_u64_" << args[i].width
+                << "(__gpga_wide_val" << i << ");\n";
+            int word_count = (args[i].width + 63) / 64;
+            out << pad << "    uint __gpga_wide_base" << i << " = " << i
+                << "u * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+            out << pad << "    for (uint __gpga_wide_word = 0u; "
+                       "__gpga_wide_word < "
+                << word_count << "u; ++__gpga_wide_word) {\n";
+            out << pad << "      sched_service[__gpga_svc_offset].arg_wide_val"
+                       "[__gpga_wide_base"
+                << i << " + __gpga_wide_word] = __gpga_wide_val" << i
+                << ".w[__gpga_wide_word];\n";
+            out << pad << "    }\n";
+          } else {
+            out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
+                << "] = " << args[i].val << ";\n";
+          }
+        }
       };
 
       auto emit_service_record =
@@ -14851,14 +17707,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << format_id_expr << ";\n";
         out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
             << args.size() << "u;\n";
-        for (size_t i = 0; i < args.size(); ++i) {
-          out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
-              << "] = " << args[i].kind << ";\n";
-          out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
-              << "] = " << args[i].width << "u;\n";
-          out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
-              << "] = " << args[i].val << ";\n";
-        }
+        emit_service_args(args, indent);
         out << pad << "  }\n";
         out << pad << "}\n";
       };
@@ -14972,13 +17821,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (width <= 0) {
             width = 1;
           }
+          bool wide = !is_real && width > 64;
           std::string value =
               is_real
                   ? EmitRealBitsExpr(*arg, module, sched_locals, sched_regs)
                   : EmitExprSized(*arg, width, module, sched_locals, sched_regs);
-          args->push_back(ServiceArg{is_real ? "GPGA_SERVICE_ARG_REAL"
-                                             : "GPGA_SERVICE_ARG_VALUE",
-                                     width, to_ulong(value, width)});
+          std::string kind = is_real
+                                 ? "GPGA_SERVICE_ARG_REAL"
+                                 : (wide ? "GPGA_SERVICE_ARG_WIDE"
+                                         : "GPGA_SERVICE_ARG_VALUE");
+          std::string val = wide ? value : to_ulong(value, width);
+          args->push_back(ServiceArg{kind, width, val, wide});
         }
         return true;
       };
@@ -15006,14 +17859,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << format_id_expr << ";\n";
         out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
             << args.size() << "u;\n";
-        for (size_t i = 0; i < args.size(); ++i) {
-          out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
-              << "] = " << args[i].kind << ";\n";
-          out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
-              << "] = " << args[i].width << "u;\n";
-          out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
-              << "] = " << args[i].val << ";\n";
-        }
+        emit_service_args(args, indent);
         out << pad << "  }\n";
         out << pad << "}\n";
       };
@@ -15042,14 +17888,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << format_id_expr << ";\n";
         out << pad << "    sched_service[__gpga_svc_offset].arg_count = "
             << args.size() << "u;\n";
-        for (size_t i = 0; i < args.size(); ++i) {
-          out << pad << "    sched_service[__gpga_svc_offset].arg_kind[" << i
-              << "] = " << args[i].kind << ";\n";
-          out << pad << "    sched_service[__gpga_svc_offset].arg_width[" << i
-              << "] = " << args[i].width << "u;\n";
-          out << pad << "    sched_service[__gpga_svc_offset].arg_val[" << i
-              << "] = " << args[i].val << ";\n";
-        }
+        emit_service_args(args, indent);
         out << pad << "  }\n";
         out << pad << "}\n";
       };
@@ -15093,6 +17932,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           kind_expr = "GPGA_SERVICE_KIND_FEOF";
         } else if (call.ident == "$ftell") {
           kind_expr = "GPGA_SERVICE_KIND_FTELL";
+        } else if (call.ident == "$fseek") {
+          kind_expr = "GPGA_SERVICE_KIND_FSEEK";
+        } else if (call.ident == "$ferror") {
+          kind_expr = "GPGA_SERVICE_KIND_FERROR";
+        } else if (call.ident == "$ungetc") {
+          kind_expr = "GPGA_SERVICE_KIND_FUNGETC";
+        } else if (call.ident == "$fread") {
+          kind_expr = "GPGA_SERVICE_KIND_FREAD";
         } else if (call.ident == "$fscanf") {
           kind_expr = "GPGA_SERVICE_KIND_FSCANF";
         } else if (call.ident == "$sscanf") {
@@ -15149,7 +17996,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << (force_emit ? "true" : "false") << ";\n";
         for (size_t i = 0; i < args.size(); ++i) {
           if (args[i].kind != "GPGA_SERVICE_ARG_VALUE" &&
-              args[i].kind != "GPGA_SERVICE_ARG_REAL") {
+              args[i].kind != "GPGA_SERVICE_ARG_REAL" &&
+              args[i].kind != "GPGA_SERVICE_ARG_WIDE") {
             continue;
           }
           int width = args[i].width;
@@ -15158,8 +18006,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           uint64_t mask = MaskForWidth64(width);
           std::string mask_literal = std::to_string(mask) + "ul";
+          std::string val_expr = args[i].val;
+          if (args[i].wide) {
+            val_expr = "gpga_wide_to_u64_" + std::to_string(width) + "(" +
+                       args[i].val + ")";
+          }
           out << pad << "ulong " << prefix << "_val" << i << " = ("
-              << args[i].val << ") & " << mask_literal << ";\n";
+              << val_expr << ") & " << mask_literal << ";\n";
           out << pad << "uint " << prefix << "_slot" << i << " = "
               << prefix << "_base + " << i << "u;\n";
           out << pad << "if (((sched_monitor_val[" << prefix << "_slot" << i
@@ -15169,6 +18022,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "}\n";
           out << pad << "sched_monitor_val[" << prefix << "_slot" << i
               << "] = " << prefix << "_val" << i << ";\n";
+          if (args[i].wide && service_wide_words > 0u) {
+            int word_count = (width + 63) / 64;
+            int last_bits = width - (word_count - 1) * 64;
+            uint64_t last_mask = MaskForWidth64(last_bits);
+            std::string type = TypeForWidth(width);
+            out << pad << type << " " << prefix << "_wide_val" << i << " = "
+                << args[i].val << ";\n";
+            out << pad << "uint " << prefix << "_wbase" << i << " = "
+                << prefix << "_slot" << i
+                << " * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+            out << pad << "for (uint __gpga_wide_word" << i
+                << " = 0u; __gpga_wide_word" << i << " < " << word_count
+                << "u; ++__gpga_wide_word" << i << ") {\n";
+            out << pad << "  ulong __gpga_wide_mask" << i
+                << " = 0xFFFFFFFFFFFFFFFFul;\n";
+            if (last_bits < 64) {
+              out << pad << "  if (__gpga_wide_word" << i << " == "
+                  << (word_count - 1) << "u) {\n";
+              out << pad << "    __gpga_wide_mask" << i << " = "
+                  << std::to_string(last_mask) << "ul;\n";
+              out << pad << "  }\n";
+            }
+            out << pad << "  ulong __gpga_wide_val" << i << "_w = "
+                << prefix << "_wide_val" << i << ".w[__gpga_wide_word" << i
+                << "] & __gpga_wide_mask" << i << ";\n";
+            out << pad << "  uint __gpga_wide_slot" << i << " = "
+                << prefix << "_wbase" << i
+                << " + __gpga_wide_word" << i << ";\n";
+            out << pad << "  if (((sched_monitor_wide_val[__gpga_wide_slot" << i
+                << "] ^ __gpga_wide_val" << i << "_w) & __gpga_wide_mask" << i
+                << ") != 0ul) {\n";
+            out << pad << "    " << changed << " = true;\n";
+            out << pad << "  }\n";
+            out << pad << "  sched_monitor_wide_val[__gpga_wide_slot" << i
+                << "] = __gpga_wide_val" << i << "_w;\n";
+            out << pad << "}\n";
+          }
         }
         return changed;
       };
@@ -15209,12 +18099,55 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << "GPGA_SCHED_STROBE_COUNT) + " << strobe_id << "u] += 1u;\n";
           return;
         }
+        if (name == "$sformat") {
+          if (stmt.task_args.size() < 2 || !stmt.task_args[0]) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          const Expr* target = stmt.task_args[0].get();
+          if (!target || target->kind != ExprKind::kIdentifier) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          std::string format_id_expr;
+          std::vector<ServiceArg> args;
+          if (!build_service_args(stmt, name, 1, &format_id_expr, &args) ||
+              format_id_expr == "GPGA_SERVICE_INVALID_ID") {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          uint32_t target_id = 0;
+          if (!string_id_for(target->ident, &target_id)) {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          int width = SignalWidth(module, target->ident);
+          if (width <= 0) {
+            width = 1;
+          }
+          ServiceArg target_arg{"GPGA_SERVICE_ARG_IDENT", width,
+                                std::to_string(target_id) + "ul"};
+          args.insert(args.begin(), target_arg);
+          emit_service_record("GPGA_SERVICE_KIND_SFORMAT", format_id_expr, args,
+                              indent);
+          return;
+        }
         const char* kind_expr = nullptr;
         size_t arg_start = 0;
         bool guard_file_fd = false;
         std::string fd_expr;
         if (name == "$display") {
           kind_expr = "GPGA_SERVICE_KIND_DISPLAY";
+        } else if (name == "$write") {
+          kind_expr = "GPGA_SERVICE_KIND_WRITE";
         } else if (name == "$fdisplay") {
           kind_expr = "GPGA_SERVICE_KIND_FDISPLAY";
           arg_start = 1;
@@ -15233,6 +18166,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
           arg_start = 1;
           guard_file_fd = true;
+        } else if (name == "$fflush") {
+          kind_expr = "GPGA_SERVICE_KIND_FFLUSH";
+          guard_file_fd = !stmt.task_args.empty();
         } else if (name == "$ftell") {
           kind_expr = "GPGA_SERVICE_KIND_FTELL";
           guard_file_fd = true;
@@ -15261,6 +18197,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           kind_expr = "GPGA_SERVICE_KIND_DUMPALL";
         } else if (name == "$dumplimit") {
           kind_expr = "GPGA_SERVICE_KIND_DUMPLIMIT";
+        } else if (name == "$timeformat") {
+          kind_expr = "GPGA_SERVICE_KIND_TIMEFORMAT";
+        } else if (name == "$printtimescale") {
+          kind_expr = "GPGA_SERVICE_KIND_PRINTTIMESCALE";
         } else {
           out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
           out << std::string(indent, ' ')

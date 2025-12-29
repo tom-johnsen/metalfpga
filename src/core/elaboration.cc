@@ -2294,7 +2294,8 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
   }
   if (expr.ident == "$realtime" || expr.ident == "$realtobits" ||
       expr.ident == "$bitstoreal" || expr.ident == "$rtoi" ||
-      expr.ident == "$itor") {
+      expr.ident == "$itor" || expr.ident == "$time" ||
+      expr.ident == "$stime") {
     auto call = std::make_unique<Expr>();
     call->kind = ExprKind::kCall;
     call->ident = expr.ident;
@@ -2303,6 +2304,8 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
   }
   if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
       expr.ident == "$feof" || expr.ident == "$ftell" ||
+      expr.ident == "$fseek" || expr.ident == "$ferror" ||
+      expr.ident == "$ungetc" || expr.ident == "$fread" ||
       expr.ident == "$fgets" || expr.ident == "$fscanf" ||
       expr.ident == "$sscanf") {
     auto call = std::make_unique<Expr>();
@@ -2450,6 +2453,8 @@ std::unique_ptr<Expr> CloneExprWithParamsImpl(
       if (!module) {
         if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
             expr.ident == "$feof" || expr.ident == "$ftell" ||
+            expr.ident == "$fseek" || expr.ident == "$ferror" ||
+            expr.ident == "$ungetc" || expr.ident == "$fread" ||
             expr.ident == "$fgets" || expr.ident == "$fscanf" ||
             expr.ident == "$sscanf") {
           auto out = std::make_unique<Expr>();
@@ -3568,7 +3573,8 @@ int ExprWidth(const Expr& expr, const Module& module) {
       }
       return std::max(32, MinimalWidth(expr.number));
     case ExprKind::kString:
-      return 0;
+      return std::max<int>(
+          1, static_cast<int>(expr.string_value.size() * 8));
     case ExprKind::kUnary:
       if (expr.unary_op == '!' || expr.unary_op == '&' ||
           expr.unary_op == '|' || expr.unary_op == '^' ||
@@ -3984,12 +3990,15 @@ void CollectAssignedSignals(const Statement& statement,
 
 bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
   if (expr.kind == ExprKind::kCall) {
-    if (expr.ident != "$time" && expr.ident != "$realtime" &&
+    if (expr.ident != "$time" && expr.ident != "$stime" &&
+        expr.ident != "$realtime" &&
         expr.ident != "$realtobits" && expr.ident != "$bitstoreal" &&
         expr.ident != "$rtoi" && expr.ident != "$itor" &&
         expr.ident != "$fopen" && expr.ident != "$fclose" &&
         expr.ident != "$fgetc" && expr.ident != "$fgets" &&
         expr.ident != "$feof" && expr.ident != "$ftell" &&
+        expr.ident != "$fseek" && expr.ident != "$ferror" &&
+        expr.ident != "$ungetc" && expr.ident != "$fread" &&
         expr.ident != "$fscanf" && expr.ident != "$sscanf") {
       if (name_out) {
         *name_out = expr.ident;
