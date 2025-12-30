@@ -57,6 +57,61 @@ add_executable(metalfpga_smoke
 
 target_link_libraries(metalfpga_smoke PRIVATE metalfpga)
 
+set(CRLIBM_REF_SOURCES
+  thirdparty/crlibm/crlibm_private.c
+  thirdparty/crlibm/triple-double.c
+  thirdparty/crlibm/exp-td.c
+  thirdparty/crlibm/exp-td-standalone.c
+  thirdparty/crlibm/expm1-standalone.c
+  thirdparty/crlibm/expm1.c
+  thirdparty/crlibm/log-td.c
+  thirdparty/crlibm/log1p.c
+  thirdparty/crlibm/log10-td.c
+  thirdparty/crlibm/log2-td.c
+  thirdparty/crlibm/rem_pio2_accurate.c
+  thirdparty/crlibm/trigo_fast.c
+  thirdparty/crlibm/trigo_accurate.c
+  thirdparty/crlibm/trigpi.c
+  thirdparty/crlibm/asincos.c
+  thirdparty/crlibm/atan_fast.c
+  thirdparty/crlibm/atan_accurate.c
+  thirdparty/crlibm/csh_fast.c
+  thirdparty/crlibm/pow.c
+  thirdparty/crlibm/scs_lib/scs_private.c
+  thirdparty/crlibm/scs_lib/addition_scs.c
+  thirdparty/crlibm/scs_lib/division_scs.c
+  thirdparty/crlibm/scs_lib/print_scs.c
+  thirdparty/crlibm/scs_lib/double2scs.c
+  thirdparty/crlibm/scs_lib/zero_scs.c
+  thirdparty/crlibm/scs_lib/multiplication_scs.c
+  thirdparty/crlibm/scs_lib/scs2double.c
+)
+
+add_library(crlibm_ref STATIC EXCLUDE_FROM_ALL
+  ${CRLIBM_REF_SOURCES}
+)
+
+target_include_directories(crlibm_ref PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/crlibm
+)
+
+target_compile_definitions(crlibm_ref PRIVATE
+  HAVE_CONFIG_H=1
+  SCS_NB_WORDS=8
+  SCS_NB_BITS=30
+)
+
+add_executable(metalfpga_crlibm_compare EXCLUDE_FROM_ALL
+  src/tools/crlibm_compare.cc
+)
+
+target_include_directories(metalfpga_crlibm_compare PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(metalfpga_crlibm_compare PRIVATE crlibm_ref)
+
 if(APPLE)
   target_link_libraries(metalfpga PUBLIC "-framework Metal" "-framework Foundation")
 endif()

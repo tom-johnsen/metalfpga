@@ -13,7 +13,7 @@ typedef uint64_t ulong;
 #define thread
 #endif
 #ifndef constant
-#define constant
+#define constant const
 #endif
 #endif
 
@@ -21,6 +21,41 @@ typedef uint64_t ulong;
 #define GPGA_CONST constant
 #else
 #define GPGA_CONST static const
+#endif
+
+#if !defined(__METAL_VERSION__) && defined(GPGA_REAL_TRACE)
+struct GpgaRealTraceCounters {
+  uint64_t sin_rn_fallback = 0;
+  uint64_t sin_ru_fallback = 0;
+  uint64_t sin_rd_fallback = 0;
+  uint64_t sin_rz_fallback = 0;
+  uint64_t cos_rn_fallback = 0;
+  uint64_t cos_ru_fallback = 0;
+  uint64_t cos_rd_fallback = 0;
+  uint64_t cos_rz_fallback = 0;
+  uint64_t tan_rn_fallback = 0;
+  uint64_t tan_ru_fallback = 0;
+  uint64_t tan_rd_fallback = 0;
+  uint64_t tan_rz_fallback = 0;
+};
+
+inline GpgaRealTraceCounters& gpga_real_trace_counters() {
+  static GpgaRealTraceCounters counters;
+  return counters;
+}
+
+inline void gpga_real_trace_reset() {
+  gpga_real_trace_counters() = GpgaRealTraceCounters();
+}
+
+#define GPGA_REAL_TRACE_FALLBACK(name) \
+  do {                                 \
+    gpga_real_trace_counters().name##_fallback += 1; \
+  } while (0)
+#else
+#define GPGA_REAL_TRACE_FALLBACK(name) \
+  do {                                 \
+  } while (0)
 #endif
 
 // IEEE-754 binary64 helpers and CRlibm-compatible API (MSL).
@@ -1869,7 +1904,7 @@ inline bool gpga_test_and_return_ru(gpga_double yh, gpga_double yl,
   gpga_double abs_yl = gpga_double_abs(yl);
   ulong u53_bits =
       (abs_yh_bits & 0x7ff0000000000000ULL) + 0x0010000000000000ULL;
-  gpga_double u53 = gpga_double_from_u64(u53_bits);
+  gpga_double u53 = gpga_bits_to_real(u53_bits);
   if (gpga_double_gt(abs_yl, gpga_double_mul(eps, u53))) {
     uint yh_neg = gpga_double_sign(yh);
     uint yl_neg = gpga_double_sign(yl);
@@ -1892,7 +1927,7 @@ inline bool gpga_test_and_return_rd(gpga_double yh, gpga_double yl,
   gpga_double abs_yl = gpga_double_abs(yl);
   ulong u53_bits =
       (abs_yh_bits & 0x7ff0000000000000ULL) + 0x0010000000000000ULL;
-  gpga_double u53 = gpga_double_from_u64(u53_bits);
+  gpga_double u53 = gpga_bits_to_real(u53_bits);
   if (gpga_double_gt(abs_yl, gpga_double_mul(eps, u53))) {
     uint yh_neg = gpga_double_sign(yh);
     uint yl_neg = gpga_double_sign(yl);
@@ -1915,7 +1950,7 @@ inline bool gpga_test_and_return_rz(gpga_double yh, gpga_double yl,
   gpga_double abs_yl = gpga_double_abs(yl);
   ulong u53_bits =
       (abs_yh_bits & 0x7ff0000000000000ULL) + 0x0010000000000000ULL;
-  gpga_double u53 = gpga_double_from_u64(u53_bits);
+  gpga_double u53 = gpga_bits_to_real(u53_bits);
   if (gpga_double_gt(abs_yl, gpga_double_mul(eps, u53))) {
     uint yh_neg = gpga_double_sign(yh);
     uint yl_neg = gpga_double_sign(yl);
@@ -1983,6 +2018,8 @@ inline void scs_set(scs_ptr result, scs_ptr x);
 inline void scs_set_si(scs_ptr result, int x);
 inline void scs_set_d(scs_ptr result, gpga_double x);
 inline void scs_get_d(thread gpga_double* result, scs_ptr x);
+inline int scs_cmp_abs(scs_ptr a, scs_ptr b);
+inline void scs_get_d_nearest(thread gpga_double* result, scs_ptr x);
 inline void scs_get_d_minf(thread gpga_double* result, scs_ptr x);
 inline void scs_get_d_pinf(thread gpga_double* result, scs_ptr x);
 inline void scs_get_d_zero(thread gpga_double* result, scs_ptr x);
@@ -2894,9 +2931,9 @@ GPGA_CONST scs tan_scs_poly[35] = {
      1},
 };
 
-#define DEGREE_SIN_SCS 13
-#define DEGREE_COS_SCS 14
-#define DEGREE_TAN_SCS 35
+#define DEGREE_SIN_SCS 25
+#define DEGREE_COS_SCS 26
+#define DEGREE_TAN_SCS 69
 
 #define sin_scs_poly_ptr ((scs_const_ptr)&sin_scs_poly)
 #define cos_scs_poly_ptr ((scs_const_ptr)&cos_scs_poly)
@@ -3149,6 +3186,7 @@ GPGA_CONST gpga_double trigpi_twoto42 = 0x4290000000000000ul;
 GPGA_CONST gpga_double trigpi_twoto52 = 0x4330000000000000ul;
 GPGA_CONST gpga_double trigpi_inv128 = 0x3f80000000000000ul;
 GPGA_CONST gpga_double trigpi_twoto5251 = 0x4338000000000000ul;
+GPGA_CONST gpga_double trigpi_dekker_const = 0x41a0000002000000ul;
 GPGA_CONST gpga_double trigpi_smallest = 0x0000000000000001ul;
 GPGA_CONST gpga_double trigpi_pih = 0x400921fb54442d18ul;
 GPGA_CONST gpga_double trigpi_pim = 0x3ca1a62633145c07ul;
@@ -3556,6 +3594,15 @@ inline void gpga_sinpiquick(thread gpga_double* rh, thread gpga_double* rm,
   }
 }
 
+// Trigpi constants used in small-x fallback (see crlibm trigpi.h).
+GPGA_CONST gpga_double TRIGPI_PIHH = 0x400921fb58000000ul;
+GPGA_CONST gpga_double TRIGPI_PIHM = 0xbe5dde9740000000ul;
+GPGA_CONST gpga_double TRIGPI_PIM = 0x3ca1a62633145c07ul;
+GPGA_CONST gpga_double TRIGPI_PIX_RNCST_SIN = 0x3ff0204081020409ul;
+GPGA_CONST gpga_double TRIGPI_PIX_RNCST_TAN = 0x3ff0410410410411ul;
+GPGA_CONST gpga_double TRIGPI_PIX_EPS_SIN = 0x3c20000000000000ul;
+GPGA_CONST gpga_double TRIGPI_PIX_EPS_TAN = 0x3c30000000000000ul;
+
 inline gpga_double gpga_sinpi_rn(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3571,6 +3618,10 @@ inline gpga_double gpga_sinpi_rn(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(sign);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
     return gpga_double_zero(sign);
   }
@@ -3585,31 +3636,12 @@ inline gpga_double gpga_sinpi_rn(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double check =
-        gpga_double_add(rh, gpga_double_mul(rl, trigpi_pix_rncst_sin));
-    if (gpga_double_eq(rh, check)) {
-      return rh;
-    }
+    scs_get_d(&rh, result);
+    return rh;
   }
 
   gpga_double rh = gpga_double_zero(0u);
@@ -3640,8 +3672,12 @@ inline gpga_double gpga_sinpi_rd(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(1u);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
-    return gpga_double_zero(sign);
+    return gpga_double_zero(1u);
   }
 
   y = gpga_double_mul(y, trigpi_inv128);
@@ -3654,30 +3690,13 @@ inline gpga_double gpga_sinpi_rd(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d_minf(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    // SCS path keeps rounding exact for tiny normals.
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double quick = gpga_double_zero(0u);
-    if (gpga_test_and_return_rd(rh, rl, trigpi_pix_eps_sin, &quick)) {
-      return quick;
-    }
+    scs_get_d_minf(&rh, result);
+    return rh;
   }
 
   gpga_double rh = gpga_double_zero(0u);
@@ -3702,8 +3721,12 @@ inline gpga_double gpga_sinpi_ru(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(0u);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
-    return gpga_double_zero(sign);
+    return gpga_double_zero(0u);
   }
 
   y = gpga_double_mul(y, trigpi_inv128);
@@ -3716,30 +3739,13 @@ inline gpga_double gpga_sinpi_ru(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d_pinf(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    // SCS path keeps rounding exact for tiny normals.
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double quick = gpga_double_zero(0u);
-    if (gpga_test_and_return_ru(rh, rl, trigpi_pix_eps_sin, &quick)) {
-      return quick;
-    }
+    scs_get_d_pinf(&rh, result);
+    return rh;
   }
 
   gpga_double rh = gpga_double_zero(0u);
@@ -3764,6 +3770,10 @@ inline gpga_double gpga_sinpi_rz(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(sign);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
     return gpga_double_zero(sign);
   }
@@ -3778,30 +3788,13 @@ inline gpga_double gpga_sinpi_rz(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d_zero(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    // SCS path keeps rounding exact for tiny normals.
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double quick = gpga_double_zero(0u);
-    if (gpga_test_and_return_rz(rh, rl, trigpi_pix_eps_sin, &quick)) {
-      return quick;
-    }
+    scs_get_d_zero(&rh, result);
+    return rh;
   }
 
   gpga_double rh = gpga_double_zero(0u);
@@ -3998,6 +3991,10 @@ inline gpga_double gpga_tanpi_rn(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(sign);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
     return gpga_double_zero(sign);
   }
@@ -4012,31 +4009,12 @@ inline gpga_double gpga_tanpi_rn(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
-    gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double check =
-        gpga_double_add(rh, gpga_double_mul(rl, trigpi_pix_rncst_tan));
-    if (gpga_double_eq(rh, check)) {
-      return rh;
-    }
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
+    gpga_double z = gpga_double_zero(0u);
+    scs_get_d_nearest(&z, result);
+    return scs_tan_rn(z);
   }
 
   gpga_double ch = gpga_double_zero(0u);
@@ -4073,6 +4051,10 @@ inline gpga_double gpga_tanpi_rd(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(sign);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
     return gpga_double_zero(sign);
   }
@@ -4087,30 +4069,13 @@ inline gpga_double gpga_tanpi_rd(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d_minf(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    // SCS path keeps rounding exact for tiny normals.
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double quick = gpga_double_zero(0u);
-    if (gpga_test_and_return_rd(rh, rl, trigpi_pix_eps_sin, &quick)) {
-      return quick;
-    }
+    scs_get_d_minf(&rh, result);
+    return rh;
   }
 
   gpga_double ch = gpga_double_zero(0u);
@@ -4147,6 +4112,10 @@ inline gpga_double gpga_tanpi_ru(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(sign);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
     return gpga_double_zero(sign);
   }
@@ -4161,30 +4130,13 @@ inline gpga_double gpga_tanpi_ru(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d_pinf(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    // SCS path keeps rounding exact for tiny normals.
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double quick = gpga_double_zero(0u);
-    if (gpga_test_and_return_ru(rh, rl, trigpi_pix_eps_tan, &quick)) {
-      return quick;
-    }
+    scs_get_d_pinf(&rh, result);
+    return rh;
   }
 
   gpga_double ch = gpga_double_zero(0u);
@@ -4221,6 +4173,10 @@ inline gpga_double gpga_tanpi_rz(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint sign = gpga_double_sign(x);
 
+  if (gpga_double_is_zero(x)) {
+    return gpga_double_zero(sign);
+  }
+
   if (index == 0u && gpga_double_is_zero(y) && ((quadrant & 1u) == 0u)) {
     return gpga_double_zero(sign);
   }
@@ -4235,30 +4191,13 @@ inline gpga_double gpga_tanpi_rz(gpga_double x) {
   }
 
   if (absxhi <= 0x3e000000u) {
-    if (absxhi < 0x01700000u) {
-      scs_t result;
-      scs_set_d(result, x);
-      scs_mul(result, PiSCS_ptr, result);
-      gpga_double rh = gpga_double_zero(0u);
-      scs_get_d_zero(&rh, result);
-      return rh;
-    }
-    gpga_double dekker = gpga_double_from_u32(134217729u);
-    gpga_double tt = gpga_double_mul(x, dekker);
-    gpga_double xh = gpga_double_add(gpga_double_sub(x, tt), tt);
-    gpga_double xl = gpga_double_sub(x, xh);
+    // SCS path keeps rounding exact for tiny normals.
+    scs_t result;
+    scs_set_d(result, x);
+    scs_mul(result, PiSCS_ptr, result);
     gpga_double rh = gpga_double_zero(0u);
-    gpga_double rl = gpga_double_zero(0u);
-    gpga_double term1 = gpga_double_mul(xh, trigpi_pihh);
-    gpga_double term2 = gpga_double_add(gpga_double_mul(xl, trigpi_pihh),
-                                        gpga_double_mul(xh, trigpi_pihm));
-    gpga_double term3 = gpga_double_add(gpga_double_mul(xh, trigpi_pim),
-                                        gpga_double_mul(xl, trigpi_pihm));
-    Add12(&rh, &rl, term1, gpga_double_add(term2, term3));
-    gpga_double quick = gpga_double_zero(0u);
-    if (gpga_test_and_return_rz(rh, rl, trigpi_pix_eps_sin, &quick)) {
-      return quick;
-    }
+    scs_get_d_zero(&rh, result);
+    return rh;
   }
 
   gpga_double ch = gpga_double_zero(0u);
@@ -4300,6 +4239,12 @@ GPGA_CONST gpga_double PIHALFRU = 0x3ff921fb54442d19ul;
 GPGA_CONST gpga_double PIRU = 0x400921fb54442d19ul;
 GPGA_CONST gpga_double PIH = 0x400921fb54442d18ul;
 GPGA_CONST gpga_double PIM = 0x3ca1a62633145c07ul;
+GPGA_CONST gpga_double PIHH = 0x400921fb58000000ul;
+GPGA_CONST gpga_double PIHM = 0xbe5dde9740000000ul;
+GPGA_CONST gpga_double PIX_RNCST_SIN = 0x3ff0204081020409ul;
+GPGA_CONST gpga_double PIX_RNCST_TAN = 0x3ff0410410410411ul;
+GPGA_CONST gpga_double PIX_EPS_SIN = 0x3c20000000000000ul;
+GPGA_CONST gpga_double PIX_EPS_TAN = 0x3c30000000000000ul;
 GPGA_CONST gpga_double PIL = 0xb92f1976b7ed8fbcul;
 GPGA_CONST gpga_double RECPRPIH = 0x3fd45f306dc9c883ul;
 GPGA_CONST gpga_double RECPRPIM = 0xbc76b01ec5417056ul;
@@ -4315,6 +4260,8 @@ GPGA_CONST gpga_double TWO999 = 0x7e60000000000000ul;
 GPGA_CONST gpga_double ASINBADCASEX = 0x3fde9950730c4696ul;
 GPGA_CONST gpga_double ASINBADCASEYRU = 0x3fdfe767739d0f6eul;
 GPGA_CONST gpga_double ASINBADCASEYRD = 0x3fdfe767739d0f6dul;
+GPGA_CONST gpga_double ACOSPIRN_BADCASEX = 0x3fd94789f4bd4efaul;
+GPGA_CONST gpga_double ACOSPIRN_BADCASEY = 0x3fd7ba5406f2b9ccul;
 GPGA_CONST gpga_double p0_quick_coeff_19h = 0x3f8a4b92dae969edul;
 GPGA_CONST gpga_double p0_quick_coeff_17h = 0x3f86c7aa165208f9ul;
 GPGA_CONST gpga_double p0_quick_coeff_15h = 0x3f8caa781489e2b8ul;
@@ -4832,58 +4779,87 @@ inline void gpga_asin_p_accu(thread gpga_double* p_resh,
   Add12(&p_t_17_0h, &p_t_17_0m, p_accu_coeff_14h, p_t_16_0h);
   gpga_double p_t_18_0h = gpga_double_zero(0u);
   gpga_double p_t_18_0m = gpga_double_zero(0u);
-  Add122(&p_t_18_0h, &p_t_18_0m, p_accu_coeff_13h, p_t_17_0h, p_t_17_0m);
+  Mul122(&p_t_18_0h, &p_t_18_0m, x, p_t_17_0h, p_t_17_0m);
   gpga_double p_t_19_0h = gpga_double_zero(0u);
   gpga_double p_t_19_0m = gpga_double_zero(0u);
-  Add122(&p_t_19_0h, &p_t_19_0m, p_accu_coeff_12h, p_t_18_0h, p_t_18_0m);
+  Add122(&p_t_19_0h, &p_t_19_0m, p_accu_coeff_13h, p_t_18_0h, p_t_18_0m);
   gpga_double p_t_20_0h = gpga_double_zero(0u);
   gpga_double p_t_20_0m = gpga_double_zero(0u);
-  Add122(&p_t_20_0h, &p_t_20_0m, p_accu_coeff_11h, p_t_19_0h, p_t_19_0m);
+  Mul122(&p_t_20_0h, &p_t_20_0m, x, p_t_19_0h, p_t_19_0m);
   gpga_double p_t_21_0h = gpga_double_zero(0u);
   gpga_double p_t_21_0m = gpga_double_zero(0u);
-  Add122(&p_t_21_0h, &p_t_21_0m, p_accu_coeff_10h, p_t_20_0h, p_t_20_0m);
+  Add122(&p_t_21_0h, &p_t_21_0m, p_accu_coeff_12h, p_t_20_0h, p_t_20_0m);
   gpga_double p_t_22_0h = gpga_double_zero(0u);
   gpga_double p_t_22_0m = gpga_double_zero(0u);
-  Add122(&p_t_22_0h, &p_t_22_0m, p_accu_coeff_9h, p_t_21_0h, p_t_21_0m);
+  Mul122(&p_t_22_0h, &p_t_22_0m, x, p_t_21_0h, p_t_21_0m);
   gpga_double p_t_23_0h = gpga_double_zero(0u);
   gpga_double p_t_23_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_23_0h, &p_t_23_0m, p_accu_coeff_8h, p_accu_coeff_8m, x,
-            p_t_22_0h, p_t_22_0m);
+  Add122(&p_t_23_0h, &p_t_23_0m, p_accu_coeff_11h, p_t_22_0h, p_t_22_0m);
   gpga_double p_t_24_0h = gpga_double_zero(0u);
   gpga_double p_t_24_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_24_0h, &p_t_24_0m, p_accu_coeff_7h, p_accu_coeff_7m, x,
-            p_t_23_0h, p_t_23_0m);
+  Mul122(&p_t_24_0h, &p_t_24_0m, x, p_t_23_0h, p_t_23_0m);
   gpga_double p_t_25_0h = gpga_double_zero(0u);
   gpga_double p_t_25_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_25_0h, &p_t_25_0m, p_accu_coeff_6h, p_accu_coeff_6m, x,
-            p_t_24_0h, p_t_24_0m);
+  Add122(&p_t_25_0h, &p_t_25_0m, p_accu_coeff_10h, p_t_24_0h, p_t_24_0m);
   gpga_double p_t_26_0h = gpga_double_zero(0u);
   gpga_double p_t_26_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_26_0h, &p_t_26_0m, p_accu_coeff_5h, p_accu_coeff_5m, x,
-            p_t_25_0h, p_t_25_0m);
+  Mul122(&p_t_26_0h, &p_t_26_0m, x, p_t_25_0h, p_t_25_0m);
   gpga_double p_t_27_0h = gpga_double_zero(0u);
   gpga_double p_t_27_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_27_0h, &p_t_27_0m, p_accu_coeff_4h, p_accu_coeff_4m, x,
-            p_t_26_0h, p_t_26_0m);
+  Add122(&p_t_27_0h, &p_t_27_0m, p_accu_coeff_9h, p_t_26_0h, p_t_26_0m);
   gpga_double p_t_28_0h = gpga_double_zero(0u);
   gpga_double p_t_28_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_28_0h, &p_t_28_0m, p_accu_coeff_3h, p_accu_coeff_3m, x,
+  MulAdd212(&p_t_28_0h, &p_t_28_0m, p_accu_coeff_8h, p_accu_coeff_8m, x,
             p_t_27_0h, p_t_27_0m);
   gpga_double p_t_29_0h = gpga_double_zero(0u);
   gpga_double p_t_29_0m = gpga_double_zero(0u);
-  Add23(&p_t_29_0h, &p_t_29_0m, p_resl, p_accu_coeff_2h, p_accu_coeff_2m,
-        p_t_28_0h, p_t_28_0m);
+  MulAdd212(&p_t_29_0h, &p_t_29_0m, p_accu_coeff_7h, p_accu_coeff_7m, x,
+            p_t_28_0h, p_t_28_0m);
   gpga_double p_t_30_0h = gpga_double_zero(0u);
   gpga_double p_t_30_0m = gpga_double_zero(0u);
-  gpga_double p_t_30_0l = gpga_double_zero(0u);
-  Add233(&p_t_30_0h, &p_t_30_0m, &p_t_30_0l, p_accu_coeff_1h,
-         p_accu_coeff_1m, p_t_29_0h, p_t_29_0m, *p_resl);
+  MulAdd212(&p_t_30_0h, &p_t_30_0m, p_accu_coeff_6h, p_accu_coeff_6m, x,
+            p_t_29_0h, p_t_29_0m);
   gpga_double p_t_31_0h = gpga_double_zero(0u);
   gpga_double p_t_31_0m = gpga_double_zero(0u);
-  gpga_double p_t_31_0l = gpga_double_zero(0u);
-  Add233(&p_t_31_0h, &p_t_31_0m, &p_t_31_0l, p_accu_coeff_0h,
-         p_accu_coeff_0m, p_t_30_0h, p_t_30_0m, p_t_30_0l);
-  Renormalize3(p_resh, p_resm, p_resl, p_t_31_0h, p_t_31_0m, p_t_31_0l);
+  MulAdd212(&p_t_31_0h, &p_t_31_0m, p_accu_coeff_5h, p_accu_coeff_5m, x,
+            p_t_30_0h, p_t_30_0m);
+  gpga_double p_t_32_0h = gpga_double_zero(0u);
+  gpga_double p_t_32_0m = gpga_double_zero(0u);
+  MulAdd212(&p_t_32_0h, &p_t_32_0m, p_accu_coeff_4h, p_accu_coeff_4m, x,
+            p_t_31_0h, p_t_31_0m);
+  gpga_double p_t_33_0h = gpga_double_zero(0u);
+  gpga_double p_t_33_0m = gpga_double_zero(0u);
+  MulAdd212(&p_t_33_0h, &p_t_33_0m, p_accu_coeff_3h, p_accu_coeff_3m, x,
+            p_t_32_0h, p_t_32_0m);
+  gpga_double p_t_34_0h = gpga_double_zero(0u);
+  gpga_double p_t_34_0m = gpga_double_zero(0u);
+  Mul122(&p_t_34_0h, &p_t_34_0m, x, p_t_33_0h, p_t_33_0m);
+  gpga_double p_t_35_0h = gpga_double_zero(0u);
+  gpga_double p_t_35_0m = gpga_double_zero(0u);
+  gpga_double p_t_35_0l = gpga_double_zero(0u);
+  Add23(&p_t_35_0h, &p_t_35_0m, &p_t_35_0l, p_accu_coeff_2h, p_accu_coeff_2m,
+        p_t_34_0h, p_t_34_0m);
+  gpga_double p_t_36_0h = gpga_double_zero(0u);
+  gpga_double p_t_36_0m = gpga_double_zero(0u);
+  gpga_double p_t_36_0l = gpga_double_zero(0u);
+  Mul133(&p_t_36_0h, &p_t_36_0m, &p_t_36_0l, x, p_t_35_0h, p_t_35_0m,
+         p_t_35_0l);
+  gpga_double p_t_37_0h = gpga_double_zero(0u);
+  gpga_double p_t_37_0m = gpga_double_zero(0u);
+  gpga_double p_t_37_0l = gpga_double_zero(0u);
+  Add233(&p_t_37_0h, &p_t_37_0m, &p_t_37_0l, p_accu_coeff_1h,
+         p_accu_coeff_1m, p_t_36_0h, p_t_36_0m, p_t_36_0l);
+  gpga_double p_t_38_0h = gpga_double_zero(0u);
+  gpga_double p_t_38_0m = gpga_double_zero(0u);
+  gpga_double p_t_38_0l = gpga_double_zero(0u);
+  Mul133(&p_t_38_0h, &p_t_38_0m, &p_t_38_0l, x, p_t_37_0h, p_t_37_0m,
+         p_t_37_0l);
+  gpga_double p_t_39_0h = gpga_double_zero(0u);
+  gpga_double p_t_39_0m = gpga_double_zero(0u);
+  gpga_double p_t_39_0l = gpga_double_zero(0u);
+  Add233(&p_t_39_0h, &p_t_39_0m, &p_t_39_0l, p_accu_coeff_0h,
+         p_accu_coeff_0m, p_t_38_0h, p_t_38_0m, p_t_38_0l);
+  Renormalize3(p_resh, p_resm, p_resl, p_t_39_0h, p_t_39_0m, p_t_39_0l);
 }
 
 inline void gpga_asin_p9_accu(thread gpga_double* p_resh,
@@ -4910,50 +4886,71 @@ inline void gpga_asin_p9_accu(thread gpga_double* p_resh,
   Add12(&p_t_17_0h, &p_t_17_0m, p9_accu_coeff_12h, p_t_16_0h);
   gpga_double p_t_18_0h = gpga_double_zero(0u);
   gpga_double p_t_18_0m = gpga_double_zero(0u);
-  Add122(&p_t_18_0h, &p_t_18_0m, p9_accu_coeff_11h, p_t_17_0h, p_t_17_0m);
+  Mul122(&p_t_18_0h, &p_t_18_0m, x, p_t_17_0h, p_t_17_0m);
   gpga_double p_t_19_0h = gpga_double_zero(0u);
   gpga_double p_t_19_0m = gpga_double_zero(0u);
-  Add122(&p_t_19_0h, &p_t_19_0m, p9_accu_coeff_10h, p_t_18_0h, p_t_18_0m);
+  Add122(&p_t_19_0h, &p_t_19_0m, p9_accu_coeff_11h, p_t_18_0h, p_t_18_0m);
   gpga_double p_t_20_0h = gpga_double_zero(0u);
   gpga_double p_t_20_0m = gpga_double_zero(0u);
-  Add122(&p_t_20_0h, &p_t_20_0m, p9_accu_coeff_9h, p_t_19_0h, p_t_19_0m);
+  Mul122(&p_t_20_0h, &p_t_20_0m, x, p_t_19_0h, p_t_19_0m);
   gpga_double p_t_21_0h = gpga_double_zero(0u);
   gpga_double p_t_21_0m = gpga_double_zero(0u);
-  Add122(&p_t_21_0h, &p_t_21_0m, p9_accu_coeff_8h, p_t_20_0h, p_t_20_0m);
+  Add122(&p_t_21_0h, &p_t_21_0m, p9_accu_coeff_10h, p_t_20_0h, p_t_20_0m);
   gpga_double p_t_22_0h = gpga_double_zero(0u);
   gpga_double p_t_22_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_22_0h, &p_t_22_0m, p9_accu_coeff_7h, p9_accu_coeff_7m, x,
-            p_t_21_0h, p_t_21_0m);
+  Mul122(&p_t_22_0h, &p_t_22_0m, x, p_t_21_0h, p_t_21_0m);
   gpga_double p_t_23_0h = gpga_double_zero(0u);
   gpga_double p_t_23_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_23_0h, &p_t_23_0m, p9_accu_coeff_6h, p9_accu_coeff_6m, x,
-            p_t_22_0h, p_t_22_0m);
+  Add122(&p_t_23_0h, &p_t_23_0m, p9_accu_coeff_9h, p_t_22_0h, p_t_22_0m);
   gpga_double p_t_24_0h = gpga_double_zero(0u);
   gpga_double p_t_24_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_24_0h, &p_t_24_0m, p9_accu_coeff_5h, p9_accu_coeff_5m, x,
-            p_t_23_0h, p_t_23_0m);
+  Mul122(&p_t_24_0h, &p_t_24_0m, x, p_t_23_0h, p_t_23_0m);
   gpga_double p_t_25_0h = gpga_double_zero(0u);
   gpga_double p_t_25_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_25_0h, &p_t_25_0m, p9_accu_coeff_4h, p9_accu_coeff_4m, x,
-            p_t_24_0h, p_t_24_0m);
+  Add122(&p_t_25_0h, &p_t_25_0m, p9_accu_coeff_8h, p_t_24_0h, p_t_24_0m);
   gpga_double p_t_26_0h = gpga_double_zero(0u);
   gpga_double p_t_26_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_26_0h, &p_t_26_0m, p9_accu_coeff_3h, p9_accu_coeff_3m, x,
+  MulAdd212(&p_t_26_0h, &p_t_26_0m, p9_accu_coeff_7h, p9_accu_coeff_7m, x,
             p_t_25_0h, p_t_25_0m);
   gpga_double p_t_27_0h = gpga_double_zero(0u);
   gpga_double p_t_27_0m = gpga_double_zero(0u);
-  MulAdd212(&p_t_27_0h, &p_t_27_0m, p9_accu_coeff_2h, p9_accu_coeff_2m, x,
+  MulAdd212(&p_t_27_0h, &p_t_27_0m, p9_accu_coeff_6h, p9_accu_coeff_6m, x,
             p_t_26_0h, p_t_26_0m);
   gpga_double p_t_28_0h = gpga_double_zero(0u);
   gpga_double p_t_28_0m = gpga_double_zero(0u);
-  Add23(&p_t_28_0h, &p_t_28_0m, p_resl, p9_accu_coeff_1h, p9_accu_coeff_1m,
-        p_t_27_0h, p_t_27_0m);
+  MulAdd212(&p_t_28_0h, &p_t_28_0m, p9_accu_coeff_5h, p9_accu_coeff_5m, x,
+            p_t_27_0h, p_t_27_0m);
   gpga_double p_t_29_0h = gpga_double_zero(0u);
   gpga_double p_t_29_0m = gpga_double_zero(0u);
-  gpga_double p_t_29_0l = gpga_double_zero(0u);
-  Add233(&p_t_29_0h, &p_t_29_0m, &p_t_29_0l, p9_accu_coeff_0h,
-         p9_accu_coeff_0m, p_t_28_0h, p_t_28_0m, *p_resl);
-  Renormalize3(p_resh, p_resm, p_resl, p_t_29_0h, p_t_29_0m, p_t_29_0l);
+  MulAdd212(&p_t_29_0h, &p_t_29_0m, p9_accu_coeff_4h, p9_accu_coeff_4m, x,
+            p_t_28_0h, p_t_28_0m);
+  gpga_double p_t_30_0h = gpga_double_zero(0u);
+  gpga_double p_t_30_0m = gpga_double_zero(0u);
+  MulAdd212(&p_t_30_0h, &p_t_30_0m, p9_accu_coeff_3h, p9_accu_coeff_3m, x,
+            p_t_29_0h, p_t_29_0m);
+  gpga_double p_t_31_0h = gpga_double_zero(0u);
+  gpga_double p_t_31_0m = gpga_double_zero(0u);
+  MulAdd212(&p_t_31_0h, &p_t_31_0m, p9_accu_coeff_2h, p9_accu_coeff_2m, x,
+            p_t_30_0h, p_t_30_0m);
+  gpga_double p_t_32_0h = gpga_double_zero(0u);
+  gpga_double p_t_32_0m = gpga_double_zero(0u);
+  Mul122(&p_t_32_0h, &p_t_32_0m, x, p_t_31_0h, p_t_31_0m);
+  gpga_double p_t_33_0h = gpga_double_zero(0u);
+  gpga_double p_t_33_0m = gpga_double_zero(0u);
+  gpga_double p_t_33_0l = gpga_double_zero(0u);
+  Add23(&p_t_33_0h, &p_t_33_0m, &p_t_33_0l, p9_accu_coeff_1h,
+        p9_accu_coeff_1m, p_t_32_0h, p_t_32_0m);
+  gpga_double p_t_34_0h = gpga_double_zero(0u);
+  gpga_double p_t_34_0m = gpga_double_zero(0u);
+  gpga_double p_t_34_0l = gpga_double_zero(0u);
+  Mul133(&p_t_34_0h, &p_t_34_0m, &p_t_34_0l, x, p_t_33_0h, p_t_33_0m,
+         p_t_33_0l);
+  gpga_double p_t_35_0h = gpga_double_zero(0u);
+  gpga_double p_t_35_0m = gpga_double_zero(0u);
+  gpga_double p_t_35_0l = gpga_double_zero(0u);
+  Add233(&p_t_35_0h, &p_t_35_0m, &p_t_35_0l, p9_accu_coeff_0h,
+         p9_accu_coeff_0m, p_t_34_0h, p_t_34_0m, p_t_34_0l);
+  Renormalize3(p_resh, p_resm, p_resl, p_t_35_0h, p_t_35_0m, p_t_35_0l);
 }
 
 inline gpga_double gpga_asin_rn(gpga_double x) {
@@ -6464,6 +6461,9 @@ inline gpga_double gpga_acospi_rn(gpga_double x) {
     }
     return gpga_double_nan();
   }
+  if (gpga_double_eq(x, ACOSPIRN_BADCASEX)) {
+    return ACOSPIRN_BADCASEY;
+  }
 
   int index = (int)((gpga_u64_hi(zdb) & 0x000f0000u) >> 16);
   gpga_double asinh = gpga_double_zero(0u);
@@ -7956,10 +7956,13 @@ inline void gpga_compute_trig_with_argred(thread gpga_rrinfo* rri) {
 
 inline gpga_double gpga_sin_rn(gpga_double x) {
   gpga_rrinfo rri;
+  gpga_double ts = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double rncst = gpga_double_zero(0u);
   gpga_double r = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
-  rri.changesign = 0;
 
   if (absxhi >= 0x7ff00000u) {
     return gpga_double_nan();
@@ -7969,20 +7972,23 @@ inline gpga_double gpga_sin_rn(gpga_double x) {
     if (absxhi < XMAX_RETURN_X_FOR_SIN) {
       return x;
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double ts = gpga_double_mul(
-        x2, gpga_double_add(
-                  trigo_fast_s3,
-                  gpga_double_mul(x2, gpga_double_add(
-                                            trigo_fast_s5,
-                                            gpga_double_mul(x2,
-                                                            trigo_fast_s7)))));
+    x2 = gpga_double_mul(x, x);
+    ts = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_s3,
+            gpga_double_mul(
+                x2, gpga_double_add(
+                        trigo_fast_s5,
+                        gpga_double_mul(x2, trigo_fast_s7)))));
     Add12(&rri.rh, &rri.rl, x, gpga_double_mul(ts, x));
-    gpga_double check =
-        gpga_double_add(rri.rh, gpga_double_mul(rri.rl, RN_CST_SIN_CASE2));
-    if (gpga_double_eq(rri.rh, check)) {
+    if (gpga_double_eq(
+            rri.rh,
+            gpga_double_add(rri.rh,
+                            gpga_double_mul(rri.rl, RN_CST_SIN_CASE2)))) {
       return rri.rh;
     }
+    GPGA_REAL_TRACE_FALLBACK(sin_rn);
     return scs_sin_rn(x);
   }
 
@@ -7990,17 +7996,24 @@ inline gpga_double gpga_sin_rn(gpga_double x) {
   rri.function = GPGA_TRIGO_SIN;
   gpga_compute_trig_with_argred(&rri);
   r = rri.changesign ? gpga_double_neg(rri.rh) : rri.rh;
-  gpga_double check =
-      gpga_double_add(rri.rh, gpga_double_mul(rri.rl, RN_CST_SINCOS_CASE3));
-  if (gpga_double_eq(rri.rh, check)) {
+  rncst = RN_CST_SINCOS_CASE3;
+  if (gpga_double_eq(
+          rri.rh,
+          gpga_double_add(rri.rh, gpga_double_mul(rri.rl, rncst)))) {
     return r;
   }
+  GPGA_REAL_TRACE_FALLBACK(sin_rn);
   return scs_sin_rn(x);
 }
 
 inline gpga_double gpga_sin_ru(gpga_double x) {
-  gpga_double epsilon = EPS_SINCOS_CASE3;
   gpga_rrinfo rri;
+  gpga_double xx = gpga_double_zero(0u);
+  gpga_double ts = gpga_double_zero(0u);
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+  gpga_double zero = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8010,46 +8023,50 @@ inline gpga_double gpga_sin_ru(gpga_double x) {
 
   if (absxhi < XMAX_SIN_CASE2) {
     if (absxhi < XMAX_RETURN_X_FOR_SIN) {
-      if (gpga_double_ge(x, gpga_double_zero(0u))) {
+      if (gpga_double_ge(x, zero)) {
         return x;
       }
-      if (gpga_double_is_zero(x)) {
-        return x;
-      }
-      return x - 1ull;
+      return gpga_double_raw_dec(x);
     }
-    gpga_double xx = gpga_double_mul(x, x);
-    gpga_double ts = gpga_double_mul(
-        x, gpga_double_mul(xx, gpga_double_add(
-                                   trigo_fast_s3,
-                                   gpga_double_mul(
-                                       xx, gpga_double_add(
-                                               trigo_fast_s5,
-                                               gpga_double_mul(
-                                                   xx, trigo_fast_s7))))));
+    xx = gpga_double_mul(x, x);
+    ts = gpga_double_mul(
+        x,
+        gpga_double_mul(
+            xx,
+            gpga_double_add(
+                trigo_fast_s3,
+                gpga_double_mul(
+                    xx, gpga_double_add(
+                            trigo_fast_s5,
+                            gpga_double_mul(xx, trigo_fast_s7))))));
     Add12(&rri.rh, &rri.rl, x, ts);
     epsilon = EPS_SIN_CASE2;
   } else {
     rri.x = x;
     rri.function = GPGA_TRIGO_SIN;
     gpga_compute_trig_with_argred(&rri);
+    epsilon = EPS_SINCOS_CASE3;
     if (rri.changesign) {
       rri.rh = gpga_double_neg(rri.rh);
       rri.rl = gpga_double_neg(rri.rl);
     }
-    epsilon = EPS_SINCOS_CASE3;
   }
 
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_ru(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_ru(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(sin_ru);
   return scs_sin_ru(x);
 }
 
 inline gpga_double gpga_sin_rd(gpga_double x) {
-  gpga_double epsilon = EPS_SINCOS_CASE3;
   gpga_rrinfo rri;
+  gpga_double xx = gpga_double_zero(0u);
+  gpga_double ts = gpga_double_zero(0u);
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+  gpga_double zero = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8059,46 +8076,49 @@ inline gpga_double gpga_sin_rd(gpga_double x) {
 
   if (absxhi < XMAX_SIN_CASE2) {
     if (absxhi < XMAX_RETURN_X_FOR_SIN) {
-      if (gpga_double_le(x, gpga_double_zero(0u))) {
+      if (gpga_double_le(x, zero)) {
         return x;
       }
-      if (gpga_double_is_zero(x)) {
-        return x;
-      }
-      return x - 1ull;
+      return gpga_double_raw_dec(x);
     }
-    gpga_double xx = gpga_double_mul(x, x);
-    gpga_double ts = gpga_double_mul(
-        x, gpga_double_mul(xx, gpga_double_add(
-                                   trigo_fast_s3,
-                                   gpga_double_mul(
-                                       xx, gpga_double_add(
-                                               trigo_fast_s5,
-                                               gpga_double_mul(
-                                                   xx, trigo_fast_s7))))));
+    xx = gpga_double_mul(x, x);
+    ts = gpga_double_mul(
+        x,
+        gpga_double_mul(
+            xx,
+            gpga_double_add(
+                trigo_fast_s3,
+                gpga_double_mul(
+                    xx, gpga_double_add(
+                            trigo_fast_s5,
+                            gpga_double_mul(xx, trigo_fast_s7))))));
     Add12(&rri.rh, &rri.rl, x, ts);
     epsilon = EPS_SIN_CASE2;
   } else {
     rri.x = x;
     rri.function = GPGA_TRIGO_SIN;
     gpga_compute_trig_with_argred(&rri);
+    epsilon = EPS_SINCOS_CASE3;
     if (rri.changesign) {
       rri.rh = gpga_double_neg(rri.rh);
       rri.rl = gpga_double_neg(rri.rl);
     }
-    epsilon = EPS_SINCOS_CASE3;
   }
 
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_rd(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_rd(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(sin_rd);
   return scs_sin_rd(x);
 }
 
 inline gpga_double gpga_sin_rz(gpga_double x) {
-  gpga_double epsilon = EPS_SINCOS_CASE3;
   gpga_rrinfo rri;
+  gpga_double xx = gpga_double_zero(0u);
+  gpga_double ts = gpga_double_zero(0u);
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8108,42 +8128,49 @@ inline gpga_double gpga_sin_rz(gpga_double x) {
 
   if (absxhi < XMAX_SIN_CASE2) {
     if (absxhi < XMAX_RETURN_X_FOR_SIN) {
-      return x;
+      if (gpga_double_is_zero(x)) {
+        return x;
+      }
+      return gpga_double_raw_dec(x);
     }
-    gpga_double xx = gpga_double_mul(x, x);
-    gpga_double ts = gpga_double_mul(
-        x, gpga_double_mul(xx, gpga_double_add(
-                                   trigo_fast_s3,
-                                   gpga_double_mul(
-                                       xx, gpga_double_add(
-                                               trigo_fast_s5,
-                                               gpga_double_mul(
-                                                   xx, trigo_fast_s7))))));
+    xx = gpga_double_mul(x, x);
+    ts = gpga_double_mul(
+        x,
+        gpga_double_mul(
+            xx,
+            gpga_double_add(
+                trigo_fast_s3,
+                gpga_double_mul(
+                    xx, gpga_double_add(
+                            trigo_fast_s5,
+                            gpga_double_mul(xx, trigo_fast_s7))))));
     Add12(&rri.rh, &rri.rl, x, ts);
     epsilon = EPS_SIN_CASE2;
   } else {
     rri.x = x;
     rri.function = GPGA_TRIGO_SIN;
     gpga_compute_trig_with_argred(&rri);
+    epsilon = EPS_SINCOS_CASE3;
     if (rri.changesign) {
       rri.rh = gpga_double_neg(rri.rh);
       rri.rl = gpga_double_neg(rri.rl);
     }
-    epsilon = EPS_SINCOS_CASE3;
   }
 
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_rz(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_rz(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(sin_rz);
   return scs_sin_rz(x);
 }
 
 inline gpga_double gpga_cos_rn(gpga_double x) {
   gpga_rrinfo rri;
+  gpga_double tc = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
-  rri.changesign = 0;
 
   if (absxhi >= 0x7ff00000u) {
     return gpga_double_nan();
@@ -8151,39 +8178,48 @@ inline gpga_double gpga_cos_rn(gpga_double x) {
 
   if (absxhi < XMAX_COS_CASE2) {
     if (absxhi < XMAX_RETURN_1_FOR_COS_RN) {
-      return gpga_double_from_u32(1u);
+      return gpga_double_const_one();
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double tc = gpga_double_mul(
-        x2, gpga_double_add(
-                  trigo_fast_c2,
-                  gpga_double_mul(x2, gpga_double_add(
-                                            trigo_fast_c4,
-                                            gpga_double_mul(x2,
-                                                            trigo_fast_c6)))));
-    Add12(&rri.rh, &rri.rl, gpga_double_from_u32(1u), tc);
-    gpga_double check =
-        gpga_double_add(rri.rh, gpga_double_mul(rri.rl, RN_CST_COS_CASE2));
-    if (gpga_double_eq(rri.rh, check)) {
+    x2 = gpga_double_mul(x, x);
+    tc = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_c2,
+            gpga_double_mul(
+                x2, gpga_double_add(
+                        trigo_fast_c4,
+                        gpga_double_mul(x2, trigo_fast_c6)))));
+    Add12(&rri.rh, &rri.rl, gpga_double_const_one(), tc);
+    if (gpga_double_eq(
+            rri.rh,
+            gpga_double_add(rri.rh,
+                            gpga_double_mul(rri.rl, RN_CST_COS_CASE2)))) {
       return rri.rh;
     }
+    GPGA_REAL_TRACE_FALLBACK(cos_rn);
     return scs_cos_rn(x);
   }
 
   rri.x = x;
   rri.function = GPGA_TRIGO_COS;
   gpga_compute_trig_with_argred(&rri);
-  gpga_double check =
-      gpga_double_add(rri.rh, gpga_double_mul(rri.rl, RN_CST_SINCOS_CASE3));
-  if (gpga_double_eq(rri.rh, check)) {
+  if (gpga_double_eq(
+          rri.rh,
+          gpga_double_add(rri.rh,
+                          gpga_double_mul(rri.rl, RN_CST_SINCOS_CASE3)))) {
     return rri.changesign ? gpga_double_neg(rri.rh) : rri.rh;
   }
+  GPGA_REAL_TRACE_FALLBACK(cos_rn);
   return scs_cos_rn(x);
 }
 
 inline gpga_double gpga_cos_ru(gpga_double x) {
-  gpga_double epsilon = EPS_SINCOS_CASE3;
   gpga_rrinfo rri;
+  gpga_double tc = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8193,17 +8229,18 @@ inline gpga_double gpga_cos_ru(gpga_double x) {
 
   if (absxhi < XMAX_COS_CASE2) {
     if (absxhi < XMAX_RETURN_1_FOR_COS_RDIR) {
-      return gpga_double_from_u32(1u);
+      return gpga_double_const_one();
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double tc = gpga_double_mul(
-        x2, gpga_double_add(
-                  trigo_fast_c2,
-                  gpga_double_mul(x2, gpga_double_add(
-                                            trigo_fast_c4,
-                                            gpga_double_mul(x2,
-                                                            trigo_fast_c6)))));
-    Add12(&rri.rh, &rri.rl, gpga_double_from_u32(1u), tc);
+    x2 = gpga_double_mul(x, x);
+    tc = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_c2,
+            gpga_double_mul(
+                x2, gpga_double_add(
+                        trigo_fast_c4,
+                        gpga_double_mul(x2, trigo_fast_c6)))));
+    Add12(&rri.rh, &rri.rl, gpga_double_const_one(), tc);
     epsilon = EPS_COS_CASE2;
   } else {
     rri.x = x;
@@ -8216,16 +8253,20 @@ inline gpga_double gpga_cos_ru(gpga_double x) {
     }
   }
 
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_ru(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_ru(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(cos_ru);
   return scs_cos_ru(x);
 }
 
 inline gpga_double gpga_cos_rd(gpga_double x) {
-  gpga_double epsilon = EPS_SINCOS_CASE3;
   gpga_rrinfo rri;
+  gpga_double tc = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8235,20 +8276,21 @@ inline gpga_double gpga_cos_rd(gpga_double x) {
 
   if (absxhi < XMAX_COS_CASE2) {
     if (gpga_double_is_zero(x)) {
-      return gpga_double_from_u32(1u);
+      return gpga_double_const_one();
     }
     if (absxhi < XMAX_RETURN_1_FOR_COS_RDIR) {
       return ONE_ROUNDED_DOWN;
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double tc = gpga_double_mul(
-        x2, gpga_double_add(
-                  trigo_fast_c2,
-                  gpga_double_mul(x2, gpga_double_add(
-                                            trigo_fast_c4,
-                                            gpga_double_mul(x2,
-                                                            trigo_fast_c6)))));
-    Add12(&rri.rh, &rri.rl, gpga_double_from_u32(1u), tc);
+    x2 = gpga_double_mul(x, x);
+    tc = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_c2,
+            gpga_double_mul(
+                x2, gpga_double_add(
+                        trigo_fast_c4,
+                        gpga_double_mul(x2, trigo_fast_c6)))));
+    Add12(&rri.rh, &rri.rl, gpga_double_const_one(), tc);
     epsilon = EPS_COS_CASE2;
   } else {
     rri.x = x;
@@ -8261,16 +8303,20 @@ inline gpga_double gpga_cos_rd(gpga_double x) {
     }
   }
 
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_rd(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_rd(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(cos_rd);
   return scs_cos_rd(x);
 }
 
 inline gpga_double gpga_cos_rz(gpga_double x) {
-  gpga_double epsilon = EPS_SINCOS_CASE3;
   gpga_rrinfo rri;
+  gpga_double tc = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8280,20 +8326,21 @@ inline gpga_double gpga_cos_rz(gpga_double x) {
 
   if (absxhi < XMAX_COS_CASE2) {
     if (gpga_double_is_zero(x)) {
-      return gpga_double_from_u32(1u);
+      return gpga_double_const_one();
     }
     if (absxhi < XMAX_RETURN_1_FOR_COS_RDIR) {
       return ONE_ROUNDED_DOWN;
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double tc = gpga_double_mul(
-        x2, gpga_double_add(
-                  trigo_fast_c2,
-                  gpga_double_mul(x2, gpga_double_add(
-                                            trigo_fast_c4,
-                                            gpga_double_mul(x2,
-                                                            trigo_fast_c6)))));
-    Add12(&rri.rh, &rri.rl, gpga_double_from_u32(1u), tc);
+    x2 = gpga_double_mul(x, x);
+    tc = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_c2,
+            gpga_double_mul(
+                x2, gpga_double_add(
+                        trigo_fast_c4,
+                        gpga_double_mul(x2, trigo_fast_c6)))));
+    Add12(&rri.rh, &rri.rl, gpga_double_const_one(), tc);
     epsilon = EPS_COS_CASE2;
   } else {
     rri.x = x;
@@ -8306,15 +8353,20 @@ inline gpga_double gpga_cos_rz(gpga_double x) {
     }
   }
 
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_rz(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_rz(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(cos_rz);
   return scs_cos_rz(x);
 }
 
 inline gpga_double gpga_tan_rn(gpga_double x) {
   gpga_rrinfo rri;
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double p5 = gpga_double_zero(0u);
+  gpga_double tt = gpga_double_zero(0u);
+  gpga_double rndcst = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8326,48 +8378,62 @@ inline gpga_double gpga_tan_rn(gpga_double x) {
     if (absxhi < XMAX_RETURN_X_FOR_TAN) {
       return x;
     }
-    uint exp_bits = absxhi >> 20;
-    uint mant = (absxhi & 0x000fffffu) + 0x00100000u;
-    uint shift = (uint)((0x3ff + 2) - exp_bits);
-    uint hi = 0x3ff00000u + (mant >> shift);
-    gpga_double rndcst = ((ulong)hi << 32) | 0xfffffffful;
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double p5 = gpga_double_add(
+    uint mant = absxhi & 0x000fffffU;
+    uint exp = absxhi >> 20;
+    uint shift = (uint)((0x3ff + 2) - exp);
+    uint frac = 0u;
+    if (shift < 32u) {
+      frac = (mant + 0x00100000u) >> shift;
+    }
+    uint rnd_hi = 0x3ff00000u + frac;
+    rndcst = gpga_u64_from_words(rnd_hi, 0xffffffffu);
+    x2 = gpga_double_mul(x, x);
+    p5 = gpga_double_add(
         trigo_fast_t5,
-        gpga_double_mul(x2, gpga_double_add(
-                               trigo_fast_t7,
-                               gpga_double_mul(
-                                   x2, gpga_double_add(
-                                           trigo_fast_t9,
-                                           gpga_double_mul(x2,
-                                                           trigo_fast_t11))))));
-    gpga_double tt = gpga_double_mul(
-        x2, gpga_double_add(trigo_fast_t3h,
-                            gpga_double_add(trigo_fast_t3l,
-                                            gpga_double_mul(x2, p5))));
+        gpga_double_mul(
+            x2, gpga_double_add(
+                    trigo_fast_t7,
+                    gpga_double_mul(
+                        x2, gpga_double_add(
+                                trigo_fast_t9,
+                                gpga_double_mul(x2, trigo_fast_t11))))));
+    tt = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_t3h,
+            gpga_double_add(trigo_fast_t3l, gpga_double_mul(x2, p5))));
     Add12(&rri.rh, &rri.rl, x, gpga_double_mul(x, tt));
-    gpga_double check =
-        gpga_double_add(rri.rh, gpga_double_mul(rri.rl, rndcst));
-    if (gpga_double_eq(rri.rh, check)) {
+    if (gpga_double_eq(
+            rri.rh,
+            gpga_double_add(rri.rh, gpga_double_mul(rri.rl, rndcst)))) {
       return rri.rh;
     }
+    GPGA_REAL_TRACE_FALLBACK(tan_rn);
     return scs_tan_rn(x);
   }
 
   rri.x = x;
   rri.function = GPGA_TRIGO_TAN;
   gpga_compute_trig_with_argred(&rri);
-  gpga_double check =
-      gpga_double_add(rri.rh, gpga_double_mul(rri.rl, RN_CST_TAN_CASE3));
-  if (gpga_double_eq(rri.rh, check)) {
+  if (gpga_double_eq(
+          rri.rh,
+          gpga_double_add(rri.rh,
+                          gpga_double_mul(rri.rl, RN_CST_TAN_CASE3)))) {
     return rri.changesign ? gpga_double_neg(rri.rh) : rri.rh;
   }
+  GPGA_REAL_TRACE_FALLBACK(tan_rn);
   return scs_tan_rn(x);
 }
 
 inline gpga_double gpga_tan_ru(gpga_double x) {
-  gpga_double epsilon = EPS_TAN_CASE3;
   gpga_rrinfo rri;
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double p5 = gpga_double_zero(0u);
+  gpga_double tt = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+  gpga_double zero = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8377,33 +8443,31 @@ inline gpga_double gpga_tan_ru(gpga_double x) {
 
   if (absxhi < XMAX_TAN_CASE2) {
     if (absxhi < XMAX_RETURN_X_FOR_TAN) {
-      if (gpga_double_le(x, gpga_double_zero(0u))) {
+      if (gpga_double_le(x, zero)) {
         return x;
       }
-      if (gpga_double_is_zero(x)) {
-        return x;
-      }
-      return x + 1ull;
+      return gpga_double_raw_inc(x);
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double p5 = gpga_double_add(
+    x2 = gpga_double_mul(x, x);
+    p5 = gpga_double_add(
         trigo_fast_t5,
-        gpga_double_mul(x2, gpga_double_add(
-                               trigo_fast_t7,
-                               gpga_double_mul(
-                                   x2, gpga_double_add(
-                                           trigo_fast_t9,
-                                           gpga_double_mul(x2,
-                                                           trigo_fast_t11))))));
-    gpga_double tt = gpga_double_mul(
-        x2, gpga_double_add(trigo_fast_t3h,
-                            gpga_double_add(trigo_fast_t3l,
-                                            gpga_double_mul(x2, p5))));
+        gpga_double_mul(
+            x2, gpga_double_add(
+                    trigo_fast_t7,
+                    gpga_double_mul(
+                        x2, gpga_double_add(
+                                trigo_fast_t9,
+                                gpga_double_mul(x2, trigo_fast_t11))))));
+    tt = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_t3h,
+            gpga_double_add(trigo_fast_t3l, gpga_double_mul(x2, p5))));
     Add12(&rri.rh, &rri.rl, x, gpga_double_mul(x, tt));
-    gpga_double out = gpga_double_zero(0u);
-    if (gpga_test_and_return_ru(rri.rh, rri.rl, EPS_TAN_CASE2, &out)) {
-      return out;
+    if (gpga_test_and_return_ru(rri.rh, rri.rl, EPS_TAN_CASE2, &quick)) {
+      return quick;
     }
+    GPGA_REAL_TRACE_FALLBACK(tan_ru);
     return scs_tan_ru(x);
   }
 
@@ -8415,16 +8479,22 @@ inline gpga_double gpga_tan_ru(gpga_double x) {
     rri.rh = gpga_double_neg(rri.rh);
     rri.rl = gpga_double_neg(rri.rl);
   }
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_ru(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_ru(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(tan_ru);
   return scs_tan_ru(x);
 }
 
 inline gpga_double gpga_tan_rd(gpga_double x) {
-  gpga_double epsilon = EPS_TAN_CASE3;
   gpga_rrinfo rri;
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double p5 = gpga_double_zero(0u);
+  gpga_double tt = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+  gpga_double zero = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8434,33 +8504,31 @@ inline gpga_double gpga_tan_rd(gpga_double x) {
 
   if (absxhi < XMAX_TAN_CASE2) {
     if (absxhi < XMAX_RETURN_X_FOR_TAN) {
-      if (gpga_double_ge(x, gpga_double_zero(0u))) {
+      if (gpga_double_ge(x, zero)) {
         return x;
       }
-      if (gpga_double_is_zero(x)) {
-        return x;
-      }
-      return x + 1ull;
+      return gpga_double_raw_inc(x);
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double p5 = gpga_double_add(
+    x2 = gpga_double_mul(x, x);
+    p5 = gpga_double_add(
         trigo_fast_t5,
-        gpga_double_mul(x2, gpga_double_add(
-                               trigo_fast_t7,
-                               gpga_double_mul(
-                                   x2, gpga_double_add(
-                                           trigo_fast_t9,
-                                           gpga_double_mul(x2,
-                                                           trigo_fast_t11))))));
-    gpga_double tt = gpga_double_mul(
-        x2, gpga_double_add(trigo_fast_t3h,
-                            gpga_double_add(trigo_fast_t3l,
-                                            gpga_double_mul(x2, p5))));
+        gpga_double_mul(
+            x2, gpga_double_add(
+                    trigo_fast_t7,
+                    gpga_double_mul(
+                        x2, gpga_double_add(
+                                trigo_fast_t9,
+                                gpga_double_mul(x2, trigo_fast_t11))))));
+    tt = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_t3h,
+            gpga_double_add(trigo_fast_t3l, gpga_double_mul(x2, p5))));
     Add12(&rri.rh, &rri.rl, x, gpga_double_mul(x, tt));
-    gpga_double out = gpga_double_zero(0u);
-    if (gpga_test_and_return_rd(rri.rh, rri.rl, EPS_TAN_CASE2, &out)) {
-      return out;
+    if (gpga_test_and_return_rd(rri.rh, rri.rl, EPS_TAN_CASE2, &quick)) {
+      return quick;
     }
+    GPGA_REAL_TRACE_FALLBACK(tan_rd);
     return scs_tan_rd(x);
   }
 
@@ -8472,16 +8540,21 @@ inline gpga_double gpga_tan_rd(gpga_double x) {
     rri.rh = gpga_double_neg(rri.rh);
     rri.rl = gpga_double_neg(rri.rl);
   }
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_rd(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_rd(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(tan_rd);
   return scs_tan_rd(x);
 }
 
 inline gpga_double gpga_tan_rz(gpga_double x) {
-  gpga_double epsilon = EPS_TAN_CASE3;
   gpga_rrinfo rri;
+  gpga_double epsilon = gpga_double_zero(0u);
+  gpga_double p5 = gpga_double_zero(0u);
+  gpga_double tt = gpga_double_zero(0u);
+  gpga_double x2 = gpga_double_zero(0u);
+  gpga_double quick = gpga_double_zero(0u);
+
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   rri.absxhi = (int)absxhi;
 
@@ -8493,25 +8566,26 @@ inline gpga_double gpga_tan_rz(gpga_double x) {
     if (absxhi < XMAX_RETURN_X_FOR_TAN) {
       return x;
     }
-    gpga_double x2 = gpga_double_mul(x, x);
-    gpga_double p5 = gpga_double_add(
+    x2 = gpga_double_mul(x, x);
+    p5 = gpga_double_add(
         trigo_fast_t5,
-        gpga_double_mul(x2, gpga_double_add(
-                               trigo_fast_t7,
-                               gpga_double_mul(
-                                   x2, gpga_double_add(
-                                           trigo_fast_t9,
-                                           gpga_double_mul(x2,
-                                                           trigo_fast_t11))))));
-    gpga_double tt = gpga_double_mul(
-        x2, gpga_double_add(trigo_fast_t3h,
-                            gpga_double_add(trigo_fast_t3l,
-                                            gpga_double_mul(x2, p5))));
+        gpga_double_mul(
+            x2, gpga_double_add(
+                    trigo_fast_t7,
+                    gpga_double_mul(
+                        x2, gpga_double_add(
+                                trigo_fast_t9,
+                                gpga_double_mul(x2, trigo_fast_t11))))));
+    tt = gpga_double_mul(
+        x2,
+        gpga_double_add(
+            trigo_fast_t3h,
+            gpga_double_add(trigo_fast_t3l, gpga_double_mul(x2, p5))));
     Add12(&rri.rh, &rri.rl, x, gpga_double_mul(x, tt));
-    gpga_double out = gpga_double_zero(0u);
-    if (gpga_test_and_return_rz(rri.rh, rri.rl, EPS_TAN_CASE2, &out)) {
-      return out;
+    if (gpga_test_and_return_rz(rri.rh, rri.rl, EPS_TAN_CASE2, &quick)) {
+      return quick;
     }
+    GPGA_REAL_TRACE_FALLBACK(tan_rz);
     return scs_tan_rz(x);
   }
 
@@ -8523,10 +8597,10 @@ inline gpga_double gpga_tan_rz(gpga_double x) {
     rri.rh = gpga_double_neg(rri.rh);
     rri.rl = gpga_double_neg(rri.rl);
   }
-  gpga_double out = gpga_double_zero(0u);
-  if (gpga_test_and_return_rz(rri.rh, rri.rl, epsilon, &out)) {
-    return out;
+  if (gpga_test_and_return_rz(rri.rh, rri.rl, epsilon, &quick)) {
+    return quick;
   }
+  GPGA_REAL_TRACE_FALLBACK(tan_rz);
   return scs_tan_rz(x);
 }
 
@@ -8742,6 +8816,54 @@ inline void scs_get_d(thread gpga_double* result, scs_ptr x) {
   }
 }
 
+inline int scs_cmp_abs(scs_ptr a, scs_ptr b) {
+  if (a->index != b->index) {
+    return (a->index > b->index) ? 1 : -1;
+  }
+  for (int i = 0; i < SCS_NB_WORDS; ++i) {
+    if (a->h_word[i] == b->h_word[i]) {
+      continue;
+    }
+    return (a->h_word[i] > b->h_word[i]) ? 1 : -1;
+  }
+  return 0;
+}
+
+inline void scs_get_d_nearest(thread gpga_double* result, scs_ptr x) {
+  gpga_double down = gpga_double_zero(0u);
+  gpga_double up = gpga_double_zero(0u);
+  scs_get_d_minf(&down, x);
+  scs_get_d_pinf(&up, x);
+  if (down == up) {
+    *result = down;
+    return;
+  }
+
+  scs_t down_scs;
+  scs_t up_scs;
+  scs_set_d(down_scs, down);
+  scs_set_d(up_scs, up);
+
+  scs_t diff_down;
+  scs_t diff_up;
+  scs_sub(diff_down, x, down_scs);
+  scs_sub(diff_up, up_scs, x);
+  diff_down->sign = 1;
+  diff_up->sign = 1;
+
+  int cmp = scs_cmp_abs(diff_down, diff_up);
+  if (cmp < 0) {
+    *result = down;
+    return;
+  }
+  if (cmp > 0) {
+    *result = up;
+    return;
+  }
+  ulong bits = gpga_real_to_bits(down);
+  *result = ((bits & 1ul) == 0ul) ? down : up;
+}
+
 inline void scs_get_d_directed(thread gpga_double* result, scs_ptr x,
                                int rnd_mantissa_up) {
   if (X_EXP != gpga_double_from_u32(1u)) {
@@ -8903,24 +9025,26 @@ inline void scs_do_add(scs_ptr result, scs_ptr x, scs_ptr y) {
     scs_set(result, x);
     return;
   }
-  int carry = 0;
-  int res[SCS_NB_WORDS];
+  uint64_t carry = 0;
+  uint32_t res[SCS_NB_WORDS];
   for (int i = SCS_NB_WORDS - 1, j = (SCS_NB_WORDS - 1) - diff; i >= 0;
        --i, --j) {
-    int s = (j >= 0) ? (int)X_HW[i] + (int)Y_HW[j] + carry
-                     : (int)X_HW[i] + carry;
+    uint64_t s =
+        (j >= 0)
+            ? (uint64_t)X_HW[i] + (uint64_t)Y_HW[j] + carry
+            : (uint64_t)X_HW[i] + carry;
     carry = s >> SCS_NB_BITS;
-    res[i] = s & SCS_MASK_RADIX;
+    res[i] = (uint32_t)(s & (uint64_t)SCS_MASK_RADIX);
   }
   if (carry) {
     for (int i = SCS_NB_WORDS - 1; i >= 1; --i) {
-      R_HW[i] = (uint)res[i - 1];
+      R_HW[i] = res[i - 1];
     }
     R_HW[0] = 1u;
     R_IND += 1;
   } else {
     for (int i = 0; i < SCS_NB_WORDS; ++i) {
-      R_HW[i] = (uint)res[i];
+      R_HW[i] = res[i];
     }
   }
 }
@@ -9692,33 +9816,156 @@ inline gpga_double gpga_atan_rn(gpga_double x) {
 }
 
 inline gpga_double gpga_atan_rd(gpga_double x) {
-  return scs_atan_rd(x);
+  uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
+  uint xlo = gpga_u64_lo(x);
+  int sign = gpga_double_sign(x) != 0u ? -1 : 1;
+  gpga_double ax = gpga_double_abs(x);
+
+  if (absxhi >= 0x43500000u) {
+    if (absxhi > 0x7ff00000u ||
+        (absxhi == 0x7ff00000u && xlo != 0u)) {
+      return gpga_double_add(x, x);
+    }
+    if (sign > 0) {
+      return atan_fast_halfpi;
+    }
+    return gpga_double_neg(atan_fast_halfpi_plus_inf);
+  }
+
+  if (absxhi < 0x3e400000u) {
+    if (sign > 0) {
+      if (gpga_double_is_zero(x)) {
+        return x;
+      }
+      return ax - 1ull;
+    }
+    return x;
+  }
+
+  gpga_double atanhi = gpga_double_zero(0u);
+  gpga_double atanlo = gpga_double_zero(0u);
+  int index_of_e = 0;
+  gpga_atan_quick(&atanhi, &atanlo, &index_of_e, ax);
+  gpga_double maxepsilon = atan_fast_epsilon[index_of_e];
+  if (sign < 0) {
+    atanhi = gpga_double_neg(atanhi);
+    atanlo = gpga_double_neg(atanlo);
+  }
+  gpga_double quick = gpga_double_zero(0u);
+  if (gpga_test_and_return_rd(atanhi, atanlo, maxepsilon, &quick)) {
+    return quick;
+  }
+  gpga_double signed_x = (sign > 0) ? ax : gpga_double_neg(ax);
+  return scs_atan_rd(signed_x);
 }
 
 inline gpga_double gpga_atan_ru(gpga_double x) {
-  return scs_atan_ru(x);
+  uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
+  uint xlo = gpga_u64_lo(x);
+  int sign = gpga_double_sign(x) != 0u ? -1 : 1;
+  gpga_double ax = gpga_double_abs(x);
+
+  if (absxhi >= 0x43500000u) {
+    if (absxhi > 0x7ff00000u ||
+        (absxhi == 0x7ff00000u && xlo != 0u)) {
+      return gpga_double_add(x, x);
+    }
+    if (sign > 0) {
+      return atan_fast_halfpi_plus_inf;
+    }
+    return gpga_double_neg(atan_fast_halfpi);
+  }
+
+  if (absxhi < 0x3e400000u) {
+    if (gpga_double_is_zero(x)) {
+      return x;
+    }
+    if (sign < 0) {
+      gpga_double next_down = ax - 1ull;
+      return gpga_double_neg(next_down);
+    }
+    return x;
+  }
+
+  gpga_double atanhi = gpga_double_zero(0u);
+  gpga_double atanlo = gpga_double_zero(0u);
+  int index_of_e = 0;
+  gpga_atan_quick(&atanhi, &atanlo, &index_of_e, ax);
+  gpga_double maxepsilon = atan_fast_epsilon[index_of_e];
+  if (sign < 0) {
+    atanhi = gpga_double_neg(atanhi);
+    atanlo = gpga_double_neg(atanlo);
+  }
+  gpga_double quick = gpga_double_zero(0u);
+  if (gpga_test_and_return_ru(atanhi, atanlo, maxepsilon, &quick)) {
+    return quick;
+  }
+  gpga_double signed_x = (sign > 0) ? ax : gpga_double_neg(ax);
+  return scs_atan_ru(signed_x);
 }
 
 inline gpga_double gpga_atan_rz(gpga_double x) {
   if (gpga_double_sign(x) != 0u) {
-    return scs_atan_ru(x);
+    return gpga_atan_ru(x);
   }
-  return scs_atan_rd(x);
+  return gpga_atan_rd(x);
+}
+
+inline bool gpga_atanpi_special_case(gpga_double x, thread gpga_double* out) {
+  uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
+  uint xlo = gpga_u64_lo(x);
+  if (absxhi > 0x7ff00000u || (absxhi == 0x7ff00000u && xlo != 0u)) {
+    *out = gpga_double_add(x, x);
+    return true;
+  }
+  if (absxhi == 0x7ff00000u) {
+    gpga_double half_val = gpga_bits_to_real(0x3fe0000000000000ul);
+    if (gpga_double_sign(x) != 0u) {
+      half_val = gpga_double_neg(half_val);
+    }
+    *out = half_val;
+    return true;
+  }
+  if (absxhi >= 0x43500000u) {
+    gpga_double half_val = gpga_bits_to_real(0x3fe0000000000000ul);
+    if (gpga_double_sign(x) != 0u) {
+      half_val = gpga_double_neg(half_val);
+    }
+    *out = half_val;
+    return true;
+  }
+  return false;
 }
 
 inline gpga_double gpga_atanpi_rn(gpga_double x) {
+  gpga_double out = gpga_double_zero(0u);
+  if (gpga_atanpi_special_case(x, &out)) {
+    return out;
+  }
   return scs_atanpi_rn(x);
 }
 
 inline gpga_double gpga_atanpi_rd(gpga_double x) {
+  gpga_double out = gpga_double_zero(0u);
+  if (gpga_atanpi_special_case(x, &out)) {
+    return out;
+  }
   return scs_atanpi_rd(x);
 }
 
 inline gpga_double gpga_atanpi_ru(gpga_double x) {
+  gpga_double out = gpga_double_zero(0u);
+  if (gpga_atanpi_special_case(x, &out)) {
+    return out;
+  }
   return scs_atanpi_ru(x);
 }
 
 inline gpga_double gpga_atanpi_rz(gpga_double x) {
+  gpga_double out = gpga_double_zero(0u);
+  if (gpga_atanpi_special_case(x, &out)) {
+    return out;
+  }
   if (gpga_double_sign(x) != 0u) {
     return scs_atanpi_ru(x);
   }
@@ -10070,7 +10317,8 @@ inline gpga_double gpga_log_rn(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log_L - 1))) >> (20 - log_L);
@@ -10187,7 +10435,8 @@ inline gpga_double gpga_log_ru(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log_L - 1))) >> (20 - log_L);
@@ -10303,7 +10552,8 @@ inline gpga_double gpga_log_rd(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log_L - 1))) >> (20 - log_L);
@@ -10419,7 +10669,8 @@ inline gpga_double gpga_log_rz(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log_L - 1))) >> (20 - log_L);
@@ -11375,7 +11626,11 @@ inline gpga_double gpga_log2_rn(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  if ((xhi & 0x000fffffU) == 0u && xlo == 0u) {
+    return gpga_double_from_s32(exp);
+  }
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log2_L - 1))) >> (20 - log2_L);
@@ -11491,7 +11746,11 @@ inline gpga_double gpga_log2_ru(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  if ((xhi & 0x000fffffU) == 0u && xlo == 0u) {
+    return gpga_double_from_s32(exp);
+  }
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log2_L - 1))) >> (20 - log2_L);
@@ -11606,7 +11865,11 @@ inline gpga_double gpga_log2_rd(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  if ((xhi & 0x000fffffU) == 0u && xlo == 0u) {
+    return gpga_double_from_s32(exp);
+  }
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log2_L - 1))) >> (20 - log2_L);
@@ -11721,7 +11984,11 @@ inline gpga_double gpga_log2_rz(gpga_double x) {
     return gpga_double_add(x, x);
   }
 
-  E += (int)((xhi >> 20) & 0x7ffu) - 1023;
+  int exp = E + (int)((xhi >> 20) & 0x7ffu) - 1023;
+  if ((xhi & 0x000fffffU) == 0u && xlo == 0u) {
+    return gpga_double_from_s32(exp);
+  }
+  E = exp;
   index = (int)(xhi & 0x000fffffU);
   xhi = (uint)index | 0x3ff00000u;
   index = (index + (1 << (20 - log2_L - 1))) >> (20 - log2_L);
@@ -13832,10 +14099,7 @@ inline gpga_double gpga_expm1_rd(gpga_double x) {
   uint xlo = gpga_u64_lo(x);
 
   if (xIntHi < expm1_RETURNXBOUND) {
-    if (gpga_double_is_zero(x)) {
-      return x;
-    }
-    return gpga_double_next_down(x);
+    return x;
   }
 
   if (xIntHi >= expm1_SIMPLEOVERFLOWBOUND) {
@@ -15153,132 +15417,266 @@ GPGA_CONST gpga_double pow_exp2_120_p_coeff_107 = 0x002e1c7f062a262aul;
 
 GPGA_CONST GpgaPowArgRed pow_argredtable[256] = {
   { 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
-  { 0x3ff0163da9fb3336ul, 0x3c8f7c62022f7ad8ul, 0x3c7ad8c8bd0e1b90ul, 0xb93444f7b4a9a1feul },
-  { 0x3ff02c9a3e778061ul, 0x3c8fe8a4db982cbcul, 0x3c7d4c7e5f7e2cf4ul, 0x3966daeb95c60f0aul },
-  { 0x3ff04315e86e7f85ul, 0x3c8f4f155d58e6b1ul, 0xbc7c0b53d9f1e771ul, 0xb93fb0e2b53a3b07ul },
-  { 0x3ff059b0d3158574ul, 0x3c8f0f217f7a3b88ul, 0x3c7b7d8a7d10a302ul, 0x39478f6c70d4ac89ul },
-  { 0x3ff0706b29ddf6deul, 0x3c8f60e8ed1b3b04ul, 0xbc7b2e09e7c5a1d7ul, 0x394f2f73b7412b0cul },
-  { 0x3ff0874518759bc8ul, 0x3c8f0b25f4b26a5aul, 0xbc7b7026a6fbe6e2ul, 0x396e24a73a1958a2ul },
-  { 0x3ff09e3ecac6f383ul, 0x3c8ec5f46f8e2d51ul, 0x3c7b6c7082b4f89bul, 0xb96e5d55b4cfd0e6ul },
-  { 0x3ff0b5586cf9890ful, 0x3c8e9079dc6aa01dul, 0x3c7b9ef2188fcde6ul, 0x3977c7f044d62c7aul },
-  { 0x3ff0cc922b7247f7ul, 0x3c8f8a6e5fe9106cul, 0xbc7bca8522ce0d54ul, 0xb96e4f6e269dd38aul },
-  { 0x3ff0e3ec32d3d1a2ul, 0x3c8f1ba3be7c74c7ul, 0x3c7b7e87a71de7fful, 0x3974bc1aa9a4af44ul },
-  { 0x3ff0fb66b6c0b3c7ul, 0x3c8eece64b1bc2a3ul, 0xbc7bb1a0bb0ed7b8ul, 0xb9633acb17b19c50ul },
-  { 0x3ff11301d0125b51ul, 0x3c8e98d32a6c3963ul, 0x3c7b0f6c4e97c3f1ul, 0x3962e1c3a8f0cdb1ul },
-  { 0x3ff12abdc06c31ccul, 0x3c8f4d278e0ba4a7ul, 0x3c7b5a69a0cbe74aul, 0x39657a6c940f7b41ul },
-  { 0x3ff1429aaea92de0ul, 0x3c8f06a64f2b79f6ul, 0xbc7b63e4f64d4636ul, 0xb970b3e7bce0f720ul },
-  { 0x3ff15a98c8a58e52ul, 0x3c8ef84d1a1e6761ul, 0xbc7b373eb0a5e431ul, 0x397b51197f47d991ul },
-  { 0x3ff172b83c7d517aul, 0x3c8dcbccb557c7e0ul, 0x3c7af08a7e1a81d8ul, 0xb95d24e377ef54f0ul },
-  { 0x3ff18af9388c8de2ul, 0x3c8f6dd0fd4f89a0ul, 0xbc7aa5db2d872c7dul, 0xb963f77a1f879af1ul },
-  { 0x3ff1a35beb6fcb75ul, 0x3c8f81ae28bfcf73ul, 0xbc7a6b71b4dc0f51ul, 0x394c17f1a8fef6b9ul },
-  { 0x3ff1bbe08b0f28c2ul, 0x3c8f56d82fb9de9eul, 0xbc7a5b1edc4b4f40ul, 0x396ef322f39f0f1dul },
-  { 0x3ff1d4873168b9aaul, 0x3c8eebc4c3f3c726ul, 0x3c7a5f5856e90c72ul, 0xb9797dc8a0e2a96bul },
-  { 0x3ff1ed5022fcd91dul, 0x3c8f4889b4f4744ful, 0xbc7a3bb4a5b6d2b6ul, 0x395dc5462b0e49feul },
-  { 0x3ff2063b88628cd6ul, 0x3c8ef2dd81c65165ul, 0xbc7a278f8a1f2e8bul, 0x3974a754664f0144ul },
-  { 0x3ff21f49917ddc96ul, 0x3c8ee6d7125f12ceul, 0x3c7a11957c1bb2a6ul, 0xb9680ff1d6b7f7d9ul },
-  { 0x3ff2387a6e756238ul, 0x3c8efbdbb08c84a5ul, 0x3c79d9bdf954e3c4ul, 0xb9648f8d84f7a70cul },
-  { 0x3ff251ce4fb2a63ful, 0x3c8e93b8138ca039ul, 0x3c79b8e8b3335e00ul, 0xb956b5bd67d2725ful },
-  { 0x3ff26b4565e27cddul, 0x3c8f405e66f51d9bul, 0x3c79a0d9d0f4d97bul, 0xb9759c7659249b9aul },
-  { 0x3ff284dfe1f56381ul, 0x3c8ef3f59d2cf534ul, 0x3c7972d0c81d7f80ul, 0x3968d7d1afcd1d32ul },
-  { 0x3ff29e9df51fdee1ul, 0x3c8f4f4f5b0a42a5ul, 0x3c7963bf0db50b2ful, 0x3967f0f6a2b3ca91ul },
-  { 0x3ff2b87fd0dad990ul, 0x3c8f0c0741f5570dul, 0x3c7940c3ed4881b8ul, 0xb94b6d0f8f424c6aul },
-  { 0x3ff2d285a6e4030bul, 0x3c8ef5d0f6f49f0aul, 0x3c7925d3f23480f3ul, 0xb96961fdc0b8de07ul },
-  { 0x3ff2ecafa93e2f56ul, 0x3c8ef4dceda55969ul, 0xbc790d7ce6e8411dul, 0x39599e4940ac09d4ul },
-  { 0x3ff306fe0a31b715ul, 0x3c8ef20ff9d1480bul, 0xbc78ed23e6b499a1ul, 0xb97a0e8d64a5a48aul },
-  { 0x3ff32170fd4e8f51ul, 0x3c8ed97f5f0520dcul, 0xbc78d859b34b3f1ful, 0x39644c6f120ebbedul },
-  { 0x3ff33c08b26416fful, 0x3c8efa5a8971cfa4ul, 0x3c78a8cc1d095b85ul, 0x397c7a03bfefbdc2ul },
-  { 0x3ff356c55f929ff1ul, 0x3c8f2b6cf45e46b9ul, 0x3c788bcab0dc7d42ul, 0x395ccfcf0a27f3e2ul },
-  { 0x3ff371a7373aa9cbul, 0x3c8e96507b6a8821ul, 0x3c7866a9b4ab42d8ul, 0x397d44d253b3c98bul },
-  { 0x3ff38cae6d05d866ul, 0x3c8efb2f7c1f77dful, 0xbc78540d2371a299ul, 0xb96ad9c0066c0e55ul },
-  { 0x3ff3a7db34e59ff7ul, 0x3c8ee0a02cf7fd80ul, 0xbc7826078792b259ul, 0xb9605c5a740edbd9ul },
-  { 0x3ff3c32dc313a8e5ul, 0x3c8e9d3ea3d6f4eeul, 0x3c7813ac2c96268aul, 0x3949fd8d4e227564ul },
-  { 0x3ff3dea64c123422ul, 0x3c8ef51a9baf259ful, 0xbc77f63b8aa2ae0bul, 0x3957e1a26ac606f4ul },
-  { 0x3ff3fa4504ac801cul, 0x3c8eb69c03f6a8a1ul, 0xbc77d7d8c8b5a60eul, 0x395d2bb1e2c25631ul },
-  { 0x3ff4160a21f72e2aul, 0x3c8efb71a5bda6a1ul, 0xbc77b40a6c0e8d64ul, 0x394b35af524b0f1ful },
-  { 0x3ff431f5d950a897ul, 0x3c8e887f2c8579a9ul, 0x3c7798727a9299a3ul, 0xb97b83e0c3963f17ul },
-  { 0x3ff44e086061892dul, 0x3c8f1c5bb5e7e2f8ul, 0x3c776d2d3947f45cul, 0xb963d1e236c313c0ul },
-  { 0x3ff46a41f6c0ee68ul, 0x3c8ec7a2f46b88eful, 0xbc7752d3c4d74b4aul, 0xb97c08d6d3a1c51bul },
-  { 0x3ff486a2d5461954ul, 0x3c8ed2f37d49e920ul, 0xbc7744a523b58a76ul, 0x3968fe2a26d0560aul },
-  { 0x3ff4a32af0d7d3deul, 0x3c8eae63a2e482c3ul, 0x3c771b0f4c6e6966ul, 0x397fa6c88ab56a3cul },
-  { 0x3ff4bfdad5362a27ul, 0x3c8ef1c050dff8d4ul, 0x3c76fbd2bca5d4a9ul, 0x397f703b529b8f6bul },
-  { 0x3ff4dcab3b4ee4daul, 0x3c8ecc50b7ea7f15ul, 0xbc76e71578c8d5dful, 0x3970a65a7bd0c99ful },
-  { 0x3ff4f9a4b7bb89c4ul, 0x3c8ef8c8e1132018ul, 0x3c76c3b1685fc530ul, 0xb97ef393e1b48700ul },
-  { 0x3ff516c79fd1155ful, 0x3c8ed28bb8ea7dc4ul, 0xbc769f9c26ebf05bul, 0xb9660f2591c08619ul },
-  { 0x3ff5341476729975ul, 0x3c8ef1d8e7addf82ul, 0x3c7677bff7d2f91cul, 0x397b4f0e3bc9c168ul },
-  { 0x3ff5518b7f2e73fcul, 0x3c8e7c3a3c4c2dbcul, 0x3c76536b0bd12084ul, 0x394a4d5a6a17b2d3ul },
-  { 0x3ff56f2d1ae33952ul, 0x3c8ef1b41053f1f9ul, 0xbc762c515f167638ul, 0xb94d0a2f1aa9ad25ul },
-  { 0x3ff58cf99671c293ul, 0x3c8ef118227e6e39ul, 0x3c761028e9e50f7bul, 0xb965bf51322f86d4ul },
-  { 0x3ff5aaef7a42f4d1ul, 0x3c8e8972d1eb7ed6ul, 0x3c75fb6c80f61f1bul, 0xb965d01ae8246841ul },
-  { 0x3ff5c910799ed64cul, 0x3c8ef38d3bd16a4ful, 0x3c75d497b3ab9fa9ul, 0xb97de22d946dac6bul },
-  { 0x3ff5e75ccbe88b7bul, 0x3c8ec1f37b11ad1aul, 0xbc75c1ed00555fe0ul, 0x397d01549b83d5f0ul },
-  { 0x3ff605d4fe6fd5c4ul, 0x3c8ed0b6b45e5461ul, 0x3c75972fe2227eeaul, 0x397902c02425093ful },
-  { 0x3ff62479ea0ba70bul, 0x3c8ec2be61b266a3ul, 0x3c7581d0984da0b0ul, 0xb96b6e0c580c94d2ul },
-  { 0x3ff6434c1e6b75aful, 0x3c8ed3f65ae198dcul, 0xbc755b1171162fe8ul, 0xb94f3fce28d0fbfful },
-  { 0x3ff6624c8c5bcb9aul, 0x3c8ee0f3b5b1e1d9ul, 0x3c7530f4c9a255caul, 0x3972f2841b5ef0c8ul },
-  { 0x3ff6817c21c611d7ul, 0x3c8ece0c0d1c22ccul, 0x3c751bf54f1f11d5ul, 0x395b2bcedd624c6cul },
-  { 0x3ff6a0dbd3c1ad09ul, 0x3c8e9176b1792aeaul, 0xbc74fa0b588d8cccul, 0x396e0d4dcbaecf08ul },
-  { 0x3ff6c06c9f90a278ul, 0x3c8ec18a7a3b5b03ul, 0x3c74d2dd2ec098b5ul, 0xb97cf0c2da54eac7ul },
-  { 0x3ff6e02f860f2094ul, 0x3c8e932478c6de1bul, 0xbc74b84f8c3ec9d4ul, 0x3947d1a3c8d1b9dcul },
-  { 0x3ff70025a01d9b4aul, 0x3c8e7cc59e4d0d73ul, 0x3c748d4b97b456f0ul, 0xb95fcb10a2a3173cul },
-  { 0x3ff7204fda8b1f61ul, 0x3c8e96a9b87a5e49ul, 0x3c746f64c14828a3ul, 0xb96e76be59c5a583ul },
-  { 0x3ff740af214536c7ul, 0x3c8ece0f3d0e47b8ul, 0xbc745e3947d89149ul, 0x3952af58f9c303f5ul },
-  { 0x3ff76144535e8578ul, 0x3c8e95cb3c435a2cul, 0xbc744163df0b8f62ul, 0xb966c79c87942d2bul },
-  { 0x3ff78210726954d0ul, 0x3c8e8e9a0276a43aul, 0x3c741ad55960a81eul, 0x397c77322da490f9ul },
-  { 0x3ff7a31366d94e4eul, 0x3c8ed2f41d5a34c3ul, 0x3c74046fcf776e7cul, 0xb96111d7277721c9ul },
-  { 0x3ff7c44e2f9b1df7ul, 0x3c8e942154588811ul, 0x3c73da52c2f0ccbdul, 0xb95ad41ea6a6e12bul },
-  { 0x3ff7e5c0be3c6a90ul, 0x3c8e8f76c7b0331ful, 0x3c73bccaf5d5a1f9ul, 0x395fbd8f70e8b3bful },
-  { 0x3ff8076af5c8d5b5ul, 0x3c8eb47d7b5c1a71ul, 0xbc73a23230b6e4dcul, 0x3977f4a4c3a63b75ul },
-  { 0x3ff8294d10d4b071ul, 0x3c8e92ef5b2c20d4ul, 0xbc73798d6fa9d4b5ul, 0xb9543ebc78b47260ul },
-  { 0x3ff84b6770c3727cul, 0x3c8edb487169ac2cul, 0x3c735f86db57ee6bul, 0x396a5009f3ac869dul },
-  { 0x3ff86dba5d39aa1ful, 0x3c8eb7a61a51a5e3ul, 0xbc734a6b576e3b4eul, 0x39588ad8d8325a4bul },
-  { 0x3ff890460c37f8d5ul, 0x3c8eb6bac6a5c112ul, 0xbc73298fcae7e964ul, 0xb960bf6e6aaf7c71ul },
-  { 0x3ff8b30abf77c5dful, 0x3c8e96c04cc2004bul, 0xbc730a3327ce4ca7ul, 0xb94a1b9c40f8a8bbul },
-  { 0x3ff8d60906dd6a06ul, 0x3c8eb62c0d0f886dul, 0x3c72e8df4c2cf2d8ul, 0xb96f3d799f25637cul },
-  { 0x3ff8f94166fa123bul, 0x3c8e96d2ad09c84aul, 0xbc72d23f34a4b7b0ul, 0xb947cd9ea6fe9ca0ul },
-  { 0x3ff91cb45660a1fbul, 0x3c8eae81f3a3f1a9ul, 0xbc72b0a86032dcf6ul, 0x394d6d7729d40b1aul },
-  { 0x3ff94061aabe0c60ul, 0x3c8e9ea18ee2ed4cul, 0x3c728f8281f6a2f8ul, 0x396f303e9940b139ul },
-  { 0x3ff96449d5897c7bul, 0x3c8eae05c18a8c1cul, 0xbc726fe731edbf79ul, 0xb95e7aa20e9cb89aul },
-  { 0x3ff9886d9d7acdb2ul, 0x3c8e8c3d5b3922a2ul, 0xbc72604e75411f41ul, 0xb97f78dc1f6b6b77ul },
-  { 0x3ff9accdcd8bd41bul, 0x3c8e9d0a8b5a0ec3ul, 0x3c723c3ee4cd2cc3ul, 0x39731f9f21f0eb6cul },
-  { 0x3ff9d1698b2c18dcul, 0x3c8e9a8b5901a99cul, 0x3c7221b41cc6ed6aul, 0xb96a0bf81e5899c0ul },
-  { 0x3ff9f641b0f0e16cul, 0x3c8e9c47e55b15d7ul, 0xbc72089a9d8212e9ul, 0x39659e3ed2fe5e47ul },
-  { 0x3ffa1b563aa60e53ul, 0x3c8e9b9d2c4008d5ul, 0x3c71ed1b4396a6b0ul, 0x396aaf58b2c0f63bul },
-  { 0x3ffa40a73dcdd4faul, 0x3c8e9d0f6fcddc3bul, 0xbc71d2263f0b3dbcul, 0xb96df83a816e4a9ful },
-  { 0x3ffa6634c7f3d80cul, 0x3c8e9b5e4e5a6b9cul, 0xbc71b79c0845d5f2ul, 0xb96a580dcf911c8eul },
-  { 0x3ffa8bfea8d6e9c4ul, 0x3c8e9c2a6f1db457ul, 0xbc719f9f7b05fd99ul, 0xb9670f7cc7f8a7a6ul },
-  { 0x3ffab205f1f4b2eeul, 0x3c8e9b2dfdc95f36ul, 0x3c7187191cd60f2bul, 0x395a121fc1ec12b4ul },
-  { 0x3ffad84b1f24b36aul, 0x3c8e9b5be8d4eb99ul, 0xbc716f6e97ca3b4cul, 0x397b7a2190a70019ul },
-  { 0x3ffafeced95d10d2ul, 0x3c8e9b29b1a13ed2ul, 0x3c7155ffbd1e4f62ul, 0x397cf5dd20e97729ul },
-  { 0x3ffb2593c2047f86ul, 0x3c8e9b90d0b9d1f2ul, 0xbc713ddf9fb4c65bul, 0xb95f55c6d8cda160ul },
-  { 0x3ffb4c985f05f5b0ul, 0x3c8e9b1785b1c705ul, 0x3c71255f86f46f0bul, 0x397d4b67e5a1a8b1ul },
-  { 0x3ffb73eecf64d7dcul, 0x3c8e9b4e4b8b3f61ul, 0x3c710c5f840c8e41ul, 0x397d2fd0e8940b8cul },
-  { 0x3ffb9b7fca8d5c80ul, 0x3c8e9b0bb070a76cul, 0x3c70f3838b63f13aul, 0x3970b60c86c7c83bul },
-  { 0x3ffbc353ce621218ul, 0x3c8e9b35095a38d4ul, 0x3c70dadf7082b947ul, 0xb97bcd5b60b0d84ful },
-  { 0x3ffbeb6b6f6f0b6cul, 0x3c8e9b2b33c85e83ul, 0xbc70c1cf12a3b8f2ul, 0xb954f0b0b4a60290ul },
-  { 0x3ffc13c742a7ad64ul, 0x3c8e9b2d9e33aa9bul, 0x3c70a7a1cfa2d3c6ul, 0xb96a23a0f2dcb32aul },
-  { 0x3ffc3c67b7d4d05bul, 0x3c8e9b1f0e784f68ul, 0xbc708d7d3e3b6b5bul, 0xb97e1478c41cc6fcul },
-  { 0x3ffc655d6f6f9b24ul, 0x3c8e9b30620f10abul, 0xbc70743aa9b8b7a9ul, 0xb964e6d9b7355a41ul },
-  { 0x3ffc8e9925d83e13ul, 0x3c8e9b2186fd73a1ul, 0xbc705b6e9efc0b2cul, 0xb953d18013fca4b2ul },
-  { 0x3ffcb81b9aab2092ul, 0x3c8e9b2602a75c31ul, 0x3c7042d6a2b2f051ul, 0x397b8e6093208a70ul },
-  { 0x3ffce1e58f21c55aul, 0x3c8e9b1fd962f1f9ul, 0x3c702a2ebbc007e0ul, 0x396a0313a23c32dbul },
-  { 0x3ffd0bf7e6ed0e07ul, 0x3c8e9b20bfe2c1a1ul, 0x3c7011b8274cf8b5ul, 0x397c96b0e68cf498ul },
-  { 0x3ffd3653573bb4a4ul, 0x3c8e9b1f38d26ea4ul, 0x3c6ffe48e4b4b827ul, 0x397c83028df0eb67ul },
-  { 0x3ffd61087c5e0a47ul, 0x3c8e9b1f4f1a2733ul, 0x3c6fd4b2c0f28fdbul, 0x39718df6b915c908ul },
-  { 0x3ffd8c0872ef6c2bul, 0x3c8e9b1e67f76f5cul, 0x3c6fabe2e1457a2bul, 0x3977e463a486ab0cul },
-  { 0x3ffdb75441d989c5ul, 0x3c8e9b1e80f38cdeul, 0x3c6f8425f3626949ul, 0x397a6f8a83a57f73ul },
-  { 0x3ffde2ed2607b2c1ul, 0x3c8e9b1e3ee1c4c9ul, 0xbc6f5d6d74f4b9f0ul, 0xb96b8b10f35aa146ul },
-  { 0x3ffe0ed47f8071f8ul, 0x3c8e9b1e28b50c8aul, 0xbc6f36f6572240fcul, 0xb975fc8a6f25d75cul },
-  { 0x3ffe3b0a9e63b6f3ul, 0x3c8e9b1e2a82c771ul, 0x3c6f114433d420eeul, 0x397c23b0e4a12c14ul },
-  { 0x3ffe678fcb9f1eaful, 0x3c8e9b1e24a48b4bul, 0xbc6eeb40e75d3cf6ul, 0xb97b2fb8bd998e08ul },
-  { 0x3ffe94646d968f34ul, 0x3c8e9b1e27cd56a6ul, 0x3c6ec5a1537e77d1ul, 0x3952d0d5a275be20ul },
-  { 0x3ffec189ea4866d3ul, 0x3c8e9b1e2a6cfb24ul, 0x3c6ea0d7a2aa8624ul, 0x396b212703b240c2ul },
-  { 0x3ffeeeffb8e9b4d9ul, 0x3c8e9b1e27a7f19ful, 0xbc6e7a99494167e0ul, 0x3974f615683c0998ul },
-  { 0x3fff1cc652e1e0c0ul, 0x3c8e9b1e293f2f7eul, 0x3c6e5659b0e7a1f8ul, 0xb96d9fd04f8ac9e0ul },
-  { 0x3fff4ade880dfe85ul, 0x3c8e9b1e27c6ea99ul, 0xbc6e3288f5b6585cul, 0xb96bde3a2b3abf4bul },
-  { 0x3fff79497e74f4b0ul, 0x3c8e9b1e27ebf1c1ul, 0xbc6e0ef99a53a4d8ul, 0xb9714df47ca9ad9bul },
-  { 0x3fffa8063c7f7ef4ul, 0x3c8e9b1e27d8c352ul, 0xbc6deb7a75e1ec72ul, 0x397d3581a73c7f1cul },
-  { 0x3fffd71567af34f5ul, 0x3c8e9b1e27e1f2b6ul, 0x3c6dc77d5d1d870dul, 0x397949166b2bd5a1ul }
+  { 0x3fefe02000000000ul, 0x3f7709ad583352d6ul, 0x3c1ae1a26af3eebeul, 0xb8ba173530d7ed87ul },
+  { 0x3fefc08000000000ul, 0x3f86fdf461d2e4f8ul, 0xbc0dc930484501f8ul, 0xb8a74ba0bc2b5224ul },
+  { 0x3fefa11c00000000ul, 0x3f9136501c41be5bul, 0x3c1d391b2eaf6e8ful, 0xb8a3f16ec019e3e3ul },
+  { 0x3fef81f800000000ul, 0x3f96e79c4b14ae57ul, 0x3c141c3fa104b8e5ul, 0x38a700345fab7c95ul },
+  { 0x3fef631000000000ul, 0x3f9c938377c791ebul, 0xbc338f6221ca17baul, 0x38b2a98befe7d318ul },
+  { 0x3fef446600000000ul, 0x3fa11cc8d0c35ea5ul, 0xbc453cf5980f7e85ul, 0xb8e9a46a45b100bful },
+  { 0x3fef25f600000000ul, 0x3fa3ed36e439e6b7ul, 0x3c44cb423fbe2130ul, 0xb8b628be6c8dbe34ul },
+  { 0x3fef07c200000000ul, 0x3fa6bad2043a8791ul, 0xbc38ee324ff21847ul, 0xb8a8bcf1004d2b26ul },
+  { 0x3feee9c800000000ul, 0x3fa985bf0a9f1682ul, 0x3c29d0544bf2b55bul, 0xb8c0279f8323370cul },
+  { 0x3feecc0800000000ul, 0x3fac4df3826464c6ul, 0xbc45087c47050b87ul, 0x38c370caaaff2d42ul },
+  { 0x3feeae8000000000ul, 0x3faf13950dd61d4bul, 0xbc45444cfc3c2d29ul, 0xb8d7db814e14def2ul },
+  { 0x3fee913200000000ul, 0x3fb0eb34a7fa5facul, 0xbc4faf67696c72e3ul, 0xb8e6300df7a38d97ul },
+  { 0x3fee741a00000000ul, 0x3fb24b63564eb2f2ul, 0x3c4a49d58dfd1898ul, 0xb8738be1adc3b97ful },
+  { 0x3fee573a00000000ul, 0x3fb3aa396bf7a150ul, 0xbc33a5808b8421a9ul, 0xb8d9707d3233af27ul },
+  { 0x3fee3a9200000000ul, 0x3fb507b1cf1c7cdcul, 0x3c338b4efb3f4f66ul, 0xb8daa591b76833d9ul },
+  { 0x3fee1e1e00000000ul, 0x3fb663f86c1d8a22ul, 0xbc40641346f0f6d9ul, 0xb8b80d9e25891273ul },
+  { 0x3fee01e000000000ul, 0x3fb7bef0080d198dul, 0xbc5854b2f7837b85ul, 0xb8e9735db8dec9deul },
+  { 0x3fede5d600000000ul, 0x3fb918ac6e6a6382ul, 0xbc25e7a8df44fffeul, 0x38c567c62442a9c1ul },
+  { 0x3fedca0200000000ul, 0x3fba711028a03916ul, 0x3c38981b8b806e09ul, 0x3891a5760ea79001ul },
+  { 0x3fedae6000000000ul, 0x3fbbc84805ff9090ul, 0xbc37bc57af6f0bb0ul, 0xb8c1122823a422d7ul },
+  { 0x3fed92f200000000ul, 0x3fbd1e3699efd061ul, 0xbc302dafd463eb28ul, 0x38dc7e0b76e2d4e9ul },
+  { 0x3fed77b600000000ul, 0x3fbe72f037527fd6ul, 0x3c5358f35e8f6061ul, 0xb8f35a074f3394d3ul },
+  { 0x3fed5cac00000000ul, 0x3fbfc6705edc941dul, 0x3c309b57b7b75b31ul, 0x38d6447b00bc80e6ul },
+  { 0x3fed41d400000000ul, 0x3fc08c594584b569ul, 0x3c61d75fd9ebc313ul, 0x390d1549b00fb99eul },
+  { 0x3fed272c00000000ul, 0x3fc134e5c3469e60ul, 0x3c4a830dfaef6d3ful, 0x38e1d912bbb8ed4bul },
+  { 0x3fed0cb600000000ul, 0x3fc1dccecbc18ba6ul, 0xbc6e0d906f72888cul, 0x390fd4a876d102c0ul },
+  { 0x3fecf26e00000000ul, 0x3fc2842b97a6467dul, 0x3c6ff50bc72a7e1dul, 0x390d40635499cd46ul },
+  { 0x3fecd85600000000ul, 0x3fc32aed4fa14f42ul, 0xbc555b931ae6fa88ul, 0xb8f3cdadd73dda7aul },
+  { 0x3fecbe6e00000000ul, 0x3fc3d111c4a6d523ul, 0xbc4239e46540c608ul, 0xb8d83c240dde86b9ul },
+  { 0x3feca4b400000000ul, 0x3fc476a3a9b28d40ul, 0x3c6fdbc847ecdd6cul, 0x38f5acc9e6e4be8cul },
+  { 0x3fec8b2600000000ul, 0x3fc51baddd18fcc8ul, 0x3c5d86d68430e722ul, 0xb890b1dea9061fc3ul },
+  { 0x3fec71c800000000ul, 0x3fc5c01474aa1452ul, 0x3c272a524a167b5dul, 0xb8b88bc01234f3b2ul },
+  { 0x3fec589400000000ul, 0x3fc663fc4cb09b06ul, 0xbc6d896fab5b5f80ul, 0x3909938c2d80afbful },
+  { 0x3fec3f9000000000ul, 0x3fc7073c56f30b42ul, 0xbc52b54c0f4d62ceul, 0xb8f6b7c7792dd916ul },
+  { 0x3fec26b600000000ul, 0x3fc7a9f9af9e2e08ul, 0x3c620e3e9eef9491ul, 0x390b028746c2a724ul },
+  { 0x3fec0e0800000000ul, 0x3fc84c2552330c76ul, 0xbc64562422a2b81cul, 0x39037280bde7a4edul },
+  { 0x3febf58400000000ul, 0x3fc8edca74cac696ul, 0xbc4282354ef597c3ul, 0x38e4859142fdb334ul },
+  { 0x3febdd2c00000000ul, 0x3fc98ed9f6aafbf3ul, 0xbc18b8c2bf7bd38aul, 0x388759b206a7f39eul },
+  { 0x3febc4fe00000000ul, 0x3fca2f5f1fedda7eul, 0xbc682770b8aad564ul, 0xb9037d150cabc2ccul },
+  { 0x3febacfa00000000ul, 0x3fcacf580c0e0fc3ul, 0x3c6986cb0f5afb7eul, 0xb90db2f0774e7e35ul },
+  { 0x3feb951e00000000ul, 0x3fcb6ed037e9933bul, 0x3c6de845f03033f5ul, 0x3907cde7ca8bae75ul },
+  { 0x3feb7d6c00000000ul, 0x3fcc0db86d5854dful, 0xbc603fcdba5fe91ful, 0xb90c4a4f8c4a5e5bul },
+  { 0x3feb65e200000000ul, 0x3fccac1c3b7e327cul, 0x3c6687b75f36d7c3ul, 0xb9056b5fd406834cul },
+  { 0x3feb4e8200000000ul, 0x3fcd49ec505e3978ul, 0x3c63d764e78e3ea4ul, 0x390332863c235761ul },
+  { 0x3feb374800000000ul, 0x3fcde741df856d7bul, 0xbc4d4b32fcdff51eul, 0xb8e2f925dd38c317ul },
+  { 0x3feb203600000000ul, 0x3fce840d9de2b8d8ul, 0xbc56af8e94338df6ul, 0xb8eb8b413759b7ccul },
+  { 0x3feb094c00000000ul, 0x3fcf204db90ea104ul, 0x3c56bfef3b6660ccul, 0xb8e2e0a13b0596b1ul },
+  { 0x3feaf28600000000ul, 0x3fcfbc1bc5aa17d8ul, 0xbc3967452d7630f8ul, 0x38a9eede0c5de7ecul },
+  { 0x3feadbe800000000ul, 0x3fd02bad58e156f8ul, 0xbc7a7b3ac39e7e93ul, 0xb9074517d41cd32eul },
+  { 0x3feac57000000000ul, 0x3fd0790b38054dccul, 0x3c71e77ef96321f6ul, 0x39150e52af0910d3ul },
+  { 0x3feaaf1e00000000ul, 0x3fd0c626a3fb3e77ul, 0xbc63bb3e5c68e6f8ul, 0x3906cb7324f40caeul },
+  { 0x3fea98f000000000ul, 0x3fd11305b0d46078ul, 0xbc7350f962f1ef14ul, 0xb8eea5a9b20d3cf2ul },
+  { 0x3fea82e600000000ul, 0x3fd15fa7917fb548ul, 0xbc75151cd70e9ae5ul, 0x391d5b2c6cea324ful },
+  { 0x3fea6d0200000000ul, 0x3fd1ac047af2aea8ul, 0x3c78f879b82915b7ul, 0x3911ddb10e91eb68ul },
+  { 0x3fea574200000000ul, 0x3fd1f8228f7556f8ul, 0xbc614ae4f2099310ul, 0xb8fbe333a788fe6cul },
+  { 0x3fea41a400000000ul, 0x3fd24408076324fcul, 0x3c76b826b1e4dfe0ul, 0x3916307765c991a4ul },
+  { 0x3fea2c2a00000000ul, 0x3fd28fad14acb4d1ul, 0x3c12f053efb0073eul, 0x38b18e1ffa73ff84ul },
+  { 0x3fea16d400000000ul, 0x3fd2db10e538534dul, 0x3c631cb428346b53ul, 0x38de9b836859c8e6ul },
+  { 0x3fea01a000000000ul, 0x3fd32639bfc045f8ul, 0x3c7cdfb14f37225bul, 0x3907f25bff4e23d8ul },
+  { 0x3fe9ec8e00000000ul, 0x3fd37126e18e3dfaul, 0x3c60bef23e84645bul, 0xb90558008a1eab52ul },
+  { 0x3fe9d7a000000000ul, 0x3fd3bbd061a3e15cul, 0xbc52124cbbdebec2ul, 0xb8edf499828e5ebdul },
+  { 0x3fe9c2d200000000ul, 0x3fd40643c051e171ul, 0x3c771faa927e7a61ul, 0xb919097636c4063cul },
+  { 0x3fe9ae2400000000ul, 0x3fd4508049660cb4ul, 0x3c763deee9533949ul, 0xb907496014be3a7bul },
+  { 0x3fe9999a00000000ul, 0x3fd49a76da78a81bul, 0xbc5101c1d27df899ul, 0x38f422d13c4929d0ul },
+  { 0x3fe9853000000000ul, 0x3fd4e43513c072acul, 0x3c3aedee74456314ul, 0x38dc67de7608231bul },
+  { 0x3fe970e400000000ul, 0x3fd52dc1808a8842ul, 0xbc69933c15083fc8ul, 0x38d98d9155b95ef0ul },
+  { 0x3fe95cbc00000000ul, 0x3fd57705a2804cc9ul, 0xbc7f00adcc238671ul, 0x3917538be6552d7eul },
+  { 0x3fe948b000000000ul, 0x3fd5c01dd54f105ful, 0x3c48ae047a464598ul, 0xb895b97b88f425b8ul },
+  { 0x3fe934c600000000ul, 0x3fd608f38798330dul, 0x3c7e34743552c452ul, 0xb91dc4147c4e2b3bul },
+  { 0x3fe920fc00000000ul, 0x3fd6518d46fe6eacul, 0xbc7afc2d3737f809ul, 0xb918d178e0264f53ul },
+  { 0x3fe90d5000000000ul, 0x3fd699f1b7644bfaul, 0x3c7cf0d48ba01548ul, 0x38c99e64f04479e5ul },
+  { 0x3fe8f9c200000000ul, 0x3fd6e2202e1e0b68ul, 0x3c630c0096e9f68eul, 0xb90409dc0191781cul },
+  { 0x3fe8e65200000000ul, 0x3fd72a17ffb007f6ul, 0x3c6590bfb7377985ul, 0x390fcb271b2895adul },
+  { 0x3fe8d30200000000ul, 0x3fd771d10f755648ul, 0xbc6d1e7a46d315bcul, 0xb905862ef0b84f0bul },
+  { 0x3fe8bfce00000000ul, 0x3fd7b9598b4b3912ul, 0xbc44e258aeb2c579ul, 0x38df3bf33cadf873ul },
+  { 0x3fe8acba00000000ul, 0x3fd800a1ded84d0ful, 0x3c6f784a80ea60ecul, 0xb90ed362939a8f68ul },
+  { 0x3fe899c000000000ul, 0x3fd847bfcf2b9b65ul, 0x3c6a3bc60cff15d1ul, 0xb907bd333e2463e4ul },
+  { 0x3fe886e600000000ul, 0x3fd88e9c392b7fbbul, 0xbc6fb8ab87be1f10ul, 0xb8db3ada0066b8e1ul },
+  { 0x3fe8742800000000ul, 0x3fd8d54575cbb376ul, 0xbc518e87bdb6ebc2ul, 0x38e7765ebe877184ul },
+  { 0x3fe8618600000000ul, 0x3fd91bbae57434ccul, 0xbc7cac9a5fa9517aul, 0x391f8d1bd512177aul },
+  { 0x3fe84f0000000000ul, 0x3fd961fbe7d038ccul, 0xbc77ae9eefe029baul, 0x38bd8737c020bc5dul },
+  { 0x3fe83c9800000000ul, 0x3fd9a8003d4a05f2ul, 0xbc13b00c84952658ul, 0xb8ac02ad66dbe5d0ul },
+  { 0x3fe82a4a00000000ul, 0x3fd9edd67b6077b9ul, 0x3c1e66b4be819a59ul, 0x38bf0c291bc0f710ul },
+  { 0x3fe8181800000000ul, 0x3fda337666d47e13ul, 0x3c7d85c894e1b491ul, 0xb90556d1c3a188cdul },
+  { 0x3fe8060200000000ul, 0x3fda78df5c7396e5ul, 0x3c793a150e9109bbul, 0x39154bfaff2a3e42ul },
+  { 0x3fe7f40600000000ul, 0x3fdabe186df47b97ul, 0x3c3234b98e55c106ul, 0x38d4ec26930c103cul },
+  { 0x3fe7e22600000000ul, 0x3fdb03194cb2058aul, 0xbc686c892bc0f92bul, 0xb9096f17098a6617ul },
+  { 0x3fe7d06000000000ul, 0x3fdb47e9148fa186ul, 0xbc646b26236254d9ul, 0xb905cbb7aa8fe266ul },
+  { 0x3fe7beb400000000ul, 0x3fdb8c8730eee185ul, 0x3c7e223eff8010fbul, 0x391e0c8c8a795113ul },
+  { 0x3fe7ad2200000000ul, 0x3fdbd0f30c877b4ful, 0xbc557b3fe5f0580cul, 0x38fd171fda99142cul },
+  { 0x3fe79baa00000000ul, 0x3fdc152c1169259dul, 0x3c5e2e348bc7e190ul, 0x38eba11d41be6eb5ul },
+  { 0x3fe78a4c00000000ul, 0x3fdc5931a8fd837dul, 0xbc6e65eda67a83c9ul, 0x390326c337e0097cul },
+  { 0x3fe7790800000000ul, 0x3fdc9d033c0a1dfdul, 0x3c737e482dbedf4cul, 0x391407b1b25be3a8ul },
+  { 0x3fe767dc00000000ul, 0x3fdce0a816784a0bul, 0x3c5867311eb75714ul, 0x38cafa68c895c808ul },
+  { 0x3fe756ca00000000ul, 0x3fdd2417c78f84d7ul, 0x3c69e164335f37d9ul, 0x38f515f353279a3ful },
+  { 0x3fe745d200000000ul, 0x3fdd6751b6343f11ul, 0xbc5a0e97ccb0c14aul, 0x38f628b79a8f0d07ul },
+  { 0x3fe734f000000000ul, 0x3fddaa6532d9d830ul, 0x3c72e8de70336b59ul, 0xb8bf976da77103c1ul },
+  { 0x3fe7242800000000ul, 0x3fdded41d0165e73ul, 0xbc7b23e9cdb38270ul, 0x3911fac7494b141eul },
+  { 0x3fe7137800000000ul, 0x3fde2feef39dc32cul, 0xbc57126723e7acd8ul, 0xb8fcfa777c285aecul },
+  { 0x3fe702e000000000ul, 0x3fde726c133bce07ul, 0x3c7b5d75af57d9f2ul, 0x38ff2c0d5d3c5e09ul },
+  { 0x3fe6f26000000000ul, 0x3fdeb4b8a4267991ul, 0x3c664055b0f98598ul, 0xb8e83ea80d5fa4daul },
+  { 0x3fe6e1f800000000ul, 0x3fdef6d41affa979ul, 0xbc7a0ffb08621087ul, 0x3918149cd6a077bdul },
+  { 0x3fe6d1a600000000ul, 0x3fdf38c6038c67aful, 0x3c66f1ce84907ceful, 0xb8f67dca87000b20ul },
+  { 0x3fe6c16c00000000ul, 0x3fdf7a85c5202492ul, 0xbc7652fb41031ee3ul, 0xb9054fddc6e70668ul },
+  { 0x3fe6b14a00000000ul, 0x3fdfbc12d2aa2d48ul, 0xbc64b073e7e56d9ful, 0x3902a66fc005bbb9ul },
+  { 0x3ff6a13c00000000ul, 0xbfe0014187b44facul, 0x3c5d73e042ace73dul, 0xb8e8f137531fe68eul },
+  { 0x3ff6914800000000ul, 0xbfdfc154d903eb46ul, 0xbc7d1fd9464d4e24ul, 0xb8f71c11b1f458eful },
+  { 0x3ff6816800000000ul, 0xbfdf804a8c7baf3ful, 0x3c6fe1a521fd016cul, 0xb8de5b04aeb73ca5ul },
+  { 0x3ff671a000000000ul, 0xbfdf3f750b195e3aul, 0xbc65318e27231144ul, 0x38fdb837d6e4c967ul },
+  { 0x3ff661ec00000000ul, 0xbfdefec4646ccef2ul, 0x3c7fec7aefc24e6aul, 0xb91aa014ed042eecul },
+  { 0x3ff6525000000000ul, 0xbfdebe4991e25946ul, 0x3c72892b40bb3cb9ul, 0xb90a54e0edf82dd8ul },
+  { 0x3ff642c800000000ul, 0xbfde7df48cff117eul, 0x3c5228e74fa1bb71ul, 0x38c8054562688b58ul },
+  { 0x3ff6335600000000ul, 0xbfde3dce15e17584ul, 0x3c4214c24cbe3565ul, 0xb8e3906da59d79e2ul },
+  { 0x3ff623fa00000000ul, 0xbfddfdd6ad0ee9f6ul, 0xbc5cadf496fec061ul, 0x38f7af3758aa5beful },
+  { 0x3ff614b400000000ul, 0xbfddbe0ed38cf2caul, 0x3c70585671981b36ul, 0x390dc0c4310de8acul },
+  { 0x3ff6058200000000ul, 0xbfdd7e6ea8254274ul, 0xbc54e7e37645be29ul, 0xb8f8f662436912b2ul },
+  { 0x3ff5f66400000000ul, 0xbfdd3ef69b8a18aeul, 0xbc7adfbb2db1eddful, 0x3914875f3f31b596ul },
+  { 0x3ff5e75c00000000ul, 0xbfdcffaf8d2f6f67ul, 0x3c429608ef5ba8e4ul, 0x38d402cb8c835cfeul },
+  { 0x3ff5d86800000000ul, 0xbfdcc0918c03c7b9ul, 0x3c62fbfae30de57cul, 0x38fd3842d35c2e50ul },
+  { 0x3ff5c98800000000ul, 0xbfdc819d0a2a2402ul, 0xbc6920e42e0fcc8aul, 0x390cf6ec2f8ff554ul },
+  { 0x3ff5babc00000000ul, 0xbfdc42d27a3dcbc3ul, 0xbc45d297da434ba2ul, 0xb8dbb3490593cd01ul },
+  { 0x3ff5ac0600000000ul, 0xbfdc043ad4ac208cul, 0x3c7ad39c6511540cul, 0xb90142fe50845734ul },
+  { 0x3ff59d6200000000ul, 0xbfdbc5c5880cd90cul, 0xbc2746f61cff2d71ul, 0x38c93e4bb58a40b1ul },
+  { 0x3ff58ed200000000ul, 0xbfdb877b87f22cf8ul, 0x3c73cb31a091957cul, 0x390e48845e55f23eul },
+  { 0x3ff5805600000000ul, 0xbfdb495d48cc341eul, 0x3c630c342a2944b9ul, 0x38d0175110e42d4bul },
+  { 0x3ff571ee00000000ul, 0xbfdb0b6b3f7d06f9ul, 0x3c798064ab5d9062ul, 0x3917dcee19022b96ul },
+  { 0x3ff5639800000000ul, 0xbfdacd9d3f22737bul, 0x3c4f81ca6f6888ceul, 0x38eae245bb09c758ul },
+  { 0x3ff5555600000000ul, 0xbfda8ffc5429eb79ul, 0x3c5afd4784c04dc9ul, 0xb8f465ce5061b975ul },
+  { 0x3ff5472600000000ul, 0xbfda52804704ebdful, 0x3c7529e34b3274b3ul, 0xb8e81059ece1199cul },
+  { 0x3ff5390a00000000ul, 0xbfda15323087936cul, 0x3c60607e1f76d660ul, 0xb8ff9515415be962ul },
+  { 0x3ff52b0000000000ul, 0xbfd9d809ce727336ul, 0xbc764191af6fe99bul, 0xb90aeea55b51782bul },
+  { 0x3ff51d0800000000ul, 0xbfd99b0786ebe419ul, 0x3c4ab3ae7c22ee96ul, 0x38ca22548e824023ul },
+  { 0x3ff50f2200000000ul, 0xbfd95e2bc0842f90ul, 0x3c509c2b2a6f3e26ul, 0xb8e3f6feff75982cul },
+  { 0x3ff5015000000000ul, 0xbfd9217faccfbf79ul, 0x3c764a71afa4b34cul, 0x3913e544fc8ef188ul },
+  { 0x3ff4f39000000000ul, 0xbfd8e4faf41f99a4ul, 0x3c508b3a2492c174ul, 0xb8d513a7a0191892ul },
+  { 0x3ff4e5e000000000ul, 0xbfd8a8952816c502ul, 0xbc7486ad2e22c074ul, 0x391879fd3ce0d459ul },
+  { 0x3ff4d84400000000ul, 0xbfd86c6057689e8aul, 0x3c7f5261fe1eb098ul, 0x38ec15ba58cbd3b5ul },
+  { 0x3ff4cab800000000ul, 0xbfd8304b3897d7eeul, 0xbc6c5d7c901c3694ul, 0x390945248b9f3b23ul },
+  { 0x3ff4bd3e00000000ul, 0xbfd7f45f0ac055caul, 0x3c579cf7664bcd1eul, 0xb8d7e2a923b6661bul },
+  { 0x3ff4afd600000000ul, 0xbfd7b89c373b7a98ul, 0xbc50bc280879c91ful, 0x38fca932860a66aeul },
+  { 0x3ff4a28000000000ul, 0xbfd77d0327c430a7ul, 0x3c73061b72edf0f9ul, 0x39088d1841d58333ul },
+  { 0x3ff4953a00000000ul, 0xbfd7418b4db0f9e4ul, 0x3c616a9864aab4d0ul, 0x3901801986169797ul },
+  { 0x3ff4880600000000ul, 0xbfd7063e00b7efb5ul, 0x3c7e5f581a533a3aul, 0xb90607f2217cd297ul },
+  { 0x3ff47ae200000000ul, 0xbfd6cb12a763c489ul, 0x3c753f3f58515e55ul, 0xb8f656817b9d206bul },
+  { 0x3ff46dce00000000ul, 0xbfd690099b9cb3d9ul, 0x3c5c251b10bd7006ul, 0x38f158d98c0ef422ul },
+  { 0x3ff460cc00000000ul, 0xbfd6552c47827273ul, 0xbc63f7d87819dbe7ul, 0xb9081d7a5649ae49ul },
+  { 0x3ff453da00000000ul, 0xbfd61a72016673a9ul, 0xbc7967e08f9de077ul, 0x3905d48b27fb3b43ul },
+  { 0x3ff446f800000000ul, 0xbfd5dfdb244515a5ul, 0x3c7283cd7d04472bul, 0x3909cae2612105d2ul },
+  { 0x3ff43a2800000000ul, 0xbfd5a5712c9f6a2ful, 0xbc2ac842e8abbb0bul, 0xb8a38012428e2a65ul },
+  { 0x3ff42d6600000000ul, 0xbfd56b223995e0ccul, 0x3c7dd5b42c93ef46ul, 0x38c0cb561d0b49a7ul },
+  { 0x3ff420b600000000ul, 0xbfd53100ef4ada69ul, 0xbc75b69cfa407faful, 0xb8f42d1bc5c7a68cul },
+  { 0x3ff4141400000000ul, 0xbfd4f6fb5679a7d6ul, 0x3c77ed7e4842818eul, 0xb919a8f1e4c689bbul },
+  { 0x3ff4078200000000ul, 0xbfd4bd1af2c86ce2ul, 0xbc793fe30de496a2ul, 0xb913762507394464ul },
+  { 0x3ff3fb0200000000ul, 0xbfd483695f490399ul, 0x3c64662292650bb2ul, 0xb8f7385656bb254ful },
+  { 0x3ff3ee9000000000ul, 0xbfd449d483180645ul, 0xbc785f59b3b79cd4ul, 0x38f93649747eba47ul },
+  { 0x3ff3e22c00000000ul, 0xbfd4105caa9b4358ul, 0x3c7a117581f8c9a8ul, 0x38f5ac9478cacdbdul },
+  { 0x3ff3d5da00000000ul, 0xbfd3d714c1360ce5ul, 0xbc787356c9dafce0ul, 0x390e5b898bfea7adul },
+  { 0x3ff3c99600000000ul, 0xbfd39dea8c5f4464ul, 0x3c7889f4b2e0ddf8ul, 0x390e1e070f07177dul },
+  { 0x3ff3bd6000000000ul, 0xbfd364de59746cebul, 0xbc6b3364fb99c572ul, 0xb8f3475bca3a1d9eul },
+  { 0x3ff3b13c00000000ul, 0xbfd32c03376e3769ul, 0x3c785408e631ea21ul, 0x39066eac5f333ee2ul },
+  { 0x3ff3a52400000000ul, 0xbfd2f33d63ac6a69ul, 0x3c7ed03d88c47881ul, 0xb8f87cf4fff52a99ul },
+  { 0x3ff3991c00000000ul, 0xbfd2ba9ff38c5e74ul, 0x3c73c8962935d766ul, 0xb91b358e6dce37e7ul },
+  { 0x3ff38d2200000000ul, 0xbfd28221d505ffb7ul, 0xbc101a41d91887f2ul, 0xb8a78a2ced7f4746ul },
+  { 0x3ff3813800000000ul, 0xbfd249cccebeafa9ul, 0xbc7d1a4f61e97e0eul, 0x391d41e96bd7775dul },
+  { 0x3ff3755c00000000ul, 0xbfd21197c3be990dul, 0xbc7a102ebd4d43f8ul, 0xb8f645fe071d7af2ul },
+  { 0x3ff3698e00000000ul, 0xbfd1d983038a5973ul, 0xbc59fabc38b4f1d7ul, 0x38d15086010eac7aul },
+  { 0x3ff35dce00000000ul, 0xbfd1a18eddf22e2dul, 0x3c6713695b4578acul, 0xb9029a005bce2a59ul },
+  { 0x3ff3521c00000000ul, 0xbfd169bba3115252ul, 0x3c7f6c90ba26b6f5ul, 0x391e2929e50eadcbul },
+  { 0x3ff3467a00000000ul, 0xbfd1321337e2905bul, 0x3c250dd2c4a0a85eul, 0x38c56b6a0a1a902aul },
+  { 0x3ff33ae400000000ul, 0xbfd0fa82c9b062bdul, 0xbc66b9c82b323c73ul, 0x390387b23c0047e0ul },
+  { 0x3ff32f5c00000000ul, 0xbfd0c31438428a13ul, 0x3c786908a94f1ed5ul, 0xb9020bd75c9f0a5dul },
+  { 0x3ff323e400000000ul, 0xbfd08bd17abe82f6ul, 0x3c5ed378d88ed722ul, 0x38e879ca9c873d19ul },
+  { 0x3ff3187800000000ul, 0xbfd054a79ca7c3beul, 0x3c63cfc9aa2e1e3eul, 0xb907bb11e4ee6b9dul },
+  { 0x3ff30d1a00000000ul, 0xbfd01da08fecad36ul, 0xbc705c929661f7e4ul, 0xb8eafbdec39f2cdbul },
+  { 0x3ff301c800000000ul, 0xbfcfcd65dedbc12cul, 0xbc6766c6d49826baul, 0xb8f3694c0576d011ul },
+  { 0x3ff2f68400000000ul, 0xbfcf5fd1725fca86ul, 0x3c62377fbc505095ul, 0xb90d99fc1eb11d69ul },
+  { 0x3ff2eb4e00000000ul, 0xbfcef2847fa56d2dul, 0xbc6fd11d9708e85aul, 0x390de96412bd685cul },
+  { 0x3ff2e02600000000ul, 0xbfce857fac7496f8ul, 0x3c6931b695470713ul, 0x39059400b5ce4149ul },
+  { 0x3ff2d50a00000000ul, 0xbfce18b002886e8aul, 0xbc445940d7e0a88bul, 0x38e058ab23540d13ul },
+  { 0x3ff2c9fc00000000ul, 0xbfcdac29ae35534ful, 0x3c47b69ed3fba6faul, 0x38e0ad749d944a05ul },
+  { 0x3ff2befa00000000ul, 0xbfcd3fd9a32ca6c6ul, 0x3c66dfed52cf2076ul, 0x38d6a5c33898bddbul },
+  { 0x3ff2b40400000000ul, 0xbfccd3c066ac4eeeul, 0xbc6ac3c4f2c63869ul, 0x38f094eb088fcec1ul },
+  { 0x3ff2a91c00000000ul, 0xbfcc67f24933fe3aul, 0xbc4c249130c7afd6ul, 0x38ee7035f4f811beul },
+  { 0x3ff29e4200000000ul, 0xbfcbfc6ff3a56d75ul, 0x3c6345b84daa3811ul, 0xb90c1850158cf0d9ul },
+  { 0x3ff2937200000000ul, 0xbfcb91124bbb16f6ul, 0x3bf483f928d80f20ul, 0xb88cac25992b7043ul },
+  { 0x3ff288b000000000ul, 0xbfcb260190d317c0ul, 0x3c522bace3a94ef4ul, 0x38f39107ecefac02ul },
+  { 0x3ff27dfa00000000ul, 0xbfcabb2a74631be2ul, 0x3c606323eaa09af7ul, 0x390159174614baa1ul },
+  { 0x3ff2735000000000ul, 0xbfca508d7ea6b479ul, 0xbc69b83b55422b01ul, 0x38f5a8873478cdfdul },
+  { 0x3ff268b400000000ul, 0xbfc9e63f4853f27dul, 0xbc6296920436683aul, 0x39037b76e5e511c3ul },
+  { 0x3ff25e2200000000ul, 0xbfc97c184629c6dbul, 0xbc620da48dcebb43ul, 0x3905be876b054631ul },
+  { 0x3ff2539e00000000ul, 0xbfc912412d5af6a5ul, 0x3c69db47ff1bc66dul, 0x38ebba90865803e3ul },
+  { 0x3ff2492400000000ul, 0xbfc8a892456dccd2ul, 0xbc5ee566f97406c8ul, 0x38dd8e059c63f397ul },
+  { 0x3ff23eb800000000ul, 0xbfc83f3472af22e8ul, 0x3c59cef46bce28e3ul, 0xb8d0962ecb2ac92ful },
+  { 0x3ff2345600000000ul, 0xbfc7d5ffcf67e386ul, 0x3c5177c90f9bc3a3ul, 0xb8fa65fb40b5d676ul },
+  { 0x3ff22a0200000000ul, 0xbfc76d1d6efa8d9bul, 0x3c5b13ee280c08e5ul, 0xb8f51e14741d4822ul },
+  { 0x3ff21fb800000000ul, 0xbfc704653e6f2bfaul, 0x3c2e566cf78817daul, 0xb8c0c03a1f244b8cul },
+  { 0x3ff2157a00000000ul, 0xbfc69bec13e5da46ul, 0xbc41ab59c70cc677ul, 0xb8e4208117de1fe6ul },
+  { 0x3ff20b4800000000ul, 0xbfc633b27c3d59d4ul, 0x3c580a3bdee7c655ul, 0xb8e0d7bec8ac11c9ul },
+  { 0x3ff2012000000000ul, 0xbfc5cba4815d2768ul, 0x3c6f063b1d7ca844ul, 0xb8f0c38ad0984f9bul },
+  { 0x3ff1f70400000000ul, 0xbfc563d71d57fce4ul, 0xbc5e71ce86db0a9bul, 0xb8d14ddb017a9a1aul },
+  { 0x3ff1ecf400000000ul, 0xbfc4fc4ade5d274cul, 0xbc3d581fe610629aul, 0xb8dd3ebbe923d095ul },
+  { 0x3ff1e2f000000000ul, 0xbfc4950053093e57ul, 0xbc6d7cd97b4055d9ul, 0xb8edb9efe4d4c917ul },
+  { 0x3ff1d8f600000000ul, 0xbfc42de358d334caul, 0x3c24403126cd72fbul, 0xb8a20ecb64aba6bcul },
+  { 0x3ff1cf0600000000ul, 0xbfc3c6f45c90fb34ul, 0xbc1a7fe73fa36d97ul, 0xb8b4dd8dbe67d365ul },
+  { 0x3ff1c52200000000ul, 0xbfc36048942ccde3ul, 0x3c411c4509acd9c8ul, 0xb8efde05b54be99ful },
+  { 0x3ff1bb4a00000000ul, 0xbfc2f9e08ff2e29dul, 0xbc677089cc7cb270ul, 0x390614c55281fecdul },
+  { 0x3ff1b17c00000000ul, 0xbfc293a800d97e62ul, 0xbc6fb5c795261e6cul, 0xb8f9f6f07b03ccf3ul },
+  { 0x3ff1a7ba00000000ul, 0xbfc22db440a72bd4ul, 0xbc50fe78064cb07eul, 0xb8eb15fba886b147ul },
+  { 0x3ff19e0200000000ul, 0xbfc1c7f0ea0d9b1dul, 0xbc5c7db106c351f4ul, 0xb8f3826fac7506a1ul },
+  { 0x3ff1945400000000ul, 0xbfc1625e6c58f466ul, 0xbc699118073f90d2ul, 0xb90a59b6ec1c5fc1ul },
+  { 0x3ff18ab000000000ul, 0xbfc0fcfd373a57eaul, 0x3c5716e20ff509ccul, 0x38d2cbec4961acd1ul },
+  { 0x3ff1811800000000ul, 0xbfc097e2d43bcac3ul, 0xbc6e9bb139f4ff6eul, 0x38f39eefe664b0cbul },
+  { 0x3ff1778a00000000ul, 0xbfc032fab179b79bul, 0x3c59e13000b877cbul, 0x38f4985f237695a7ul },
+  { 0x3ff16e0600000000ul, 0xbfbf9c8a7fa3c0ddul, 0xbc583475add2eff2ul, 0x38ea22f7f1549586ul },
+  { 0x3ff1648e00000000ul, 0xbfbed3b0592f5c51ul, 0x3c22650ad66860ccul, 0xb8c27123c80630e9ul },
+  { 0x3ff15b1e00000000ul, 0xbfbe0b12f9a25cbdul, 0xbc5477a9fb508b62ul, 0x38ea1c15abdbcc7dul },
+  { 0x3ff151ba00000000ul, 0xbfbd43084c62ed7dul, 0xbc468d08b93d1bbaul, 0x38de58736c28eb19ul },
+  { 0x3ff1486000000000ul, 0xbfbc7b66be0edce9ul, 0x3c50daa64b4f4040ul, 0x38f902472fe2f95dul },
+  { 0x3ff13f0e00000000ul, 0xbfbbb4045fae9a73ul, 0xbc5d7743a2e89fb1ul, 0xb8ea3f9e05f24ad1ul },
+  { 0x3ff135c800000000ul, 0xbfbaed37a961f043ul, 0x3c3262a275c22634ul, 0xb8dbf19957b8f29cul },
+  { 0x3ff12c8c00000000ul, 0xbfba26d6c4bca3b3ul, 0x3c319ab439f1ac95ul, 0x38dadce5d0b9452eul },
+  { 0x3ff1235800000000ul, 0xbfb960b77fb6f6f6ul, 0xbc0104a7aed68c41ul, 0xb8a3ae1db5cfa33bul },
+  { 0x3ff11a3000000000ul, 0xbfb89b30df1ebccdul, 0x3c5f99128fd71218ul, 0xb8ebe279ec516fe8ul },
+  { 0x3ff1111200000000ul, 0xbfb7d618c96da670ul, 0xbc44dac2548ef3fcul, 0xb8bb166887e7b76aul },
+  { 0x3ff107fc00000000ul, 0xbfb71144c9812025ul, 0xbc591f050a1f574cul, 0x38f06685d1990a83ul },
+  { 0x3ff0fef000000000ul, 0xbfb64ce0fab1fa4bul, 0xbc5474af28a77166ul, 0x38ec60260b669553ul },
+  { 0x3ff0f5ee00000000ul, 0xbfb588ee483c3392ul, 0xbc4d08d2414dc22ful, 0x38e95d5034764347ul },
+  { 0x3ff0ecf600000000ul, 0xbfb4c56d9e0b83a1ul, 0xbc5c6767ddb7ba33ul, 0xb8f1f9240132c329ul },
+  { 0x3ff0e40600000000ul, 0xbfb402342d6b031eul, 0xbc4dfbdb39c30515ul, 0x38eb3c68a68b38d1ul },
+  { 0x3ff0db2000000000ul, 0xbfb33f6e70c7e7fcul, 0xbc4781f5fcb4b722ul, 0xb8d5e74e7b959973ul },
+  { 0x3ff0d24400000000ul, 0xbfb27d1d56173380ul, 0xbc5ea42607f447a4ul, 0x38f82d2c1733d6eful },
+  { 0x3ff0c97200000000ul, 0xbfb1bb41cbf6df7aul, 0xbc533bc3315a63c8ul, 0x38fb7a62dc8735eful },
+  { 0x3ff0c0a800000000ul, 0xbfb0f9b0aa0a6ecaul, 0xbc3022c861757a0bul, 0x38de5cbb3a94b3b5ul },
+  { 0x3ff0b7e600000000ul, 0xbfb0386a9b00ef62ul, 0x3c568b5e8855a717ul, 0x38fddf86e99f2fe5ul },
+  { 0x3ff0af3000000000ul, 0xbfaeef91aba429e0ul, 0x3c4dec40dac50e46ul, 0xb8eaa17328c046a9ul },
+  { 0x3ff0a68200000000ul, 0xbfad6ee7ae5a54a6ul, 0x3c1bccca0ee60898ul, 0xb8bd7111d067dc7bul },
+  { 0x3ff09ddc00000000ul, 0xbfabeed897667a79ul, 0xbc48877a60699474ul, 0xb8e98d4f998bab7cul },
+  { 0x3ff0954000000000ul, 0xbfaa6fbed7681b1cul, 0xbc49b6df35c92a07ul, 0xb8e8c8bb45d74dc3ul },
+  { 0x3ff08cac00000000ul, 0xbfa8f143105da0b3ul, 0x3c4b561c6db8ac54ul, 0x38efa168db9b984aul },
+  { 0x3ff0842200000000ul, 0xbfa773c011bdf1ecul, 0x3c3de73a4b91361aul, 0xb8de99e0aea26785ul },
+  { 0x3ff07ba000000000ul, 0xbfa5f6de23af4cf7ul, 0xbc2763fe6e768d3bul, 0xb8c53778d07105f2ul },
+  { 0x3ff0732600000000ul, 0xbfa47a9ea5addbd8ul, 0x3c4ffc052d725bd3ul, 0x38af6f9f9cbc734aul },
+  { 0x3ff06ab600000000ul, 0xbfa2ff5cf561236ful, 0xbc3be6c877971b8cul, 0xb8cec3cbef56ab92ul },
+  { 0x3ff0624e00000000ul, 0xbfa184c0d415ead6ul, 0xbc1f00cfe66b6aa7ul, 0xb8ba4cf7be23be9dul },
+  { 0x3ff059ee00000000ul, 0xbfa00acba4e8a4c3ul, 0xbc3dafd282b1f6c3ul, 0xb8d4e56402f30761ul },
+  { 0x3ff0519800000000ul, 0xbf9d23b2a73a25e5ul, 0xbc387ca1673278c9ul, 0x38bb32ccabd63e02ul },
+  { 0x3ff0494a00000000ul, 0xbf9a3322351dbeacul, 0xbc3b83a3a005b1beul, 0x38baee19a375f9b1ul },
+  { 0x3ff0410400000000ul, 0xbf9743e8c0cd5929ul, 0x3c34d6651774eef4ul, 0xb8dbb9f971e4df78ul },
+  { 0x3ff038c600000000ul, 0xbf94560919e9ccd5ul, 0xbbd387a906d2ddbful, 0xb878f5b79f51da43ul },
+  { 0x3ff0309200000000ul, 0xbf916a3c92a45987ul, 0x3c02d16b81d93e0aul, 0xb87222993dea069cul },
+  { 0x3ff0286400000000ul, 0xbf8cfe32b6199e97ul, 0x3c2ff036d92d7d7dul, 0xb8b5dd74503ea3c8ul },
+  { 0x3ff0204000000000ul, 0xbf872c1f4cf06d25ul, 0x3c174fe03519133dul, 0x38bfdb345d7f39fcul },
+  { 0x3ff0182400000000ul, 0xbf815cd79ac60bbbul, 0xbbfccc739c2e4cd4ul, 0xb869b8ca42ded759ul },
+  { 0x3ff0101000000000ul, 0xbf7720c2ab2312a9ul, 0x3c1ff25180953e64ul, 0x3887b763fdac5075ul },
+  { 0x3ff0080400000000ul, 0xbf671b08dedc8633ul, 0x3bdf7eccd83c2e4dul, 0xb872b904d249df13ul },
 };
+
+inline uint gpga_pow_exp_shift(int exp) {
+  return ((uint)exp) << 20;
+}
 
 inline bool gpga_pow_is_odd_integer(gpga_double y) {
   gpga_double ay = gpga_double_abs(y);
@@ -15608,8 +16006,8 @@ inline void gpga_pow_exp2_120_core(thread int* H, thread gpga_double* resh,
   gpga_double p_resl = gpga_double_zero(0u);
   Renormalize3(&p_resh, &p_resm, &p_resl, p_t_11_0h, p_t_11_0m, p_t_11_0l);
 
-  GpgaExpTableEntry tbl1 = exp_twoPowerIndex1[index1];
-  GpgaExpTableEntry tbl2 = exp_twoPowerIndex2[index2];
+  GpgaPowTwoPowerIndex1 tbl1 = pow_twoPowerIndex1[index1];
+  GpgaPowTwoPowerIndex2 tbl2 = pow_twoPowerIndex2[index2];
   gpga_double tablesh = gpga_double_zero(0u);
   gpga_double tablesm = gpga_double_zero(0u);
   gpga_double tablesl = gpga_double_zero(0u);
@@ -15951,10 +16349,10 @@ inline gpga_double gpga_pow_exact_rn(gpga_double x, gpga_double y,
 inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
   gpga_double one = gpga_double_const_one();
   gpga_double zero = gpga_double_zero(0u);
-  uint x_exp = gpga_double_exp(x);
-  uint y_exp = gpga_double_exp(y);
-  if ((((x_exp + 1u) & 0x7ffu) <= 1u) ||
-      (((y_exp + 1u) & 0x7ffu) <= 1u)) {
+  uint x_hi = gpga_u64_hi(x);
+  uint y_hi = gpga_u64_hi(y);
+  if ((((x_hi >> 20) + 1u) & 0x3ffu) <= 1u ||
+      (((y_hi >> 20) + 1u) & 0x3ffu) <= 1u) {
     if (gpga_double_eq(x, one)) {
       return one;
     }
@@ -16100,6 +16498,10 @@ inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
   gpga_double zm = gpga_double_zero(0u);
   Add12Cond(&zh, &zm, th, yril);
 
+#ifndef GPGA_POW_FAST_PATH
+#define GPGA_POW_FAST_PATH 0
+#endif
+#if GPGA_POW_FAST_PATH
   gpga_double zhSq = gpga_double_mul(zh, zh);
   gpga_double p35 = gpga_double_add(pow_log2_70_p_coeff_3h,
                                     gpga_double_mul(zhSq,
@@ -16179,11 +16581,11 @@ inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
       uint pow_hi = gpga_u64_hi(powdb);
       uint pow_lo = gpga_u64_lo(powdb);
       if (H < 1023) {
-        pow_hi += (uint)(H << 20);
+        pow_hi += gpga_pow_exp_shift(H);
         powdb = gpga_u64_from_words(pow_hi, pow_lo);
         return gpga_double_mul(sign, powdb);
       }
-      pow_hi += (uint)((H - 3) << 20);
+      pow_hi += gpga_pow_exp_shift(H - 3);
       powdb = gpga_u64_from_words(pow_hi, pow_lo);
       return gpga_double_mul(sign, gpga_double_mul(powdb, gpga_double_from_u32(8u)));
     }
@@ -16208,7 +16610,7 @@ inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
         gpga_double powdb = powh;
         uint pow_hi = gpga_u64_hi(powdb);
         uint pow_lo = gpga_u64_lo(powdb);
-        pow_hi += (uint)(H << 20);
+        pow_hi += gpga_pow_exp_shift(H);
         powdb = gpga_u64_from_words(pow_hi, pow_lo);
         return gpga_double_mul(sign, powdb);
       }
@@ -16244,6 +16646,7 @@ inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
     }
   }
 
+#endif
   return gpga_pow_exact_rn(x, y, sign, index, ed, zh, zm);
 }
 

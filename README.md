@@ -2,7 +2,7 @@
 
 A Verilog-to-Metal (MSL) compiler for GPU-based hardware simulation. Parses and lowers a large, practical subset of Verilog (spanning RTL and common testbench semantics) into Metal Shading Language compute kernels, enabling fast hardware prototyping and validation on Apple GPUs.
 
-**Current Status**: v0.7+ — **Verilog frontend 100% complete** + **GPU runtime functional** + **VCD waveform generation** + **Wide integer support**: Full Verilog-2005 parsing, elaboration, and MSL codegen, plus Metal runtime with GPU execution and industry-standard VCD waveform output. Includes **software double-precision float** (IEEE 754), **wide integers** (128-bit, 256-bit, arbitrary width), User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, procedural part-select assignment, and **dynamic repeat loops**. Full **VCD debugging support** with `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), and `$readmemh`/`$readmemb`. **14 file I/O functions** including `$fopen`, `$fseek`, `$fread`, `$ungetc`, `$ferror`. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **393 total test files** validate the compiler. **VCD smoke test passes ✅**. **Next: Full test suite validation on GPU (v1.0).**
+**Current Status**: v0.7+ — **Verilog frontend 100% complete** + **GPU runtime functional** + **VCD waveform generation** + **Wide integer support** + **IEEE 754 math functions**: Full Verilog-2005 parsing, elaboration, and MSL codegen, plus Metal runtime with GPU execution and industry-standard VCD waveform output. Includes **software double-precision float** (IEEE 754) with **13 math functions** ($log10, $ln, $exp, $sqrt, $pow, $floor, $ceil, $sin, $cos, $tan, $asin, $acos, $atan), **wide integers** (128-bit, 256-bit, arbitrary width), **command-line arguments** ($test$plusargs, $value$plusargs), User-Defined Primitives (UDPs), match-3 operators (`===`, `!==`, `==?`, `!=?`), power operator (`**`), multi-dimensional arrays, procedural part-select assignment, and **dynamic repeat loops**. Full **VCD debugging support** with `$dumpfile`, `$dumpvars`, dump control (`$dumpoff`/`$dumpon`), and `$readmemh`/`$readmemb`. **14 file I/O functions** including `$fopen`, `$fseek`, `$fread`, `$ungetc`, `$ferror`. Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks, timing controls, and switch-level primitives. **400 total test files** validate the compiler. **VCD smoke test passes ✅**. **Next: Full test suite validation on GPU (v1.0).**
 
 ## What is this?
 
@@ -58,6 +58,9 @@ cmake --build build
 
 # Run with VCD waveform output (requires --run, generates .vcd files)
 ./build/metalfpga_cli path/to/design.v --run --vcd-dir ./waves/
+
+# Run with command-line arguments (plusargs)
+./build/metalfpga_cli path/to/testbench.v --run +DEBUG +WIDTH=128 +TESTNAME=smoke
 ```
 
 ## Output Artifacts
@@ -135,6 +138,7 @@ The compiler produces:
   - File I/O: `$fopen`, `$fclose`, `$fgetc`, `$fgets`, `$feof`, `$ftell`, `$rewind`, `$fseek`, `$fread`, `$ungetc`, `$ferror`, `$fflush`, `$fscanf`, `$sscanf` - File operations (14 functions, infrastructure complete, runtime execution pending)
   - String: `$sformat` - String formatting
   - Math/Type: `$signed`, `$unsigned`, `$clog2`, `$bits` - Type casting and utility functions
+  - Command-line args: `$test$plusargs`, `$value$plusargs` - Runtime configuration via `+ARG` syntax
 - Tasks (procedural `task` blocks with inputs/outputs)
 - `time` data type and time system functions
 - Named events (`event` keyword and `->` trigger)
@@ -154,15 +158,17 @@ The compiler produces:
 - **Real number arithmetic** (IEEE 754 double-precision via software emulation):
   - `real` data type for floating-point variables
   - **Software double-precision**: Implemented using `ulong` (Metal GPUs lack native double hardware)
+  - **17,113-line IEEE 754 implementation** in `include/gpga_real.h` with dynamic library caching
   - Real literals: `3.14`, `1.5e-10`, `.5`, `5.`
   - Real arrays: `real voltage[0:15];`
-  - Real parameters: `parameter real PI = 3.14159;`
-  - Arithmetic operators: `+`, `-`, `*`, `/`, `**` (power, partial support)
+  - Real parameters: `parameter real PI = $acos(-1.0);`
+  - Arithmetic operators: `+`, `-`, `*`, `/`, `**` (power)
   - Comparison operators: `<`, `>`, `<=`, `>=`, `==`, `!=`
+  - **Math functions** (13 functions): `$log10`, `$ln`, `$exp`, `$sqrt`, `$pow`, `$floor`, `$ceil`, `$sin`, `$cos`, `$tan`, `$asin`, `$acos`, `$atan`
   - Type conversion: `$itor()` (int→real), `$rtoi()` (real→int with truncation)
   - Bit conversion: `$realtobits()`, `$bitstoreal()` (for real storage in 4-state)
   - Mixed integer/real arithmetic with automatic promotion
-  - Real constant expressions in parameters and generate blocks
+  - Real constant expressions in parameters and generate blocks (including math functions)
   - Special values: NaN, Infinity, ±0, denormals fully supported
 
 ### 🧪 Implemented with runtime validation in progress
@@ -195,9 +201,9 @@ The Metal runtime infrastructure is fully functional (smoke test passes on GPU).
 
 ## Test Suite
 
-**393 total test files** across the test suite:
-- **13 files** in `verilog/` (smoke tests including VCD tests, for quick validation)
-- **379 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
+**400 total test files** across the test suite:
+- **14 files** in `verilog/` (smoke tests including VCD tests and real math test, for quick validation)
+- **385 files** in `verilog/pass/` (comprehensive test suite, requires `--full` flag, runs in ~3 minutes)
 - **18 files** in `verilog/systemverilog/` (SystemVerilog features, expected to fail)
 
 The test suite validates parsing, elaboration, MSL codegen output quality, semantic correctness, and VCD waveform generation. Tests cover all major Verilog-2005 features including edge cases and advanced semantics.
@@ -206,9 +212,9 @@ The test suite validates parsing, elaboration, MSL codegen output quality, seman
 
 **Test coverage includes**:
 - **User-Defined Primitives (UDPs)**: Combinational, sequential, edge-sensitive primitives
-- **Real number arithmetic**: Software double-precision float, all IEEE 754 operations, conversions, edge cases (infinity, NaN, denormals)
-- **Wide integers** (5 tests): 128-bit/256-bit literals, wide arithmetic with carry propagation, wide shifts across 64-bit boundaries, wide casez/X/Z matching
-- **File I/O** (14 functions, 9+ tests): $fopen, $fseek, $fread, $ftell, $rewind, $ungetc, $ferror, $fflush, $fscanf/$sscanf with wide values
+- **Real number arithmetic** (13+ tests): Software double-precision float, all 13 IEEE 754 math functions ($log10, $ln, $exp, $sqrt, $pow, $floor, $ceil, $sin, $cos, $tan, $asin, $acos, $atan), conversions, edge cases (infinity, NaN, denormals)
+- **Wide integers** (11+ tests): 128-bit/256-bit literals, wide arithmetic with carry propagation, wide shifts across 64-bit boundaries, wide casez/X/Z matching, wide VCD dumps, wide file I/O, wide memory operations
+- **File I/O** (14 functions, 15+ tests): $fopen, $fseek, $fread, $ftell, $rewind, $ungetc, $ferror, $fflush, $fscanf/$sscanf with wide values, $fdisplay/$fwrite with wide formats
 - **casez/casex pattern matching** (16 tests): Don't-care case statements, wildcard matching, priority encoding, state machines with X/Z tolerance
 - **defparam hierarchical override** (9 tests): Parameter override across module boundaries, precedence rules, nested hierarchy, generate block instances
 - **Generate blocks** (23 tests): Conditional/loop/case generate, nested generate, genvar scoping, gate instantiation, scoping edge cases, multi-dimensional unrolling
@@ -234,7 +240,7 @@ The test suite validates parsing, elaboration, MSL codegen output quality, seman
 ./test_runner.sh
 ```
 
-**Full test suite** (364 files, ~3 minutes):
+**Full test suite** (400 files, ~3 minutes):
 ```sh
 ./test_runner.sh --full
 ```
@@ -277,15 +283,18 @@ The compiler detects and reports:
 ### Technical References
 - [4-State Logic Plan](docs/4STATE.md) - X/Z support design document
 - [4-State API Reference](docs/gpga_4state_api.md) - Complete MSL library documentation (100+ functions)
-- [Software Double Implementation](docs/SOFTFLOAT64_IMPLEMENTATION.md) - IEEE 754 double-precision emulation on Metal GPUs
-- [GPGA Keywords Reference](docs/GPGA_KEYWORDS.md) - All `gpga_*` and `__gpga_*` keywords used in generated MSL
+- [IEEE 754 Real Implementation](include/gpga_real.h) - 17,113-line software double-precision library
+- [CRlibm Porting Plan](docs/CRLIBM_PORTING.md) - Roadmap for correctly rounded elementary functions
+- [Software Double Implementation](docs/SOFTFLOAT64_IMPLEMENTATION.md) - Original softfloat design document (REV31)
+- [GPGA Keywords Reference](docs/GPGA_KEYWORDS.md) - All `gpga_*` and `__gpga_*` keywords used in generated MSL (power ops, real number operations, math functions, wide integers, double precision internals)
 - [App Bundling Vision](docs/APP_BUNDLING.md) - HDL-to-native macOS applications
 - [Bit Packing Strategy](docs/bit_packing_strategy.md) - GPU memory optimization techniques
 - [Verilog Reference](docs/VERILOG_REFERENCE.md) - Language reference
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ### Revision History
-- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV32)
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV33)
+  - [REV33](docs/diff/REV33.md) - IEEE 754 compliant software double & dynamic libraries (v0.7+)
   - [REV32](docs/diff/REV32.md) - Wide integer support & complete file I/O (v0.7+)
   - [REV31](docs/diff/REV31.md) - Software double-precision float & extended file I/O (v0.7)
   - [REV30](docs/diff/REV30.md) - File I/O & string literals (v0.7)
@@ -374,18 +383,24 @@ verilog/
   test_v1_ready_do_not_move.v  # Smoke test (1 file, default run)
   test_vcd_*.v                 # VCD waveform tests (12 files)
   test_repeat_dynamic.v        # Dynamic repeat test
-  pass/           # Comprehensive test suite (365 files, --full flag)
+  test_real_math.v             # Real math functions test
+  pass/           # Comprehensive test suite (385 files, --full flag)
   systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/
-  gpga/                 # Core documentation
-  diff/                 # REV documents (REV0-REV29 commit changelogs)
-  4STATE.md             # 4-state logic implementation
-  gpga_4state_api.md    # Complete MSL 4-state library reference
-  ANALOG.md             # Analog/mixed-signal support
-  GPGA_KEYWORDS.md      # Verilog keyword reference
-  VERILOG_REFERENCE.md  # Language reference
-  ASYNC_DEBUGGING.md    # Async circuit debugging
+  gpga/                    # Core documentation
+  diff/                    # REV documents (REV0-REV33 commit changelogs)
+  4STATE.md                # 4-state logic implementation
+  gpga_4state_api.md       # Complete MSL 4-state library reference
+  CRLIBM_PORTING.md        # CRlibm correctly rounded math port plan
+  SOFTFLOAT64_IMPLEMENTATION.md  # Original softfloat design (REV31)
+  ANALOG.md                # Analog/mixed-signal support
+  GPGA_KEYWORDS.md         # Verilog keyword reference
+  VERILOG_REFERENCE.md     # Language reference
+  ASYNC_DEBUGGING.md       # Async circuit debugging
   bit_packing_strategy.md  # GPU memory optimization
+include/
+  gpga_real.h              # IEEE 754 binary64 library (17,113 lines)
+  gpga_real_decl.h         # Forward declarations for gpga_real.h
 build/
   metalfpga_cli         # Main compiler executable
   metalfpga_smoke       # GPU runtime smoke test

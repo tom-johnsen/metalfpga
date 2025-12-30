@@ -26,16 +26,18 @@ Emits host-side runtime scaffolding
 .PP
 .B Current Status:
 v0.7+ -
-.B Verilog frontend 100% complete + GPU runtime functional + VCD waveform generation + Wide integer support:
+.B Verilog frontend 100% complete + GPU runtime functional + VCD waveform generation + Wide integer support + IEEE 754 math functions:
 Full Verilog-2005 parsing, elaboration, and MSL codegen, plus Metal runtime
 with GPU execution and industry-standard VCD waveform output. Includes
-software double-precision float (IEEE 754), wide integers (128-bit, 256-bit, arbitrary width),
-User-Defined Primitives (UDPs), match-3 operators (===, !==, ==?, !=?), power operator (**),
+software double-precision float (IEEE 754) with 13 math functions ($log10, $ln, $exp, $sqrt, $pow, $floor, $ceil,
+$sin, $cos, $tan, $asin, $acos, $atan), wide integers (128-bit, 256-bit, arbitrary width),
+command-line arguments ($test$plusargs, $value$plusargs), User-Defined Primitives (UDPs),
+match-3 operators (===, !==, ==?, !=?), power operator (**),
 multi-dimensional arrays, procedural part-select assignment, and dynamic repeat loops.
 Full VCD debugging support with $dumpfile, $dumpvars, dump control ($dumpoff/$dumpon),
 and $readmemh/$readmemb. 14 file I/O functions including $fopen, $fseek, $fread, $ungetc, $ferror.
 Extensive support for generate blocks, 4-state logic, signed arithmetic, system tasks,
-timing controls, and switch-level primitives. 393 total test files validate the compiler pipeline.
+timing controls, and switch-level primitives. 400 total test files validate the compiler pipeline.
 .B Next phase: Full test suite validation on GPU (v1.0).
 .SH OPTIONS
 .TP
@@ -85,6 +87,19 @@ Set maximum scheduler steps per GPU dispatch (default: 1000).
 .TP
 .BR \-\-service\-capacity " \fIN\fR"
 Set service record buffer capacity for system tasks (default: 1024).
+.TP
+.BR \-\-dispatch\-timeout\-ms " \fIN\fR"
+Set GPU dispatch timeout in milliseconds.
+.TP
+.BR \-\-run\-verbose
+Enable verbose runtime output for debugging.
+.TP
+.BR \-\-source\-bindings
+Prefer source-level shader bindings (debug mode, slower compilation).
+.TP
+.BR + \fIARG\fR[=\fIVALUE\fR]
+Pass command-line arguments (plusargs) for $test$plusargs and $value$plusargs.
+Example: +DEBUG +WIDTH=128
 .SH SUPPORTED VERILOG FEATURES
 .SS Module System
 .IP \[bu] 2
@@ -204,6 +219,10 @@ File I/O: $fopen, $fclose, $fgetc, $fgets, $feof, $ftell, $rewind, $fseek, $frea
 String: $sformat - String formatting
 .IP \[bu]
 Real conversion: $itor, $rtoi, $realtobits, $bitstoreal
+.IP \[bu]
+Real math: $log10, $ln, $exp, $sqrt, $pow, $floor, $ceil, $sin, $cos, $tan, $asin, $acos, $atan - Mathematical functions (13 functions)
+.IP \[bu]
+Command-line args: $test$plusargs, $value$plusargs - Runtime configuration via +ARG syntax
 .SS Tasks and Time
 .IP \[bu] 2
 Tasks (procedural task blocks with inputs/outputs)
@@ -230,13 +249,19 @@ real data type for IEEE 754 double-precision floating-point (software emulation 
 .IP \[bu]
 Real literals: 3.14, 1.5e-10, .5, 5.
 .IP \[bu]
-Real arrays and parameters
+Real arrays and parameters (e.g., parameter real PI = $acos(-1.0);)
+.IP \[bu]
+17,113-line IEEE 754 implementation in include/gpga_real.h with dynamic library caching
 .IP \[bu]
 Arithmetic operators: +, -, *, /, ** (power)
 .IP \[bu]
 Comparison operators: <, >, <=, >=, ==, !=
 .IP \[bu]
+Math functions (13 functions): $log10, $ln, $exp, $sqrt, $pow, $floor, $ceil, $sin, $cos, $tan, $asin, $acos, $atan
+.IP \[bu]
 Mixed integer/real arithmetic with automatic promotion
+.IP \[bu]
+Real constant expressions in parameters and generate blocks (including math functions)
 .IP \[bu]
 Special values: NaN, Infinity, ±0, denormals fully supported
 .SS Switch-Level Modeling
@@ -329,6 +354,12 @@ Run with VCD waveform output:
 .I testbench.v
 .B \-\-run \-\-vcd\-dir
 .I ./waves/
+.TP
+Run with command-line arguments (plusargs):
+.B metalfpga
+.I testbench.v
+.B \-\-run
+.B +DEBUG +WIDTH=128 +TESTNAME=smoke
 .SH TEST RUNNER
 The
 .B test_runner.sh
@@ -340,7 +371,7 @@ for different testing scenarios.
 Quick smoke test (1 file, ~2 seconds) - For rapid development iteration
 .TP
 .B ./test_runner.sh \-\-full
-Comprehensive test suite (393 files, ~3 minutes) - For regression testing
+Comprehensive test suite (400 files, ~3 minutes) - For regression testing
 .TP
 .B ./test_runner.sh \-\-4state
 Force 4-state mode for all tests - Tests X/Z logic paths
@@ -373,7 +404,7 @@ Invalid command-line arguments
 Smoke test for quick validation (1 file, runs in ~2 seconds)
 .TP
 .I verilog/pass/*.v
-Comprehensive test suite (393 files, requires --full flag, runs in ~3 minutes)
+Comprehensive test suite (400 files, requires --full flag, runs in ~3 minutes)
 .TP
 .I verilog/systemverilog/*.v
 SystemVerilog test suite (18 files, expected to fail)
@@ -394,7 +425,7 @@ Flattened netlist invariants
 Complete MSL 4-state library reference (100+ functions)
 .TP
 .I docs/GPGA_KEYWORDS.md
-GPGA keywords reference - All gpga_* and __gpga_* keywords used in generated MSL
+GPGA keywords reference - All gpga_* and __gpga_* keywords used in generated MSL (power ops, real number operations, math functions, wide integers, double precision internals)
 .TP
 .I docs/SOFTFLOAT64_IMPLEMENTATION.md
 Software double-precision float implementation (IEEE 754 emulation, 29 functions)
@@ -402,8 +433,17 @@ Software double-precision float implementation (IEEE 754 emulation, 29 functions
 .I docs/APP_BUNDLING.md
 Vision for compiling HDL to native macOS applications
 .TP
+.I docs/CRLIBM_PORTING.md
+CRlibm porting plan - Roadmap for correctly rounded elementary functions
+.TP
 .I docs/diff/
-REV documents tracking commit-by-commit changes (REV0-REV32)
+REV documents tracking commit-by-commit changes (REV0-REV33)
+.TP
+.I include/gpga_real.h
+IEEE 754 binary64 library (17,113 lines) - Software double-precision implementation
+.TP
+.I include/gpga_real_decl.h
+Forward declarations for gpga_real.h
 .TP
 .I verilog/test_vcd_*.v
 VCD waveform generation tests (12 files)
@@ -411,28 +451,32 @@ VCD waveform generation tests (12 files)
 .I verilog/test_repeat_dynamic.v
 Dynamic repeat loop test
 .TP
+.I verilog/test_real_math.v
+Real math functions test (13 math functions)
+.TP
 .I verilog/test_wide_*.v
-Wide integer tests (128-bit, 256-bit, 5 files)
+Wide integer tests (128-bit, 256-bit, 5+ files)
 .TP
 .I verilog/test_system_*.v
-File I/O system task tests (9+ files)
+File I/O system task tests (15+ files)
 .SH NOTES
 .SS Test Suite Status
-393 total test files validate the compiler pipeline. The test suite validates
+400 total test files validate the compiler pipeline. The test suite validates
 parsing, elaboration, MSL codegen output quality, semantic correctness, and
 VCD waveform generation.
-Test coverage includes UDPs (4 tests), real number arithmetic (12 tests),
+Test coverage includes UDPs (4 tests), real number arithmetic (13+ tests including all 13 math functions),
 casez/casex pattern matching (16 tests), defparam hierarchical override (9 tests),
 generate blocks (23 tests), timing semantics (14 tests), switch-level primitives
 (23 tests), VCD waveform generation (12 tests), dynamic repeat loops (1 test),
-wide integers (5 tests), file I/O (14 functions, 9+ tests),
+wide integers (11+ tests including wide VCD, wide file I/O, wide memory operations),
+file I/O (14 functions, 15+ tests),
 match-3 operators, part-select assignment, reduction operators,
 signed arithmetic, 4-state logic, system tasks, multi-dimensional arrays, and
 advanced net types.
 .PP
 The default test run (./test_runner.sh) executes a single smoke test for rapid
 iteration during development. Use ./test_runner.sh --full for comprehensive
-regression testing (393 files).
+regression testing (400 files).
 .SS Frontend Status
 .B Complete:
 The Verilog frontend is feature-complete. The compiler successfully parses,
@@ -442,9 +486,14 @@ emitted MSL is structurally sound and implements intended semantics.
 .B Runtime Status:
 The Metal runtime infrastructure is fully functional. VCD waveform generation
 is complete and working with full dump control support. Software double-precision
-float (IEEE 754) is implemented using ulong emulation. File I/O infrastructure
-is complete with all 14 functions implemented ($readmemh/$readmemb, $fopen/$fclose,
-$fseek/$ftell/$rewind, $fread/$fgetc/$fgets, $ungetc, $ferror/$fflush, $fscanf/$sscanf).
+float (IEEE 754) is implemented using ulong emulation with 17,113-line library
+in include/gpga_real.h, providing 13 math functions ($log10, $ln, $exp, $sqrt, $pow,
+$floor, $ceil, $sin, $cos, $tan, $asin, $acos, $atan). Dynamic library caching
+optimizes compilation performance (first run ~2-3s, subsequent runs instant).
+File I/O infrastructure is complete with all 14 functions implemented
+($readmemh/$readmemb, $fopen/$fclose, $fseek/$ftell/$rewind, $fread/$fgetc/$fgets,
+$ungetc, $ferror/$fflush, $fscanf/$sscanf). Command-line argument support
+($test$plusargs, $value$plusargs) enables runtime configuration via +ARG syntax.
 Features awaiting full validation include:
 .IP \[bu] 2
 Event scheduling behavior under GPU dispatch
@@ -479,25 +528,30 @@ verilog/
   test_v1_ready_do_not_move.v  Smoke test (1 file, default run)
   test_vcd_*.v                 VCD waveform tests (12 files)
   test_repeat_dynamic.v        Dynamic repeat test
-  test_wide_*.v                Wide integer tests (128-bit, 256-bit, 5 files)
-  test_system_*.v              File I/O tests (9+ files)
-  pass/           Comprehensive test suite (393 files, --full flag)
+  test_real_math.v             Real math functions test
+  test_wide_*.v                Wide integer tests (128-bit, 256-bit, 5+ files)
+  test_system_*.v              File I/O tests (15+ files)
+  pass/           Comprehensive test suite (400 files, --full flag)
   systemverilog/  SystemVerilog tests (18 files, expected to fail)
 docs/
   gpga/                      Core documentation
-  diff/                      REV documents (REV0-REV32 commit changelogs)
+  diff/                      REV documents (REV0-REV33 commit changelogs)
   4STATE.md                  4-state logic implementation
   gpga_4state_api.md         Complete MSL 4-state library reference
-  SOFTFLOAT64_IMPLEMENTATION.md  Software double-precision float (IEEE 754)
+  CRLIBM_PORTING.md          CRlibm correctly rounded math port plan
+  SOFTFLOAT64_IMPLEMENTATION.md  Original softfloat design (REV31)
   APP_BUNDLING.md            HDL-to-macOS apps vision
   VERILOG_REFERENCE.md       Language reference
   ASYNC_DEBUGGING.md         Async circuit debugging
   bit_packing_strategy.md    GPU memory optimization
+include/
+  gpga_real.h                IEEE 754 binary64 library (17,113 lines)
+  gpga_real_decl.h           Forward declarations for gpga_real.h
 artifacts/        Test run outputs (generated, gitignored)
 .fi
 .SH BUGS
 Report bugs at:
-.UR https://github.com/anthropics/metalfpga/issues
+.UR https://github.com/tom-johnsen/metalfpga/issues
 .UE
 .SH LICENSE
 MetalFPGA is dual-licensed:
@@ -518,5 +572,5 @@ Written by the MetalFPGA project contributors.
 .BR cmake (1)
 .PP
 Online documentation:
-.UR https://github.com/anthropics/metalfpga
+.UR https://github.com/tom-johnsen/metalfpga
 .UE
