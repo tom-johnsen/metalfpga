@@ -1339,6 +1339,29 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
     return static_cast<size_t>(instance_count) *
            static_cast<size_t>(array_size);
   };
+  auto align8 = [](size_t value) -> size_t {
+    return (value + 7u) & ~static_cast<size_t>(7u);
+  };
+  auto packed_state_bytes = [&]() -> size_t {
+    size_t total = 0;
+    for (const auto& signal : module.signals) {
+      size_t bytes = signal_bytes(signal) * signal_elements(signal);
+      total = align8(total);
+      total += bytes;
+      if (module.four_state) {
+        total = align8(total);
+        total += bytes;
+      }
+      if (signal.is_trireg) {
+        total = align8(total);
+        total += sizeof(uint64_t) * signal_elements(signal);
+      }
+    }
+    if (total == 0) {
+      total = 1;
+    }
+    return total;
+  };
   specs->clear();
   const auto& indices = kernel.BufferIndices();
   specs->reserve(indices.size());
@@ -1346,6 +1369,16 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
     BufferSpec spec;
     spec.name = entry.first;
     const std::string& name = spec.name;
+    if (name == "gpga_state") {
+      spec.length = packed_state_bytes();
+      specs->push_back(spec);
+      continue;
+    }
+    if (name == "nb_state") {
+      spec.length = packed_state_bytes();
+      specs->push_back(spec);
+      continue;
+    }
     if (name == "params") {
       spec.length = sizeof(GpgaParams);
       specs->push_back(spec);

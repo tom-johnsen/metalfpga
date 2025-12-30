@@ -3562,6 +3562,7 @@ class Parser {
   bool ParseRealDecl(Module* module) {
     const int width = 64;
     bool is_signed = true;
+    std::vector<Statement> init_statements;
     while (true) {
       std::string name;
       if (!ConsumeIdentifier(&name)) {
@@ -3585,6 +3586,22 @@ class Parser {
       AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
                      std::shared_ptr<Expr>(), std::shared_ptr<Expr>(),
                      array_dims, true);
+      if (MatchSymbol("=")) {
+        if (!array_dims.empty()) {
+          ErrorHere("real array initializer not supported");
+          return false;
+        }
+        std::unique_ptr<Expr> rhs = ParseExpr();
+        if (!rhs) {
+          return false;
+        }
+        Statement init_stmt;
+        init_stmt.kind = StatementKind::kAssign;
+        init_stmt.assign.lhs = name;
+        init_stmt.assign.rhs = std::move(rhs);
+        init_stmt.assign.nonblocking = false;
+        init_statements.push_back(std::move(init_stmt));
+      }
       if (MatchSymbol(",")) {
         continue;
       }
@@ -3593,6 +3610,13 @@ class Parser {
         return false;
       }
       break;
+    }
+    if (!init_statements.empty()) {
+      AlwaysBlock init_block;
+      init_block.edge = EdgeKind::kInitial;
+      init_block.clock = "initial";
+      init_block.statements = std::move(init_statements);
+      module->always_blocks.push_back(std::move(init_block));
     }
     return true;
   }
@@ -6049,6 +6073,7 @@ class Parser {
     bool has_event = false;
     bool saw_star = false;
     std::vector<EventItem> items;
+    bool has_delay_control = false;
     if (MatchSymbol("@")) {
       has_event = true;
       bool has_paren = MatchSymbol("(");
@@ -6058,6 +6083,8 @@ class Parser {
     } else if (!(Peek().kind == TokenKind::kSymbol && Peek().text == "#")) {
       ErrorHere("expected '@' or delay control after 'always'");
       return false;
+    } else {
+      has_delay_control = true;
     }
 
     std::vector<Statement> statements;
@@ -6093,6 +6120,18 @@ class Parser {
         edge = EdgeKind::kCombinational;
       }
     }
+    if (has_delay_control) {
+      AlwaysBlock block;
+      block.edge = EdgeKind::kInitial;
+      block.clock = "initial";
+      Statement forever_stmt;
+      forever_stmt.kind = StatementKind::kForever;
+      forever_stmt.forever_body = std::move(statements);
+      block.statements.push_back(std::move(forever_stmt));
+      *out_block = std::move(block);
+      return true;
+    }
+
     if (complex_sensitivity) {
       AlwaysBlock block;
       block.edge = EdgeKind::kInitial;
@@ -6753,7 +6792,7 @@ class Parser {
     int init_width = 0;
     bool init_signed = false;
     bool init_real = false;
-    if (MatchKeyword("integer")) {
+    if (MatchKeyword("integer") || MatchKeyword("int")) {
       init_decl = true;
       init_width = 32;
       init_signed = true;

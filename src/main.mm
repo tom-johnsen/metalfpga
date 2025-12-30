@@ -70,6 +70,22 @@ std::string DirLabel(gpga::PortDir dir) {
   return "unknown";
 }
 
+const gpga::Port* FindPort(const gpga::Module& module,
+                           const std::string& name) {
+  for (const auto& port : module.ports) {
+    if (port.name == name) {
+      return &port;
+    }
+  }
+  return nullptr;
+}
+
+bool IsOutputPort(const gpga::Module& module, const std::string& name) {
+  const gpga::Port* port = FindPort(module, name);
+  return port && (port->dir == gpga::PortDir::kOutput ||
+                  port->dir == gpga::PortDir::kInout);
+}
+
 struct SysTaskInfo {
   bool has_tasks = false;
   bool has_dumpvars = false;
@@ -247,6 +263,233 @@ void CollectSystemFunctionExpr(const gpga::Expr& expr, SysTaskInfo* info) {
     }
     if (expr.repeat_expr) {
       CollectSystemFunctionExpr(*expr.repeat_expr, info);
+    }
+    return;
+  }
+}
+
+void CollectReadSignalsExpr(const gpga::Expr& expr,
+                            std::unordered_set<std::string>* out) {
+  if (!out) {
+    return;
+  }
+  switch (expr.kind) {
+    case gpga::ExprKind::kIdentifier:
+      out->insert(expr.ident);
+      return;
+    case gpga::ExprKind::kUnary:
+      if (expr.operand) {
+        CollectReadSignalsExpr(*expr.operand, out);
+      }
+      return;
+    case gpga::ExprKind::kBinary:
+      if (expr.lhs) {
+        CollectReadSignalsExpr(*expr.lhs, out);
+      }
+      if (expr.rhs) {
+        CollectReadSignalsExpr(*expr.rhs, out);
+      }
+      return;
+    case gpga::ExprKind::kTernary:
+      if (expr.condition) {
+        CollectReadSignalsExpr(*expr.condition, out);
+      }
+      if (expr.then_expr) {
+        CollectReadSignalsExpr(*expr.then_expr, out);
+      }
+      if (expr.else_expr) {
+        CollectReadSignalsExpr(*expr.else_expr, out);
+      }
+      return;
+    case gpga::ExprKind::kSelect:
+      if (expr.base) {
+        CollectReadSignalsExpr(*expr.base, out);
+      }
+      if (expr.msb_expr) {
+        CollectReadSignalsExpr(*expr.msb_expr, out);
+      }
+      if (expr.lsb_expr) {
+        CollectReadSignalsExpr(*expr.lsb_expr, out);
+      }
+      return;
+    case gpga::ExprKind::kIndex:
+      if (expr.base) {
+        CollectReadSignalsExpr(*expr.base, out);
+      }
+      if (expr.index) {
+        CollectReadSignalsExpr(*expr.index, out);
+      }
+      return;
+    case gpga::ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        if (arg) {
+          CollectReadSignalsExpr(*arg, out);
+        }
+      }
+      return;
+    case gpga::ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        if (element) {
+          CollectReadSignalsExpr(*element, out);
+        }
+      }
+      if (expr.repeat_expr) {
+        CollectReadSignalsExpr(*expr.repeat_expr, out);
+      }
+      return;
+    default:
+      return;
+  }
+}
+
+void CollectReadSignals(const gpga::Statement& stmt,
+                        std::unordered_set<std::string>* out) {
+  if (!out) {
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kAssign ||
+      stmt.kind == gpga::StatementKind::kForce ||
+      stmt.kind == gpga::StatementKind::kRelease) {
+    if (stmt.assign.rhs) {
+      CollectReadSignalsExpr(*stmt.assign.rhs, out);
+    }
+    if (stmt.assign.lhs_index) {
+      CollectReadSignalsExpr(*stmt.assign.lhs_index, out);
+    }
+    for (const auto& index : stmt.assign.lhs_indices) {
+      if (index) {
+        CollectReadSignalsExpr(*index, out);
+      }
+    }
+    if (stmt.assign.lhs_msb_expr) {
+      CollectReadSignalsExpr(*stmt.assign.lhs_msb_expr, out);
+    }
+    if (stmt.assign.lhs_lsb_expr) {
+      CollectReadSignalsExpr(*stmt.assign.lhs_lsb_expr, out);
+    }
+    if (stmt.assign.delay) {
+      CollectReadSignalsExpr(*stmt.assign.delay, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kIf) {
+    if (stmt.condition) {
+      CollectReadSignalsExpr(*stmt.condition, out);
+    }
+    for (const auto& inner : stmt.then_branch) {
+      CollectReadSignals(inner, out);
+    }
+    for (const auto& inner : stmt.else_branch) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kCase) {
+    if (stmt.case_expr) {
+      CollectReadSignalsExpr(*stmt.case_expr, out);
+    }
+    for (const auto& item : stmt.case_items) {
+      for (const auto& label : item.labels) {
+        if (label) {
+          CollectReadSignalsExpr(*label, out);
+        }
+      }
+      for (const auto& inner : item.body) {
+        CollectReadSignals(inner, out);
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kFor) {
+    if (stmt.for_init_rhs) {
+      CollectReadSignalsExpr(*stmt.for_init_rhs, out);
+    }
+    if (stmt.for_condition) {
+      CollectReadSignalsExpr(*stmt.for_condition, out);
+    }
+    if (stmt.for_step_rhs) {
+      CollectReadSignalsExpr(*stmt.for_step_rhs, out);
+    }
+    for (const auto& inner : stmt.for_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kWhile) {
+    if (stmt.while_condition) {
+      CollectReadSignalsExpr(*stmt.while_condition, out);
+    }
+    for (const auto& inner : stmt.while_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kRepeat) {
+    if (stmt.repeat_count) {
+      CollectReadSignalsExpr(*stmt.repeat_count, out);
+    }
+    for (const auto& inner : stmt.repeat_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kDelay) {
+    if (stmt.delay) {
+      CollectReadSignalsExpr(*stmt.delay, out);
+    }
+    for (const auto& inner : stmt.delay_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kEventControl) {
+    if (stmt.event_expr) {
+      CollectReadSignalsExpr(*stmt.event_expr, out);
+    }
+    for (const auto& item : stmt.event_items) {
+      if (item.expr) {
+        CollectReadSignalsExpr(*item.expr, out);
+      }
+    }
+    for (const auto& inner : stmt.event_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kWait) {
+    if (stmt.wait_condition) {
+      CollectReadSignalsExpr(*stmt.wait_condition, out);
+    }
+    for (const auto& inner : stmt.wait_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      CollectReadSignals(inner, out);
+    }
+    return;
+  }
+  if (stmt.kind == gpga::StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
+      CollectReadSignals(inner, out);
+    }
+  }
+  if (stmt.kind == gpga::StatementKind::kTaskCall) {
+    for (const auto& arg : stmt.task_args) {
+      if (arg) {
+        CollectReadSignalsExpr(*arg, out);
+      }
     }
     return;
   }
@@ -670,6 +913,10 @@ size_t SignalWordCount(const gpga::SignalInfo& sig) {
   return (width + 63u) / 64u;
 }
 
+size_t SignalElementSize(const gpga::SignalInfo& sig) {
+  return SignalWordSize(sig) * SignalWordCount(sig);
+}
+
 size_t SignalElementCount(const gpga::SignalInfo& sig,
                           const gpga::MetalBuffer& buffer) {
   size_t word_size = SignalWordSize(sig);
@@ -707,6 +954,45 @@ bool ReadSignalWordFromBuffer(const gpga::SignalInfo& sig, uint32_t gid,
   }
   size_t word_size = SignalWordSize(sig);
   size_t offset = (element_index * word_count + word_index) * word_size;
+  if (buffer.length() < offset + word_size) {
+    return false;
+  }
+  uint64_t value = 0;
+  if (word_size == sizeof(uint64_t)) {
+    std::memcpy(&value, static_cast<const uint8_t*>(buffer.contents()) + offset,
+                sizeof(uint64_t));
+  } else {
+    uint32_t tmp = 0;
+    std::memcpy(&tmp, static_cast<const uint8_t*>(buffer.contents()) + offset,
+                sizeof(uint32_t));
+    value = tmp;
+  }
+  *value_out = value;
+  return true;
+}
+
+bool ReadPackedSignalWordFromBuffer(const gpga::SignalInfo& sig, uint32_t gid,
+                                    uint64_t array_index,
+                                    const gpga::MetalBuffer& buffer,
+                                    size_t base_offset, size_t word_index,
+                                    uint64_t* value_out) {
+  if (!value_out || !buffer.contents()) {
+    return false;
+  }
+  size_t word_count = SignalWordCount(sig);
+  if (word_index >= word_count) {
+    return false;
+  }
+  size_t array_size = sig.array_size > 0 ? sig.array_size : 1u;
+  if (array_index >= array_size) {
+    return false;
+  }
+  size_t word_size = SignalWordSize(sig);
+  size_t element_size = SignalElementSize(sig);
+  size_t element_index =
+      static_cast<size_t>(gid) * array_size + static_cast<size_t>(array_index);
+  size_t offset =
+      base_offset + (element_index * element_size) + (word_index * word_size);
   if (buffer.length() < offset + word_size) {
     return false;
   }
@@ -1589,8 +1875,134 @@ std::string FormatNumeric(const gpga::ServiceArgView& arg, char spec,
     uint64_t mask = MaskForWidth(width);
     return std::to_string(arg.value & mask);
   }
-  int64_t signed_value = SignExtend(arg.value, width);
-  return std::to_string(signed_value);
+int64_t signed_value = SignExtend(arg.value, width);
+return std::to_string(signed_value);
+}
+
+struct PackedSignalOffsets {
+  size_t val_offset = 0u;
+  size_t xz_offset = 0u;
+  size_t elem_size = 0u;
+  size_t array_size = 1u;
+  bool has_val = false;
+  bool has_xz = false;
+};
+
+struct PackedStateLayout {
+  std::unordered_map<std::string, PackedSignalOffsets> offsets;
+
+  const PackedSignalOffsets* Find(const std::string& name) const {
+    auto it = offsets.find(name);
+    if (it == offsets.end()) {
+      return nullptr;
+    }
+    return &it->second;
+  }
+};
+
+size_t Align8(size_t value) {
+  return (value + 7u) & ~static_cast<size_t>(7u);
+}
+
+PackedStateLayout BuildPackedStateLayout(const gpga::Module& module,
+                                         const gpga::ModuleInfo& info,
+                                         bool four_state,
+                                         uint32_t count) {
+  PackedStateLayout layout;
+  std::unordered_set<std::string> scheduled_reads;
+  for (const auto& block : module.always_blocks) {
+    if (block.edge == gpga::EdgeKind::kCombinational) {
+      continue;
+    }
+    for (const auto& stmt : block.statements) {
+      CollectReadSignals(stmt, &scheduled_reads);
+    }
+  }
+  std::unordered_set<std::string> port_names;
+  port_names.reserve(module.ports.size());
+  for (const auto& port : module.ports) {
+    port_names.insert(port.name);
+  }
+  std::vector<std::string> reg_names;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      continue;
+    }
+    if (port_names.count(net.name) > 0 || net.type == gpga::NetType::kTrireg) {
+      continue;
+    }
+    if (net.type == gpga::NetType::kReg ||
+        scheduled_reads.count(net.name) > 0) {
+      reg_names.push_back(net.name);
+    }
+  }
+  std::vector<const gpga::Net*> trireg_nets;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      continue;
+    }
+    if (net.type == gpga::NetType::kTrireg &&
+        !IsOutputPort(module, net.name)) {
+      trireg_nets.push_back(&net);
+    }
+  }
+  std::vector<const gpga::Net*> array_nets;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      array_nets.push_back(&net);
+    }
+  }
+  size_t offset = 0;
+  auto add_segment = [&](const std::string& base_name, bool is_xz) {
+    const gpga::SignalInfo* sig = FindSignalInfo(info, base_name);
+    if (!sig) {
+      return;
+    }
+    size_t array_size = sig->array_size > 0 ? sig->array_size : 1u;
+    size_t elem_size = SignalElementSize(*sig);
+    offset = Align8(offset);
+    PackedSignalOffsets& entry = layout.offsets[base_name];
+    entry.elem_size = elem_size;
+    entry.array_size = array_size;
+    if (is_xz) {
+      entry.has_xz = true;
+      entry.xz_offset = offset;
+    } else {
+      entry.has_val = true;
+      entry.val_offset = offset;
+    }
+    offset += static_cast<size_t>(count) * array_size * elem_size;
+  };
+  auto add_decay = [&]() {
+    offset = Align8(offset);
+    offset += static_cast<size_t>(count) * sizeof(uint64_t);
+  };
+  for (const auto& port : module.ports) {
+    add_segment(port.name, false);
+    if (four_state) {
+      add_segment(port.name, true);
+    }
+  }
+  for (const auto& reg : reg_names) {
+    add_segment(reg, false);
+    if (four_state) {
+      add_segment(reg, true);
+    }
+  }
+  for (const auto* reg : trireg_nets) {
+    add_segment(reg->name, false);
+    if (four_state) {
+      add_segment(reg->name, true);
+    }
+    add_decay();
+  }
+  for (const auto* net : array_nets) {
+    add_segment(net->name, false);
+    if (four_state) {
+      add_segment(net->name, true);
+    }
+  }
+  return layout;
 }
 
 std::string FormatReal(const gpga::ServiceArgView& arg, char spec,
@@ -1856,6 +2268,10 @@ struct VcdSignal {
 
 class VcdWriter {
  public:
+  void SetPackedLayout(const PackedStateLayout* layout) {
+    packed_layout_ = layout;
+  }
+
   bool Start(const std::string& filename, const std::string& output_dir,
              const gpga::ModuleInfo& module,
              const std::vector<std::string>& filter, uint32_t depth,
@@ -2255,10 +2671,18 @@ class VcdWriter {
     }
     const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.base_name, "_val");
     const gpga::MetalBuffer* xz_buf = nullptr;
+    const gpga::MetalBuffer* packed_buf = nullptr;
+    const PackedSignalOffsets* packed = nullptr;
     if (four_state_) {
       xz_buf = FindBuffer(buffers, sig.base_name, "_xz");
     }
-    if (!val_buf) {
+    if (!val_buf && packed_layout_) {
+      packed = packed_layout_->Find(sig.base_name);
+      if (packed) {
+        packed_buf = FindBuffer(buffers, "gpga_state", "");
+      }
+    }
+    if (!val_buf && (!packed || !packed_buf || !packed->has_val)) {
       return false;
     }
     gpga::SignalInfo info;
@@ -2267,15 +2691,31 @@ class VcdWriter {
     info.array_size = sig.array_size;
     info.is_real = sig.is_real;
     uint64_t val_word = 0;
-    if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
-                                  *val_buf, 0u, &val_word)) {
-      return false;
+    if (packed) {
+      if (!ReadPackedSignalWordFromBuffer(
+              info, sig.instance_index, sig.array_index, *packed_buf,
+              packed->val_offset, 0u, &val_word)) {
+        return false;
+      }
+    } else {
+      if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                    *val_buf, 0u, &val_word)) {
+        return false;
+      }
     }
     *val = val_word;
-    if (four_state_ && xz_buf && xz_buf->contents() &&
-        ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
-                                 *xz_buf, 0u, xz)) {
-      return true;
+    if (four_state_) {
+      if (packed && packed_buf && packed->has_xz) {
+        return ReadPackedSignalWordFromBuffer(
+            info, sig.instance_index, sig.array_index, *packed_buf,
+            packed->xz_offset, 0u, xz);
+      }
+      if (xz_buf && xz_buf->contents() &&
+          ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                   *xz_buf, 0u, xz)) {
+        return true;
+      }
+      *xz = 0;
     } else {
       *xz = 0;
     }
@@ -2292,10 +2732,18 @@ class VcdWriter {
     }
     const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.base_name, "_val");
     const gpga::MetalBuffer* xz_buf = nullptr;
+    const gpga::MetalBuffer* packed_buf = nullptr;
+    const PackedSignalOffsets* packed = nullptr;
     if (four_state_) {
       xz_buf = FindBuffer(buffers, sig.base_name, "_xz");
     }
-    if (!val_buf) {
+    if (!val_buf && packed_layout_) {
+      packed = packed_layout_->Find(sig.base_name);
+      if (packed) {
+        packed_buf = FindBuffer(buffers, "gpga_state", "");
+      }
+    }
+    if (!val_buf && (!packed || !packed_buf || !packed->has_val)) {
       return false;
     }
     gpga::SignalInfo info;
@@ -2306,14 +2754,33 @@ class VcdWriter {
     val_words->assign(sig.word_count, 0ull);
     xz_words->assign(sig.word_count, 0ull);
     for (uint32_t word = 0; word < sig.word_count; ++word) {
-      if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
-                                    *val_buf, word, &(*val_words)[word])) {
-        return false;
-      }
-      if (four_state_ && xz_buf && xz_buf->contents()) {
-        if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
-                                      *xz_buf, word, &(*xz_words)[word])) {
+      if (packed) {
+        if (!ReadPackedSignalWordFromBuffer(
+                info, sig.instance_index, sig.array_index, *packed_buf,
+                packed->val_offset, word, &(*val_words)[word])) {
           return false;
+        }
+      } else {
+        if (!ReadSignalWordFromBuffer(info, sig.instance_index, sig.array_index,
+                                      *val_buf, word, &(*val_words)[word])) {
+          return false;
+        }
+      }
+      if (four_state_) {
+        if (packed && packed_buf && packed->has_xz) {
+          if (!ReadPackedSignalWordFromBuffer(
+                  info, sig.instance_index, sig.array_index, *packed_buf,
+                  packed->xz_offset, word, &(*xz_words)[word])) {
+            return false;
+          }
+          continue;
+        }
+        if (xz_buf && xz_buf->contents()) {
+          if (!ReadSignalWordFromBuffer(
+                  info, sig.instance_index, sig.array_index, *xz_buf, word,
+                  &(*xz_words)[word])) {
+            return false;
+          }
         }
       }
     }
@@ -2476,6 +2943,7 @@ class VcdWriter {
   uint64_t last_time_ = 0;
   uint64_t dump_limit_ = 0;
   std::string timescale_ = "1ns";
+  const PackedStateLayout* packed_layout_ = nullptr;
   std::ofstream out_;
   std::vector<VcdSignal> signals_;
 };
@@ -4250,6 +4718,13 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     buffers.emplace(entry.first, std::move(buffer));
   }
 
+  PackedStateLayout packed_layout;
+  bool has_packed_layout = false;
+  if (buffers.find("gpga_state") != buffers.end()) {
+    packed_layout = BuildPackedStateLayout(module, info, enable_4state, count);
+    has_packed_layout = true;
+  }
+
   const bool has_dumpvars = ModuleUsesDumpvars(module);
   const uint32_t vcd_step_budget = (vcd_steps > 0u) ? vcd_steps : 1u;
   uint32_t effective_max_steps = max_steps;
@@ -4276,6 +4751,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
 
   gpga::ServiceStringTable strings = BuildStringTable(module);
   VcdWriter vcd;
+  if (has_packed_layout) {
+    vcd.SetPackedLayout(&packed_layout);
+  }
   std::string dumpfile;
   std::vector<FileTable> file_tables(count);
 
@@ -4369,9 +4847,14 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       if (!status) {
         break;
       }
-      if (status[0] == kStatusFinished || status[0] == kStatusStopped ||
-          status[0] == kStatusError || saw_finish ||
-          status[0] == kStatusIdle) {
+      const uint32_t status_val = status[0];
+      const bool should_stop = status_val == kStatusFinished ||
+          status_val == kStatusStopped || status_val == kStatusError ||
+          saw_finish;
+      if (status_val == kStatusIdle && has_dumpvars && !should_stop) {
+        continue;
+      }
+      if (should_stop || status_val == kStatusIdle) {
         vcd.FinalSnapshot(buffers);
         vcd.Close();
         break;

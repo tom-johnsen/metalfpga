@@ -293,7 +293,8 @@ The compiler detects and reports:
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ### Revision History
-- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV33)
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV34)
+  - [REV34](docs/diff/REV34.md) - CRlibm validation milestone: 99.999% perfect accuracy (v0.7+)
   - [REV33](docs/diff/REV33.md) - IEEE 754 compliant software double & dynamic libraries (v0.7+)
   - [REV32](docs/diff/REV32.md) - Wide integer support & complete file I/O (v0.7+)
   - [REV31](docs/diff/REV31.md) - Software double-precision float & extended file I/O (v0.7)
@@ -388,7 +389,7 @@ verilog/
   systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/
   gpga/                    # Core documentation
-  diff/                    # REV documents (REV0-REV33 commit changelogs)
+  diff/                    # REV documents (REV0-REV34 commit changelogs)
   4STATE.md                # 4-state logic implementation
   gpga_4state_api.md       # Complete MSL 4-state library reference
   CRLIBM_PORTING.md        # CRlibm correctly rounded math port plan

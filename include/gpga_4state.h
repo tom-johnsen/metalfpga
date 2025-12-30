@@ -49,6 +49,10 @@ inline FourState32 fs_resize32(FourState32 a, uint width) {
 inline FourState64 fs_resize64(FourState64 a, uint width) {
   return fs_make64(a.val, a.xz, width);
 }
+inline FourState64 fs_resize64(FourState32 a, uint width) {
+  FourState64 widened = {static_cast<ulong>(a.val), static_cast<ulong>(a.xz)};
+  return fs_resize64(widened, width);
+}
 inline FourState32 fs_sext32(FourState32 a, uint src_width, uint target_width) {
   if (target_width == 0u || src_width == 0u) return fs_make32(0u, 0u, target_width);
   if (target_width <= src_width) return fs_make32(a.val, a.xz, target_width);

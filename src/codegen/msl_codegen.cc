@@ -44,6 +44,145 @@ const Task* FindTask(const Module& module, const std::string& name) {
   return nullptr;
 }
 
+SequentialAssign CloneSequentialAssign(const SequentialAssign& assign) {
+  SequentialAssign out;
+  out.lhs = assign.lhs;
+  out.lhs_has_range = assign.lhs_has_range;
+  out.lhs_indexed_range = assign.lhs_indexed_range;
+  out.lhs_indexed_desc = assign.lhs_indexed_desc;
+  out.lhs_indexed_width = assign.lhs_indexed_width;
+  out.lhs_msb = assign.lhs_msb;
+  out.lhs_lsb = assign.lhs_lsb;
+  out.nonblocking = assign.nonblocking;
+  if (assign.lhs_index) {
+    out.lhs_index = CloneExpr(*assign.lhs_index);
+  }
+  for (const auto& idx : assign.lhs_indices) {
+    out.lhs_indices.push_back(CloneExpr(*idx));
+  }
+  if (assign.lhs_msb_expr) {
+    out.lhs_msb_expr = CloneExpr(*assign.lhs_msb_expr);
+  }
+  if (assign.lhs_lsb_expr) {
+    out.lhs_lsb_expr = CloneExpr(*assign.lhs_lsb_expr);
+  }
+  if (assign.rhs) {
+    out.rhs = CloneExpr(*assign.rhs);
+  }
+  if (assign.delay) {
+    out.delay = CloneExpr(*assign.delay);
+  }
+  return out;
+}
+
+EventItem CloneEventItem(const EventItem& item) {
+  EventItem out;
+  out.edge = item.edge;
+  if (item.expr) {
+    out.expr = CloneExpr(*item.expr);
+  }
+  return out;
+}
+
+Statement CloneStatement(const Statement& stmt) {
+  Statement out;
+  out.kind = stmt.kind;
+  out.case_kind = stmt.case_kind;
+  out.assign = CloneSequentialAssign(stmt.assign);
+  out.for_init_lhs = stmt.for_init_lhs;
+  if (stmt.for_init_rhs) {
+    out.for_init_rhs = CloneExpr(*stmt.for_init_rhs);
+  }
+  if (stmt.for_condition) {
+    out.for_condition = CloneExpr(*stmt.for_condition);
+  }
+  out.for_step_lhs = stmt.for_step_lhs;
+  if (stmt.for_step_rhs) {
+    out.for_step_rhs = CloneExpr(*stmt.for_step_rhs);
+  }
+  for (const auto& inner : stmt.for_body) {
+    out.for_body.push_back(CloneStatement(inner));
+  }
+  if (stmt.while_condition) {
+    out.while_condition = CloneExpr(*stmt.while_condition);
+  }
+  for (const auto& inner : stmt.while_body) {
+    out.while_body.push_back(CloneStatement(inner));
+  }
+  if (stmt.repeat_count) {
+    out.repeat_count = CloneExpr(*stmt.repeat_count);
+  }
+  for (const auto& inner : stmt.repeat_body) {
+    out.repeat_body.push_back(CloneStatement(inner));
+  }
+  if (stmt.delay) {
+    out.delay = CloneExpr(*stmt.delay);
+  }
+  for (const auto& inner : stmt.delay_body) {
+    out.delay_body.push_back(CloneStatement(inner));
+  }
+  out.event_edge = stmt.event_edge;
+  if (stmt.event_expr) {
+    out.event_expr = CloneExpr(*stmt.event_expr);
+  }
+  for (const auto& item : stmt.event_items) {
+    out.event_items.push_back(CloneEventItem(item));
+  }
+  for (const auto& inner : stmt.event_body) {
+    out.event_body.push_back(CloneStatement(inner));
+  }
+  if (stmt.wait_condition) {
+    out.wait_condition = CloneExpr(*stmt.wait_condition);
+  }
+  for (const auto& inner : stmt.wait_body) {
+    out.wait_body.push_back(CloneStatement(inner));
+  }
+  for (const auto& inner : stmt.forever_body) {
+    out.forever_body.push_back(CloneStatement(inner));
+  }
+  for (const auto& inner : stmt.fork_branches) {
+    out.fork_branches.push_back(CloneStatement(inner));
+  }
+  out.disable_target = stmt.disable_target;
+  out.task_name = stmt.task_name;
+  for (const auto& arg : stmt.task_args) {
+    out.task_args.push_back(arg ? CloneExpr(*arg) : nullptr);
+  }
+  out.trigger_target = stmt.trigger_target;
+  out.force_target = stmt.force_target;
+  out.release_target = stmt.release_target;
+  if (stmt.condition) {
+    out.condition = CloneExpr(*stmt.condition);
+  }
+  for (const auto& inner : stmt.then_branch) {
+    out.then_branch.push_back(CloneStatement(inner));
+  }
+  for (const auto& inner : stmt.else_branch) {
+    out.else_branch.push_back(CloneStatement(inner));
+  }
+  for (const auto& inner : stmt.block) {
+    out.block.push_back(CloneStatement(inner));
+  }
+  out.block_label = stmt.block_label;
+  if (stmt.case_expr) {
+    out.case_expr = CloneExpr(*stmt.case_expr);
+  }
+  for (const auto& item : stmt.case_items) {
+    CaseItem cloned;
+    for (const auto& label : item.labels) {
+      cloned.labels.push_back(CloneExpr(*label));
+    }
+    for (const auto& inner : item.body) {
+      cloned.body.push_back(CloneStatement(inner));
+    }
+    out.case_items.push_back(std::move(cloned));
+  }
+  for (const auto& inner : stmt.default_branch) {
+    out.default_branch.push_back(CloneStatement(inner));
+  }
+  return out;
+}
+
 const std::unordered_map<std::string, int>* g_task_arg_widths = nullptr;
 const std::unordered_map<std::string, bool>* g_task_arg_signed = nullptr;
 const std::unordered_map<std::string, bool>* g_task_arg_real = nullptr;
@@ -7243,6 +7382,123 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     }
 
+    const bool pack_signals = needs_scheduler;
+    const bool pack_nb = pack_signals;
+    struct PackedSignal {
+      std::string name;
+      std::string type;
+      int array_size = 1;
+    };
+    std::unordered_map<std::string, int> signal_array_sizes;
+    signal_array_sizes.reserve(module.nets.size());
+    for (const auto& net : module.nets) {
+      if (net.array_size > 0) {
+        signal_array_sizes[net.name] = net.array_size;
+      }
+    }
+    auto array_size_for = [&](const std::string& name) -> int {
+      auto it = signal_array_sizes.find(name);
+      return (it != signal_array_sizes.end()) ? it->second : 1;
+    };
+    std::vector<PackedSignal> packed_signals;
+    std::vector<PackedSignal> packed_nb_signals;
+    if (pack_signals) {
+      packed_signals.reserve(module.ports.size() * 2 +
+                             reg_names.size() * 2 +
+                             trireg_nets.size() * 3 +
+                             array_nets.size() * 2);
+      for (const auto& port : module.ports) {
+        std::string type = TypeForWidth(port.width);
+        PackedSignal val;
+        val.name = val_name(port.name);
+        val.type = type;
+        val.array_size = 1;
+        packed_signals.push_back(std::move(val));
+        PackedSignal xz;
+        xz.name = xz_name(port.name);
+        xz.type = type;
+        xz.array_size = 1;
+        packed_signals.push_back(std::move(xz));
+      }
+      for (const auto& reg : reg_names) {
+        std::string type = TypeForWidth(SignalWidth(module, reg));
+        int arr = array_size_for(reg);
+        PackedSignal val;
+        val.name = val_name(reg);
+        val.type = type;
+        val.array_size = arr;
+        packed_signals.push_back(std::move(val));
+        PackedSignal xz;
+        xz.name = xz_name(reg);
+        xz.type = type;
+        xz.array_size = arr;
+        packed_signals.push_back(std::move(xz));
+      }
+      for (const auto* reg : trireg_nets) {
+        std::string type = TypeForWidth(SignalWidth(module, reg->name));
+        int arr = array_size_for(reg->name);
+        PackedSignal val;
+        val.name = val_name(reg->name);
+        val.type = type;
+        val.array_size = arr;
+        packed_signals.push_back(std::move(val));
+        PackedSignal xz;
+        xz.name = xz_name(reg->name);
+        xz.type = type;
+        xz.array_size = arr;
+        packed_signals.push_back(std::move(xz));
+        PackedSignal decay;
+        decay.name = decay_name(reg->name);
+        decay.type = "ulong";
+        decay.array_size = 1;
+        packed_signals.push_back(std::move(decay));
+      }
+      for (const auto* net : array_nets) {
+        std::string type = TypeForWidth(net->width);
+        int arr = std::max(1, net->array_size);
+        PackedSignal val;
+        val.name = val_name(net->name);
+        val.type = type;
+        val.array_size = arr;
+        packed_signals.push_back(std::move(val));
+        PackedSignal xz;
+        xz.name = xz_name(net->name);
+        xz.type = type;
+        xz.array_size = arr;
+        packed_signals.push_back(std::move(xz));
+      }
+    }
+    auto emit_packed_signal_setup = [&](const std::string& count_expr) {
+      if (!pack_signals) {
+        return;
+      }
+      out << "  uint __gpga_count = " << count_expr << ";\n";
+      out << "  ulong __gpga_offset = 0ul;\n";
+      for (const auto& sig : packed_signals) {
+        int array_size = std::max(1, sig.array_size);
+        out << "  __gpga_offset = (__gpga_offset + 7ul) & ~7ul;\n";
+        out << "  device " << sig.type << "* " << sig.name
+            << " = (device " << sig.type << "*)(gpga_state + __gpga_offset);\n";
+        out << "  __gpga_offset += (ulong)__gpga_count * " << array_size
+            << "u * (ulong)sizeof(" << sig.type << ");\n";
+      }
+    };
+    auto emit_packed_nb_setup = [&](const std::string& count_expr) {
+      if (!pack_nb || packed_nb_signals.empty()) {
+        return;
+      }
+      out << "  uint __gpga_nb_count = " << count_expr << ";\n";
+      out << "  ulong __gpga_nb_offset = 0ul;\n";
+      for (const auto& sig : packed_nb_signals) {
+        int array_size = std::max(1, sig.array_size);
+        out << "  __gpga_nb_offset = (__gpga_nb_offset + 7ul) & ~7ul;\n";
+        out << "  device " << sig.type << "* " << sig.name
+            << " = (device " << sig.type << "*)(nb_state + __gpga_nb_offset);\n";
+        out << "  __gpga_nb_offset += (ulong)__gpga_nb_count * " << array_size
+            << "u * (ulong)sizeof(" << sig.type << ");\n";
+      }
+    };
+
     std::unordered_set<std::string> switch_nets;
     for (const auto& sw : module.switches) {
       switch_nets.insert(sw.a);
@@ -7280,60 +7536,70 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "kernel void gpga_" << module.name << "(";
     int buffer_index = 0;
     bool first = true;
-    for (const auto& port : module.ports) {
+    if (pack_signals) {
       if (!first) {
         out << ",\n";
       }
       first = false;
-      std::string qualifier =
-          (port.dir == PortDir::kInput) ? "constant" : "device";
-      std::string type = TypeForWidth(port.width);
-      out << "  " << qualifier << " " << type << "* "
-          << val_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
-      out << ",\n";
-      out << "  " << qualifier << " " << type << "* "
-          << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
+      out << "  device uchar* gpga_state [[buffer(" << buffer_index++
+          << ")]]";
     }
-    for (const auto& reg : reg_names) {
-      if (!first) {
+    if (!pack_signals) {
+      for (const auto& port : module.ports) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string qualifier =
+            (port.dir == PortDir::kInput) ? "constant" : "device";
+        std::string type = TypeForWidth(port.width);
+        out << "  " << qualifier << " " << type << "* "
+            << val_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
         out << ",\n";
+        out << "  " << qualifier << " " << type << "* "
+            << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
       }
-      first = false;
-      std::string type = TypeForWidth(SignalWidth(module, reg));
-      out << "  device " << type << "* " << val_name(reg) << " [[buffer("
-          << buffer_index++ << ")]]";
-      out << ",\n";
-      out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
-          << buffer_index++ << ")]]";
-    }
-    for (const auto* reg : trireg_nets) {
-      if (!first) {
+      for (const auto& reg : reg_names) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string type = TypeForWidth(SignalWidth(module, reg));
+        out << "  device " << type << "* " << val_name(reg) << " [[buffer("
+            << buffer_index++ << ")]]";
         out << ",\n";
+        out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
+            << buffer_index++ << ")]]";
       }
-      first = false;
-      std::string type = TypeForWidth(SignalWidth(module, reg->name));
-      out << "  device " << type << "* " << val_name(reg->name)
-          << " [[buffer("
-          << buffer_index++ << ")]]";
-      out << ",\n";
-      out << "  device " << type << "* " << xz_name(reg->name)
-          << " [[buffer("
-          << buffer_index++ << ")]]";
-      out << ",\n";
-      out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
-          << buffer_index++ << ")]]";
-    }
-    for (const auto* net : array_nets) {
-      if (!first) {
+      for (const auto* reg : trireg_nets) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string type = TypeForWidth(SignalWidth(module, reg->name));
+        out << "  device " << type << "* " << val_name(reg->name)
+            << " [[buffer("
+            << buffer_index++ << ")]]";
         out << ",\n";
+        out << "  device " << type << "* " << xz_name(reg->name)
+            << " [[buffer("
+            << buffer_index++ << ")]]";
+        out << ",\n";
+        out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
+            << buffer_index++ << ")]]";
       }
-      first = false;
-      std::string type = TypeForWidth(net->width);
-      out << "  device " << type << "* " << val_name(net->name)
-          << " [[buffer(" << buffer_index++ << ")]]";
-      out << ",\n";
-      out << "  device " << type << "* " << xz_name(net->name)
-          << " [[buffer(" << buffer_index++ << ")]]";
+      for (const auto* net : array_nets) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string type = TypeForWidth(net->width);
+        out << "  device " << type << "* " << val_name(net->name)
+            << " [[buffer(" << buffer_index++ << ")]]";
+        out << ",\n";
+        out << "  device " << type << "* " << xz_name(net->name)
+            << " [[buffer(" << buffer_index++ << ")]]";
+      }
     }
     if (!first) {
       out << ",\n";
@@ -7345,6 +7611,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if (gid >= params.count) {\n";
     out << "    return;\n";
     out << "  }\n";
+    if (pack_signals) {
+      emit_packed_signal_setup("params.count");
+    }
 
     std::unordered_set<std::string> locals;
     std::unordered_set<std::string> regs;
@@ -8671,6 +8940,215 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     out << "}\n";
 
+    auto emit_sched_comb_update = [&](int indent) {
+      bool has_comb = !module.assigns.empty() || !module.switches.empty();
+      if (!has_comb) {
+        for (const auto& block : module.always_blocks) {
+          if (block.edge == EdgeKind::kCombinational) {
+            has_comb = true;
+            break;
+          }
+        }
+      }
+      if (!has_comb) {
+        return;
+      }
+      std::string pad(indent, ' ');
+      out << pad << "{\n";
+      std::unordered_set<std::string> comb_declared;
+      emit_continuous_assigns(locals, regs, &comb_declared);
+
+      for (const auto& name : switch_nets) {
+        if (drive_declared.count(name) > 0) {
+          continue;
+        }
+        int width = SignalWidth(module, name);
+        ensure_drive_declared(name, width, drive_init_for(name, width));
+      }
+
+      std::unordered_set<std::string> comb_targets;
+      for (const auto& block : module.always_blocks) {
+        if (block.edge != EdgeKind::kCombinational) {
+          continue;
+        }
+        for (const auto& stmt : block.statements) {
+          CollectAssignedSignals(stmt, &comb_targets);
+        }
+      }
+      for (const auto& target : comb_targets) {
+        if (locals.count(target) == 0 || comb_declared.count(target) > 0) {
+          continue;
+        }
+        std::string type = TypeForWidth(SignalWidth(module, target));
+        out << "  " << type << " " << val_name(target) << ";\n";
+        out << "  " << type << " " << xz_name(target) << ";\n";
+        comb_declared.insert(target);
+      }
+      for (const auto& block : module.always_blocks) {
+        if (block.edge != EdgeKind::kCombinational) {
+          continue;
+        }
+        ExprCache block_cache;
+        for (const auto& stmt : block.statements) {
+          emit_comb_stmt(stmt, indent + 2, &block_cache);
+        }
+      }
+      for (const auto& sw : module.switches) {
+        std::string a_val;
+        std::string a_xz;
+        std::string b_val;
+        std::string b_xz;
+        int a_width = 0;
+        int b_width = 0;
+        if (!signal_lvalue4(sw.a, &a_val, &a_xz, &a_width) ||
+            !signal_lvalue4(sw.b, &b_val, &b_xz, &b_width)) {
+          continue;
+        }
+        int width = std::min(a_width, b_width);
+        FsExpr a_expr{a_val, a_xz, drive_full(width), width};
+        FsExpr b_expr{b_val, b_xz, drive_full(width), width};
+
+        std::string cond_false;
+        std::string cond_unknown = "false";
+        if (sw.kind == SwitchKind::kTran) {
+          cond_false = "false";
+        } else if (sw.kind == SwitchKind::kTranif1 ||
+                   sw.kind == SwitchKind::kTranif0) {
+          FsExpr cond = sw.control ? emit_expr4(*sw.control)
+                                   : FsExpr{literal_for_width(0, 1),
+                                            literal_for_width(0, 1),
+                                            drive_full(1), 1};
+          cond = hoist_full_for_use(cond, 2);
+          std::string known = xz_is_zero(cond.xz, cond.width);
+          std::string is_zero = val_is_zero(cond.val, cond.width);
+          std::string is_one = val_is_nonzero(cond.val, cond.width);
+          cond_unknown = "!(" + known + ")";
+          if (sw.kind == SwitchKind::kTranif1) {
+            cond_false = known + " && " + is_zero;
+          } else {
+            cond_false = known + " && " + is_one;
+          }
+        } else {
+          FsExpr cond = sw.control ? emit_expr4(*sw.control)
+                                   : FsExpr{literal_for_width(0, 1),
+                                            literal_for_width(0, 1),
+                                            drive_full(1), 1};
+          FsExpr cond_n = sw.control_n ? emit_expr4(*sw.control_n)
+                                       : FsExpr{literal_for_width(0, 1),
+                                                literal_for_width(0, 1),
+                                                drive_full(1), 1};
+          cond = hoist_full_for_use(cond, 2);
+          cond_n = hoist_full_for_use(cond_n, 2);
+          std::string known =
+              "(" + xz_is_zero(cond.xz, cond.width) + " && " +
+              xz_is_zero(cond_n.xz, cond_n.width) + ")";
+          std::string on =
+              "(" + val_is_nonzero(cond.val, cond.width) + " && " +
+              val_is_zero(cond_n.val, cond_n.width) + ")";
+          cond_unknown = "!(" + known + ")";
+          cond_false = known + " && !" + on;
+        }
+
+        out << "  if (" << cond_false << ") {\n";
+        out << "  } else {\n";
+        int temp_index = switch_temp_index++;
+        std::string fs_type = (width > 32) ? "FourState64" : "FourState32";
+        std::string type = TypeForWidth(width);
+        std::string zero = literal_for_width(0, width);
+        std::string one = (width > 32) ? "1ul" : "1u";
+        std::string strength0 = StrengthLiteral(sw.strength0);
+        std::string strength1 = StrengthLiteral(sw.strength1);
+        std::string x_strength = (strength0 == strength1)
+                                     ? strength0
+                                     : ("(" + strength0 + " > " + strength1 +
+                                        ") ? " + strength0 + " : " + strength1);
+        std::string a_tmp = "__gpga_sw_a" + std::to_string(temp_index);
+        std::string b_tmp = "__gpga_sw_b" + std::to_string(temp_index);
+        std::string m_val = "__gpga_sw_val" + std::to_string(temp_index);
+        std::string m_xz = "__gpga_sw_xz" + std::to_string(temp_index);
+        std::string m_drive = "__gpga_sw_drive" + std::to_string(temp_index);
+        std::string a_drive = drive_var_name(sw.a);
+        std::string b_drive = drive_var_name(sw.b);
+        out << "    " << fs_type << " " << a_tmp << " = "
+            << fs_make_expr(a_expr, width) << ";\n";
+        out << "    " << fs_type << " " << b_tmp << " = "
+            << fs_make_expr(b_expr, width) << ";\n";
+        out << "    " << type << " " << m_val << " = " << zero << ";\n";
+        out << "    " << type << " " << m_xz << " = " << zero << ";\n";
+        out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+        out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
+        out << "      " << type << " mask = (" << one << " << bit);\n";
+        out << "      uint best0 = 0u;\n";
+        out << "      uint best1 = 0u;\n";
+        out << "      uint bestx = 0u;\n";
+        out << "      if ((" << a_drive << " & mask) != " << zero << ") {\n";
+        out << "        if ((" << a_tmp << ".xz & mask) != " << zero << ") {\n";
+        out << "          bestx = (bestx > " << x_strength << ") ? bestx : "
+            << x_strength << ";\n";
+        out << "        } else if ((" << a_tmp << ".val & mask) != " << zero
+            << ") {\n";
+        out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+            << strength1 << ";\n";
+        out << "        } else {\n";
+        out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+            << strength0 << ";\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      if ((" << b_drive << " & mask) != " << zero << ") {\n";
+        out << "        if ((" << b_tmp << ".xz & mask) != " << zero << ") {\n";
+        out << "          bestx = (bestx > " << x_strength << ") ? bestx : "
+            << x_strength << ";\n";
+        out << "        } else if ((" << b_tmp << ".val & mask) != " << zero
+            << ") {\n";
+        out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+            << strength1 << ";\n";
+        out << "        } else {\n";
+        out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+            << strength0 << ";\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      if (best0 == 0u && best1 == 0u && bestx == 0u) {\n";
+        out << "        " << m_xz << " |= mask;\n";
+        out << "        continue;\n";
+        out << "      }\n";
+        out << "      " << m_drive << " |= mask;\n";
+        out << "      uint max01 = (best0 > best1) ? best0 : best1;\n";
+        out << "      if ((bestx >= max01) && max01 != 0u) {\n";
+        out << "        " << m_xz << " |= mask;\n";
+        out << "      } else if (best0 > best1) {\n";
+        out << "        // 0 wins\n";
+        out << "      } else if (best1 > best0) {\n";
+        out << "        " << m_val << " |= mask;\n";
+        out << "      } else {\n";
+        out << "        " << m_xz << " |= mask;\n";
+        out << "      }\n";
+        out << "    }\n";
+        out << "    if (" << cond_unknown << ") {\n";
+        out << "      " << type << " __gpga_sw_diff_a = (" << a_tmp
+            << ".val ^ " << m_val << ") | (" << a_tmp << ".xz ^ " << m_xz
+            << ");\n";
+        out << "      " << type << " __gpga_sw_diff_b = (" << b_tmp
+            << ".val ^ " << m_val << ") | (" << b_tmp << ".xz ^ " << m_xz
+            << ");\n";
+        out << "      " << a_val << " = " << a_tmp << ".val;\n";
+        out << "      " << a_xz << " = " << a_tmp
+            << ".xz | __gpga_sw_diff_a;\n";
+        out << "      " << b_val << " = " << b_tmp << ".val;\n";
+        out << "      " << b_xz << " = " << b_tmp
+            << ".xz | __gpga_sw_diff_b;\n";
+        out << "    } else {\n";
+        out << "      " << a_val << " = " << m_val << ";\n";
+        out << "      " << a_xz << " = " << m_xz << ";\n";
+        out << "      " << b_val << " = " << m_val << ";\n";
+        out << "      " << b_xz << " = " << m_xz << ";\n";
+        out << "    }\n";
+        out << "    " << a_drive << " = " << m_drive << ";\n";
+        out << "    " << b_drive << " = " << m_drive << ";\n";
+        out << "  }\n";
+      }
+      out << pad << "}\n";
+    };
+
     if (has_initial && !needs_scheduler) {
       out << "\n";
       out << "kernel void gpga_" << module.name << "_init(";
@@ -9091,43 +9569,53 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "kernel void gpga_" << module.name << "_tick(";
       buffer_index = 0;
       first = true;
-      for (const auto& port : module.ports) {
+      if (pack_signals) {
         if (!first) {
           out << ",\n";
         }
         first = false;
-        std::string qualifier =
-            (port.dir == PortDir::kInput) ? "constant" : "device";
-        std::string type = TypeForWidth(port.width);
-        out << "  " << qualifier << " " << type << "* "
-            << val_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
-        out << ",\n";
-        out << "  " << qualifier << " " << type << "* "
-            << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
+        out << "  device uchar* gpga_state [[buffer(" << buffer_index++
+            << ")]]";
       }
-      for (const auto& reg : reg_names) {
-        if (!first) {
+      if (!pack_signals) {
+        for (const auto& port : module.ports) {
+          if (!first) {
+            out << ",\n";
+          }
+          first = false;
+          std::string qualifier =
+              (port.dir == PortDir::kInput) ? "constant" : "device";
+          std::string type = TypeForWidth(port.width);
+          out << "  " << qualifier << " " << type << "* "
+              << val_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
           out << ",\n";
+          out << "  " << qualifier << " " << type << "* "
+              << xz_name(port.name) << " [[buffer(" << buffer_index++ << ")]]";
         }
-        first = false;
-        std::string type = TypeForWidth(SignalWidth(module, reg));
-        out << "  device " << type << "* " << val_name(reg) << " [[buffer("
-            << buffer_index++ << ")]]";
-        out << ",\n";
-        out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
-            << buffer_index++ << ")]]";
-      }
-      for (const auto* net : array_nets) {
-        if (!first) {
+        for (const auto& reg : reg_names) {
+          if (!first) {
+            out << ",\n";
+          }
+          first = false;
+          std::string type = TypeForWidth(SignalWidth(module, reg));
+          out << "  device " << type << "* " << val_name(reg) << " [[buffer("
+              << buffer_index++ << ")]]";
           out << ",\n";
+          out << "  device " << type << "* " << xz_name(reg) << " [[buffer("
+              << buffer_index++ << ")]]";
         }
-        first = false;
-        std::string type = TypeForWidth(net->width);
-        out << "  device " << type << "* " << val_name(net->name)
-            << " [[buffer(" << buffer_index++ << ")]]";
-        out << ",\n";
-        out << "  device " << type << "* " << xz_name(net->name)
-            << " [[buffer(" << buffer_index++ << ")]]";
+        for (const auto* net : array_nets) {
+          if (!first) {
+            out << ",\n";
+          }
+          first = false;
+          std::string type = TypeForWidth(net->width);
+          out << "  device " << type << "* " << val_name(net->name)
+              << " [[buffer(" << buffer_index++ << ")]]";
+          out << ",\n";
+          out << "  device " << type << "* " << xz_name(net->name)
+              << " [[buffer(" << buffer_index++ << ")]]";
+        }
       }
       for (const auto* net : array_nets) {
         if (!first) {
@@ -9151,6 +9639,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  if (gid >= params.count) {\n";
       out << "    return;\n";
       out << "  }\n";
+      if (pack_signals) {
+        emit_packed_signal_setup("params.count");
+      }
       out << "  // Tick kernel: sequential logic (posedge/negedge in v0).\n";
       for (const auto* net : array_nets) {
         out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
@@ -9573,13 +10064,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       };
 
       std::vector<const AlwaysBlock*> initial_blocks;
+      std::vector<const AlwaysBlock*> edge_blocks;
       for (const auto& block : module.always_blocks) {
         if (block.edge == EdgeKind::kInitial) {
           initial_blocks.push_back(&block);
+        } else if (block.edge == EdgeKind::kPosedge ||
+                   block.edge == EdgeKind::kNegedge) {
+          edge_blocks.push_back(&block);
         }
       }
 
-      if (!initial_blocks.empty()) {
+      if (!initial_blocks.empty() || !edge_blocks.empty()) {
         std::unordered_map<std::string, int> event_ids;
         for (size_t i = 0; i < module.events.size(); ++i) {
           event_ids[module.events[i].name] = static_cast<int>(i);
@@ -9596,12 +10091,41 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::vector<ProcDef> procs;
         std::vector<int> proc_parent;
         std::vector<int> proc_join_tag;
+        std::vector<std::unique_ptr<Statement>> always_wrappers;
 
         int next_pid = 0;
         for (const auto* block : initial_blocks) {
           procs.push_back(ProcDef{next_pid, &block->statements, nullptr});
           proc_parent.push_back(-1);
           proc_join_tag.push_back(-1);
+          ++next_pid;
+        }
+        always_wrappers.reserve(edge_blocks.size());
+        auto make_edge_wrapper = [&](const AlwaysBlock& block) {
+          auto forever_stmt = std::make_unique<Statement>();
+          forever_stmt->kind = StatementKind::kForever;
+          Statement event_stmt;
+          event_stmt.kind = StatementKind::kEventControl;
+          event_stmt.event_edge = (block.edge == EdgeKind::kPosedge)
+                                      ? EventEdgeKind::kPosedge
+                                      : EventEdgeKind::kNegedge;
+          auto clock_expr = std::make_unique<Expr>();
+          clock_expr->kind = ExprKind::kIdentifier;
+          clock_expr->ident = block.clock;
+          event_stmt.event_expr = std::move(clock_expr);
+          event_stmt.event_body.reserve(block.statements.size());
+          for (const auto& stmt : block.statements) {
+            event_stmt.event_body.push_back(CloneStatement(stmt));
+          }
+          forever_stmt->forever_body.push_back(std::move(event_stmt));
+          return forever_stmt;
+        };
+        for (const auto* block : edge_blocks) {
+          auto wrapper = make_edge_wrapper(*block);
+          procs.push_back(ProcDef{next_pid, nullptr, wrapper.get()});
+          proc_parent.push_back(-1);
+          proc_join_tag.push_back(-1);
+          always_wrappers.push_back(std::move(wrapper));
           ++next_pid;
         }
         const int root_proc_count = next_pid;
@@ -9705,8 +10229,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
         };
         for (int i = 0; i < root_proc_count; ++i) {
-          collect_forks_in_list(*procs[i].body, procs[i].pid);
+          if (procs[i].body) {
+            collect_forks_in_list(*procs[i].body, procs[i].pid);
+          } else if (procs[i].single) {
+            collect_forks(*procs[i].single, procs[i].pid);
+          }
         }
+
+        auto for_each_proc_stmt = [&](const auto& fn) {
+          for (const auto& proc : procs) {
+            if (proc.body) {
+              for (const auto& stmt : *proc.body) {
+                fn(stmt);
+              }
+            } else if (proc.single) {
+              fn(*proc.single);
+            }
+          }
+        };
 
         std::unordered_map<const Statement*, int> wait_ids;
         std::vector<const Expr*> wait_exprs;
@@ -9787,11 +10327,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
         };
-        for (const auto& block : module.always_blocks) {
-          for (const auto& stmt : block.statements) {
-            collect_waits(stmt);
-          }
-        }
+        for_each_proc_stmt([&](const Statement& stmt) { collect_waits(stmt); });
 
         struct EdgeWaitItem {
           const Expr* expr = nullptr;
@@ -9932,11 +10468,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
         };
-        for (const auto& block : module.always_blocks) {
-          for (const auto& stmt : block.statements) {
-            collect_edge_waits(stmt);
-          }
-        }
+        for_each_proc_stmt(
+            [&](const Statement& stmt) { collect_edge_waits(stmt); });
 
         std::unordered_map<const Statement*, uint32_t> monitor_pid;
         std::unordered_map<const Statement*, uint32_t> strobe_pid;
@@ -10176,11 +10709,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
           }
         };
-        for (const auto& block : module.always_blocks) {
-          for (const auto& stmt : block.statements) {
-            collect_delay_assigns(stmt);
-          }
-        }
+        for_each_proc_stmt(
+            [&](const Statement& stmt) { collect_delay_assigns(stmt); });
 
         const uint64_t kRepeatUnrollLimit = 4096u;
         const std::unordered_map<std::string, int64_t> kRepeatEmptyParams;
@@ -10377,15 +10907,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             return;
           }
         };
-        for (const auto& block : module.always_blocks) {
-          for (const auto& stmt : block.statements) {
-            collect_nb_targets(stmt);
-          }
-        }
+        for_each_proc_stmt(
+            [&](const Statement& stmt) { collect_nb_targets(stmt); });
 
         std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
                                                    nb_targets.end());
         std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+        packed_nb_signals.clear();
+        if (pack_nb && !nb_targets_sorted.empty()) {
+          packed_nb_signals.reserve(nb_targets_sorted.size() * 2);
+          for (const auto& target : nb_targets_sorted) {
+            std::string type = TypeForWidth(SignalWidth(module, target));
+            PackedSignal val;
+            val.name = "nb_" + val_name(target);
+            val.type = type;
+            val.array_size = 1;
+            packed_nb_signals.push_back(std::move(val));
+            PackedSignal xz;
+            xz.name = "nb_" + xz_name(target);
+            xz.type = type;
+            xz.array_size = 1;
+            packed_nb_signals.push_back(std::move(xz));
+          }
+        }
         std::vector<const Net*> nb_array_nets;
         for (const auto& net : module.nets) {
           if (net.array_size <= 0) {
@@ -10600,6 +11144,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         out << "};\n";
 
+        drive_declared.clear();
+
         out << "\n";
         out << "kernel void gpga_" << module.name << "_sched_step(";
         int buffer_index = 0;
@@ -10611,41 +11157,53 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           first = false;
           out << text;
         };
-        for (const auto& port : module.ports) {
-          std::string qualifier =
-              (port.dir == PortDir::kInput) ? "constant" : "device";
-          std::string type = TypeForWidth(port.width);
-          emit_param("  " + qualifier + " " + type + "* " +
-                     val_name(port.name) + " [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  " + qualifier + " " + type + "* " +
-                     xz_name(port.name) + " [[buffer(" +
+        if (pack_signals) {
+          emit_param("  device uchar* gpga_state [[buffer(" +
                      std::to_string(buffer_index++) + ")]]");
         }
-        for (const auto& reg : sched_reg_names) {
-          std::string type = TypeForWidth(SignalWidth(module, reg));
-          emit_param("  device " + type + "* " + val_name(reg) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-          emit_param("  device " + type + "* " + xz_name(reg) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-          if (IsTriregNet(SignalNetType(module, reg))) {
-            emit_param("  device ulong* " + decay_name(reg) + " [[buffer(" +
+        if (!pack_signals) {
+          for (const auto& port : module.ports) {
+            std::string qualifier =
+                (port.dir == PortDir::kInput) ? "constant" : "device";
+            std::string type = TypeForWidth(port.width);
+            emit_param("  " + qualifier + " " + type + "* " +
+                       val_name(port.name) + " [[buffer(" +
+                       std::to_string(buffer_index++) + ")]]");
+            emit_param("  " + qualifier + " " + type + "* " +
+                       xz_name(port.name) + " [[buffer(" +
                        std::to_string(buffer_index++) + ")]]");
           }
+          for (const auto& reg : sched_reg_names) {
+            std::string type = TypeForWidth(SignalWidth(module, reg));
+            emit_param("  device " + type + "* " + val_name(reg) +
+                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+            emit_param("  device " + type + "* " + xz_name(reg) +
+                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+            if (IsTriregNet(SignalNetType(module, reg))) {
+              emit_param("  device ulong* " + decay_name(reg) + " [[buffer(" +
+                         std::to_string(buffer_index++) + ")]]");
+            }
+          }
+          for (const auto* net : array_nets) {
+            std::string type = TypeForWidth(net->width);
+            emit_param("  device " + type + "* " + val_name(net->name) +
+                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+            emit_param("  device " + type + "* " + xz_name(net->name) +
+                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+          }
         }
-        for (const auto* net : array_nets) {
-          std::string type = TypeForWidth(net->width);
-          emit_param("  device " + type + "* " + val_name(net->name) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-          emit_param("  device " + type + "* " + xz_name(net->name) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+        if (pack_nb && !packed_nb_signals.empty()) {
+          emit_param("  device uchar* nb_state [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
         }
-        for (const auto& target : nb_targets_sorted) {
-          std::string type = TypeForWidth(SignalWidth(module, target));
-          emit_param("  device " + type + "* nb_" + val_name(target) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-          emit_param("  device " + type + "* nb_" + xz_name(target) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+        if (!pack_nb) {
+          for (const auto& target : nb_targets_sorted) {
+            std::string type = TypeForWidth(SignalWidth(module, target));
+            emit_param("  device " + type + "* nb_" + val_name(target) +
+                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+            emit_param("  device " + type + "* nb_" + xz_name(target) +
+                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+          }
         }
         for (const auto* net : nb_array_nets) {
           std::string type = TypeForWidth(net->width);
@@ -10766,6 +11324,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  if (gid >= sched.count) {\n";
         out << "    return;\n";
         out << "  }\n";
+        if (pack_signals) {
+          emit_packed_signal_setup("sched.count");
+        }
+        emit_packed_nb_setup("sched.count");
         if (system_task_info.has_system_tasks) {
           out << "  sched_service_count[gid] = 0u;\n";
         }
@@ -11064,6 +11626,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "        }\n";
         }
         out << "      }\n";
+        emit_sched_comb_update(6);
         out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "        uint idx = gpga_sched_index(gid, pid);\n";
         out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -12980,34 +13543,159 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 continue;
               }
               const Statement& body_stmt = stmt.forever_body.front();
-              if (body_stmt.kind != StatementKind::kDelay) {
+              if (body_stmt.kind != StatementKind::kDelay &&
+                  body_stmt.kind != StatementKind::kEventControl) {
                 out << "                  sched_error[gid] = 1u;\n";
                 out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
                 out << "                  break;\n";
                 out << "                }\n";
                 continue;
               }
-              int body_pc = pc_counter++;
-              BodyCase body_case;
-              body_case.pc = body_pc;
-              body_case.owner = &stmt;
-              body_case.next_pc = pc;
-              body_case.loop_pc = pc;
-              body_case.is_forever_body = true;
-              for (const auto& inner : body_stmt.delay_body) {
-                body_case.body.push_back(&inner);
+              if (body_stmt.kind == StatementKind::kDelay) {
+                int body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = pc;
+                body_case.loop_pc = pc;
+                body_case.is_forever_body = true;
+                for (const auto& inner : body_stmt.delay_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_cases.push_back(std::move(body_case));
+                std::string delay_val =
+                    body_stmt.delay ? emit_delay_value4(*body_stmt.delay) : "0ul";
+                out << "                  ulong __gpga_delay = " << delay_val
+                    << ";\n";
+                out << "                  sched_wait_kind[idx] = "
+                       "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                       "GPGA_SCHED_WAIT_TIME;\n";
+                out << "                  sched_wait_time[idx] = __gpga_time + "
+                       "__gpga_delay;\n";
+                out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
               }
-              body_cases.push_back(std::move(body_case));
-              std::string delay_val =
-                  body_stmt.delay ? emit_delay_value4(*body_stmt.delay) : "0ul";
-              out << "                  ulong __gpga_delay = " << delay_val
+              int body_pc = -1;
+              if (!body_stmt.event_body.empty()) {
+                body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = pc;
+                body_case.loop_pc = pc;
+                body_case.is_forever_body = true;
+                for (const auto& inner : body_stmt.event_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_cases.push_back(std::move(body_case));
+              }
+              int event_id = -1;
+              bool named_event = false;
+              const Expr* named_expr = nullptr;
+              if (!body_stmt.event_items.empty()) {
+                if (body_stmt.event_items.size() == 1 &&
+                    body_stmt.event_items[0].edge == EventEdgeKind::kAny &&
+                    body_stmt.event_items[0].expr) {
+                  named_expr = body_stmt.event_items[0].expr.get();
+                }
+              } else if (body_stmt.event_expr &&
+                         body_stmt.event_edge == EventEdgeKind::kAny) {
+                named_expr = body_stmt.event_expr.get();
+              }
+              if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+                auto it = event_ids.find(named_expr->ident);
+                if (it != event_ids.end()) {
+                  event_id = it->second;
+                  named_event = true;
+                }
+              }
+              if (named_event) {
+                out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EVENT;\n";
+                out << "                  sched_wait_event[idx] = " << event_id
+                    << "u;\n";
+              } else {
+                int edge_id = -1;
+                auto it = edge_wait_ids.find(&body_stmt);
+                if (it != edge_wait_ids.end()) {
+                  edge_id = it->second;
+                }
+                if (edge_id < 0) {
+                  out << "                  sched_error[gid] = 1u;\n";
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "                  break;\n";
+                  out << "                }\n";
+                  continue;
+                }
+                const EdgeWaitInfo& info = edge_waits[edge_id];
+                const char* edge_kind = "GPGA_SCHED_EDGE_ANY";
+                if (!info.items.empty()) {
+                  edge_kind = "GPGA_SCHED_EDGE_LIST";
+                } else if (body_stmt.event_edge == EventEdgeKind::kPosedge) {
+                  edge_kind = "GPGA_SCHED_EDGE_POSEDGE";
+                } else if (body_stmt.event_edge == EventEdgeKind::kNegedge) {
+                  edge_kind = "GPGA_SCHED_EDGE_NEGEDGE";
+                }
+                out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EDGE;\n";
+                out << "                  sched_wait_id[idx] = " << edge_id
+                    << "u;\n";
+                out << "                  sched_wait_edge_kind[idx] = " << edge_kind
+                    << ";\n";
+                if (!info.items.empty()) {
+                  out << "                  uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                      << info.item_offset << "u;\n";
+                  for (size_t i = 0; i < info.items.size(); ++i) {
+                    FsExpr edge_expr = emit_expr4(*info.items[i].expr);
+                    edge_expr = hoist_full_for_use(edge_expr, 18);
+                    std::string mask =
+                        literal_for_width(MaskForWidth64(edge_expr.width), 64);
+                    out << "                  ulong __gpga_edge_val = ((ulong)("
+                        << edge_expr.val << ")) & " << mask << ";\n";
+                    out << "                  ulong __gpga_edge_xz = ((ulong)("
+                        << edge_expr.xz << ")) & " << mask << ";\n";
+                    out << "                  sched_edge_prev_val[__gpga_edge_base + "
+                        << i << "u] = __gpga_edge_val;\n";
+                    out << "                  sched_edge_prev_xz[__gpga_edge_base + "
+                        << i << "u] = __gpga_edge_xz;\n";
+                  }
+                } else if (info.expr) {
+                  FsExpr edge_expr = emit_expr4(*info.expr);
+                  edge_expr = hoist_full_for_use(edge_expr, 18);
+                  std::string mask =
+                      literal_for_width(MaskForWidth64(edge_expr.width), 64);
+                  out << "                  uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                      << info.item_offset << "u;\n";
+                  out << "                  ulong __gpga_edge_val = ((ulong)("
+                      << edge_expr.val << ")) & " << mask << ";\n";
+                  out << "                  ulong __gpga_edge_xz = ((ulong)("
+                      << edge_expr.xz << ")) & " << mask << ";\n";
+                  out << "                  sched_edge_prev_val[__gpga_edge_idx] = __gpga_edge_val;\n";
+                  out << "                  sched_edge_prev_xz[__gpga_edge_idx] = __gpga_edge_xz;\n";
+                } else {
+                  out << "                  uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + "
+                      << info.star_offset << "u;\n";
+                  for (size_t i = 0; i < info.star_signals.size(); ++i) {
+                    Expr ident_expr;
+                    ident_expr.kind = ExprKind::kIdentifier;
+                    ident_expr.ident = info.star_signals[i];
+                    FsExpr sig = emit_expr4(ident_expr);
+                    std::string mask =
+                        literal_for_width(MaskForWidth64(sig.width), 64);
+                    out << "                  sched_edge_star_prev_val[__gpga_edge_star_base + "
+                        << i << "u] = ((ulong)(" << sig.val << ")) & " << mask
+                        << ";\n";
+                    out << "                  sched_edge_star_prev_xz[__gpga_edge_star_base + "
+                        << i << "u] = ((ulong)(" << sig.xz << ")) & " << mask
+                        << ";\n";
+                  }
+                }
+              }
+              out << "                  sched_pc[idx] = "
+                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                   : std::to_string(pc) + "u")
                   << ";\n";
-              out << "                  sched_wait_kind[idx] = "
-                     "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
-                     "GPGA_SCHED_WAIT_TIME;\n";
-              out << "                  sched_wait_time[idx] = __gpga_time + "
-                     "__gpga_delay;\n";
-              out << "                  sched_pc[idx] = " << body_pc << "u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
               out << "                  break;\n";
               out << "                }\n";
@@ -13466,6 +14154,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               curr = hoist_full_for_use(curr, 16);
               std::string mask =
                   literal_for_width(MaskForWidth64(curr.width), 64);
+              out << "                {\n";
               out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
                   << j << "u];\n";
               out << "                ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + "
@@ -13505,6 +14194,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   << "u] = __gpga_curr_val;\n";
               out << "                sched_edge_prev_xz[__gpga_edge_base + " << j
                   << "u] = __gpga_curr_xz;\n";
+              out << "                }\n";
             }
             out << "                ready = __gpga_any;\n";
           } else if (info.expr) {
@@ -13651,6 +14341,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "      }\n";
           }
         }
+        emit_sched_comb_update(6);
         if (!system_task_info.monitor_stmts.empty()) {
           out << "      // Monitor change detection.\n";
           for (size_t i = 0; i < system_task_info.monitor_stmts.size(); ++i) {
@@ -13740,6 +14431,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               curr = hoist_full_for_use(curr, 16);
               std::string mask =
                   literal_for_width(MaskForWidth64(curr.width), 64);
+              out << "              {\n";
               out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
                   << j << "u];\n";
               out << "              ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + "
@@ -13779,6 +14471,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   << "u] = __gpga_curr_val;\n";
               out << "              sched_edge_prev_xz[__gpga_edge_base + " << j
                   << "u] = __gpga_curr_xz;\n";
+              out << "              }\n";
             }
             out << "              ready = __gpga_any;\n";
           } else if (info.expr) {
@@ -14081,6 +14774,94 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
   }
 
+  const bool pack_signals = needs_scheduler;
+  const bool pack_nb = pack_signals;
+  struct PackedSignal {
+    std::string name;
+    std::string type;
+    int array_size = 1;
+  };
+  std::unordered_map<std::string, int> signal_array_sizes;
+  signal_array_sizes.reserve(module.nets.size());
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      signal_array_sizes[net.name] = net.array_size;
+    }
+  }
+  auto array_size_for = [&](const std::string& name) -> int {
+    auto it = signal_array_sizes.find(name);
+    return (it != signal_array_sizes.end()) ? it->second : 1;
+  };
+  std::vector<PackedSignal> packed_signals;
+  std::vector<PackedSignal> packed_nb_signals;
+  if (pack_signals) {
+    packed_signals.reserve(module.ports.size() + reg_names.size() +
+                           trireg_nets.size() * 2 + array_nets.size());
+    for (const auto& port : module.ports) {
+      PackedSignal sig;
+      sig.name = port.name;
+      sig.type = TypeForWidth(port.width);
+      sig.array_size = 1;
+      packed_signals.push_back(std::move(sig));
+    }
+    for (const auto& reg : reg_names) {
+      PackedSignal sig;
+      sig.name = reg;
+      sig.type = TypeForWidth(SignalWidth(module, reg));
+      sig.array_size = array_size_for(reg);
+      packed_signals.push_back(std::move(sig));
+    }
+    for (const auto* reg : trireg_nets) {
+      PackedSignal sig;
+      sig.name = reg->name;
+      sig.type = TypeForWidth(SignalWidth(module, reg->name));
+      sig.array_size = array_size_for(reg->name);
+      packed_signals.push_back(std::move(sig));
+      PackedSignal decay;
+      decay.name = decay_name(reg->name);
+      decay.type = "ulong";
+      decay.array_size = 1;
+      packed_signals.push_back(std::move(decay));
+    }
+    for (const auto* net : array_nets) {
+      PackedSignal sig;
+      sig.name = net->name;
+      sig.type = TypeForWidth(net->width);
+      sig.array_size = std::max(1, net->array_size);
+      packed_signals.push_back(std::move(sig));
+    }
+  }
+  auto emit_packed_signal_setup = [&](const std::string& count_expr) {
+    if (!pack_signals) {
+      return;
+    }
+    out << "  uint __gpga_count = " << count_expr << ";\n";
+    out << "  ulong __gpga_offset = 0ul;\n";
+    for (const auto& sig : packed_signals) {
+      int array_size = std::max(1, sig.array_size);
+      out << "  __gpga_offset = (__gpga_offset + 7ul) & ~7ul;\n";
+      out << "  device " << sig.type << "* " << sig.name
+          << " = (device " << sig.type << "*)(gpga_state + __gpga_offset);\n";
+      out << "  __gpga_offset += (ulong)__gpga_count * " << array_size
+          << "u * (ulong)sizeof(" << sig.type << ");\n";
+    }
+  };
+  auto emit_packed_nb_setup = [&](const std::string& count_expr) {
+    if (!pack_nb || packed_nb_signals.empty()) {
+      return;
+    }
+    out << "  uint __gpga_nb_count = " << count_expr << ";\n";
+    out << "  ulong __gpga_nb_offset = 0ul;\n";
+    for (const auto& sig : packed_nb_signals) {
+      int array_size = std::max(1, sig.array_size);
+      out << "  __gpga_nb_offset = (__gpga_nb_offset + 7ul) & ~7ul;\n";
+      out << "  device " << sig.type << "* " << sig.name
+          << " = (device " << sig.type << "*)(nb_state + __gpga_nb_offset);\n";
+      out << "  __gpga_nb_offset += (ulong)__gpga_nb_count * " << array_size
+          << "u * (ulong)sizeof(" << sig.type << ");\n";
+    }
+  };
+
   std::unordered_set<std::string> switch_nets;
   for (const auto& sw : module.switches) {
     switch_nets.insert(sw.a);
@@ -14118,46 +14899,55 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   out << "kernel void gpga_" << module.name << "(";
   int buffer_index = 0;
   bool first = true;
-  for (const auto& port : module.ports) {
+  if (pack_signals) {
     if (!first) {
       out << ",\n";
     }
     first = false;
-    std::string qualifier =
-        (port.dir == PortDir::kInput) ? "constant" : "device";
-    std::string type = TypeForWidth(port.width);
-    out << "  " << qualifier << " " << type << "* " << port.name
-        << " [[buffer(" << buffer_index++ << ")]]";
+    out << "  device uchar* gpga_state [[buffer(" << buffer_index++ << ")]]";
   }
-  for (const auto& reg : reg_names) {
-    if (!first) {
-      out << ",\n";
+  if (!pack_signals) {
+    for (const auto& port : module.ports) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string qualifier =
+          (port.dir == PortDir::kInput) ? "constant" : "device";
+      std::string type = TypeForWidth(port.width);
+      out << "  " << qualifier << " " << type << "* " << port.name
+          << " [[buffer(" << buffer_index++ << ")]]";
     }
-    first = false;
-    std::string type = TypeForWidth(SignalWidth(module, reg));
-    out << "  device " << type << "* " << reg << " [[buffer("
-        << buffer_index++ << ")]]";
-  }
-  for (const auto* reg : trireg_nets) {
-    if (!first) {
-      out << ",\n";
+    for (const auto& reg : reg_names) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(SignalWidth(module, reg));
+      out << "  device " << type << "* " << reg << " [[buffer("
+          << buffer_index++ << ")]]";
     }
-    first = false;
-    std::string type = TypeForWidth(SignalWidth(module, reg->name));
-    out << "  device " << type << "* " << reg->name << " [[buffer("
-        << buffer_index++ << ")]]";
-    out << ",\n";
-    out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
-        << buffer_index++ << ")]]";
-  }
-  for (const auto* net : array_nets) {
-    if (!first) {
+    for (const auto* reg : trireg_nets) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(SignalWidth(module, reg->name));
+      out << "  device " << type << "* " << reg->name << " [[buffer("
+          << buffer_index++ << ")]]";
       out << ",\n";
+      out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
+          << buffer_index++ << ")]]";
     }
-    first = false;
-    std::string type = TypeForWidth(net->width);
-    out << "  device " << type << "* " << net->name << " [[buffer("
-        << buffer_index++ << ")]]";
+    for (const auto* net : array_nets) {
+      if (!first) {
+        out << ",\n";
+      }
+      first = false;
+      std::string type = TypeForWidth(net->width);
+      out << "  device " << type << "* " << net->name << " [[buffer("
+          << buffer_index++ << ")]]";
+    }
   }
   if (!first) {
     out << ",\n";
@@ -14168,6 +14958,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   out << "  if (gid >= params.count) {\n";
   out << "    return;\n";
   out << "  }\n";
+  if (pack_signals) {
+    emit_packed_signal_setup("params.count");
+  }
 
   std::unordered_set<std::string> locals;
   std::unordered_set<std::string> regs;
@@ -15039,6 +15832,145 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
   out << "}\n";
 
+  auto emit_sched_comb_update = [&](int indent) {
+    bool has_comb = !module.assigns.empty() || !module.switches.empty();
+    if (!has_comb) {
+      for (const auto& block : module.always_blocks) {
+        if (block.edge == EdgeKind::kCombinational) {
+          has_comb = true;
+          break;
+        }
+      }
+    }
+    if (!has_comb) {
+      return;
+    }
+    std::string pad(indent, ' ');
+    out << pad << "{\n";
+    std::unordered_set<std::string> comb_declared;
+    emit_continuous_assigns(locals, regs, &comb_declared);
+
+    for (const auto& name : switch_nets) {
+      if (drive_declared.count(name) > 0) {
+        continue;
+      }
+      int width = SignalWidth(module, name);
+      ensure_drive_declared(name, width, drive_init_for(name, width));
+    }
+
+    std::unordered_set<std::string> comb_targets;
+    for (const auto& block : module.always_blocks) {
+      if (block.edge != EdgeKind::kCombinational) {
+        continue;
+      }
+      for (const auto& stmt : block.statements) {
+        CollectAssignedSignals(stmt, &comb_targets);
+      }
+    }
+    for (const auto& target : comb_targets) {
+      if (locals.count(target) == 0 || comb_declared.count(target) > 0) {
+        continue;
+      }
+      std::string type = TypeForWidth(SignalWidth(module, target));
+      out << "  " << type << " " << target << ";\n";
+      comb_declared.insert(target);
+    }
+    for (const auto& block : module.always_blocks) {
+      if (block.edge != EdgeKind::kCombinational) {
+        continue;
+      }
+      for (const auto& stmt : block.statements) {
+        emit_comb_stmt(stmt, indent + 2);
+      }
+    }
+    for (const auto& sw : module.switches) {
+      std::string a_val;
+      std::string b_val;
+      int a_width = 0;
+      int b_width = 0;
+      if (!signal_lvalue2(sw.a, &a_val, &a_width) ||
+          !signal_lvalue2(sw.b, &b_val, &b_width)) {
+        continue;
+      }
+      int width = std::min(a_width, b_width);
+      std::string cond_false;
+      if (sw.kind == SwitchKind::kTran) {
+        cond_false = "false";
+      } else if (sw.kind == SwitchKind::kTranif1 ||
+                 sw.kind == SwitchKind::kTranif0) {
+        std::string cond =
+            sw.control ? EmitCondExpr(*sw.control, module, locals, regs)
+                       : "false";
+        cond_false = (sw.kind == SwitchKind::kTranif1) ? ("!(" + cond + ")")
+                                                       : cond;
+      } else {
+        std::string cond =
+            sw.control ? EmitCondExpr(*sw.control, module, locals, regs)
+                       : "false";
+        std::string cond_n =
+            sw.control_n ? EmitCondExpr(*sw.control_n, module, locals, regs)
+                         : "false";
+        std::string on = "(" + cond + " && !(" + cond_n + "))";
+        cond_false = "!(" + on + ")";
+      }
+
+      out << "  if (" << cond_false << ") {\n";
+      out << "  } else {\n";
+      int temp_index = switch_temp_index++;
+      std::string type = TypeForWidth(width);
+      std::string zero = ZeroForWidth(width);
+      std::string one = (width > 32) ? "1ul" : "1u";
+      std::string strength0 = StrengthLiteral(sw.strength0);
+      std::string strength1 = StrengthLiteral(sw.strength1);
+      std::string a_tmp = "__gpga_sw_a" + std::to_string(temp_index);
+      std::string b_tmp = "__gpga_sw_b" + std::to_string(temp_index);
+      std::string m_val = "__gpga_sw_val" + std::to_string(temp_index);
+      std::string m_drive = "__gpga_sw_drive" + std::to_string(temp_index);
+      std::string a_drive = drive_var_name(sw.a);
+      std::string b_drive = drive_var_name(sw.b);
+      out << "    " << type << " " << a_tmp << " = " << a_val << ";\n";
+      out << "    " << type << " " << b_tmp << " = " << b_val << ";\n";
+      out << "    " << type << " " << m_val << " = " << zero << ";\n";
+      out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+      out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
+      out << "      " << type << " mask = (" << one << " << bit);\n";
+      out << "      uint best0 = 0u;\n";
+      out << "      uint best1 = 0u;\n";
+      out << "      if ((" << a_drive << " & mask) != " << zero << ") {\n";
+      out << "        if ((" << a_tmp << " & mask) != " << zero << ") {\n";
+      out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+          << strength1 << ";\n";
+      out << "        } else {\n";
+      out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+          << strength0 << ";\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if ((" << b_drive << " & mask) != " << zero << ") {\n";
+      out << "        if ((" << b_tmp << " & mask) != " << zero << ") {\n";
+      out << "          best1 = (best1 > " << strength1 << ") ? best1 : "
+          << strength1 << ";\n";
+      out << "        } else {\n";
+      out << "          best0 = (best0 > " << strength0 << ") ? best0 : "
+          << strength0 << ";\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (best0 == 0u && best1 == 0u) {\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      " << m_drive << " |= mask;\n";
+      out << "      if (best1 > best0) {\n";
+      out << "        " << m_val << " |= mask;\n";
+      out << "      }\n";
+      out << "    }\n";
+      out << "    " << a_val << " = " << m_val << ";\n";
+      out << "    " << b_val << " = " << m_val << ";\n";
+      out << "    " << a_drive << " = " << m_drive << ";\n";
+      out << "    " << b_drive << " = " << m_drive << ";\n";
+      out << "  }\n";
+    }
+    out << pad << "}\n";
+  };
+
   if (has_initial && !needs_scheduler) {
     out << "\n";
     out << "kernel void gpga_" << module.name << "_init(";
@@ -15315,46 +16247,56 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "kernel void gpga_" << module.name << "_tick(";
     buffer_index = 0;
     first = true;
-    for (const auto& port : module.ports) {
+    if (pack_signals) {
       if (!first) {
         out << ",\n";
       }
       first = false;
-      std::string qualifier =
-          (port.dir == PortDir::kInput) ? "constant" : "device";
-      std::string type = TypeForWidth(port.width);
-      out << "  " << qualifier << " " << type << "* " << port.name
-          << " [[buffer(" << buffer_index++ << ")]]";
+      out << "  device uchar* gpga_state [[buffer(" << buffer_index++
+          << ")]]";
     }
-    for (const auto& reg : reg_names) {
-      if (!first) {
-        out << ",\n";
+    if (!pack_signals) {
+      for (const auto& port : module.ports) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string qualifier =
+            (port.dir == PortDir::kInput) ? "constant" : "device";
+        std::string type = TypeForWidth(port.width);
+        out << "  " << qualifier << " " << type << "* " << port.name
+            << " [[buffer(" << buffer_index++ << ")]]";
       }
-      first = false;
-      std::string type = TypeForWidth(SignalWidth(module, reg));
-      out << "  device " << type << "* " << reg << " [[buffer("
-          << buffer_index++ << ")]]";
-    }
-    for (const auto* reg : trireg_nets) {
-      if (!first) {
-        out << ",\n";
+      for (const auto& reg : reg_names) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string type = TypeForWidth(SignalWidth(module, reg));
+        out << "  device " << type << "* " << reg << " [[buffer("
+            << buffer_index++ << ")]]";
       }
-      first = false;
-      std::string type = TypeForWidth(SignalWidth(module, reg->name));
-      out << "  device " << type << "* " << reg->name << " [[buffer("
-          << buffer_index++ << ")]]";
-      out << ",\n";
-      out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
-          << buffer_index++ << ")]]";
-    }
-    for (const auto* net : array_nets) {
-      if (!first) {
+      for (const auto* reg : trireg_nets) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string type = TypeForWidth(SignalWidth(module, reg->name));
+        out << "  device " << type << "* " << reg->name << " [[buffer("
+            << buffer_index++ << ")]]";
         out << ",\n";
+        out << "  device ulong* " << decay_name(reg->name) << " [[buffer("
+            << buffer_index++ << ")]]";
       }
-      first = false;
-      std::string type = TypeForWidth(net->width);
-      out << "  device " << type << "* " << net->name << " [[buffer("
-          << buffer_index++ << ")]]";
+      for (const auto* net : array_nets) {
+        if (!first) {
+          out << ",\n";
+        }
+        first = false;
+        std::string type = TypeForWidth(net->width);
+        out << "  device " << type << "* " << net->name << " [[buffer("
+            << buffer_index++ << ")]]";
+      }
     }
     for (const auto* net : array_nets) {
       if (!first) {
@@ -15374,6 +16316,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if (gid >= params.count) {\n";
     out << "    return;\n";
     out << "  }\n";
+    if (pack_signals) {
+      emit_packed_signal_setup("params.count");
+    }
     out << "  // Tick kernel: sequential logic (posedge/negedge in v0).\n";
     for (const auto* net : array_nets) {
       out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
@@ -15718,13 +16663,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     std::vector<const AlwaysBlock*> initial_blocks;
+    std::vector<const AlwaysBlock*> edge_blocks;
     for (const auto& block : module.always_blocks) {
       if (block.edge == EdgeKind::kInitial) {
         initial_blocks.push_back(&block);
+      } else if (block.edge == EdgeKind::kPosedge ||
+                 block.edge == EdgeKind::kNegedge) {
+        edge_blocks.push_back(&block);
       }
     }
 
-    if (!initial_blocks.empty()) {
+    if (!initial_blocks.empty() || !edge_blocks.empty()) {
       std::unordered_map<std::string, int> event_ids;
       for (size_t i = 0; i < module.events.size(); ++i) {
         event_ids[module.events[i].name] = static_cast<int>(i);
@@ -15741,12 +16690,41 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::vector<ProcDef> procs;
       std::vector<int> proc_parent;
       std::vector<int> proc_join_tag;
+      std::vector<std::unique_ptr<Statement>> always_wrappers;
 
       int next_pid = 0;
       for (const auto* block : initial_blocks) {
         procs.push_back(ProcDef{next_pid, &block->statements, nullptr});
         proc_parent.push_back(-1);
         proc_join_tag.push_back(-1);
+        ++next_pid;
+      }
+      always_wrappers.reserve(edge_blocks.size());
+      auto make_edge_wrapper = [&](const AlwaysBlock& block) {
+        auto forever_stmt = std::make_unique<Statement>();
+        forever_stmt->kind = StatementKind::kForever;
+        Statement event_stmt;
+        event_stmt.kind = StatementKind::kEventControl;
+        event_stmt.event_edge = (block.edge == EdgeKind::kPosedge)
+                                    ? EventEdgeKind::kPosedge
+                                    : EventEdgeKind::kNegedge;
+        auto clock_expr = std::make_unique<Expr>();
+        clock_expr->kind = ExprKind::kIdentifier;
+        clock_expr->ident = block.clock;
+        event_stmt.event_expr = std::move(clock_expr);
+        event_stmt.event_body.reserve(block.statements.size());
+        for (const auto& stmt : block.statements) {
+          event_stmt.event_body.push_back(CloneStatement(stmt));
+        }
+        forever_stmt->forever_body.push_back(std::move(event_stmt));
+        return forever_stmt;
+      };
+      for (const auto* block : edge_blocks) {
+        auto wrapper = make_edge_wrapper(*block);
+        procs.push_back(ProcDef{next_pid, nullptr, wrapper.get()});
+        proc_parent.push_back(-1);
+        proc_join_tag.push_back(-1);
+        always_wrappers.push_back(std::move(wrapper));
         ++next_pid;
       }
       const int root_proc_count = next_pid;
@@ -15850,8 +16828,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       };
       for (int i = 0; i < root_proc_count; ++i) {
-        collect_forks_in_list(*procs[i].body, procs[i].pid);
+        if (procs[i].body) {
+          collect_forks_in_list(*procs[i].body, procs[i].pid);
+        } else if (procs[i].single) {
+          collect_forks(*procs[i].single, procs[i].pid);
+        }
       }
+
+      auto for_each_proc_stmt = [&](const auto& fn) {
+        for (const auto& proc : procs) {
+          if (proc.body) {
+            for (const auto& stmt : *proc.body) {
+              fn(stmt);
+            }
+          } else if (proc.single) {
+            fn(*proc.single);
+          }
+        }
+      };
 
       std::unordered_map<const Statement*, int> wait_ids;
       std::vector<const Expr*> wait_exprs;
@@ -15932,11 +16926,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
       };
-      for (const auto& block : module.always_blocks) {
-        for (const auto& stmt : block.statements) {
-          collect_waits(stmt);
-        }
-      }
+      for_each_proc_stmt([&](const Statement& stmt) { collect_waits(stmt); });
 
       struct EdgeWaitItem {
         const Expr* expr = nullptr;
@@ -16077,11 +17067,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
       };
-      for (const auto& block : module.always_blocks) {
-        for (const auto& stmt : block.statements) {
-          collect_edge_waits(stmt);
-        }
-      }
+      for_each_proc_stmt(
+          [&](const Statement& stmt) { collect_edge_waits(stmt); });
 
       struct DelayAssignInfo {
         const Statement* stmt = nullptr;
@@ -16223,11 +17210,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
         }
       };
-      for (const auto& block : module.always_blocks) {
-        for (const auto& stmt : block.statements) {
-          collect_delay_assigns(stmt);
-        }
-      }
+      for_each_proc_stmt(
+          [&](const Statement& stmt) { collect_delay_assigns(stmt); });
 
       const int64_t kRepeatUnrollLimit = 4096;
       const std::unordered_map<std::string, int64_t> kRepeatEmptyParams;
@@ -16423,15 +17407,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
       };
-      for (const auto& block : module.always_blocks) {
-        for (const auto& stmt : block.statements) {
-          collect_nb_targets(stmt);
-        }
-      }
+      for_each_proc_stmt(
+          [&](const Statement& stmt) { collect_nb_targets(stmt); });
 
       std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
                                                  nb_targets.end());
       std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+      packed_nb_signals.clear();
+      if (pack_nb && !nb_targets_sorted.empty()) {
+        packed_nb_signals.reserve(nb_targets_sorted.size());
+        for (const auto& target : nb_targets_sorted) {
+          PackedSignal sig;
+          sig.name = "nb_" + target;
+          sig.type = TypeForWidth(SignalWidth(module, target));
+          sig.array_size = 1;
+          packed_nb_signals.push_back(std::move(sig));
+        }
+      }
       std::vector<const Net*> nb_array_nets;
       for (const auto& net : module.nets) {
         if (net.array_size <= 0) {
@@ -16744,6 +17736,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       out << "};\n";
 
+      drive_declared.clear();
+
       out << "\n";
       out << "kernel void gpga_" << module.name << "_sched_step(";
       int buffer_index = 0;
@@ -16755,31 +17749,43 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         first = false;
         out << text;
       };
-      for (const auto& port : module.ports) {
-        std::string qualifier =
-            (port.dir == PortDir::kInput) ? "constant" : "device";
-        std::string type = TypeForWidth(port.width);
-        emit_param("  " + qualifier + " " + type + "* " + port.name +
-                   " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-      }
-      for (const auto& reg : sched_reg_names) {
-        std::string type = TypeForWidth(SignalWidth(module, reg));
-        emit_param("  device " + type + "* " + reg + " [[buffer(" +
+      if (pack_signals) {
+        emit_param("  device uchar* gpga_state [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
       }
-      for (const auto* reg : trireg_nets) {
-        emit_param("  device ulong* " + decay_name(reg->name) + " [[buffer(" +
+      if (!pack_signals) {
+        for (const auto& port : module.ports) {
+          std::string qualifier =
+              (port.dir == PortDir::kInput) ? "constant" : "device";
+          std::string type = TypeForWidth(port.width);
+          emit_param("  " + qualifier + " " + type + "* " + port.name +
+                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto& reg : sched_reg_names) {
+          std::string type = TypeForWidth(SignalWidth(module, reg));
+          emit_param("  device " + type + "* " + reg + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto* reg : trireg_nets) {
+          emit_param("  device ulong* " + decay_name(reg->name) + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+        for (const auto* net : array_nets) {
+          std::string type = TypeForWidth(net->width);
+          emit_param("  device " + type + "* " + net->name + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
+      }
+      if (pack_nb && !packed_nb_signals.empty()) {
+        emit_param("  device uchar* nb_state [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
       }
-      for (const auto* net : array_nets) {
-        std::string type = TypeForWidth(net->width);
-        emit_param("  device " + type + "* " + net->name + " [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      for (const auto& target : nb_targets_sorted) {
-        std::string type = TypeForWidth(SignalWidth(module, target));
-        emit_param("  device " + type + "* nb_" + target + " [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
+      if (!pack_nb) {
+        for (const auto& target : nb_targets_sorted) {
+          std::string type = TypeForWidth(SignalWidth(module, target));
+          emit_param("  device " + type + "* nb_" + target + " [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
       }
       for (const auto* net : nb_array_nets) {
         std::string type = TypeForWidth(net->width);
@@ -16880,6 +17886,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  if (gid >= sched.count) {\n";
     out << "    return;\n";
     out << "  }\n";
+    if (pack_signals) {
+      emit_packed_signal_setup("sched.count");
+    }
+    emit_packed_nb_setup("sched.count");
     if (system_task_info.has_system_tasks) {
       out << "  sched_service_count[gid] = 0u;\n";
     }
@@ -17146,6 +18156,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "        }\n";
       }
       out << "      }\n";
+      emit_sched_comb_update(6);
       out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
       out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -18963,33 +19974,154 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             const Statement& body_stmt = stmt.forever_body.front();
-            if (body_stmt.kind != StatementKind::kDelay) {
+            if (body_stmt.kind != StatementKind::kDelay &&
+                body_stmt.kind != StatementKind::kEventControl) {
               out << "                  sched_error[gid] = 1u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
             }
-            int body_pc = pc_counter++;
-            BodyCase body_case;
-            body_case.pc = body_pc;
-            body_case.owner = &stmt;
-            body_case.next_pc = pc;
-            body_case.loop_pc = pc;
-            body_case.is_forever_body = true;
-            for (const auto& inner : body_stmt.delay_body) {
-              body_case.body.push_back(&inner);
+            if (body_stmt.kind == StatementKind::kDelay) {
+              int body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = pc;
+              body_case.loop_pc = pc;
+              body_case.is_forever_body = true;
+              for (const auto& inner : body_stmt.delay_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+              std::string delay =
+                  body_stmt.delay ? emit_delay_value2(*body_stmt.delay) : "0ul";
+              out << "                  ulong __gpga_delay = " << delay << ";\n";
+              out << "                  sched_wait_kind[idx] = "
+                     "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
+                     "GPGA_SCHED_WAIT_TIME;\n";
+              out << "                  sched_wait_time[idx] = __gpga_time + "
+                     "__gpga_delay;\n";
+              out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
             }
-            body_cases.push_back(std::move(body_case));
-            std::string delay =
-                body_stmt.delay ? emit_delay_value2(*body_stmt.delay) : "0ul";
-            out << "                  ulong __gpga_delay = " << delay << ";\n";
-            out << "                  sched_wait_kind[idx] = "
-                   "(__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : "
-                   "GPGA_SCHED_WAIT_TIME;\n";
-            out << "                  sched_wait_time[idx] = __gpga_time + "
-                   "__gpga_delay;\n";
-            out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+            int body_pc = -1;
+            if (!body_stmt.event_body.empty()) {
+              body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = pc;
+              body_case.loop_pc = pc;
+              body_case.is_forever_body = true;
+              for (const auto& inner : body_stmt.event_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+            }
+            int event_id = -1;
+            bool named_event = false;
+            const Expr* named_expr = nullptr;
+            if (!body_stmt.event_items.empty()) {
+              if (body_stmt.event_items.size() == 1 &&
+                  body_stmt.event_items[0].edge == EventEdgeKind::kAny &&
+                  body_stmt.event_items[0].expr) {
+                named_expr = body_stmt.event_items[0].expr.get();
+              }
+            } else if (body_stmt.event_expr &&
+                       body_stmt.event_edge == EventEdgeKind::kAny) {
+              named_expr = body_stmt.event_expr.get();
+            }
+            if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+              auto it = event_ids.find(named_expr->ident);
+              if (it != event_ids.end()) {
+                event_id = it->second;
+                named_event = true;
+              }
+            }
+            if (named_event) {
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EVENT;\n";
+              out << "                  sched_wait_event[idx] = " << event_id
+                  << "u;\n";
+            } else {
+              int edge_id = -1;
+              auto it = edge_wait_ids.find(&body_stmt);
+              if (it != edge_wait_ids.end()) {
+                edge_id = it->second;
+              }
+              if (edge_id < 0) {
+                out << "                  sched_error[gid] = 1u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              const EdgeWaitInfo& info = edge_waits[edge_id];
+              const char* edge_kind = "GPGA_SCHED_EDGE_ANY";
+              if (!info.items.empty()) {
+                edge_kind = "GPGA_SCHED_EDGE_LIST";
+              } else if (body_stmt.event_edge == EventEdgeKind::kPosedge) {
+                edge_kind = "GPGA_SCHED_EDGE_POSEDGE";
+              } else if (body_stmt.event_edge == EventEdgeKind::kNegedge) {
+                edge_kind = "GPGA_SCHED_EDGE_NEGEDGE";
+              }
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EDGE;\n";
+              out << "                  sched_wait_id[idx] = " << edge_id << "u;\n";
+              out << "                  sched_wait_edge_kind[idx] = " << edge_kind
+                  << ";\n";
+              if (!info.items.empty()) {
+                out << "                  uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                    << info.item_offset << "u;\n";
+                for (size_t i = 0; i < info.items.size(); ++i) {
+                  int width = ExprWidth(*info.items[i].expr, module);
+                  std::string curr =
+                      EmitExprSized(*info.items[i].expr, width, module,
+                                    sched_locals, sched_regs);
+                  std::string mask =
+                      std::to_string(MaskForWidth64(width)) + "ul";
+                  out << "                  ulong __gpga_edge_val = ((ulong)("
+                      << curr << ")) & " << mask << ";\n";
+                  out << "                  sched_edge_prev_val[__gpga_edge_base + "
+                      << i << "u] = __gpga_edge_val;\n";
+                }
+              } else if (info.expr) {
+                int width = ExprWidth(*info.expr, module);
+                std::string curr =
+                    EmitExprSized(*info.expr, width, module, sched_locals,
+                                  sched_regs);
+                std::string mask =
+                    std::to_string(MaskForWidth64(width)) + "ul";
+                out << "                  uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
+                    << info.item_offset << "u;\n";
+                out << "                  ulong __gpga_edge_val = ((ulong)(" << curr
+                    << ")) & " << mask << ";\n";
+                out << "                  sched_edge_prev_val[__gpga_edge_idx] = __gpga_edge_val;\n";
+              } else {
+                out << "                  uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + "
+                    << info.star_offset << "u;\n";
+                for (size_t i = 0; i < info.star_signals.size(); ++i) {
+                  Expr ident_expr;
+                  ident_expr.kind = ExprKind::kIdentifier;
+                  ident_expr.ident = info.star_signals[i];
+                  int width = ExprWidth(ident_expr, module);
+                  std::string curr =
+                      EmitExprSized(ident_expr, width, module, sched_locals,
+                                    sched_regs);
+                  std::string mask =
+                      std::to_string(MaskForWidth64(width)) + "ul";
+                  out << "                  sched_edge_star_prev_val[__gpga_edge_star_base + "
+                      << i << "u] = ((ulong)(" << curr << ")) & " << mask
+                      << ";\n";
+                }
+              }
+            }
+            out << "                  sched_pc[idx] = "
+                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
+                                 : std::to_string(pc) + "u")
+                << ";\n";
             out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
             out << "                  break;\n";
             out << "                }\n";
@@ -19422,6 +20554,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 EmitExprSized(*info.items[j].expr, width, module, sched_locals,
                               sched_regs);
             std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
+            out << "                {\n";
             out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
                 << j << "u];\n";
             out << "                ulong __gpga_curr_val = ((ulong)(" << curr
@@ -19447,6 +20580,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             out << "                sched_edge_prev_val[__gpga_edge_base + " << j
                 << "u] = __gpga_curr_val;\n";
+            out << "                }\n";
           }
           out << "                ready = __gpga_any;\n";
         } else if (info.expr) {
@@ -19570,6 +20704,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "      }\n";
         }
       }
+      emit_sched_comb_update(6);
       if (!system_task_info.monitor_stmts.empty()) {
         out << "      // Monitor change detection.\n";
         for (size_t i = 0; i < system_task_info.monitor_stmts.size(); ++i) {
@@ -19660,6 +20795,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 EmitExprSized(*info.items[j].expr, width, module, sched_locals,
                               sched_regs);
             std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
+            out << "              {\n";
             out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
                 << j << "u];\n";
             out << "              ulong __gpga_curr_val = ((ulong)(" << curr
@@ -19685,6 +20821,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             out << "              sched_edge_prev_val[__gpga_edge_base + " << j
                 << "u] = __gpga_curr_val;\n";
+            out << "              }\n";
           }
           out << "              ready = __gpga_any;\n";
         } else if (info.expr) {
