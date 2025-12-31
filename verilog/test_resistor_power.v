@@ -34,7 +34,6 @@ module sine_generator #(
     // Sine wave lookup table (one complete cycle, 100 samples)
     real sine_lut [0:99];
     integer sample_index;
-
     // Pre-computed sine table scaled to amplitude
     initial begin
         integer i;
@@ -109,10 +108,11 @@ module testbench_resistor_power;
     initial begin
         // Setup VCD dump
         $dumpfile("resistor_power.vcd");
-        $dumpvars(0, testbench_resistor_power);
-        $dumpvars(0, voltage);
-        $dumpvars(0, current);
-        $dumpvars(0, power);
+        $dumpvars(0, testbench_resistor_power.clk,
+                     testbench_resistor_power.reset,
+                     testbench_resistor_power.voltage,
+                     testbench_resistor_power.current,
+                     testbench_resistor_power.power);
 
         // Reset
         reset = 1;

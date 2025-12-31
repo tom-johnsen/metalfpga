@@ -905,6 +905,11 @@ inline gpga_double gpga_double_sinh(gpga_double x) {
 inline gpga_double gpga_double_cosh(gpga_double x) {
   return gpga_cosh_rn(x);
 }
+inline gpga_double gpga_double_tanh(gpga_double x) {
+  gpga_double sinh = gpga_double_sinh(x);
+  gpga_double cosh = gpga_double_cosh(x);
+  return gpga_double_div(sinh, cosh);
+}
 inline gpga_double gpga_double_atan_series(gpga_double x) {
   gpga_double x2 = gpga_double_mul(x, x);
   gpga_double term = x;
@@ -954,6 +959,72 @@ inline gpga_double gpga_double_asin(gpga_double x) {
 inline gpga_double gpga_double_acos(gpga_double x) {
   gpga_double half_pi = gpga_double_const_half_pi();
   return gpga_double_sub(half_pi, gpga_double_asin(x));
+}
+inline gpga_double gpga_double_hypot(gpga_double x, gpga_double y) {
+  gpga_double x2 = gpga_double_mul(x, x);
+  gpga_double y2 = gpga_double_mul(y, y);
+  return gpga_double_sqrt(gpga_double_add(x2, y2));
+}
+inline gpga_double gpga_double_asinh(gpga_double x) {
+  if (gpga_double_is_nan(x)) {
+    return x;
+  }
+  bool neg = gpga_double_sign(x);
+  gpga_double ax = neg ? gpga_double_neg(x) : x;
+  gpga_double ax2 = gpga_double_mul(ax, ax);
+  gpga_double root = gpga_double_sqrt(
+      gpga_double_add(ax2, gpga_double_from_u32(1u)));
+  gpga_double res = gpga_double_ln(gpga_double_add(ax, root));
+  return neg ? gpga_double_neg(res) : res;
+}
+inline gpga_double gpga_double_acosh(gpga_double x) {
+  if (gpga_double_is_nan(x)) {
+    return x;
+  }
+  gpga_double one = gpga_double_from_u32(1u);
+  if (gpga_double_lt(x, one)) {
+    return gpga_double_nan();
+  }
+  gpga_double xm1 = gpga_double_sub(x, one);
+  gpga_double xp1 = gpga_double_add(x, one);
+  gpga_double root = gpga_double_mul(gpga_double_sqrt(xm1),
+                                     gpga_double_sqrt(xp1));
+  return gpga_double_ln(gpga_double_add(x, root));
+}
+inline gpga_double gpga_double_atanh(gpga_double x) {
+  if (gpga_double_is_nan(x)) {
+    return x;
+  }
+  gpga_double one = gpga_double_from_u32(1u);
+  gpga_double ax = gpga_double_abs(x);
+  if (gpga_double_ge(ax, one)) {
+    return gpga_double_nan();
+  }
+  gpga_double num = gpga_double_add(one, x);
+  gpga_double den = gpga_double_sub(one, x);
+  gpga_double half = gpga_double_div(one, gpga_double_from_u32(2u));
+  return gpga_double_mul(half, gpga_double_ln(gpga_double_div(num, den)));
+}
+inline gpga_double gpga_double_atan2(gpga_double y, gpga_double x) {
+  if (gpga_double_is_nan(x) || gpga_double_is_nan(y)) {
+    return gpga_double_nan();
+  }
+  gpga_double zero = gpga_double_zero(0u);
+  if (gpga_double_is_zero(x)) {
+    if (gpga_double_is_zero(y)) {
+      return zero;
+    }
+    gpga_double half_pi = gpga_double_const_half_pi();
+    return gpga_double_sign(y) ? gpga_double_neg(half_pi) : half_pi;
+  }
+  gpga_double ratio = gpga_double_div(y, x);
+  gpga_double angle = gpga_double_atan(ratio);
+  if (gpga_double_gt(x, zero)) {
+    return angle;
+  }
+  gpga_double pi = gpga_double_const_pi();
+  return gpga_double_sign(y) ? gpga_double_sub(angle, pi)
+                             : gpga_double_add(angle, pi);
 }
 inline gpga_double gpga_double_pow_int(gpga_double base, long exp) {
   if (exp == 0l) {

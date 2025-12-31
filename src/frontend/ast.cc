@@ -245,7 +245,7 @@ bool EvalConstExpr4State(const Expr& expr,
         }
         return false;
       }
-      int width = MinimalWidth(static_cast<uint64_t>(it->second));
+      int width = std::max(32, MinimalWidth(static_cast<uint64_t>(it->second)));
       *out_value = MakeKnown(static_cast<uint64_t>(it->second), width);
       return true;
     }
@@ -388,7 +388,7 @@ bool EvalConstExpr4State(const Expr& expr,
       switch (expr.op) {
         case '+':
         case '-':
-          width = clamp_width(std::max(lhs_width, rhs_width) + 1);
+          width = clamp_width(std::max(lhs_width, rhs_width));
           break;
         case '*':
           width = clamp_width(lhs_width + rhs_width);
@@ -719,21 +719,234 @@ bool EvalConstExpr4State(const Expr& expr,
       }
       return EvalConstExpr4State(*expr.else_expr, params, out_value, error);
     }
-    case ExprKind::kSelect:
-      if (error) {
-        *error = "bit/part select not allowed in constant expression";
+    case ExprKind::kSelect: {
+      if (!expr.base) {
+        if (error) {
+          *error = "missing base expression in select";
+        }
+        return false;
       }
-      return false;
-    case ExprKind::kIndex:
-      if (error) {
-        *error = "indexing not allowed in constant expression";
+      FourStateValue base;
+      if (!EvalConstExpr4State(*expr.base, params, &base, error)) {
+        return false;
       }
-      return false;
+      int base_width = ValueWidth(base);
+      if (base_width <= 0) {
+        if (error) {
+          *error = "invalid base width in constant select";
+        }
+        return false;
+      }
+      if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
+        FourStateValue index_value;
+        if (!EvalConstExpr4State(*expr.lsb_expr, params, &index_value, error)) {
+          return false;
+        }
+        if (index_value.HasXorZ()) {
+          if (error) {
+            *error = "indexed part select requires a known index";
+          }
+          return false;
+        }
+        int index_width = ValueWidth(index_value);
+        int64_t shift = ExprIsSigned(*expr.lsb_expr)
+                            ? SignedValue(index_value.value_bits, index_width)
+                            : static_cast<int64_t>(index_value.value_bits);
+        if (shift < 0) {
+          if (error) {
+            *error = "indexed part select index must be >= 0";
+          }
+          return false;
+        }
+        int width = expr.indexed_width;
+        if (width <= 0) {
+          if (error) {
+            *error = "indexed part select width must be > 0";
+          }
+          return false;
+        }
+        if (width > 64) {
+          if (error) {
+            *error = "indexed part select width exceeds 64 bits";
+          }
+          return false;
+        }
+        if (shift >= base_width || shift >= 64) {
+          *out_value = MakeKnown(0, width);
+          return true;
+        }
+        uint64_t mask = MaskForWidth(width);
+        FourStateValue out;
+        out.width = width;
+        out.value_bits = (base.value_bits >> shift) & mask;
+        out.x_bits = (base.x_bits >> shift) & mask;
+        out.z_bits = (base.z_bits >> shift) & mask;
+        *out_value = out;
+        return true;
+      }
+      int lo = std::min(expr.msb, expr.lsb);
+      int hi = std::max(expr.msb, expr.lsb);
+      int width = hi - lo + 1;
+      if (width <= 0) {
+        if (error) {
+          *error = "part select width must be > 0";
+        }
+        return false;
+      }
+      if (width > 64) {
+        if (error) {
+          *error = "part select width exceeds 64 bits";
+        }
+        return false;
+      }
+      if (lo < 0) {
+        if (error) {
+          *error = "part select index must be >= 0";
+        }
+        return false;
+      }
+      if (lo >= base_width || lo >= 64) {
+        *out_value = MakeKnown(0, width);
+        return true;
+      }
+      uint64_t mask = MaskForWidth(width);
+      FourStateValue out;
+      out.width = width;
+      out.value_bits = (base.value_bits >> lo) & mask;
+      out.x_bits = (base.x_bits >> lo) & mask;
+      out.z_bits = (base.z_bits >> lo) & mask;
+      *out_value = out;
+      return true;
+    }
+    case ExprKind::kIndex: {
+      if (!expr.base || !expr.index) {
+        if (error) {
+          *error = "missing base expression in index";
+        }
+        return false;
+      }
+      FourStateValue base;
+      FourStateValue index_value;
+      if (!EvalConstExpr4State(*expr.base, params, &base, error) ||
+          !EvalConstExpr4State(*expr.index, params, &index_value, error)) {
+        return false;
+      }
+      if (index_value.HasXorZ()) {
+        if (error) {
+          *error = "index requires a known value";
+        }
+        return false;
+      }
+      int index_width = ValueWidth(index_value);
+      int64_t index = ExprIsSigned(*expr.index)
+                          ? SignedValue(index_value.value_bits, index_width)
+                          : static_cast<int64_t>(index_value.value_bits);
+      if (index < 0) {
+        if (error) {
+          *error = "index must be >= 0";
+        }
+        return false;
+      }
+      int base_width = ValueWidth(base);
+      if (base_width <= 0) {
+        if (error) {
+          *error = "invalid base width in constant index";
+        }
+        return false;
+      }
+      if (index >= base_width || index >= 64) {
+        *out_value = MakeKnown(0, 1);
+        return true;
+      }
+      FourStateValue out;
+      out.width = 1;
+      out.value_bits = (base.value_bits >> index) & 1ull;
+      out.x_bits = (base.x_bits >> index) & 1ull;
+      out.z_bits = (base.z_bits >> index) & 1ull;
+      *out_value = out;
+      return true;
+    }
     case ExprKind::kConcat:
-      if (error) {
-        *error = "concatenation not allowed in constant expression";
+      {
+        int64_t repeat = expr.repeat;
+        if (expr.repeat_expr) {
+          FourStateValue repeat_value;
+          if (!EvalConstExpr4State(*expr.repeat_expr, params, &repeat_value,
+                                   error)) {
+            return false;
+          }
+          if (repeat_value.HasXorZ()) {
+            if (error) {
+              *error = "repeat count not allowed to be x/z in constant expression";
+            }
+            return false;
+          }
+          repeat = SignedValue(repeat_value.value_bits,
+                               ValueWidth(repeat_value));
+        }
+        if (repeat < 0) {
+          if (error) {
+            *error = "repeat count must be >= 0 in constant expression";
+          }
+          return false;
+        }
+        FourStateValue out;
+        out.width = 0;
+        out.value_bits = 0;
+        out.x_bits = 0;
+        out.z_bits = 0;
+        auto append = [&](const FourStateValue& part) {
+          int part_width = ValueWidth(part);
+          if (part_width <= 0) {
+            return;
+          }
+          if (part_width > 64) {
+            part_width = 64;
+          }
+          if (out.width >= 64) {
+            out.width = 64;
+            return;
+          }
+          uint64_t part_mask = MaskForWidth(part_width);
+          uint64_t part_val = part.value_bits & part_mask;
+          uint64_t part_x = part.x_bits & part_mask;
+          uint64_t part_z = part.z_bits & part_mask;
+          if (out.width + part_width <= 64) {
+            out.value_bits = (out.value_bits << part_width) | part_val;
+            out.x_bits = (out.x_bits << part_width) | part_x;
+            out.z_bits = (out.z_bits << part_width) | part_z;
+            out.width += part_width;
+            return;
+          }
+          int keep = 64 - out.width;
+          if (keep <= 0) {
+            out.width = 64;
+            return;
+          }
+          uint64_t keep_mask = MaskForWidth(keep);
+          out.value_bits = (out.value_bits << keep) | (part_val & keep_mask);
+          out.x_bits = (out.x_bits << keep) | (part_x & keep_mask);
+          out.z_bits = (out.z_bits << keep) | (part_z & keep_mask);
+          out.width = 64;
+        };
+        for (int64_t r = 0; r < repeat; ++r) {
+          for (const auto& element : expr.elements) {
+            if (!element) {
+              continue;
+            }
+            FourStateValue element_value;
+            if (!EvalConstExpr4State(*element, params, &element_value, error)) {
+              return false;
+            }
+            append(element_value);
+          }
+        }
+        if (out.width == 0) {
+          out.width = 1;
+        }
+        *out_value = out;
+        return true;
       }
-      return false;
     case ExprKind::kCall:
       if (error) {
         *error = "function call not allowed in constant expression";
@@ -754,13 +967,18 @@ bool EvalConstExpr(const Expr& expr,
     return false;
   }
   if (value.HasXorZ()) {
-    if (error) {
-      *error = "x/z not allowed in constant expression";
-    }
-    return false;
+    uint64_t unknown = value.x_bits | value.z_bits;
+    value.value_bits &= ~unknown;
+    value.x_bits = 0;
+    value.z_bits = 0;
   }
   if (out_value) {
-    *out_value = static_cast<int64_t>(value.value_bits);
+    int width = ValueWidth(value);
+    if (ExprIsSigned(expr)) {
+      *out_value = SignedValue(value.value_bits, width);
+    } else {
+      *out_value = static_cast<int64_t>(value.value_bits);
+    }
   }
   return true;
 }

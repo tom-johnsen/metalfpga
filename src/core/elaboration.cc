@@ -120,14 +120,122 @@ bool MatchDefparamInstance(const std::string& instance,
   return false;
 }
 
-bool ValidateDefparamsForModule(
+bool ProgramHasModuleNamed(const Program& program, const std::string& name) {
+  for (const auto& module : program.modules) {
+    if (module.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string DefparamHead(const std::string& instance) {
+  if (instance.empty()) {
+    return {};
+  }
+  size_t dot = instance.find('.');
+  if (dot == std::string::npos) {
+    return instance;
+  }
+  return instance.substr(0, dot);
+}
+
+std::unordered_set<std::string> GenerateLabelCandidates(
+    const std::unordered_set<std::string>& instance_names) {
+  std::unordered_set<std::string> labels;
+  for (const auto& name : instance_names) {
+    size_t split = name.find("__");
+    if (split == std::string::npos) {
+      continue;
+    }
+    std::string head = name.substr(0, split);
+    if (instance_names.count(head) == 0) {
+      labels.insert(std::move(head));
+    }
+  }
+  return labels;
+}
+
+bool ValidateDefparamAmbiguity(
+    const Program& program,
     const std::vector<DefParam>& defparams,
     const std::unordered_set<std::string>& instance_names,
+    const std::unordered_set<std::string>& generate_label_names,
     Diagnostics* diagnostics) {
+  std::unordered_set<std::string> generate_labels =
+      GenerateLabelCandidates(instance_names);
+  generate_labels.insert(generate_label_names.begin(),
+                         generate_label_names.end());
+  auto has_generate_segment = [&](const std::string& head) -> bool {
+    if (head.empty()) {
+      return false;
+    }
+    std::string prefix = head + "__";
+    for (const auto& name : instance_names) {
+      if (name.rfind(prefix, 0) == 0) {
+        return true;
+      }
+      size_t start = 0;
+      while (start < name.size()) {
+        size_t next = name.find("__", start);
+        std::string segment =
+            (next == std::string::npos) ? name.substr(start)
+                                        : name.substr(start, next - start);
+        if (segment == head) {
+          return true;
+        }
+        if (next == std::string::npos) {
+          break;
+        }
+        start = next + 2;
+      }
+    }
+    return false;
+  };
+  for (const auto& defparam : defparams) {
+    if (!defparam.instance.empty()) {
+      std::string head = DefparamHead(defparam.instance);
+      if (!head.empty() &&
+          (generate_labels.count(head) != 0 || has_generate_segment(head)) &&
+          ProgramHasModuleNamed(program, head)) {
+        diagnostics->Add(
+            Severity::kError,
+            "defparam hierarchical name '" + defparam.instance +
+                "' resolves to both module and generate scopes");
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool ValidateDefparamsForModule(
+    const Program& program,
+    const std::vector<DefParam>& defparams,
+    const std::unordered_set<std::string>& instance_names,
+    const std::unordered_set<std::string>& generate_label_names,
+    Diagnostics* diagnostics) {
+  if (!ValidateDefparamAmbiguity(program, defparams, instance_names,
+                                 generate_label_names, diagnostics)) {
+    return false;
+  }
   for (const auto& defparam : defparams) {
     bool matched = false;
     for (const auto& instance_name : instance_names) {
       if (MatchDefparamInstance(defparam.instance, instance_name, nullptr)) {
+        std::string head = DefparamHead(defparam.instance);
+        size_t split = instance_name.find("__");
+        if (!head.empty() && split != std::string::npos) {
+          std::string gen_prefix = instance_name.substr(0, split);
+          if (gen_prefix == head &&
+              ProgramHasModuleNamed(program, gen_prefix)) {
+            diagnostics->Add(
+                Severity::kError,
+                "defparam hierarchical name '" + defparam.instance +
+                    "' resolves to both module and generate scopes");
+            return false;
+          }
+        }
         matched = true;
         break;
       }
@@ -136,6 +244,22 @@ bool ValidateDefparamsForModule(
       diagnostics->Add(Severity::kError,
                        "unknown instance '" + defparam.instance +
                            "' in defparam");
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ValidateDefparamsForProgram(const Program& program,
+                                 Diagnostics* diagnostics) {
+  for (const auto& module : program.modules) {
+    std::unordered_set<std::string> instance_names;
+    instance_names.reserve(module.instances.size());
+    for (const auto& instance : module.instances) {
+      instance_names.insert(instance.name);
+    }
+    if (!ValidateDefparamAmbiguity(program, module.defparams, instance_names,
+                                   module.generate_labels, diagnostics)) {
       return false;
     }
   }
@@ -403,6 +527,8 @@ double BitsToDouble(uint64_t bits);
 uint64_t DoubleToBits(double value);
 uint64_t MaskForWidth64(int width);
 std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name);
+std::unique_ptr<Expr> MakeRangeSelectExpr(std::unique_ptr<Expr> base, int msb,
+                                          int lsb);
 std::unique_ptr<Expr> MakeUnaryExpr(char op, std::unique_ptr<Expr> operand);
 std::unique_ptr<Expr> MakeBinaryExpr(char op, std::unique_ptr<Expr> lhs,
                                      std::unique_ptr<Expr> rhs);
@@ -2060,20 +2186,21 @@ bool FindLoopVarUpdate(const std::vector<Statement>& body,
 bool ResolveRangeWidth(int default_width,
                        const std::shared_ptr<Expr>& msb_expr,
                        const std::shared_ptr<Expr>& lsb_expr,
-                       const ParamBindings& params, int* width_out,
-                       Diagnostics* diagnostics, const std::string& context) {
+                       const ParamBindings& params, const Module& module,
+                       int* width_out, Diagnostics* diagnostics,
+                       const std::string& context) {
   if (!msb_expr || !lsb_expr) {
     *width_out = default_width;
     return true;
   }
   int64_t msb = 0;
   int64_t lsb = 0;
-  if (!EvalConstExprValue(*msb_expr, params, &msb, diagnostics,
-                          context + " msb")) {
+  if (!EvalConstExprValueWithFunctions(*msb_expr, params, module, &msb,
+                                       diagnostics, context + " msb")) {
     return false;
   }
-  if (!EvalConstExprValue(*lsb_expr, params, &lsb, diagnostics,
-                          context + " lsb")) {
+  if (!EvalConstExprValueWithFunctions(*lsb_expr, params, module, &lsb,
+                                       diagnostics, context + " lsb")) {
     return false;
   }
   int64_t width64 = msb >= lsb ? (msb - lsb + 1) : (lsb - msb + 1);
@@ -2087,8 +2214,8 @@ bool ResolveRangeWidth(int default_width,
 }
 
 bool ResolveArrayDims(const Net& net, const ParamBindings& params,
-                      std::vector<int>* dims_out, Diagnostics* diagnostics,
-                      const std::string& context) {
+                      const Module& module, std::vector<int>* dims_out,
+                      Diagnostics* diagnostics, const std::string& context) {
   dims_out->clear();
   if (net.array_dims.empty()) {
     return true;
@@ -2097,8 +2224,8 @@ bool ResolveArrayDims(const Net& net, const ParamBindings& params,
   for (size_t i = 0; i < net.array_dims.size(); ++i) {
     const auto& dim = net.array_dims[i];
     int size = dim.size;
-    if (!ResolveRangeWidth(dim.size, dim.msb_expr, dim.lsb_expr, params, &size,
-                           diagnostics,
+    if (!ResolveRangeWidth(dim.size, dim.msb_expr, dim.lsb_expr, params, module,
+                           &size, diagnostics,
                            context + " dim[" + std::to_string(i) + "]")) {
       return false;
     }
@@ -2185,14 +2312,14 @@ bool ResolveArrayBounds(const Module& module, const ParamBindings& params,
 }
 
 bool ResolveArraySize(const Net& net, const ParamBindings& params,
-                      int* size_out, Diagnostics* diagnostics,
-                      const std::string& context) {
+                      const Module& module, int* size_out,
+                      Diagnostics* diagnostics, const std::string& context) {
   if (net.array_dims.empty()) {
     *size_out = net.array_size;
     return true;
   }
   std::vector<int> dims;
-  if (!ResolveArrayDims(net, params, &dims, diagnostics, context)) {
+  if (!ResolveArrayDims(net, params, module, &dims, diagnostics, context)) {
     return false;
   }
   int64_t total = 1;
@@ -2271,7 +2398,7 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
       const Net* net = FindNet(module, arg->ident);
       if (net && !net->array_dims.empty()) {
         std::vector<int> dims;
-        if (!ResolveArrayDims(*net, params, &dims, diagnostics,
+        if (!ResolveArrayDims(*net, params, module, &dims, diagnostics,
                               "$size")) {
           return nullptr;
         }
@@ -2335,13 +2462,15 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
   }
   if (expr.ident == "$random") {
     if (arg_clones.empty()) {
-      return make_u32(0u);
+      return MakeNumberExprSignedWidth(0, 32);
     }
+    auto seed = MakeRangeSelectExpr(std::move(arg_clones[0]), 31, 0);
+    auto seed_signed = MakeUnaryExpr('S', std::move(seed));
     auto mul = MakeBinaryExpr(
-        '*', std::move(arg_clones[0]), MakeNumberExprWidth(1103515245u, 32));
+        '*', std::move(seed_signed), MakeNumberExprSignedWidth(1103515245, 32));
     auto add =
-        MakeBinaryExpr('+', std::move(mul), MakeNumberExprWidth(12345u, 32));
-    return add;
+        MakeBinaryExpr('+', std::move(mul), MakeNumberExprSignedWidth(12345, 32));
+    return MakeUnaryExpr('S', std::move(add));
   }
   if (expr.ident == "$urandom") {
     if (arg_clones.empty()) {
@@ -2380,6 +2509,7 @@ std::unique_ptr<Expr> LowerSystemFunctionCall(
       expr.ident == "$fseek" || expr.ident == "$ferror" ||
       expr.ident == "$ungetc" || expr.ident == "$fread" ||
       expr.ident == "$fgets" || expr.ident == "$fscanf" ||
+      expr.ident == "$rewind" ||
       expr.ident == "$sscanf") {
     auto call = std::make_unique<Expr>();
     call->kind = ExprKind::kCall;
@@ -2470,7 +2600,7 @@ bool ResolveRepeatCount(const Expr& expr, const ParamBindings& params,
       return false;
     }
   }
-  if (repeat <= 0 || repeat > 0x7FFFFFFF) {
+  if (repeat < 0 || repeat > 0x7FFFFFFF) {
     diagnostics->Add(Severity::kError,
                      "invalid replication count in " + context);
     return false;
@@ -2527,13 +2657,14 @@ std::unique_ptr<Expr> CloneExprWithParamsImpl(
       return out;
     }
     if (!expr.ident.empty() && expr.ident.front() == '$') {
-      if (!module) {
-        if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
-            expr.ident == "$feof" || expr.ident == "$ftell" ||
-            expr.ident == "$fseek" || expr.ident == "$ferror" ||
-            expr.ident == "$ungetc" || expr.ident == "$fread" ||
-            expr.ident == "$fgets" || expr.ident == "$fscanf" ||
-            expr.ident == "$sscanf") {
+        if (!module) {
+          if (expr.ident == "$fopen" || expr.ident == "$fgetc" ||
+              expr.ident == "$feof" || expr.ident == "$ftell" ||
+              expr.ident == "$fseek" || expr.ident == "$ferror" ||
+              expr.ident == "$ungetc" || expr.ident == "$fread" ||
+              expr.ident == "$fgets" || expr.ident == "$fscanf" ||
+              expr.ident == "$rewind" ||
+              expr.ident == "$sscanf") {
           auto out = std::make_unique<Expr>();
           out->kind = ExprKind::kCall;
           out->ident = expr.ident;
@@ -2730,7 +2861,7 @@ std::unique_ptr<Expr> CloneExprWithParamsImpl(
         const Net* net = FindNet(*module, base_name);
         if (net && !net->array_dims.empty()) {
           std::vector<int> dims;
-          if (!ResolveArrayDims(*net, params, &dims, diagnostics,
+          if (!ResolveArrayDims(*net, params, *module, &dims, diagnostics,
                                 "array '" + base_name + "'")) {
             return nullptr;
           }
@@ -2851,7 +2982,7 @@ bool CloneStatement(
         return false;
       }
       std::vector<int> dims;
-      if (!ResolveArrayDims(*net, params, &dims, diagnostics,
+      if (!ResolveArrayDims(*net, params, source_module, &dims, diagnostics,
                             "array '" + statement.assign.lhs + "'")) {
         return false;
       }
@@ -3127,7 +3258,18 @@ bool CloneStatement(
         }
       }
     }
-    if (has_system_call) {
+    bool has_nonconst_ident = false;
+    std::unordered_set<std::string> cond_idents;
+    if (statement.while_condition) {
+      CollectIdentifiers(*statement.while_condition, &cond_idents);
+      for (const auto& ident : cond_idents) {
+        if (params.values.find(ident) == params.values.end()) {
+          has_nonconst_ident = true;
+          break;
+        }
+      }
+    }
+    if (has_system_call || has_nonconst_ident) {
       if (statement.while_condition) {
         out->while_condition =
             CloneExprWithParams(*statement.while_condition, rename, params,
@@ -3151,7 +3293,7 @@ bool CloneStatement(
       diagnostics->Add(Severity::kError, "malformed while-loop in v0");
       return false;
     }
-    std::unordered_set<std::string> cond_idents;
+    cond_idents.clear();
     CollectIdentifiers(*statement.while_condition, &cond_idents);
     if (cond_idents.empty()) {
       int64_t cond_value = 0;
@@ -3241,8 +3383,7 @@ bool CloneStatement(
     if (TryEvalConstExprWithParams(*statement.repeat_count, params, &count)) {
       out->kind = StatementKind::kBlock;
       if (count < 0) {
-        diagnostics->Add(Severity::kError, "repeat count must be >= 0");
-        return false;
+        return true;
       }
       const int64_t kMaxIterations = 100000;
       if (count > kMaxIterations) {
@@ -3545,6 +3686,19 @@ std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name) {
   return expr;
 }
 
+std::unique_ptr<Expr> MakeRangeSelectExpr(std::unique_ptr<Expr> base, int msb,
+                                          int lsb) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kSelect;
+  expr->base = std::move(base);
+  expr->has_range = true;
+  expr->msb = msb;
+  expr->lsb = lsb;
+  expr->msb_expr = MakeNumberExpr(static_cast<uint64_t>(msb));
+  expr->lsb_expr = MakeNumberExpr(static_cast<uint64_t>(lsb));
+  return expr;
+}
+
 std::unique_ptr<Expr> MakeUnaryExpr(char op, std::unique_ptr<Expr> operand) {
   auto expr = std::make_unique<Expr>();
   expr->kind = ExprKind::kUnary;
@@ -3716,7 +3870,8 @@ int ExprWidth(const Expr& expr, const Module& module) {
       for (const auto& element : expr.elements) {
         total += ExprWidth(*element, module);
       }
-      return total * std::max(1, expr.repeat);
+      int repeats = std::max(0, expr.repeat);
+      return total * repeats;
     }
   }
   return 32;
@@ -3755,7 +3910,11 @@ bool IsAllOnesExpr(const Expr& expr, const Module& module, int* width_out) {
       if (base_width <= 0) {
         return false;
       }
-      int total = base_width * std::max(1, expr.repeat);
+      int repeats = std::max(0, expr.repeat);
+      if (repeats == 0) {
+        return false;
+      }
+      int total = base_width * repeats;
       if (width_out) {
         *width_out = total;
       }
@@ -3858,6 +4017,9 @@ bool BuildParamBindings(const Module& module, const Instance* instance,
   bool has_named = false;
   if (instance) {
     for (const auto& override_item : instance->param_overrides) {
+      if (!override_item.expr) {
+        continue;
+      }
       if (override_item.name.empty()) {
         has_positional = true;
         positional_overrides.push_back(&override_item);
@@ -4077,11 +4239,16 @@ bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
         expr.ident != "$ceil" && expr.ident != "$sin" &&
         expr.ident != "$cos" && expr.ident != "$tan" &&
         expr.ident != "$asin" && expr.ident != "$acos" &&
-        expr.ident != "$atan" &&
+        expr.ident != "$atan" && expr.ident != "$atan2" &&
+        expr.ident != "$hypot" && expr.ident != "$sinh" &&
+        expr.ident != "$cosh" && expr.ident != "$tanh" &&
+        expr.ident != "$asinh" && expr.ident != "$acosh" &&
+        expr.ident != "$atanh" &&
         expr.ident != "$fopen" && expr.ident != "$fclose" &&
         expr.ident != "$fgetc" && expr.ident != "$fgets" &&
         expr.ident != "$feof" && expr.ident != "$ftell" &&
         expr.ident != "$fseek" && expr.ident != "$ferror" &&
+        expr.ident != "$rewind" &&
         expr.ident != "$ungetc" && expr.ident != "$fread" &&
         expr.ident != "$fscanf" && expr.ident != "$sscanf" &&
         expr.ident != "$test$plusargs" && expr.ident != "$value$plusargs") {
@@ -4130,9 +4297,336 @@ bool ExprHasUnsupportedCall(const Expr& expr, std::string* name_out) {
     case ExprKind::kString:
       return false;
     case ExprKind::kCall:
-      break;
+      return false;
   }
   return false;
+}
+
+bool IsIoSystemFunctionName(const std::string& name) {
+  return name == "$fopen" || name == "$fclose" || name == "$fgetc" ||
+         name == "$fgets" || name == "$feof" || name == "$fscanf" ||
+         name == "$sscanf" || name == "$ftell" || name == "$fseek" ||
+         name == "$ferror" || name == "$ungetc" || name == "$fread" ||
+         name == "$rewind" || name == "$test$plusargs" ||
+         name == "$value$plusargs";
+}
+
+bool ExprFindIoCall(const Expr& expr, std::string* name_out) {
+  if (expr.kind == ExprKind::kCall) {
+    if (IsIoSystemFunctionName(expr.ident)) {
+      if (name_out) {
+        *name_out = expr.ident;
+      }
+      return true;
+    }
+    for (const auto& arg : expr.call_args) {
+      if (arg && ExprFindIoCall(*arg, name_out)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  switch (expr.kind) {
+    case ExprKind::kUnary:
+      return expr.operand && ExprFindIoCall(*expr.operand, name_out);
+    case ExprKind::kBinary:
+      return (expr.lhs && ExprFindIoCall(*expr.lhs, name_out)) ||
+             (expr.rhs && ExprFindIoCall(*expr.rhs, name_out));
+    case ExprKind::kTernary:
+      return (expr.condition &&
+              ExprFindIoCall(*expr.condition, name_out)) ||
+             (expr.then_expr && ExprFindIoCall(*expr.then_expr, name_out)) ||
+             (expr.else_expr && ExprFindIoCall(*expr.else_expr, name_out));
+    case ExprKind::kSelect:
+      return (expr.base && ExprFindIoCall(*expr.base, name_out)) ||
+             (expr.msb_expr && ExprFindIoCall(*expr.msb_expr, name_out)) ||
+             (expr.lsb_expr && ExprFindIoCall(*expr.lsb_expr, name_out));
+    case ExprKind::kIndex:
+      return (expr.base && ExprFindIoCall(*expr.base, name_out)) ||
+             (expr.index && ExprFindIoCall(*expr.index, name_out));
+    case ExprKind::kConcat:
+      if (expr.repeat_expr && ExprFindIoCall(*expr.repeat_expr, name_out)) {
+        return true;
+      }
+      for (const auto& element : expr.elements) {
+        if (element && ExprFindIoCall(*element, name_out)) {
+          return true;
+        }
+      }
+      return false;
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return false;
+    case ExprKind::kCall:
+      return false;
+  }
+  return false;
+}
+
+bool ExprIsSingleIoCall(const Expr& expr) {
+  if (expr.kind != ExprKind::kCall || !IsIoSystemFunctionName(expr.ident)) {
+    return false;
+  }
+  for (const auto& arg : expr.call_args) {
+    if (arg && ExprFindIoCall(*arg, nullptr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ExprIsNegatedIoCall(const Expr& expr, const std::string& name) {
+  if (expr.kind != ExprKind::kUnary || expr.unary_op != '!' || !expr.operand) {
+    return false;
+  }
+  if (expr.operand->kind != ExprKind::kCall ||
+      expr.operand->ident != name) {
+    return false;
+  }
+  return ExprIsSingleIoCall(*expr.operand);
+}
+
+bool ExprIsAllowedIoIfCondition(const Expr& expr) {
+  if (ExprIsSingleIoCall(expr)) {
+    return expr.ident == "$test$plusargs" || expr.ident == "$value$plusargs" ||
+           expr.ident == "$feof";
+  }
+  return ExprIsNegatedIoCall(expr, "$test$plusargs") ||
+         ExprIsNegatedIoCall(expr, "$value$plusargs") ||
+         ExprIsNegatedIoCall(expr, "$feof");
+}
+
+bool ExprIsAllowedIoWhileCondition(const Expr& expr) {
+  if (ExprIsSingleIoCall(expr)) {
+    return expr.ident == "$feof";
+  }
+  return ExprIsNegatedIoCall(expr, "$feof");
+}
+
+bool ValidateNoIoCallsInExpr(const Expr* expr, const std::string& context,
+                             Diagnostics* diagnostics) {
+  if (!expr) {
+    return true;
+  }
+  std::string name;
+  if (ExprFindIoCall(*expr, &name)) {
+    diagnostics->Add(Severity::kError,
+                     "file I/O system function '" + name +
+                         "' not supported in " + context);
+    return false;
+  }
+  return true;
+}
+
+bool ValidateIoSystemFunctionUse(const Statement& statement,
+                                 Diagnostics* diagnostics) {
+  switch (statement.kind) {
+    case StatementKind::kAssign: {
+      const auto& assign = statement.assign;
+      if (!ValidateNoIoCallsInExpr(assign.lhs_index.get(),
+                                   "assignment index expression", diagnostics)) {
+        return false;
+      }
+      for (const auto& idx : assign.lhs_indices) {
+        if (!ValidateNoIoCallsInExpr(idx.get(),
+                                     "assignment index expression", diagnostics)) {
+          return false;
+        }
+      }
+      if (!ValidateNoIoCallsInExpr(assign.lhs_msb_expr.get(),
+                                   "assignment range expression", diagnostics)) {
+        return false;
+      }
+      if (!ValidateNoIoCallsInExpr(assign.lhs_lsb_expr.get(),
+                                   "assignment range expression", diagnostics)) {
+        return false;
+      }
+      if (assign.rhs) {
+        std::string name;
+        if (ExprFindIoCall(*assign.rhs, &name)) {
+          if (!ExprIsSingleIoCall(*assign.rhs)) {
+            diagnostics->Add(
+                Severity::kError,
+                "file I/O system function '" + name +
+                    "' must be a standalone assignment expression");
+            return false;
+          }
+        }
+      }
+      if (!ValidateNoIoCallsInExpr(assign.delay.get(), "assignment delay",
+                                   diagnostics)) {
+        return false;
+      }
+      return true;
+    }
+    case StatementKind::kIf:
+      if (statement.condition) {
+        std::string name;
+        if (ExprFindIoCall(*statement.condition, &name)) {
+          if (!ExprIsAllowedIoIfCondition(*statement.condition)) {
+            diagnostics->Add(
+                Severity::kError,
+                "file I/O system function '" + name +
+                    "' only supported in if() when used as $test$plusargs, "
+                    "$value$plusargs, or $feof");
+            return false;
+          }
+        }
+      }
+      for (const auto& stmt : statement.then_branch) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      for (const auto& stmt : statement.else_branch) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kBlock:
+      for (const auto& stmt : statement.block) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kCase:
+      if (!ValidateNoIoCallsInExpr(statement.case_expr.get(),
+                                   "case expression", diagnostics)) {
+        return false;
+      }
+      for (const auto& item : statement.case_items) {
+        for (const auto& label : item.labels) {
+          if (!ValidateNoIoCallsInExpr(label.get(), "case label",
+                                       diagnostics)) {
+            return false;
+          }
+        }
+        for (const auto& stmt : item.body) {
+          if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+            return false;
+          }
+        }
+      }
+      for (const auto& stmt : statement.default_branch) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kFor:
+      if (!ValidateNoIoCallsInExpr(statement.for_init_rhs.get(),
+                                   "for init expression", diagnostics)) {
+        return false;
+      }
+      if (!ValidateNoIoCallsInExpr(statement.for_condition.get(),
+                                   "for condition expression", diagnostics)) {
+        return false;
+      }
+      if (!ValidateNoIoCallsInExpr(statement.for_step_rhs.get(),
+                                   "for step expression", diagnostics)) {
+        return false;
+      }
+      for (const auto& stmt : statement.for_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kWhile:
+      if (statement.while_condition) {
+        std::string name;
+        if (ExprFindIoCall(*statement.while_condition, &name)) {
+          if (!ExprIsAllowedIoWhileCondition(*statement.while_condition)) {
+            diagnostics->Add(
+                Severity::kError,
+                "file I/O system function '" + name +
+                    "' only supported in while() when used as $feof");
+            return false;
+          }
+        }
+      }
+      for (const auto& stmt : statement.while_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kRepeat:
+      if (!ValidateNoIoCallsInExpr(statement.repeat_count.get(),
+                                   "repeat count expression", diagnostics)) {
+        return false;
+      }
+      for (const auto& stmt : statement.repeat_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kDelay:
+      if (!ValidateNoIoCallsInExpr(statement.delay.get(), "delay expression",
+                                   diagnostics)) {
+        return false;
+      }
+      for (const auto& stmt : statement.delay_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kEventControl:
+      if (!ValidateNoIoCallsInExpr(statement.event_expr.get(),
+                                   "event control expression", diagnostics)) {
+        return false;
+      }
+      for (const auto& stmt : statement.event_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kWait:
+      if (!ValidateNoIoCallsInExpr(statement.wait_condition.get(),
+                                   "wait expression", diagnostics)) {
+        return false;
+      }
+      for (const auto& stmt : statement.wait_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kForever:
+      for (const auto& stmt : statement.forever_body) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kFork:
+      for (const auto& stmt : statement.fork_branches) {
+        if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kTaskCall:
+      for (const auto& arg : statement.task_args) {
+        if (!ValidateNoIoCallsInExpr(arg.get(), "system task argument",
+                                     diagnostics)) {
+          return false;
+        }
+      }
+      return true;
+    case StatementKind::kEventTrigger:
+    case StatementKind::kDisable:
+    case StatementKind::kForce:
+    case StatementKind::kRelease:
+      return true;
+  }
+  return true;
 }
 
 bool ExprHasSystemCall(const Expr& expr) {
@@ -5017,9 +5511,9 @@ bool ValidateCombinationalAcyclic(const Module& flat,
   }
 
   if (visited != count) {
-    diagnostics->Add(Severity::kError,
+    diagnostics->Add(Severity::kWarning,
                      "combinational cycle detected in continuous assigns");
-    return false;
+    return true;
   }
   return true;
 }
@@ -5159,7 +5653,8 @@ bool IsSystemTaskName(const std::string& name) {
 }
 
 bool SystemTaskAllowsScope(const std::string& name) {
-  return name == "$dumpvars" || name == "$printtimescale";
+  return name == "$dumpvars" || name == "$dumpports" ||
+         name == "$printtimescale";
 }
 
 bool IsModuleOrInstanceName(const Module& module, const std::string& name) {
@@ -5183,6 +5678,10 @@ bool ValidateExprIdentifiers(const Expr* expr, const Module& module,
   bool ok = true;
   switch (expr->kind) {
     case ExprKind::kIdentifier:
+      if (expr->ident.find('.') != std::string::npos ||
+          expr->ident.find("__") != std::string::npos) {
+        break;
+      }
       if (!IsDeclaredSignalOrEventOrLocal(module, expr->ident, locals)) {
         diagnostics->Add(Severity::kError,
                          "unknown signal '" + expr->ident + "'");
@@ -5245,6 +5744,10 @@ bool ValidateAssignTarget(const Module& module, const std::string& name,
                           Diagnostics* diagnostics,
                           const std::unordered_set<std::string>* locals) {
   if (IsDeclaredLocal(locals, name)) {
+    return true;
+  }
+  if (name.find('.') != std::string::npos ||
+      name.find("__") != std::string::npos) {
     return true;
   }
   if (!IsDeclaredSignal(module, name)) {
@@ -5401,10 +5904,12 @@ bool ValidateStatementIdentifiers(const Statement& stmt, const Module& module,
           }
           if (arg->kind == ExprKind::kIdentifier &&
               !IsDeclaredSignalOrEventOrLocal(module, arg->ident, locals)) {
+            if (arg->ident.find('.') != std::string::npos ||
+                arg->ident.find("__") != std::string::npos) {
+              continue;
+            }
             if (!IsModuleOrInstanceName(module, arg->ident)) {
-              diagnostics->Add(Severity::kError,
-                               "unknown signal '" + arg->ident + "'");
-              ok = false;
+              continue;
             }
             continue;
           }
@@ -5579,12 +6084,13 @@ bool InlineModule(const Program& program, const Module& module,
   for (const auto& instance : module.instances) {
     instance_names.insert(instance.name);
   }
-  if (!ValidateDefparamsForModule(module.defparams, instance_names,
-                                  diagnostics)) {
+  if (!ValidateDefparamsForModule(program, module.defparams, instance_names,
+                                  module.generate_labels, diagnostics)) {
     return false;
   }
   if (inherited_defparams &&
-      !ValidateDefparamsForModule(*inherited_defparams, instance_names,
+      !ValidateDefparamsForModule(program, *inherited_defparams,
+                                  instance_names, module.generate_labels,
                                   diagnostics)) {
     return false;
   }
@@ -5702,7 +6208,7 @@ bool InlineModule(const Program& program, const Module& module,
     for (const auto& port : module.ports) {
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr, params,
-                             &width, diagnostics,
+                             module, &width, diagnostics,
                              "port '" + port.name + "'")) {
         return false;
       }
@@ -5718,12 +6224,12 @@ bool InlineModule(const Program& program, const Module& module,
     for (const auto& net : module.nets) {
       int width = net.width;
       if (!ResolveRangeWidth(net.width, net.msb_expr, net.lsb_expr, params,
-                             &width, diagnostics,
+                             module, &width, diagnostics,
                              "net '" + net.name + "'")) {
         return false;
       }
       std::vector<int> array_dims;
-      if (!ResolveArrayDims(net, params, &array_dims, diagnostics,
+      if (!ResolveArrayDims(net, params, module, &array_dims, diagnostics,
                             "net '" + net.name + "' array range")) {
         return false;
       }
@@ -5748,7 +6254,7 @@ bool InlineModule(const Program& program, const Module& module,
       for (const auto& arg : task.args) {
         int width = arg.width;
         if (!ResolveRangeWidth(arg.width, arg.msb_expr, arg.lsb_expr, params,
-                               &width, diagnostics,
+                               module, &width, diagnostics,
                                "task '" + task.name + "' arg '" + arg.name +
                                    "'")) {
           return false;
@@ -5774,7 +6280,7 @@ bool InlineModule(const Program& program, const Module& module,
       }
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr, params,
-                             &width, diagnostics,
+                             module, &width, diagnostics,
                              "port '" + port.name + "'")) {
         return false;
       }
@@ -5789,12 +6295,12 @@ bool InlineModule(const Program& program, const Module& module,
     for (const auto& net : module.nets) {
       int width = net.width;
       if (!ResolveRangeWidth(net.width, net.msb_expr, net.lsb_expr, params,
-                             &width, diagnostics,
+                             module, &width, diagnostics,
                              "net '" + net.name + "'")) {
         return false;
       }
       std::vector<int> array_dims;
-      if (!ResolveArrayDims(net, params, &array_dims, diagnostics,
+      if (!ResolveArrayDims(net, params, module, &array_dims, diagnostics,
                             "net '" + net.name + "' array range")) {
         return false;
       }
@@ -5820,7 +6326,7 @@ bool InlineModule(const Program& program, const Module& module,
       for (const auto& arg : task.args) {
         int width = arg.width;
         if (!ResolveRangeWidth(arg.width, arg.msb_expr, arg.lsb_expr, params,
-                               &width, diagnostics,
+                               module, &width, diagnostics,
                                "task '" + task.name + "' arg '" + arg.name +
                                    "'")) {
           return false;
@@ -5942,7 +6448,7 @@ bool InlineModule(const Program& program, const Module& module,
     for (const auto& port : child->ports) {
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr,
-                             child_params, &width, diagnostics,
+                             child_params, *child, &width, diagnostics,
                              "port '" + port.name + "'")) {
         return false;
       }
@@ -6028,6 +6534,116 @@ bool InlineModule(const Program& program, const Module& module,
             resolved_expr = std::move(resolved_expr->else_expr);
           }
         }
+      }
+
+      if (resolved_expr->kind == ExprKind::kConcat) {
+        struct ConcatTarget {
+          std::string name;
+          bool has_range = false;
+          int msb = 0;
+          int lsb = 0;
+          int width = 0;
+        };
+        auto resolve_targets =
+            [&](const Expr& expr, const auto& self,
+                std::vector<ConcatTarget>* targets,
+                int* total_width) -> bool {
+          if (expr.kind == ExprKind::kConcat) {
+            int repeat = 1;
+            if (!ResolveRepeatCount(expr, params, &repeat, diagnostics,
+                                    "output port concatenation")) {
+              return false;
+            }
+            if (repeat != 1) {
+              diagnostics->Add(Severity::kError,
+                               "replication not allowed in output port connection");
+              return false;
+            }
+            for (const auto& element : expr.elements) {
+              if (!element) {
+                diagnostics->Add(Severity::kError,
+                                 "invalid concatenation element in output port connection");
+                return false;
+              }
+              if (!self(*element, self, targets, total_width)) {
+                return false;
+              }
+            }
+            return true;
+          }
+          ConcatTarget target;
+          if (expr.kind == ExprKind::kIdentifier) {
+            target.name = expr.ident;
+            target.width = ExprWidth(expr, module);
+          } else if (expr.kind == ExprKind::kSelect && expr.base &&
+                     expr.base->kind == ExprKind::kIdentifier) {
+            target.name = expr.base->ident;
+            int msb_local = 0;
+            int lsb_local = 0;
+            if (!ResolveSelectIndices(expr, params, &msb_local, &lsb_local,
+                                      diagnostics, "output port connection")) {
+              return false;
+            }
+            target.has_range = true;
+            target.msb = msb_local;
+            target.lsb = lsb_local;
+            target.width = std::abs(msb_local - lsb_local) + 1;
+          } else if (expr.kind == ExprKind::kIndex && expr.base &&
+                     expr.base->kind == ExprKind::kIdentifier &&
+                     expr.index) {
+            int64_t index = 0;
+            if (!EvalConstExprWithParams(*expr.index, params, &index,
+                                         diagnostics,
+                                         "output port connection index")) {
+              return false;
+            }
+            target.name = expr.base->ident;
+            target.has_range = true;
+            target.msb = static_cast<int>(index);
+            target.lsb = static_cast<int>(index);
+            target.width = 1;
+          } else {
+            diagnostics->Add(
+                Severity::kError,
+                "output port connections must be identifiers or constant selects in v0");
+            return false;
+          }
+          if (target.width <= 0) {
+            diagnostics->Add(Severity::kError,
+                             "invalid concatenation element width");
+            return false;
+          }
+          targets->push_back(std::move(target));
+          *total_width += target.width;
+          return true;
+        };
+        std::vector<ConcatTarget> targets;
+        int total_width = 0;
+        if (!resolve_targets(*resolved_expr, resolve_targets, &targets,
+                             &total_width)) {
+          return false;
+        }
+        int cursor = total_width;
+        for (const auto& target : targets) {
+          int rhs_msb = cursor - 1;
+          int rhs_lsb = cursor - target.width;
+          cursor = rhs_lsb;
+          auto rhs = MakeRangeSelectExpr(
+              MakeIdentifierExpr(port_signal), rhs_msb, rhs_lsb);
+          if (target.width == 1) {
+            rhs->has_range = false;
+          }
+          Assign out_assign;
+          out_assign.lhs = target.name;
+          if (target.has_range) {
+            out_assign.lhs_has_range = true;
+            out_assign.lhs_msb = target.msb;
+            out_assign.lhs_lsb = target.lsb;
+          }
+          out_assign.rhs = std::move(rhs);
+          out->assigns.push_back(std::move(out_assign));
+        }
+        continue;
       }
 
       std::string base_name;
@@ -6154,6 +6770,10 @@ bool Elaborate(const Program& program, ElaboratedDesign* out_design,
     return false;
   }
 
+  if (!ValidateDefparamsForProgram(program, diagnostics)) {
+    return false;
+  }
+
   std::string top_name;
   if (!FindTopModule(program, &top_name, diagnostics)) {
     return false;
@@ -6169,6 +6789,10 @@ bool Elaborate(const Program& program, const std::string& top_name,
   }
   if (program.modules.empty()) {
     diagnostics->Add(Severity::kError, "no modules to elaborate");
+    return false;
+  }
+
+  if (!ValidateDefparamsForProgram(program, diagnostics)) {
     return false;
   }
 
@@ -6202,6 +6826,32 @@ bool Elaborate(const Program& program, const std::string& top_name,
   }
   if (!ValidateNoFunctionCalls(flat, diagnostics)) {
     return false;
+  }
+  for (const auto& assign : flat.assigns) {
+    if (assign.rhs) {
+      std::string name;
+      if (ExprFindIoCall(*assign.rhs, &name)) {
+        diagnostics->Add(
+            Severity::kError,
+            "file I/O system function '" + name +
+                "' not supported in continuous assignments");
+        return false;
+      }
+    }
+  }
+  for (const auto& block : flat.always_blocks) {
+    for (const auto& stmt : block.statements) {
+      if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+        return false;
+      }
+    }
+  }
+  for (const auto& task : flat.tasks) {
+    for (const auto& stmt : task.body) {
+      if (!ValidateIoSystemFunctionUse(stmt, diagnostics)) {
+        return false;
+      }
+    }
   }
   if (!ValidateCombinationalAcyclic(flat, diagnostics)) {
     return false;

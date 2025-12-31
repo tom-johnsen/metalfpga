@@ -101,7 +101,7 @@ target_compile_definitions(crlibm_ref PRIVATE
   SCS_NB_BITS=30
 )
 
-add_executable(metalfpga_crlibm_compare EXCLUDE_FROM_ALL
+add_executable(metalfpga_crlibm_compare
   src/tools/crlibm_compare.cc
 )
 
@@ -111,6 +111,10 @@ target_include_directories(metalfpga_crlibm_compare PRIVATE
 )
 
 target_link_libraries(metalfpga_crlibm_compare PRIVATE crlibm_ref)
+
+add_custom_target(metalfpga_tools ALL
+  DEPENDS metalfpga_cli metalfpga_smoke metalfpga_crlibm_compare
+)
 
 if(APPLE)
   target_link_libraries(metalfpga PUBLIC "-framework Metal" "-framework Foundation")

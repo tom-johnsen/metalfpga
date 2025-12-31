@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace gpga {
@@ -22,6 +23,7 @@ struct Port {
   int width = 1;
   bool is_signed = false;
   bool is_real = false;
+  bool is_declared = false;
   std::shared_ptr<Expr> msb_expr;
   std::shared_ptr<Expr> lsb_expr;
 };
@@ -370,6 +372,15 @@ struct DefParam {
   int column = 0;
 };
 
+struct TimingCheck {
+  std::string name;
+  std::string edge;
+  std::string signal;
+  std::string condition;
+  int line = 0;
+  int column = 0;
+};
+
 struct Module {
   std::string name;
   std::string timescale;
@@ -384,6 +395,8 @@ struct Module {
   std::vector<Task> tasks;
   std::vector<EventDecl> events;
   std::vector<DefParam> defparams;
+  std::vector<TimingCheck> timing_checks;
+  std::unordered_set<std::string> generate_labels;
   UnconnectedDrive unconnected_drive = UnconnectedDrive::kNone;
 };
 

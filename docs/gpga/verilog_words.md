@@ -61,6 +61,41 @@
 - special net types (`wand`, `wor`, `tri0`, `tri1`, `triand`, `trior`,
   `trireg`, `supply0`, `supply1`)
 
+### System I/O words
+
+Progress: 22/22 words added [######################]
+
+Functions:
+- `$fopen`
+- `$fclose`
+- `$fgetc`
+- `$fgets`
+- `$feof`
+- `$ftell`
+- `$fseek`
+- `$ferror`
+- `$ungetc`
+- `$fread`
+- `$fscanf`
+- `$sscanf`
+- `$test$plusargs`
+- `$value$plusargs`
+
+Tasks:
+- `$fdisplay`
+- `$fwrite`
+- `$fflush`
+- `$rewind`
+- `$readmemh`
+- `$readmemb`
+- `$writememh`
+- `$writememb`
+
+Notes:
+- File I/O functions must appear as standalone assignment expressions.
+- `$feof`, `$test$plusargs`, and `$value$plusargs` are also supported as direct
+  `if`/`while` conditions (no compound expressions yet).
+
 ### Operators implemented
 - `+` `-` `%`
 - `&` `|` `^`

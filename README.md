@@ -284,6 +284,7 @@ The compiler detects and reports:
 - [4-State Logic Plan](docs/4STATE.md) - X/Z support design document
 - [4-State API Reference](docs/gpga_4state_api.md) - Complete MSL library documentation (100+ functions)
 - [IEEE 754 Real Implementation](include/gpga_real.h) - 17,113-line software double-precision library
+- [GPGA Real Library API Reference](docs/GPGA_REAL_API.md) - Complete reference for 346+ IEEE 754 functions
 - [CRlibm Porting Plan](docs/CRLIBM_PORTING.md) - Roadmap for correctly rounded elementary functions
 - [Software Double Implementation](docs/SOFTFLOAT64_IMPLEMENTATION.md) - Original softfloat design document (REV31)
 - [GPGA Keywords Reference](docs/GPGA_KEYWORDS.md) - All `gpga_*` and `__gpga_*` keywords used in generated MSL (power ops, real number operations, math functions, wide integers, double precision internals)
@@ -293,7 +294,8 @@ The compiler detects and reports:
 - [Async Debugging](docs/ASYNC_DEBUGGING.md) - Debugging asynchronous circuits
 
 ### Revision History
-- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV34)
+- [docs/diff/](docs/diff/) - REV documents tracking commit-by-commit changes (REV0-REV35)
+  - [REV35](docs/diff/REV35.md) - VCD and scheduler fixes + GPGA Real API documentation (v0.7+)
   - [REV34](docs/diff/REV34.md) - CRlibm validation milestone: 99.999% perfect accuracy (v0.7+)
   - [REV33](docs/diff/REV33.md) - IEEE 754 compliant software double & dynamic libraries (v0.7+)
   - [REV32](docs/diff/REV32.md) - Wide integer support & complete file I/O (v0.7+)
@@ -389,7 +391,7 @@ verilog/
   systemverilog/  # SystemVerilog tests (18 files, expected to fail)
 docs/
   gpga/                    # Core documentation
-  diff/                    # REV documents (REV0-REV34 commit changelogs)
+  diff/                    # REV documents (REV0-REV35 commit changelogs)
   4STATE.md                # 4-state logic implementation
   gpga_4state_api.md       # Complete MSL 4-state library reference
   CRLIBM_PORTING.md        # CRlibm correctly rounded math port plan

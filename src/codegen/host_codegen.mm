@@ -9,7 +9,6 @@ namespace gpga {
 
 std::string EmitHostStub(const Module& module) {
   std::ostringstream out;
-  out << "// Placeholder host stub emitted by GPGA.\n";
   out << "// Module: " << module.name << "\n";
   struct SysTaskInfo {
     bool has_tasks = false;

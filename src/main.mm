@@ -26,10 +26,13 @@
 
 namespace {
 
+constexpr const char* kMetalFpgaVersion = "dev";
+
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
             << " <input.v> [<more.v> ...] [--emit-msl <path>] [--emit-host <path>]"
-            << " [--dump-flat] [--top <module>] [--4state] [--auto]"
+            << " [--dump-flat] [--top <module>] [--4state] [--auto] [--strict-1364]"
+            << " [--sdf <path>] [--version]"
             << " [--run] [--count N] [--service-capacity N]"
             << " [--max-steps N] [--max-proc-steps N]"
             << " [--dispatch-timeout-ms N]"
@@ -38,6 +41,8 @@ void PrintUsage(const char* argv0) {
             << " [--vcd-dir <path>] [--vcd-steps N]"
             << " [+ARG[=VALUE] ...]\n";
 }
+
+void PrintVersion() { std::cout << "metalfpga " << kMetalFpgaVersion << "\n"; }
 
 bool WriteFile(const std::string& path, const std::string& content,
                gpga::Diagnostics* diagnostics) {
@@ -56,6 +61,15 @@ bool WriteFile(const std::string& path, const std::string& content,
     return false;
   }
   return true;
+}
+
+std::string ToLowerAscii(const std::string& input) {
+  std::string out;
+  out.reserve(input.size());
+  for (unsigned char ch : input) {
+    out.push_back(static_cast<char>(std::tolower(ch)));
+  }
+  return out;
 }
 
 std::string DirLabel(gpga::PortDir dir) {
@@ -84,6 +98,483 @@ bool IsOutputPort(const gpga::Module& module, const std::string& name) {
   const gpga::Port* port = FindPort(module, name);
   return port && (port->dir == gpga::PortDir::kOutput ||
                   port->dir == gpga::PortDir::kInout);
+}
+
+struct SdfToken {
+  std::string text;
+  int line = 0;
+  int column = 0;
+};
+
+struct SdfNode {
+  bool is_atom = false;
+  std::string text;
+  std::vector<SdfNode> children;
+  int line = 0;
+  int column = 0;
+};
+
+struct SdfTimingCheck {
+  std::string name;
+  std::string edge;
+  std::string signal;
+  std::string condition;
+  bool has_cond = false;
+  int line = 0;
+  int column = 0;
+};
+
+bool TokenizeSdf(const std::string& content, std::vector<SdfToken>* tokens,
+                 std::string* error, int* error_line, int* error_column) {
+  tokens->clear();
+  int line = 1;
+  int column = 1;
+  size_t i = 0;
+  auto set_error = [&](const std::string& message) {
+    if (error) {
+      *error = message;
+    }
+    if (error_line) {
+      *error_line = line;
+    }
+    if (error_column) {
+      *error_column = column;
+    }
+  };
+  auto push_token = [&](const std::string& text, int tok_line,
+                        int tok_column) {
+    tokens->push_back(SdfToken{text, tok_line, tok_column});
+  };
+  while (i < content.size()) {
+    unsigned char ch = static_cast<unsigned char>(content[i]);
+    if (std::isspace(ch)) {
+      if (content[i] == '\n') {
+        ++line;
+        column = 1;
+      } else {
+        ++column;
+      }
+      ++i;
+      continue;
+    }
+    if (content[i] == '/' && i + 1 < content.size()) {
+      if (content[i + 1] == '/') {
+        i += 2;
+        column += 2;
+        while (i < content.size() && content[i] != '\n') {
+          ++i;
+          ++column;
+        }
+        continue;
+      }
+      if (content[i + 1] == '*') {
+        i += 2;
+        column += 2;
+        bool closed = false;
+        while (i + 1 < content.size()) {
+          if (content[i] == '\n') {
+            ++line;
+            column = 1;
+            ++i;
+            continue;
+          }
+          if (content[i] == '*' && content[i + 1] == '/') {
+            i += 2;
+            column += 2;
+            closed = true;
+            break;
+          }
+          ++i;
+          ++column;
+        }
+        if (!closed) {
+          set_error("unterminated block comment");
+          return false;
+        }
+        continue;
+      }
+    }
+    if (content[i] == '(' || content[i] == ')') {
+      int tok_line = line;
+      int tok_column = column;
+      push_token(std::string(1, content[i]), tok_line, tok_column);
+      ++i;
+      ++column;
+      continue;
+    }
+    if (content[i] == '"') {
+      int tok_line = line;
+      int tok_column = column;
+      ++i;
+      ++column;
+      std::string value;
+      bool closed = false;
+      while (i < content.size()) {
+        char c = content[i];
+        if (c == '"') {
+          closed = true;
+          ++i;
+          ++column;
+          break;
+        }
+        if (c == '\\' && i + 1 < content.size()) {
+          value.push_back(content[i + 1]);
+          i += 2;
+          column += 2;
+          continue;
+        }
+        if (c == '\n') {
+          ++line;
+          column = 1;
+          value.push_back(c);
+          ++i;
+          continue;
+        }
+        value.push_back(c);
+        ++i;
+        ++column;
+      }
+      if (!closed) {
+        set_error("unterminated string literal");
+        return false;
+      }
+      push_token(value, tok_line, tok_column);
+      continue;
+    }
+    int tok_line = line;
+    int tok_column = column;
+    size_t start = i;
+    while (i < content.size()) {
+      char c = content[i];
+      if (std::isspace(static_cast<unsigned char>(c)) || c == '(' ||
+          c == ')') {
+        break;
+      }
+      ++i;
+      ++column;
+    }
+    if (i == start) {
+      set_error("unexpected character");
+      return false;
+    }
+    push_token(content.substr(start, i - start), tok_line, tok_column);
+  }
+  return true;
+}
+
+bool ParseSdfNode(const std::vector<SdfToken>& tokens, size_t* index,
+                  SdfNode* out, std::string* error, int* error_line,
+                  int* error_column) {
+  if (*index >= tokens.size()) {
+    if (error) {
+      *error = "unexpected end of file";
+    }
+    return false;
+  }
+  const SdfToken& token = tokens[*index];
+  if (token.text == "(") {
+    out->is_atom = false;
+    out->line = token.line;
+    out->column = token.column;
+    out->children.clear();
+    ++(*index);
+    while (*index < tokens.size() && tokens[*index].text != ")") {
+      SdfNode child;
+      if (!ParseSdfNode(tokens, index, &child, error, error_line,
+                        error_column)) {
+        return false;
+      }
+      out->children.push_back(std::move(child));
+    }
+    if (*index >= tokens.size()) {
+      if (error) {
+        *error = "missing ')' in SDF list";
+      }
+      if (error_line) {
+        *error_line = token.line;
+      }
+      if (error_column) {
+        *error_column = token.column;
+      }
+      return false;
+    }
+    ++(*index);
+    return true;
+  }
+  if (token.text == ")") {
+    if (error) {
+      *error = "unexpected ')'";
+    }
+    if (error_line) {
+      *error_line = token.line;
+    }
+    if (error_column) {
+      *error_column = token.column;
+    }
+    return false;
+  }
+  out->is_atom = true;
+  out->text = token.text;
+  out->line = token.line;
+  out->column = token.column;
+  ++(*index);
+  return true;
+}
+
+bool ParseSdfTokens(const std::vector<SdfToken>& tokens,
+                    std::vector<SdfNode>* nodes, std::string* error,
+                    int* error_line, int* error_column) {
+  nodes->clear();
+  size_t index = 0;
+  while (index < tokens.size()) {
+    SdfNode node;
+    if (!ParseSdfNode(tokens, &index, &node, error, error_line,
+                      error_column)) {
+      return false;
+    }
+    nodes->push_back(std::move(node));
+  }
+  return true;
+}
+
+void AppendSdfNodeText(const SdfNode& node, std::string* out,
+                       bool include_parens) {
+  if (node.is_atom) {
+    out->append(node.text);
+    return;
+  }
+  if (include_parens) {
+    out->push_back('(');
+  }
+  for (const auto& child : node.children) {
+    AppendSdfNodeText(child, out, true);
+  }
+  if (include_parens) {
+    out->push_back(')');
+  }
+}
+
+std::string NormalizeSdfExpr(const SdfNode& node) {
+  std::string out;
+  AppendSdfNodeText(node, &out, false);
+  return ToLowerAscii(out);
+}
+
+std::string NormalizeSdfNodeList(const std::vector<SdfNode>& nodes) {
+  SdfNode wrapper;
+  wrapper.is_atom = false;
+  wrapper.children = nodes;
+  return NormalizeSdfExpr(wrapper);
+}
+
+bool IsTimingCheckName(const std::string& name) {
+  static const std::unordered_set<std::string> names = {
+      "setup", "hold", "setuphold", "recovery", "removal",
+      "recrem", "skew", "period", "width", "pulsewidth", "nochange"};
+  return names.count(name) != 0u;
+}
+
+void ExtractEventFromSdfNode(const SdfNode& node, std::string* edge,
+                             std::string* signal) {
+  edge->clear();
+  signal->clear();
+  if (node.is_atom) {
+    *signal = ToLowerAscii(node.text);
+    return;
+  }
+  if (node.children.empty()) {
+    return;
+  }
+  if (node.children[0].is_atom) {
+    std::string first = ToLowerAscii(node.children[0].text);
+    if (first == "posedge" || first == "negedge") {
+      *edge = first;
+      if (node.children.size() > 1) {
+        *signal = NormalizeSdfNodeList(
+            std::vector<SdfNode>(node.children.begin() + 1,
+                                 node.children.end()));
+      }
+      return;
+    }
+  }
+  *signal = NormalizeSdfNodeList(node.children);
+}
+
+bool ParseSdfTimingCheck(const SdfNode& node, SdfTimingCheck* out) {
+  if (node.is_atom || node.children.empty()) {
+    return false;
+  }
+  if (!node.children[0].is_atom) {
+    return false;
+  }
+  std::string name = ToLowerAscii(node.children[0].text);
+  if (!IsTimingCheckName(name)) {
+    return false;
+  }
+  const SdfNode* event_node = nullptr;
+  for (size_t i = 1; i < node.children.size(); ++i) {
+    const SdfNode& child = node.children[i];
+    if (!child.is_atom && !child.children.empty()) {
+      if (child.children[0].is_atom) {
+        std::string head = ToLowerAscii(child.children[0].text);
+        if (head == "cond" || head == "posedge" || head == "negedge") {
+          event_node = &child;
+          break;
+        }
+      }
+    }
+  }
+  if (!event_node) {
+    return false;
+  }
+  out->name = name;
+  out->edge.clear();
+  out->signal.clear();
+  out->condition.clear();
+  out->has_cond = false;
+  out->line = node.line;
+  out->column = node.column;
+  if (!event_node->children.empty() && event_node->children[0].is_atom) {
+    std::string head = ToLowerAscii(event_node->children[0].text);
+    if (head == "cond") {
+      out->has_cond = true;
+      if (event_node->children.size() >= 3) {
+        out->condition = NormalizeSdfExpr(event_node->children[1]);
+        ExtractEventFromSdfNode(event_node->children.back(), &out->edge,
+                                &out->signal);
+        return !out->signal.empty();
+      }
+      return false;
+    }
+  }
+  ExtractEventFromSdfNode(*event_node, &out->edge, &out->signal);
+  return !out->signal.empty();
+}
+
+void CollectSdfTimingChecks(const SdfNode& node,
+                            std::vector<SdfTimingCheck>* out) {
+  SdfTimingCheck timing;
+  if (ParseSdfTimingCheck(node, &timing)) {
+    out->push_back(std::move(timing));
+  }
+  if (!node.is_atom) {
+    for (const auto& child : node.children) {
+      CollectSdfTimingChecks(child, out);
+    }
+  }
+}
+
+bool LoadSdfTimingChecks(const std::string& path,
+                         std::vector<SdfTimingCheck>* checks,
+                         gpga::Diagnostics* diagnostics) {
+  checks->clear();
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    diagnostics->Add(gpga::Severity::kError,
+                     "failed to open SDF file",
+                     gpga::SourceLocation{path});
+    return false;
+  }
+  std::string content((std::istreambuf_iterator<char>(in)),
+                      std::istreambuf_iterator<char>());
+  std::vector<SdfToken> tokens;
+  std::string error;
+  int error_line = 0;
+  int error_column = 0;
+  if (!TokenizeSdf(content, &tokens, &error, &error_line, &error_column)) {
+    diagnostics->Add(gpga::Severity::kError,
+                     "failed to tokenize SDF: " + error,
+                     gpga::SourceLocation{path, error_line, error_column});
+    return false;
+  }
+  std::vector<SdfNode> nodes;
+  if (!ParseSdfTokens(tokens, &nodes, &error, &error_line, &error_column)) {
+    diagnostics->Add(gpga::Severity::kError,
+                     "failed to parse SDF: " + error,
+                     gpga::SourceLocation{path, error_line, error_column});
+    return false;
+  }
+  for (const auto& node : nodes) {
+    CollectSdfTimingChecks(node, checks);
+  }
+  return true;
+}
+
+void MatchSdfTimingChecks(const std::string& path,
+                          const std::vector<SdfTimingCheck>& sdf_checks,
+                          const gpga::Program& program,
+                          gpga::Diagnostics* diagnostics) {
+  std::unordered_set<std::string> keys;
+  std::vector<std::pair<std::string, const gpga::TimingCheck*>> check_keys;
+  for (const auto& module : program.modules) {
+    for (const auto& check : module.timing_checks) {
+      std::string key = check.name + "|" + check.edge + "|" + check.signal +
+                        "|" + check.condition;
+      keys.insert(key);
+      check_keys.emplace_back(module.name, &check);
+    }
+  }
+  const char* verbose_env = std::getenv("METALFPGA_SDF_VERBOSE");
+  bool verbose = verbose_env && *verbose_env != '\0';
+  std::unordered_set<std::string> matched_keys;
+  for (const auto& sdf : sdf_checks) {
+    std::string key = sdf.name + "|" + sdf.edge + "|" + sdf.signal + "|" +
+                      sdf.condition;
+    bool matched = keys.count(key) != 0u;
+    if (matched) {
+      matched_keys.insert(key);
+      if (verbose) {
+        std::cerr << "SDF match: " << sdf.name;
+        if (!sdf.edge.empty()) {
+          std::cerr << " " << sdf.edge;
+        }
+        if (!sdf.signal.empty()) {
+          std::cerr << " " << sdf.signal;
+        }
+        if (!sdf.condition.empty()) {
+          std::cerr << " &&& " << sdf.condition;
+        }
+        std::cerr << "\n";
+      }
+      continue;
+    }
+    if (sdf.has_cond) {
+      diagnostics->Add(gpga::Severity::kWarning,
+                       "SDF COND did not match any timing check",
+                       gpga::SourceLocation{path, sdf.line, sdf.column});
+    } else if (verbose) {
+      std::cerr << "SDF no match: " << sdf.name;
+      if (!sdf.edge.empty()) {
+        std::cerr << " " << sdf.edge;
+      }
+      if (!sdf.signal.empty()) {
+        std::cerr << " " << sdf.signal;
+      }
+      std::cerr << "\n";
+    }
+  }
+  if (verbose) {
+    for (const auto& entry : check_keys) {
+      const std::string key = entry.second->name + "|" + entry.second->edge +
+                              "|" + entry.second->signal + "|" +
+                              entry.second->condition;
+      if (matched_keys.count(key) != 0u) {
+        continue;
+      }
+      std::cerr << "SDF unannotated: " << entry.first << "."
+                << entry.second->name;
+      if (!entry.second->edge.empty()) {
+        std::cerr << " " << entry.second->edge;
+      }
+      if (!entry.second->signal.empty()) {
+        std::cerr << " " << entry.second->signal;
+      }
+      if (!entry.second->condition.empty()) {
+        std::cerr << " &&& " << entry.second->condition;
+      }
+      std::cerr << "\n";
+    }
+  }
 }
 
 struct SysTaskInfo {
@@ -1913,6 +2404,12 @@ PackedStateLayout BuildPackedStateLayout(const gpga::Module& module,
   for (const auto& block : module.always_blocks) {
     if (block.edge == gpga::EdgeKind::kCombinational) {
       continue;
+    }
+    if (block.edge == gpga::EdgeKind::kPosedge ||
+        block.edge == gpga::EdgeKind::kNegedge) {
+      if (!block.clock.empty()) {
+        scheduled_reads.insert(block.clock);
+      }
     }
     for (const auto& stmt : block.statements) {
       CollectReadSignals(stmt, &scheduled_reads);
@@ -4964,7 +5461,7 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       if (expr.has_width && expr.number_width > 0) {
         return expr.number_width;
       }
-      return MinimalWidth(expr.number);
+      return std::max(32, MinimalWidth(expr.number));
     case gpga::ExprKind::kString:
       return std::max<int>(
           1, static_cast<int>(expr.string_value.size() * 8));
@@ -5024,7 +5521,8 @@ int ExprWidth(const gpga::Expr& expr, const gpga::Module& module) {
       for (const auto& element : expr.elements) {
         total += ExprWidth(*element, module);
       }
-      return total * std::max(1, expr.repeat);
+      int repeats = std::max(0, expr.repeat);
+      return total * repeats;
     }
   }
   return 32;
@@ -5125,7 +5623,11 @@ bool IsAllOnesExpr(const gpga::Expr& expr, const gpga::Module& module,
       if (base_width <= 0) {
         return false;
       }
-      int total = base_width * std::max(1, expr.repeat);
+      int repeats = std::max(0, expr.repeat);
+      if (repeats == 0) {
+        return false;
+      }
+      int total = base_width * repeats;
       if (width_out) {
         *width_out = total;
       }
@@ -5812,9 +6314,11 @@ int main(int argc, char** argv) {
   std::string msl_out;
   std::string host_out;
   std::string top_name;
+  std::string sdf_path;
   bool dump_flat = false;
   bool enable_4state = false;
   bool auto_discover = false;
+  bool strict_1364 = false;
   bool run = false;
   bool run_verbose = false;
   bool run_source_bindings = false;
@@ -5849,10 +6353,21 @@ int main(int argc, char** argv) {
         return 2;
       }
       host_out = argv[++i];
+    } else if (arg == "--sdf") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      sdf_path = argv[++i];
     } else if (arg == "--4state") {
       enable_4state = true;
     } else if (arg == "--auto") {
       auto_discover = true;
+    } else if (arg == "--strict-1364") {
+      strict_1364 = true;
+    } else if (arg == "--version") {
+      PrintVersion();
+      return 0;
     } else if (arg == "--run") {
       run = true;
     } else if (arg == "--run-verbose") {
@@ -5928,6 +6443,8 @@ int main(int argc, char** argv) {
   program.modules.clear();
   gpga::ParseOptions parse_options;
   parse_options.enable_4state = enable_4state;
+  parse_options.strict_1364 = strict_1364;
+  std::unordered_set<size_t> explicit_module_indices;
 
   struct ParseItem {
     std::string path;
@@ -5988,6 +6505,7 @@ int main(int argc, char** argv) {
 
   for (const auto& item : parse_queue) {
     if (item.explicit_input) {
+      size_t before_count = program.modules.size();
       if (!gpga::ParseVerilogFile(item.path, &program, &diagnostics,
                                   parse_options)) {
         diagnostics.RenderTo(std::cerr);
@@ -5996,6 +6514,10 @@ int main(int argc, char** argv) {
       if (diagnostics.HasErrors()) {
         diagnostics.RenderTo(std::cerr);
         return 1;
+      }
+      size_t after_count = program.modules.size();
+      for (size_t i = before_count; i < after_count; ++i) {
+        explicit_module_indices.insert(i);
       }
       continue;
     }
@@ -6013,8 +6535,127 @@ int main(int argc, char** argv) {
     }
   }
 
+  if (auto_discover && !explicit_module_indices.empty()) {
+    std::unordered_map<std::string, std::vector<std::string>> graph;
+    graph.reserve(program.modules.size());
+    for (const auto& module : program.modules) {
+      auto& edges = graph[module.name];
+      for (const auto& instance : module.instances) {
+        edges.push_back(instance.module_name);
+      }
+    }
+    std::unordered_set<std::string> active_module_names;
+    active_module_names.reserve(program.modules.size());
+    std::vector<std::string> stack;
+    for (size_t idx : explicit_module_indices) {
+      if (idx >= program.modules.size()) {
+        continue;
+      }
+      const std::string& name = program.modules[idx].name;
+      if (active_module_names.insert(name).second) {
+        stack.push_back(name);
+      }
+    }
+    while (!stack.empty()) {
+      std::string name = std::move(stack.back());
+      stack.pop_back();
+      auto it = graph.find(name);
+      if (it == graph.end()) {
+        continue;
+      }
+      for (const auto& child : it->second) {
+        if (active_module_names.insert(child).second) {
+          stack.push_back(child);
+        }
+      }
+    }
+    for (auto& module : program.modules) {
+      if (active_module_names.count(module.name) == 0) {
+        module.defparams.clear();
+      }
+    }
+  }
+
+  if (!sdf_path.empty()) {
+    std::vector<SdfTimingCheck> sdf_checks;
+    if (!LoadSdfTimingChecks(sdf_path, &sdf_checks, &diagnostics)) {
+      diagnostics.RenderTo(std::cerr);
+      return 1;
+    }
+    MatchSdfTimingChecks(sdf_path, sdf_checks, program, &diagnostics);
+    if (diagnostics.HasErrors()) {
+      diagnostics.RenderTo(std::cerr);
+      return 1;
+    }
+  }
+
   gpga::ElaboratedDesign design;
   bool elaborated = false;
+  if (top_name.empty() && auto_discover &&
+      !explicit_module_indices.empty()) {
+    std::unordered_set<std::string> instantiated;
+    for (const auto& module : program.modules) {
+      for (const auto& instance : module.instances) {
+        instantiated.insert(instance.module_name);
+      }
+    }
+    std::vector<const gpga::Module*> roots;
+    for (size_t i = 0; i < program.modules.size(); ++i) {
+      if (explicit_module_indices.count(i) == 0) {
+        continue;
+      }
+      const auto& module = program.modules[i];
+      if (instantiated.count(module.name) == 0) {
+        roots.push_back(&module);
+      }
+    }
+    if (!roots.empty()) {
+      auto has_initial = [](const gpga::Module& module) -> bool {
+        for (const auto& block : module.always_blocks) {
+          if (block.edge == gpga::EdgeKind::kInitial) {
+            return true;
+          }
+        }
+        return false;
+      };
+      auto is_test = [](const std::string& name) -> bool {
+        return name.rfind("test_", 0) == 0;
+      };
+      const gpga::Module* chosen = nullptr;
+      for (const auto* module : roots) {
+        if (has_initial(*module) && is_test(module->name)) {
+          chosen = module;
+          break;
+        }
+      }
+      if (!chosen) {
+        for (const auto* module : roots) {
+          if (has_initial(*module)) {
+            chosen = module;
+            break;
+          }
+        }
+      }
+      if (!chosen) {
+        for (const auto* module : roots) {
+          if (is_test(module->name)) {
+            chosen = module;
+            break;
+          }
+        }
+      }
+      if (!chosen) {
+        chosen = roots.front();
+      }
+      if (roots.size() > 1) {
+        diagnostics.Add(gpga::Severity::kWarning,
+                        "multiple top-level modules found; using '" +
+                            chosen->name +
+                            "' (use --top <name> to override)");
+      }
+      top_name = chosen->name;
+    }
+  }
   if (!top_name.empty()) {
     elaborated =
         gpga::Elaborate(program, top_name, &design, &diagnostics, enable_4state);
