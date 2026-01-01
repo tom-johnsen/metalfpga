@@ -2964,6 +2964,7 @@ bool CloneStatement(
     const Module& flat_module, Statement* out, Diagnostics* diagnostics) {
   out->kind = statement.kind;
   out->block_label = statement.block_label;
+  out->is_procedural = statement.is_procedural;
   if (statement.kind == StatementKind::kAssign ||
       statement.kind == StatementKind::kForce ||
       statement.kind == StatementKind::kRelease) {
@@ -6061,12 +6062,14 @@ bool InlineModule(const Program& program, const Module& module,
                   std::unordered_map<std::string, std::string>* flat_to_hier,
                   bool enable_4state,
                   const std::vector<DefParam>* inherited_defparams) {
-    if (stack->count(module.name) > 0) {
+  if (stack->count(module.name) > 0) {
     diagnostics->Add(Severity::kError,
                      "recursive module instantiation detected");
     return false;
   }
   stack->insert(module.name);
+  const int origin_depth =
+      static_cast<int>(std::count(hier_prefix.begin(), hier_prefix.end(), '.'));
 
   std::unordered_set<std::string> port_names;
   std::unordered_set<std::string> local_net_names;
@@ -6356,6 +6359,9 @@ bool InlineModule(const Program& program, const Module& module,
     flattened.strength0 = assign.strength0;
     flattened.strength1 = assign.strength1;
     flattened.has_strength = assign.has_strength;
+    flattened.is_implicit = assign.is_implicit;
+    flattened.is_derived = assign.is_derived;
+    flattened.origin_depth = origin_depth;
     if (assign.rhs) {
       flattened.rhs =
           CloneExprWithParams(*assign.rhs, rename, params, &module,
@@ -6400,6 +6406,9 @@ bool InlineModule(const Program& program, const Module& module,
     flattened.edge = block.edge;
     flattened.clock = rename(block.clock);
     flattened.sensitivity = block.sensitivity;
+    flattened.is_synthesized = block.is_synthesized;
+    flattened.is_decl_init = block.is_decl_init;
+    flattened.origin_depth = origin_depth;
     if (!CloneStatementList(block.statements, rename, params, module, *out,
                             &flattened.statements, diagnostics)) {
       return false;
@@ -6517,6 +6526,8 @@ bool InlineModule(const Program& program, const Module& module,
       if (child_port_dirs[port_name] == PortDir::kInput) {
         Assign expr_assign;
         expr_assign.lhs = port_signal;
+        expr_assign.is_implicit = true;
+        expr_assign.origin_depth = origin_depth;
         expr_assign.rhs = std::move(resolved_expr);
         out->assigns.push_back(std::move(expr_assign));
         continue;
@@ -6635,6 +6646,8 @@ bool InlineModule(const Program& program, const Module& module,
           }
           Assign out_assign;
           out_assign.lhs = target.name;
+          out_assign.is_implicit = true;
+          out_assign.origin_depth = origin_depth;
           if (target.has_range) {
             out_assign.lhs_has_range = true;
             out_assign.lhs_msb = target.msb;
@@ -6679,6 +6692,8 @@ bool InlineModule(const Program& program, const Module& module,
       }
       Assign out_assign;
       out_assign.lhs = base_name;
+      out_assign.is_implicit = true;
+      out_assign.origin_depth = origin_depth;
       if (resolved_expr->kind != ExprKind::kIdentifier) {
         out_assign.lhs_has_range = true;
         out_assign.lhs_msb = msb;
@@ -6708,6 +6723,8 @@ bool InlineModule(const Program& program, const Module& module,
           std::string default_label;
           Assign default_assign;
           default_assign.lhs = port_net;
+          default_assign.is_implicit = true;
+          default_assign.origin_depth = origin_depth;
           switch (module.unconnected_drive) {
             case UnconnectedDrive::kPull0:
               default_label = "pull0";

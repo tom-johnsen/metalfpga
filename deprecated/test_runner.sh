@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# DEPRECATED DO NOT USE
+
 # MetalFPGA comprehensive test script with smart flag detection
 # Tests all Verilog files with appropriate flags
 

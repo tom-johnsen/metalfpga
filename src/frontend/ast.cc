@@ -255,7 +255,44 @@ bool EvalConstExpr4State(const Expr& expr,
         return false;
       }
       int width = ValueWidth(value);
-      FourStateValue normalized = NormalizeUnknown(value, width);
+      bool signed_operand = expr.operand ? ExprIsSigned(*expr.operand) : false;
+      if (expr.unary_op == '+' || expr.unary_op == '-') {
+        width = std::max(width, 32);
+      }
+      auto extend_value = [&](const FourStateValue& in_value, int src_width,
+                              int dst_width, bool signed_op) -> FourStateValue {
+        FourStateValue out = in_value;
+        out.width = dst_width;
+        if (dst_width <= src_width || src_width <= 0) {
+          uint64_t mask = MaskForWidth(dst_width);
+          out.value_bits &= mask;
+          out.x_bits &= mask;
+          out.z_bits &= mask;
+          return out;
+        }
+        uint64_t src_mask = MaskForWidth(src_width);
+        uint64_t dst_mask = MaskForWidth(dst_width);
+        uint64_t val = in_value.value_bits & src_mask;
+        uint64_t x_bits = in_value.x_bits & src_mask;
+        uint64_t z_bits = in_value.z_bits & src_mask;
+        if (signed_op && src_width > 0) {
+          uint64_t sign_bit = 1ull << (src_width - 1);
+          uint64_t ext_mask = dst_mask & ~src_mask;
+          bool sign_unknown = ((x_bits | z_bits) & sign_bit) != 0;
+          if (sign_unknown) {
+            x_bits |= ext_mask;
+          } else if ((val & sign_bit) != 0) {
+            val |= ext_mask;
+          }
+        }
+        out.value_bits = val & dst_mask;
+        out.x_bits = x_bits & dst_mask;
+        out.z_bits = z_bits & dst_mask;
+        return out;
+      };
+      FourStateValue extended =
+          extend_value(value, ValueWidth(value), width, signed_operand);
+      FourStateValue normalized = NormalizeUnknown(extended, width);
       switch (expr.unary_op) {
         case '+':
           if (normalized.HasXorZ()) {
@@ -409,30 +446,83 @@ bool EvalConstExpr4State(const Expr& expr,
           width = clamp_width(width);
           break;
       }
-      FourStateValue left = NormalizeUnknown(lhs, width);
-      FourStateValue right = NormalizeUnknown(rhs, width);
-      uint64_t mask = MaskForWidth(width);
       bool signed_cmp = ExprIsSigned(*expr.lhs) && ExprIsSigned(*expr.rhs);
+      auto extend_value = [&](const FourStateValue& in_value, int src_width,
+                              int dst_width, bool signed_op) -> FourStateValue {
+        FourStateValue out = in_value;
+        out.width = dst_width;
+        if (dst_width <= src_width || src_width <= 0) {
+          uint64_t mask = MaskForWidth(dst_width);
+          out.value_bits &= mask;
+          out.x_bits &= mask;
+          out.z_bits &= mask;
+          return out;
+        }
+        uint64_t src_mask = MaskForWidth(src_width);
+        uint64_t dst_mask = MaskForWidth(dst_width);
+        uint64_t val = in_value.value_bits & src_mask;
+        uint64_t x_bits = in_value.x_bits & src_mask;
+        uint64_t z_bits = in_value.z_bits & src_mask;
+        if (signed_op && src_width > 0) {
+          uint64_t sign_bit = 1ull << (src_width - 1);
+          uint64_t ext_mask = dst_mask & ~src_mask;
+          bool sign_unknown = ((x_bits | z_bits) & sign_bit) != 0;
+          if (sign_unknown) {
+            x_bits |= ext_mask;
+          } else if ((val & sign_bit) != 0) {
+            val |= ext_mask;
+          }
+        }
+        out.value_bits = val & dst_mask;
+        out.x_bits = x_bits & dst_mask;
+        out.z_bits = z_bits & dst_mask;
+        return out;
+      };
+      FourStateValue left =
+          NormalizeUnknown(extend_value(lhs, lhs_width, width, signed_cmp),
+                           width);
+      FourStateValue right =
+          NormalizeUnknown(extend_value(rhs, rhs_width, width, signed_cmp),
+                           width);
+      uint64_t mask = MaskForWidth(width);
       switch (expr.op) {
         case '+':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(width);
           } else {
-            *out_value = MakeKnown(left.value_bits + right.value_bits, width);
+            if (signed_cmp) {
+              int64_t lv = SignedValue(left.value_bits, width);
+              int64_t rv = SignedValue(right.value_bits, width);
+              *out_value = MakeKnown(static_cast<uint64_t>(lv + rv), width);
+            } else {
+              *out_value = MakeKnown(left.value_bits + right.value_bits, width);
+            }
           }
           return true;
         case '-':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(width);
           } else {
-            *out_value = MakeKnown(left.value_bits - right.value_bits, width);
+            if (signed_cmp) {
+              int64_t lv = SignedValue(left.value_bits, width);
+              int64_t rv = SignedValue(right.value_bits, width);
+              *out_value = MakeKnown(static_cast<uint64_t>(lv - rv), width);
+            } else {
+              *out_value = MakeKnown(left.value_bits - right.value_bits, width);
+            }
           }
           return true;
         case '*':
           if (left.HasXorZ() || right.HasXorZ()) {
             *out_value = AllX(width);
           } else {
-            *out_value = MakeKnown(left.value_bits * right.value_bits, width);
+            if (signed_cmp) {
+              int64_t lv = SignedValue(left.value_bits, width);
+              int64_t rv = SignedValue(right.value_bits, width);
+              *out_value = MakeKnown(static_cast<uint64_t>(lv * rv), width);
+            } else {
+              *out_value = MakeKnown(left.value_bits * right.value_bits, width);
+            }
           }
           return true;
         case 'p':
@@ -465,7 +555,17 @@ bool EvalConstExpr4State(const Expr& expr,
               right.value_bits == 0) {
             *out_value = AllX(width);
           } else {
-            *out_value = MakeKnown(left.value_bits / right.value_bits, width);
+            if (signed_cmp) {
+              int64_t lv = SignedValue(left.value_bits, width);
+              int64_t rv = SignedValue(right.value_bits, width);
+              if (rv == 0) {
+                *out_value = AllX(width);
+              } else {
+                *out_value = MakeKnown(static_cast<uint64_t>(lv / rv), width);
+              }
+            } else {
+              *out_value = MakeKnown(left.value_bits / right.value_bits, width);
+            }
           }
           return true;
         case '%':
@@ -473,7 +573,17 @@ bool EvalConstExpr4State(const Expr& expr,
               right.value_bits == 0) {
             *out_value = AllX(width);
           } else {
-            *out_value = MakeKnown(left.value_bits % right.value_bits, width);
+            if (signed_cmp) {
+              int64_t lv = SignedValue(left.value_bits, width);
+              int64_t rv = SignedValue(right.value_bits, width);
+              if (rv == 0) {
+                *out_value = AllX(width);
+              } else {
+                *out_value = MakeKnown(static_cast<uint64_t>(lv % rv), width);
+              }
+            } else {
+              *out_value = MakeKnown(left.value_bits % right.value_bits, width);
+            }
           }
           return true;
         case '&':
@@ -684,7 +794,14 @@ bool EvalConstExpr4State(const Expr& expr,
             }
             FourStateValue out;
             out.width = width;
-            out.value_bits = (left.value_bits >> shift) & mask;
+            if (signed_cmp) {
+              int64_t lv = SignedValue(left.value_bits, width);
+              out.value_bits =
+                  static_cast<uint64_t>(lv >> static_cast<int64_t>(shift)) &
+                  mask;
+            } else {
+              out.value_bits = (left.value_bits >> shift) & mask;
+            }
             out.x_bits = (left.x_bits >> shift) & mask;
             out.z_bits = 0;
             *out_value = out;

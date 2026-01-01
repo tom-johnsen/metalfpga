@@ -5,11 +5,14 @@
 #include <unordered_map>
 #include <vector>
 
+#include "utils/msl_naming.hh"
+
 namespace gpga {
 
 std::string EmitHostStub(const Module& module) {
   std::ostringstream out;
   out << "// Module: " << module.name << "\n";
+  const std::string msl_module_name = MslMangleIdentifier(module.name);
   struct SysTaskInfo {
     bool has_tasks = false;
     size_t max_args = 0;
@@ -457,23 +460,23 @@ std::string EmitHostStub(const Module& module) {
   } else {
     out << "    gpga::ServiceStringTable strings;\n";
   }
-  out << "    if (!runtime.CreateKernel(\"gpga_" << module.name << "_sched_step\", &sched_kernel, &error)) {\n";
+  out << "    if (!runtime.CreateKernel(\"gpga_" << msl_module_name << "_sched_step\", &sched_kernel, &error)) {\n";
   out << "      std::cerr << \"Failed to create scheduler kernel: \" << error << \"\\n\";\n";
   out << "      return 1;\n";
   out << "    }\n";
   out << "  } else {\n";
-  out << "    if (!runtime.CreateKernel(\"gpga_" << module.name << "\", &comb_kernel, &error)) {\n";
+  out << "    if (!runtime.CreateKernel(\"gpga_" << msl_module_name << "\", &comb_kernel, &error)) {\n";
   out << "      std::cerr << \"Failed to create comb kernel: \" << error << \"\\n\";\n";
   out << "      return 1;\n";
   out << "    }\n";
   out << "    if (has_init) {\n";
-  out << "      if (!runtime.CreateKernel(\"gpga_" << module.name << "_init\", &init_kernel, &error)) {\n";
+  out << "      if (!runtime.CreateKernel(\"gpga_" << msl_module_name << "_init\", &init_kernel, &error)) {\n";
   out << "        std::cerr << \"Failed to create init kernel: \" << error << \"\\n\";\n";
   out << "        return 1;\n";
   out << "      }\n";
   out << "    }\n";
   out << "    if (has_tick) {\n";
-  out << "      if (!runtime.CreateKernel(\"gpga_" << module.name << "_tick\", &tick_kernel, &error)) {\n";
+  out << "      if (!runtime.CreateKernel(\"gpga_" << msl_module_name << "_tick\", &tick_kernel, &error)) {\n";
   out << "        std::cerr << \"Failed to create tick kernel: \" << error << \"\\n\";\n";
   out << "        return 1;\n";
   out << "      }\n";

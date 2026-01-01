@@ -7,12 +7,12 @@ docs/pdfs/
 .claude/
 
 persistent/
-msl/
 host/
 test_results/
 artifacts/
 goldentests/
 thirdparty/
+deprecated/docs
 
 docs/PLAN.md
 docs/IDEA.md

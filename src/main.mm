@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -22,6 +23,7 @@
 #include "core/elaboration.hh"
 #include "frontend/verilog_parser.hh"
 #include "runtime/metal_runtime.hh"
+#include "utils/msl_naming.hh"
 #include "utils/diagnostics.hh"
 
 namespace {
@@ -31,7 +33,8 @@ constexpr const char* kMetalFpgaVersion = "dev";
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
             << " <input.v> [<more.v> ...] [--emit-msl <path>] [--emit-host <path>]"
-            << " [--dump-flat] [--top <module>] [--4state] [--auto] [--strict-1364]"
+            << " [--emit-flat <path>] [--dump-flat] [--top <module>]"
+            << " [--4state] [--auto] [--strict-1364]"
             << " [--sdf <path>] [--version]"
             << " [--run] [--count N] [--service-capacity N]"
             << " [--max-steps N] [--max-proc-steps N]"
@@ -1356,6 +1359,10 @@ const gpga::SignalInfo* FindSignalInfo(const gpga::ModuleInfo& module,
   return nullptr;
 }
 
+std::string MslSignalName(const std::string& name) {
+  return gpga::MslMangleIdentifier(name);
+}
+
 const gpga::MetalBuffer* FindBuffer(
     const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
     const std::string& base, const char* suffix) {
@@ -1505,7 +1512,8 @@ bool ReadSignalWord(const gpga::SignalInfo& sig, uint32_t gid,
                     uint64_t array_index,
                     const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
                     size_t word_index, uint64_t* value_out) {
-  const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.name, "_val");
+  const gpga::MetalBuffer* val_buf =
+      FindBuffer(buffers, MslSignalName(sig.name), "_val");
   if (!val_buf) {
     return false;
   }
@@ -1517,13 +1525,14 @@ bool WriteSignalWord(const gpga::SignalInfo& sig, uint32_t gid,
                      uint64_t array_index, size_t word_index, uint64_t value,
                      uint64_t xz, bool four_state,
                      std::unordered_map<std::string, gpga::MetalBuffer>* buffers) {
-  gpga::MetalBuffer* val_buf = FindBufferMutable(buffers, sig.name, "_val");
+  gpga::MetalBuffer* val_buf =
+      FindBufferMutable(buffers, MslSignalName(sig.name), "_val");
   if (!val_buf || !val_buf->contents()) {
     return false;
   }
   gpga::MetalBuffer* xz_buf = nullptr;
   if (four_state) {
-    xz_buf = FindBufferMutable(buffers, sig.name, "_xz");
+    xz_buf = FindBufferMutable(buffers, MslSignalName(sig.name), "_xz");
   }
   size_t word_count = SignalWordCount(sig);
   if (word_index >= word_count) {
@@ -3166,12 +3175,13 @@ class VcdWriter {
     if (!val || !xz) {
       return false;
     }
-    const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.base_name, "_val");
+    const gpga::MetalBuffer* val_buf =
+        FindBuffer(buffers, MslSignalName(sig.base_name), "_val");
     const gpga::MetalBuffer* xz_buf = nullptr;
     const gpga::MetalBuffer* packed_buf = nullptr;
     const PackedSignalOffsets* packed = nullptr;
     if (four_state_) {
-      xz_buf = FindBuffer(buffers, sig.base_name, "_xz");
+      xz_buf = FindBuffer(buffers, MslSignalName(sig.base_name), "_xz");
     }
     if (!val_buf && packed_layout_) {
       packed = packed_layout_->Find(sig.base_name);
@@ -3227,12 +3237,13 @@ class VcdWriter {
     if (!val_words || !xz_words) {
       return false;
     }
-    const gpga::MetalBuffer* val_buf = FindBuffer(buffers, sig.base_name, "_val");
+    const gpga::MetalBuffer* val_buf =
+        FindBuffer(buffers, MslSignalName(sig.base_name), "_val");
     const gpga::MetalBuffer* xz_buf = nullptr;
     const gpga::MetalBuffer* packed_buf = nullptr;
     const PackedSignalOffsets* packed = nullptr;
     if (four_state_) {
-      xz_buf = FindBuffer(buffers, sig.base_name, "_xz");
+      xz_buf = FindBuffer(buffers, MslSignalName(sig.base_name), "_xz");
     }
     if (!val_buf && packed_layout_) {
       packed = packed_layout_->Find(sig.base_name);
@@ -3655,14 +3666,14 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
     }
     return false;
   }
-  const std::string base = signal.name;
+  const std::string base = MslSignalName(signal.name);
   auto it_val = buffers->find(base + "_val");
   if (it_val == buffers->end()) {
     it_val = buffers->find(base);
   }
   if (it_val == buffers->end()) {
     if (error) {
-      *error = "readmem target buffer not found: " + base;
+      *error = "readmem target buffer not found: " + signal.name;
     }
     return false;
   }
@@ -3886,14 +3897,14 @@ bool ApplyWritemem(const std::string& filename, bool is_hex,
     }
     return false;
   }
-  const std::string base = signal.name;
+  const std::string base = MslSignalName(signal.name);
   auto it_val = buffers->find(base + "_val");
   if (it_val == buffers->end()) {
     it_val = buffers->find(base);
   }
   if (it_val == buffers->end()) {
     if (error) {
-      *error = "writemem target buffer not found: " + base;
+      *error = "writemem target buffer not found: " + signal.name;
     }
     return false;
   }
@@ -5134,7 +5145,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   gpga::ParseSchedulerConstants(msl, &sched, error);
 
   gpga::ModuleInfo info = BuildModuleInfo(module, enable_4state);
-  const std::string base = "gpga_" + module.name;
+  const std::string base = "gpga_" + gpga::MslMangleIdentifier(module.name);
   const bool has_sched = HasKernel(msl, base + "_sched_step");
   const bool has_init = HasKernel(msl, base + "_init");
   const bool has_tick = HasKernel(msl, base + "_tick");
@@ -6123,8 +6134,13 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
       if (stmt.assign.lhs_index) {
         lhs += "[" + ExprToString(*stmt.assign.lhs_index, module) + "]";
       }
-      os << pad << "force " << lhs << " = "
-         << ExprToString(*stmt.assign.rhs, module) << ";\n";
+      if (stmt.is_procedural) {
+        os << pad << "assign " << lhs << " = "
+           << ExprToString(*stmt.assign.rhs, module) << ";\n";
+      } else {
+        os << pad << "force " << lhs << " = "
+           << ExprToString(*stmt.assign.rhs, module) << ";\n";
+      }
     }
     return;
   }
@@ -6134,7 +6150,11 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     if (stmt.assign.lhs_index) {
       lhs += "[" + ExprToString(*stmt.assign.lhs_index, module) + "]";
     }
-    os << pad << "release " << lhs << ";\n";
+    if (stmt.is_procedural) {
+      os << pad << "deassign " << lhs << ";\n";
+    } else {
+      os << pad << "release " << lhs << ";\n";
+    }
     return;
   }
 }
@@ -6215,36 +6235,192 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
       os << "  - event " << evt.name << "\n";
     }
   }
-  os << "Assigns:\n";
+  auto format_assign = [&](const gpga::Assign& assign) -> std::string {
+    int lhs_width = SignalWidth(top, assign.lhs);
+    std::string lhs = assign.lhs;
+    if (assign.lhs_has_range) {
+      int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+      int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+      lhs_width = hi - lo + 1;
+      if (assign.lhs_msb == assign.lhs_lsb) {
+        lhs += "[" + std::to_string(assign.lhs_msb) + "]";
+      } else {
+        lhs += "[" + std::to_string(assign.lhs_msb) + ":" +
+               std::to_string(assign.lhs_lsb) + "]";
+      }
+    }
+    const gpga::Expr* rhs_expr = assign.rhs.get();
+    if (const gpga::Expr* simplified =
+            SimplifyAssignMask(*assign.rhs, top, lhs_width)) {
+      rhs_expr = simplified;
+    }
+    int rhs_width = ExprWidth(*rhs_expr, top);
+    std::string rhs = ExprToString(*rhs_expr, top);
+    if (rhs_width < lhs_width) {
+      rhs = (ExprSigned(*rhs_expr, top) ? "sext(" : "zext(") + rhs + ", " +
+            std::to_string(lhs_width) + ")";
+    } else if (rhs_width > lhs_width) {
+      rhs = "trunc(" + rhs + ", " + std::to_string(lhs_width) + ")";
+    }
+    return lhs + " = " + rhs;
+  };
+  auto format_proc_assign = [&](const gpga::Statement& stmt) -> std::string {
+    std::string lhs = stmt.assign.lhs;
+    for (const auto& idx : stmt.assign.lhs_indices) {
+      if (idx) {
+        lhs += "[" + ExprToString(*idx, top) + "]";
+      }
+    }
+    if (stmt.assign.lhs_index) {
+      lhs += "[" + ExprToString(*stmt.assign.lhs_index, top) + "]";
+    } else if (stmt.assign.lhs_has_range) {
+      if (stmt.assign.lhs_msb == stmt.assign.lhs_lsb) {
+        lhs += "[" + std::to_string(stmt.assign.lhs_msb) + "]";
+      } else {
+        lhs += "[" + std::to_string(stmt.assign.lhs_msb) + ":" +
+               std::to_string(stmt.assign.lhs_lsb) + "]";
+      }
+    }
+    std::string rhs =
+        stmt.assign.rhs ? ExprToString(*stmt.assign.rhs, top) : "<null>";
+    std::string delay;
+    if (stmt.assign.delay) {
+      delay = "#" + ExprToString(*stmt.assign.delay, top) + " ";
+    }
+    return "procedural " + lhs + " = " + delay + rhs;
+  };
+  std::vector<const gpga::Assign*> explicit_assigns;
+  std::vector<const gpga::Assign*> derived_assigns;
+  std::vector<const gpga::Assign*> implicit_assigns;
+  std::vector<const gpga::Assign*> inlined_assigns;
   for (const auto& assign : top.assigns) {
-    if (assign.rhs) {
-      int lhs_width = SignalWidth(top, assign.lhs);
-      std::string lhs = assign.lhs;
-      if (assign.lhs_has_range) {
-        int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
-        int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
-        lhs_width = hi - lo + 1;
-        if (assign.lhs_msb == assign.lhs_lsb) {
-          lhs += "[" + std::to_string(assign.lhs_msb) + "]";
-        } else {
-          lhs += "[" + std::to_string(assign.lhs_msb) + ":" +
-                 std::to_string(assign.lhs_lsb) + "]";
+    if (!assign.rhs) {
+      continue;
+    }
+    if (assign.is_derived) {
+      derived_assigns.push_back(&assign);
+    } else if (assign.origin_depth == 0 && !assign.is_implicit) {
+      explicit_assigns.push_back(&assign);
+    } else if (assign.is_implicit) {
+      implicit_assigns.push_back(&assign);
+    } else {
+      inlined_assigns.push_back(&assign);
+    }
+  }
+  std::vector<std::string> procedural_assigns;
+  std::function<void(const gpga::Statement&)> collect_proc;
+  collect_proc = [&](const gpga::Statement& stmt) {
+    if (stmt.kind == gpga::StatementKind::kForce && stmt.is_procedural) {
+      if (stmt.assign.rhs) {
+        procedural_assigns.push_back(format_proc_assign(stmt));
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kIf) {
+      for (const auto& inner : stmt.then_branch) {
+        collect_proc(inner);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kBlock) {
+      for (const auto& inner : stmt.block) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kCase) {
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          collect_proc(inner);
         }
       }
-      const gpga::Expr* rhs_expr = assign.rhs.get();
-      if (const gpga::Expr* simplified =
-              SimplifyAssignMask(*assign.rhs, top, lhs_width)) {
-        rhs_expr = simplified;
+      for (const auto& inner : stmt.default_branch) {
+        collect_proc(inner);
       }
-      int rhs_width = ExprWidth(*rhs_expr, top);
-      std::string rhs = ExprToString(*rhs_expr, top);
-      if (rhs_width < lhs_width) {
-        rhs = (ExprSigned(*rhs_expr, top) ? "sext(" : "zext(") + rhs + ", " +
-              std::to_string(lhs_width) + ")";
-      } else if (rhs_width > lhs_width) {
-        rhs = "trunc(" + rhs + ", " + std::to_string(lhs_width) + ")";
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kFor) {
+      for (const auto& inner : stmt.for_body) {
+        collect_proc(inner);
       }
-      os << "  - " << lhs << " = " << rhs << "\n";
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kWhile) {
+      for (const auto& inner : stmt.while_body) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kRepeat) {
+      for (const auto& inner : stmt.repeat_body) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kDelay) {
+      for (const auto& inner : stmt.delay_body) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kEventControl) {
+      for (const auto& inner : stmt.event_body) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kWait) {
+      for (const auto& inner : stmt.wait_body) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kForever) {
+      for (const auto& inner : stmt.forever_body) {
+        collect_proc(inner);
+      }
+      return;
+    }
+    if (stmt.kind == gpga::StatementKind::kFork) {
+      for (const auto& inner : stmt.fork_branches) {
+        collect_proc(inner);
+      }
+    }
+  };
+  for (const auto& block : top.always_blocks) {
+    if (block.origin_depth != 0 || block.is_synthesized) {
+      continue;
+    }
+    for (const auto& stmt : block.statements) {
+      collect_proc(stmt);
+    }
+  }
+  os << "Assigns:\n";
+  for (const auto* assign : explicit_assigns) {
+    os << "  - " << format_assign(*assign) << "\n";
+  }
+  for (const auto& proc : procedural_assigns) {
+    os << "  - " << proc << "\n";
+  }
+  if (!derived_assigns.empty()) {
+    os << "Derived assigns:\n";
+    for (const auto* assign : derived_assigns) {
+      os << "  * " << format_assign(*assign) << "\n";
+    }
+  }
+  if (!inlined_assigns.empty()) {
+    os << "Inlined assigns:\n";
+    for (const auto* assign : inlined_assigns) {
+      os << "  * " << format_assign(*assign) << "\n";
+    }
+  }
+  if (!implicit_assigns.empty()) {
+    os << "Implicit assigns:\n";
+    for (const auto* assign : implicit_assigns) {
+      os << "  * " << format_assign(*assign) << "\n";
     }
   }
   os << "Switches:\n";
@@ -6273,32 +6449,78 @@ void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
     }
     os << "\n";
   }
-  os << "Always blocks:\n";
-  for (const auto& block : top.always_blocks) {
+  auto emit_block_header = [&](const gpga::AlwaysBlock& block,
+                               const std::string& bullet) {
     if (block.edge == gpga::EdgeKind::kCombinational) {
       if (!block.sensitivity.empty() && block.sensitivity != "*") {
-        os << "  - always @(" << block.sensitivity << ")\n";
+        os << bullet << "always @(" << block.sensitivity << ")\n";
       } else {
-        os << "  - always @*\n";
+        os << bullet << "always @*\n";
       }
-    } else if (block.edge == gpga::EdgeKind::kInitial) {
-      os << "  - initial\n";
-    } else {
-      if (!block.sensitivity.empty()) {
-        os << "  - always @(" << block.sensitivity << ")\n";
-      } else {
-        os << "  - always @("
-           << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")
-           << block.clock << ")\n";
-      }
+      return;
     }
+    if (block.edge == gpga::EdgeKind::kInitial) {
+      os << bullet << "initial\n";
+      return;
+    }
+    if (!block.sensitivity.empty()) {
+      os << bullet << "always @(" << block.sensitivity << ")\n";
+    } else {
+      os << bullet << "always @("
+         << (block.edge == gpga::EdgeKind::kPosedge ? "posedge " : "negedge ")
+         << block.clock << ")\n";
+    }
+  };
+  auto emit_block = [&](const gpga::AlwaysBlock& block,
+                        const std::string& bullet, bool split_decl_init) {
+    if (split_decl_init && block.is_decl_init &&
+        block.statements.size() > 1) {
+      for (const auto& stmt : block.statements) {
+        emit_block_header(block, bullet);
+        DumpStatement(stmt, top, 4, os);
+      }
+      return;
+    }
+    emit_block_header(block, bullet);
     for (const auto& stmt : block.statements) {
       DumpStatement(stmt, top, 4, os);
     }
+  };
+  os << "Always blocks:\n";
+  std::vector<const gpga::AlwaysBlock*> explicit_blocks;
+  std::vector<const gpga::AlwaysBlock*> inlined_blocks;
+  std::vector<const gpga::AlwaysBlock*> synthesized_blocks;
+  for (const auto& block : top.always_blocks) {
+    if (block.is_synthesized) {
+      synthesized_blocks.push_back(&block);
+    } else if (block.origin_depth != 0) {
+      inlined_blocks.push_back(&block);
+    } else {
+      explicit_blocks.push_back(&block);
+    }
+  }
+  for (const auto* block : explicit_blocks) {
+    emit_block(*block, "  - ", true);
+  }
+  if (!inlined_blocks.empty()) {
+    os << "Inlined always blocks:\n";
+    for (const auto* block : inlined_blocks) {
+      emit_block(*block, "  * ", false);
+    }
+  }
+  if (!synthesized_blocks.empty()) {
+    os << "Synthesized always blocks:\n";
+    for (const auto* block : synthesized_blocks) {
+      emit_block(*block, "  * ", false);
+    }
   }
   os << "Flat name map:\n";
-  for (const auto& entry : design.flat_to_hier) {
-    os << "  - " << entry.first << " -> " << entry.second << "\n";
+  if (design.flat_to_hier.empty()) {
+    os << "  - __top__ -> " << top.name << "\n";
+  } else {
+    for (const auto& entry : design.flat_to_hier) {
+      os << "  - " << entry.first << " -> " << entry.second << "\n";
+    }
   }
 }
 
@@ -6313,6 +6535,7 @@ int main(int argc, char** argv) {
   std::vector<std::string> input_paths;
   std::string msl_out;
   std::string host_out;
+  std::string flat_out;
   std::string top_name;
   std::string sdf_path;
   bool dump_flat = false;
@@ -6339,6 +6562,12 @@ int main(int argc, char** argv) {
         return 2;
       }
       msl_out = argv[++i];
+    } else if (arg == "--emit-flat") {
+      if (i + 1 >= argc) {
+        PrintUsage(argv[0]);
+        return 2;
+      }
+      flat_out = argv[++i];
     } else if (arg == "--dump-flat") {
       dump_flat = true;
     } else if (arg == "--top") {
@@ -6445,6 +6674,8 @@ int main(int argc, char** argv) {
   parse_options.enable_4state = enable_4state;
   parse_options.strict_1364 = strict_1364;
   std::unordered_set<size_t> explicit_module_indices;
+  std::unordered_set<std::string> active_module_names;
+  bool have_active_modules = false;
 
   struct ParseItem {
     std::string path;
@@ -6544,8 +6775,9 @@ int main(int argc, char** argv) {
         edges.push_back(instance.module_name);
       }
     }
-    std::unordered_set<std::string> active_module_names;
+    active_module_names.clear();
     active_module_names.reserve(program.modules.size());
+    have_active_modules = true;
     std::vector<std::string> stack;
     for (size_t idx : explicit_module_indices) {
       if (idx >= program.modules.size()) {
@@ -6593,10 +6825,18 @@ int main(int argc, char** argv) {
   bool elaborated = false;
   if (top_name.empty() && auto_discover &&
       !explicit_module_indices.empty()) {
+    auto is_active = [&](const std::string& name) -> bool {
+      return !have_active_modules || active_module_names.count(name) > 0;
+    };
     std::unordered_set<std::string> instantiated;
     for (const auto& module : program.modules) {
+      if (!is_active(module.name)) {
+        continue;
+      }
       for (const auto& instance : module.instances) {
-        instantiated.insert(instance.module_name);
+        if (is_active(instance.module_name)) {
+          instantiated.insert(instance.module_name);
+        }
       }
     }
     std::vector<const gpga::Module*> roots;
@@ -6605,6 +6845,9 @@ int main(int argc, char** argv) {
         continue;
       }
       const auto& module = program.modules[i];
+      if (!is_active(module.name)) {
+        continue;
+      }
       if (instantiated.count(module.name) == 0) {
         roots.push_back(&module);
       }
@@ -6705,8 +6948,19 @@ int main(int argc, char** argv) {
     std::cout << "Elaborated top module '" << design.top.name
               << "'. Use --emit-msl/--emit-host to write stubs.\n";
   }
-  if (dump_flat) {
-    DumpFlat(design, std::cout);
+  if (dump_flat || !flat_out.empty()) {
+    std::ostringstream os;
+    DumpFlat(design, os);
+    const std::string flat_text = os.str();
+    if (dump_flat) {
+      std::cout << flat_text;
+    }
+    if (!flat_out.empty()) {
+      if (!WriteFile(flat_out, flat_text, &diagnostics)) {
+        diagnostics.RenderTo(std::cerr);
+        return 1;
+      }
+    }
   }
 
   return 0;

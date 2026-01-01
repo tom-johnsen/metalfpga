@@ -11,6 +11,8 @@
 #include <sstream>
 #include <unordered_map>
 
+#include "utils/msl_naming.hh"
+
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <Metal/MTL4ArgumentTable.h>
@@ -1302,6 +1304,8 @@ bool ParseSchedulerConstants(const std::string& source,
   ParseUintConst(source, "GPGA_SCHED_SERVICE_WIDE_WORDS",
                  &info.service_wide_words);
   ParseUintConst(source, "GPGA_SCHED_STRING_COUNT", &info.string_count);
+  ParseUintConst(source, "GPGA_SCHED_FORCE_COUNT", &info.force_count);
+  ParseUintConst(source, "GPGA_SCHED_PCONT_COUNT", &info.pcont_count);
   info.has_scheduler = info.proc_count > 0;
   info.has_services = info.service_max_args > 0;
   *out = info;
@@ -1320,7 +1324,7 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
   }
   std::unordered_map<std::string, SignalInfo> signals;
   for (const auto& signal : module.signals) {
-    signals[signal.name] = signal;
+    signals[MslMangleIdentifier(signal.name)] = signal;
   }
   auto signal_bytes = [&](const SignalInfo& signal) -> size_t {
     uint32_t width = signal.width;
@@ -1462,6 +1466,12 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
             ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args),
                                 sched.service_wide_words, module.four_state);
         spec.length = stride * instance_count * service_capacity;
+      } else if (name == "sched_force_id") {
+        spec.length = sizeof(uint32_t) * instance_count * sched.force_count;
+      } else if (name == "sched_passign_id") {
+        spec.length = sizeof(uint32_t) * instance_count * sched.pcont_count;
+      } else if (name == "sched_force_state") {
+        spec.length = packed_state_bytes();
       } else {
         if (error) {
           *error = "unknown scheduler buffer: " + name;

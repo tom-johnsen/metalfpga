@@ -204,6 +204,9 @@ struct Assign {
   Strength strength0 = Strength::kStrong;
   Strength strength1 = Strength::kStrong;
   bool has_strength = false;
+  bool is_implicit = false;
+  bool is_derived = false;
+  int origin_depth = 0;
 };
 
 struct SequentialAssign {
@@ -271,6 +274,7 @@ struct Statement {
   StatementKind kind = StatementKind::kAssign;
   CaseKind case_kind = CaseKind::kCase;
   SequentialAssign assign;
+  bool is_procedural = false;
   std::string for_init_lhs;
   std::unique_ptr<Expr> for_init_rhs;
   std::unique_ptr<Expr> for_condition;
@@ -318,6 +322,9 @@ struct AlwaysBlock {
   EdgeKind edge = EdgeKind::kPosedge;
   std::string clock;
   std::string sensitivity;
+  bool is_synthesized = false;
+  bool is_decl_init = false;
+  int origin_depth = 0;
   std::vector<Statement> statements;
 };
 

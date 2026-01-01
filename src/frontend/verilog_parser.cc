@@ -1106,6 +1106,8 @@ class Parser {
     Strength strength0 = Strength::kStrong;
     Strength strength1 = Strength::kStrong;
     bool has_strength = false;
+    bool is_implicit = false;
+    int id = 0;
   };
 
   struct GateAssign {
@@ -1597,6 +1599,7 @@ class Parser {
             AlwaysBlock block;
             block.edge = EdgeKind::kCombinational;
             block.sensitivity = "*";
+            block.is_synthesized = true;
             Statement stmt;
             stmt.kind = StatementKind::kAssign;
             stmt.assign.lhs = gate_assign.lhs;
@@ -1621,6 +1624,7 @@ class Parser {
           assign.strength0 = gate_assign.strength0;
           assign.strength1 = gate_assign.strength1;
           assign.has_strength = gate_assign.has_strength;
+          assign.is_implicit = true;
           module.assigns.push_back(std::move(assign));
         }
         continue;
@@ -1915,6 +1919,7 @@ class Parser {
       assign.lhs = name;
       assign.rhs = MakeNumberExpr(value);
       assign.has_strength = true;
+      assign.is_implicit = true;
       if (has_pair_strength) {
         assign.strength0 = pull_strength0;
         assign.strength1 = pull_strength1;
@@ -2297,6 +2302,7 @@ class Parser {
       AlwaysBlock init;
       init.edge = EdgeKind::kInitial;
       init.clock = "initial";
+      init.is_synthesized = true;
       if (sequential) {
         Statement init_out;
         init_out.kind = StatementKind::kAssign;
@@ -2325,6 +2331,7 @@ class Parser {
     AlwaysBlock block;
     block.edge = EdgeKind::kCombinational;
     block.sensitivity = "*";
+    block.is_synthesized = true;
     if (!sequential) {
       Statement init_assign;
       init_assign.kind = StatementKind::kAssign;
@@ -3197,7 +3204,8 @@ class Parser {
         Advance();
         return true;
       }
-      Token token = Advance();
+      Token token = Peek();
+      Advance();
       UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
       out_tokens->push_back(std::move(token));
     }
@@ -5086,6 +5094,20 @@ class Parser {
         ErrorHere("expected identifier in declaration");
         return false;
       }
+      std::vector<ArrayDim> array_dims;
+      while (true) {
+        int array_size = 0;
+        std::shared_ptr<Expr> array_msb;
+        std::shared_ptr<Expr> array_lsb;
+        bool had_array = false;
+        if (!ParseRange(&array_size, &array_msb, &array_lsb, &had_array)) {
+          return false;
+        }
+        if (!had_array) {
+          break;
+        }
+        array_dims.push_back(ArrayDim{array_size, array_msb, array_lsb});
+      }
       std::unique_ptr<Expr> init;
       if (MatchSymbol("=")) {
         if (!array_dims.empty()) {
@@ -5108,17 +5130,17 @@ class Parser {
         NetType var_type =
             (dir == PortDir::kOutput) ? NetType::kReg : NetType::kWire;
         AddOrUpdateNet(module, name, var_type, width, is_signed, range_msb,
-                       range_lsb, {}, is_real);
+                       range_lsb, array_dims, is_real);
       } else {
         if ((dir == PortDir::kOutput || dir == PortDir::kInout) && !is_reg &&
             net_type != NetType::kWire) {
           AddOrUpdateNet(module, name, net_type, width, is_signed, range_msb,
-                         range_lsb, {});
+                         range_lsb, array_dims);
           AddImplicitNetDriver(module, name, net_type);
         }
         if (dir == PortDir::kOutput && is_reg) {
           AddOrUpdateNet(module, name, NetType::kReg, width, is_signed,
-                         range_msb, range_lsb, {});
+                         range_msb, range_lsb, array_dims);
         }
       }
       if (init) {
@@ -5146,6 +5168,8 @@ class Parser {
       AlwaysBlock init_block;
       init_block.edge = EdgeKind::kInitial;
       init_block.clock = "initial";
+      init_block.is_synthesized = true;
+      init_block.is_decl_init = true;
       init_block.statements = std::move(init_statements);
       module->always_blocks.push_back(std::move(init_block));
     }
@@ -5269,6 +5293,7 @@ class Parser {
         Assign assign;
         assign.lhs = name;
         assign.rhs = std::move(init);
+        assign.is_implicit = true;
         module->assigns.push_back(std::move(assign));
       }
       if (MatchSymbol(",")) {
@@ -5360,6 +5385,7 @@ class Parser {
       AlwaysBlock init_block;
       init_block.edge = EdgeKind::kInitial;
       init_block.clock = "initial";
+      init_block.is_decl_init = true;
       init_block.statements = std::move(init_statements);
       module->always_blocks.push_back(std::move(init_block));
     }
@@ -5449,6 +5475,30 @@ class Parser {
     return true;
   }
 
+  std::unique_ptr<Expr> ParseSpecparamValue(const std::string& name) {
+    if (name.rfind("PATHPULSE$", 0) != 0) {
+      return ParseExpr();
+    }
+    if (MatchSymbol("(")) {
+      std::unique_ptr<Expr> first = ParseExpr();
+      if (!first) {
+        return nullptr;
+      }
+      if (MatchSymbol(",")) {
+        std::unique_ptr<Expr> second = ParseExpr();
+        if (!second) {
+          return nullptr;
+        }
+      }
+      if (!MatchSymbol(")")) {
+        ErrorHere("expected ')' after PATHPULSE specparam");
+        return nullptr;
+      }
+      return first;
+    }
+    return ParseExpr();
+  }
+
   bool ParseParameterItem(Module* module, bool is_local, bool is_specparam,
                           ParamTypeHint* type_hint) {
     bool param_is_real = false;
@@ -5505,7 +5555,8 @@ class Parser {
       ErrorHere("expected '=' in parameter assignment");
       return false;
     }
-    std::unique_ptr<Expr> expr = ParseExpr();
+    std::unique_ptr<Expr> expr =
+        is_specparam ? ParseSpecparamValue(name) : ParseExpr();
     if (!expr) {
       return false;
     }
@@ -5611,6 +5662,7 @@ class Parser {
       AlwaysBlock init_block;
       init_block.edge = EdgeKind::kInitial;
       init_block.clock = "initial";
+      init_block.is_decl_init = true;
       init_block.statements = std::move(init_statements);
       module->always_blocks.push_back(std::move(init_block));
     }
@@ -5678,6 +5730,7 @@ class Parser {
       AlwaysBlock init_block;
       init_block.edge = EdgeKind::kInitial;
       init_block.clock = "initial";
+      init_block.is_decl_init = true;
       init_block.statements = std::move(init_statements);
       module->always_blocks.push_back(std::move(init_block));
     }
@@ -5740,6 +5793,7 @@ class Parser {
       AlwaysBlock init_block;
       init_block.edge = EdgeKind::kInitial;
       init_block.clock = "initial";
+      init_block.is_decl_init = true;
       init_block.statements = std::move(init_statements);
       module->always_blocks.push_back(std::move(init_block));
     }
@@ -6791,6 +6845,7 @@ class Parser {
       return false;
     }
     GenerateAssign assign;
+    assign.id = generate_assign_id_++;
     assign.lhs = lhs;
     assign.strength0 = strength0;
     assign.strength1 = strength1;
@@ -7285,6 +7340,7 @@ class Parser {
                               Statement* out_statement) {
     out_statement->kind = statement.kind;
     out_statement->block_label = statement.block_label;
+    out_statement->is_procedural = statement.is_procedural;
     if (statement.kind == StatementKind::kAssign ||
         statement.kind == StatementKind::kForce ||
         statement.kind == StatementKind::kRelease) {
@@ -7594,6 +7650,8 @@ class Parser {
     out_block->edge = block.edge;
     out_block->clock = RenameIdent(block.clock, ctx.renames);
     out_block->sensitivity = block.sensitivity;
+    out_block->is_synthesized = block.is_synthesized;
+    out_block->is_decl_init = block.is_decl_init;
     for (const auto& stmt : block.statements) {
       Statement cloned;
       if (!CloneStatementGenerate(stmt, ctx, &cloned)) {
@@ -7740,6 +7798,12 @@ class Parser {
           assign.strength0 = gen_assign.strength0;
           assign.strength1 = gen_assign.strength1;
           assign.has_strength = gen_assign.has_strength;
+          assign.is_implicit = gen_assign.is_implicit;
+          if (generate_assign_emitted_.insert(gen_assign.id).second) {
+            assign.is_derived = false;
+          } else if (!gen_assign.is_implicit) {
+            assign.is_derived = true;
+          }
           if (gen_assign.lhs_has_range) {
             int64_t msb = 0;
             int64_t lsb = 0;
@@ -8087,10 +8151,6 @@ class Parser {
   bool RegisterGenerateLabel(const std::string& label) {
     if (!current_module_) {
       return true;
-    }
-    if (current_module_->generate_labels.count(label) > 0) {
-      ErrorHere("duplicate generate block label '" + label + "'");
-      return false;
     }
     if (NameConflictsWithModuleItem(label)) {
       ErrorHere("generate block label '" + label +
@@ -8559,6 +8619,7 @@ class Parser {
           AlwaysBlock block;
           block.edge = EdgeKind::kCombinational;
           block.sensitivity = "*";
+          block.is_synthesized = true;
           Statement stmt;
           stmt.kind = StatementKind::kAssign;
           stmt.assign.lhs = gate_assign.lhs;
@@ -8580,9 +8641,11 @@ class Parser {
           continue;
         }
         GenerateAssign assign;
+        assign.id = generate_assign_id_++;
         assign.lhs = gate_assign.lhs;
         assign.lhs_has_range = gate_assign.lhs_has_range;
         assign.lhs_is_range = gate_assign.lhs_is_range;
+        assign.is_implicit = true;
         if (gate_assign.lhs_has_range) {
           if (gate_assign.lhs_msb_expr) {
             assign.lhs_msb_expr = std::move(gate_assign.lhs_msb_expr);
@@ -8773,6 +8836,7 @@ class Parser {
         return false;
       }
     }
+    bool is_first_assign = true;
     while (true) {
       std::unique_ptr<Expr> lhs_concat;
       std::string lhs;
@@ -8788,6 +8852,7 @@ class Parser {
         }
       }
       Assign assign;
+      bool is_primary = is_first_assign;
       if (!lhs_concat) {
         assign.lhs = lhs;
         assign.strength0 = strength0;
@@ -8875,7 +8940,8 @@ class Parser {
           return false;
         }
         int cursor = total_width;
-        for (const auto& lv : lvalues) {
+        for (size_t idx = 0; idx < lvalues.size(); ++idx) {
+          const auto& lv = lvalues[idx];
           int msb = cursor - 1;
           int lsb = cursor - lv.width;
           cursor = lsb;
@@ -8894,11 +8960,13 @@ class Parser {
           part_assign.lhs_has_range = lv.has_range;
           part_assign.lhs_msb = lv.msb;
           part_assign.lhs_lsb = lv.lsb;
+          part_assign.is_derived = !is_primary || idx > 0;
           part_assign.rhs = std::move(rhs_slice);
           module->assigns.push_back(std::move(part_assign));
         }
       } else {
         assign.rhs = std::move(rhs);
+        assign.is_derived = !is_primary;
         if (assign.lhs.find('.') == std::string::npos &&
             LookupSignalWidth(assign.lhs) <= 0) {
           if (default_nettype_none_) {
@@ -8917,6 +8985,7 @@ class Parser {
         module->assigns.push_back(std::move(assign));
       }
       if (MatchSymbol(",")) {
+        is_first_assign = false;
         continue;
       }
       break;
@@ -10460,6 +10529,7 @@ class Parser {
     std::string target = assign.lhs;
     Statement stmt;
     stmt.kind = StatementKind::kForce;
+    stmt.is_procedural = true;
     stmt.force_target = std::move(target);
     assign.rhs = std::move(rhs);
     assign.delay = std::move(delay);
@@ -10510,6 +10580,7 @@ class Parser {
     }
     Statement stmt;
     stmt.kind = StatementKind::kRelease;
+    stmt.is_procedural = true;
     stmt.release_target = std::move(target);
     stmt.assign.lhs = stmt.release_target;
     *out_statement = std::move(stmt);
@@ -11729,10 +11800,6 @@ class Parser {
         ErrorHere("invalid replication count");
         return nullptr;
       }
-      if (repeat == 0) {
-        ErrorHere("replication count must be > 0");
-        return nullptr;
-      }
       std::unique_ptr<Expr> repeat_expr = std::move(first);
       std::vector<std::unique_ptr<Expr>> elements;
       if (MatchSymbol("}")) {
@@ -11787,6 +11854,7 @@ class Parser {
   }
 
   std::unique_ptr<Expr> ParseBasedLiteral(uint64_t size) {
+    const bool is_unsized = (size == 0);
     if (Peek().kind != TokenKind::kIdentifier &&
         Peek().kind != TokenKind::kNumber) {
       ErrorHere("expected base digits after '''");
@@ -11891,9 +11959,13 @@ class Parser {
       const size_t digit_count = normalized.size();
       const uint64_t total_bits =
           static_cast<uint64_t>(digit_count) * bits_per_digit;
-      if (size > 0 && size > total_bits) {
+      uint64_t padded_size = size;
+      if (padded_size == 0) {
+        padded_size = std::max<uint64_t>(32u, total_bits);
+      }
+      if (padded_size > total_bits) {
         char pad_char = '0';
-        if (is_signed && !normalized.empty()) {
+        if (!normalized.empty()) {
           char msb = normalized.front();
           char sign_kind = '0';
           if (msb == 'x' || msb == 'X') {
@@ -11914,7 +11986,11 @@ class Parser {
               sign_kind = sign_bit ? '1' : '0';
             }
           }
-          if (sign_kind == '1') {
+          if (sign_kind == 'x') {
+            pad_char = 'x';
+          } else if (sign_kind == 'z') {
+            pad_char = 'z';
+          } else if (is_signed && sign_kind == '1') {
             if (base_char == 'b') {
               pad_char = '1';
             } else if (base_char == 'o') {
@@ -11922,16 +11998,15 @@ class Parser {
             } else {
               pad_char = 'f';
             }
-          } else if (sign_kind == 'x') {
-            pad_char = 'x';
-          } else if (sign_kind == 'z') {
-            pad_char = 'z';
           }
         }
         const size_t needed_digits = static_cast<size_t>(
-            (size + bits_per_digit - 1) / bits_per_digit);
+            (padded_size + bits_per_digit - 1) / bits_per_digit);
         if (normalized.size() < needed_digits) {
           normalized.insert(0, needed_digits - normalized.size(), pad_char);
+        }
+        if (size == 0) {
+          size = padded_size;
         }
       }
     }
@@ -12134,7 +12209,7 @@ class Parser {
     expr->z_bits = z_bits;
     expr->has_base = true;
     expr->base_char = base_char;
-    expr->is_signed = is_signed;
+    expr->is_signed = is_signed || is_unsized;
     if (size > 0) {
       expr->has_width = true;
       expr->number_width = static_cast<int>(size);
@@ -12239,6 +12314,7 @@ class Parser {
     Assign assign;
     assign.lhs = name;
     assign.has_strength = true;
+    assign.is_implicit = true;
     switch (type) {
       case NetType::kTri0:
         assign.rhs = MakeNumberExpr(0u);
@@ -12491,6 +12567,8 @@ class Parser {
   bool allow_string_literals_ = false;
   std::unordered_map<std::string, GateArrayRange> gate_array_ranges_;
   int generate_id_ = 0;
+  int generate_assign_id_ = 0;
+  std::unordered_set<int> generate_assign_emitted_;
   int instance_id_ = 0;
 
   bool ExprIsRealParamExpr(const Expr& expr) const {

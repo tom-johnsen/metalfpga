@@ -132,6 +132,8 @@ struct SchedulerConstants {
   uint32_t service_max_args = 0;
   uint32_t service_wide_words = 0;
   uint32_t string_count = 0;
+  uint32_t force_count = 0;
+  uint32_t pcont_count = 0;
   bool has_services = false;
 };
 
