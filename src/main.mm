@@ -36,6 +36,7 @@ void PrintUsage(const char* argv0) {
             << " [--emit-flat <path>] [--dump-flat] [--top <module>]"
             << " [--4state] [--auto] [--strict-1364]"
             << " [--sdf <path>] [--version]"
+            << " [--verbose]"
             << " [--run] [--count N] [--service-capacity N]"
             << " [--max-steps N] [--max-proc-steps N]"
             << " [--dispatch-timeout-ms N]"
@@ -6542,6 +6543,7 @@ int main(int argc, char** argv) {
   bool enable_4state = false;
   bool auto_discover = false;
   bool strict_1364 = false;
+  bool verbose_warnings = false;
   bool run = false;
   bool run_verbose = false;
   bool run_source_bindings = false;
@@ -6594,6 +6596,8 @@ int main(int argc, char** argv) {
       auto_discover = true;
     } else if (arg == "--strict-1364") {
       strict_1364 = true;
+    } else if (arg == "--verbose" || arg == "-v") {
+      verbose_warnings = true;
     } else if (arg == "--version") {
       PrintVersion();
       return 0;
@@ -6901,9 +6905,12 @@ int main(int argc, char** argv) {
   }
   if (!top_name.empty()) {
     elaborated =
-        gpga::Elaborate(program, top_name, &design, &diagnostics, enable_4state);
+        gpga::Elaborate(program, top_name, &design, &diagnostics,
+                        enable_4state, verbose_warnings);
   } else {
-    elaborated = gpga::Elaborate(program, &design, &diagnostics, enable_4state);
+    elaborated =
+        gpga::Elaborate(program, &design, &diagnostics, enable_4state,
+                        verbose_warnings);
   }
   if (!elaborated || diagnostics.HasErrors()) {
     diagnostics.RenderTo(std::cerr);

@@ -1306,6 +1306,8 @@ bool ParseSchedulerConstants(const std::string& source,
   ParseUintConst(source, "GPGA_SCHED_STRING_COUNT", &info.string_count);
   ParseUintConst(source, "GPGA_SCHED_FORCE_COUNT", &info.force_count);
   ParseUintConst(source, "GPGA_SCHED_PCONT_COUNT", &info.pcont_count);
+  ParseUintConst(source, "GPGA_SCHED_TIMING_CHECK_COUNT",
+                 &info.timing_check_count);
   info.has_scheduler = info.proc_count > 0;
   info.has_services = info.service_max_args > 0;
   *out = info;
@@ -1423,6 +1425,16 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
                  name == "sched_edge_star_prev_xz") {
         spec.length = sizeof(uint64_t) * instance_count *
                       sched.edge_star_count;
+      } else if (name == "sched_timing_prev_val" ||
+                 name == "sched_timing_prev_xz") {
+        spec.length = sizeof(uint64_t) * instance_count *
+                      sched.timing_check_count * 2u;
+      } else if (name == "sched_timing_data_time" ||
+                 name == "sched_timing_ref_time" ||
+                 name == "sched_timing_window_start" ||
+                 name == "sched_timing_window_end") {
+        spec.length = sizeof(uint64_t) * instance_count *
+                      sched.timing_check_count;
       } else if (name == "sched_event_pending") {
         spec.length = sizeof(uint32_t) * instance_count * sched.event_count;
       } else if (name == "sched_delay_val" || name == "sched_delay_xz") {
@@ -1642,6 +1654,39 @@ ServiceDrainResult DrainSchedulerServices(
       case ServiceKind::kValuePlusargs:
         out << "$value$plusargs (pid=" << pid << ")\n";
         break;
+      case ServiceKind::kAsyncAndArray:
+      case ServiceKind::kSyncOrPlane:
+      case ServiceKind::kAsyncNorPlane:
+      case ServiceKind::kSyncNandPlane: {
+        const char* label = "$async$and$array";
+        switch (kind) {
+          case ServiceKind::kSyncOrPlane:
+            label = "$sync$or$plane";
+            break;
+          case ServiceKind::kAsyncNorPlane:
+            label = "$async$nor$plane";
+            break;
+          case ServiceKind::kSyncNandPlane:
+            label = "$sync$nand$plane";
+            break;
+          default:
+            break;
+        }
+        out << label << " (pid=" << pid << ")";
+        for (uint32_t a = 0; a < arg_count; ++a) {
+          const ServiceArgView& arg = args[a];
+          out << " ";
+          if (arg.kind == ServiceArgKind::kString ||
+              arg.kind == ServiceArgKind::kIdent) {
+            out << ResolveString(strings,
+                                 static_cast<uint32_t>(arg.value));
+          } else {
+            out << FormatNumeric(arg, 'h', has_xz);
+          }
+        }
+        out << "\n";
+        break;
+      }
       case ServiceKind::kDumpfile: {
         std::string filename = ResolveString(strings, format_id);
         out << "$dumpfile \"" << filename << "\" (pid=" << pid << ")\n";

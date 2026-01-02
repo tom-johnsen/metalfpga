@@ -971,6 +971,56 @@ constant constexpr uint GPGA_SERVICE_KIND_VALUEPLUSARGS = 37u;
 
 ---
 
+### PLA System Tasks
+
+### `GPGA_SERVICE_KIND_ASYNC_AND_ARRAY`
+
+```cpp
+constant constexpr uint GPGA_SERVICE_KIND_ASYNC_AND_ARRAY = 38u;
+```
+
+**Description**: `$async$and$array` - PLA async AND array setup.
+
+**Verilog**: `$async$and$array(mem, in_terms, out_terms);`
+
+---
+
+### `GPGA_SERVICE_KIND_SYNC_OR_PLANE`
+
+```cpp
+constant constexpr uint GPGA_SERVICE_KIND_SYNC_OR_PLANE = 39u;
+```
+
+**Description**: `$sync$or$plane` - PLA sync OR plane setup.
+
+**Verilog**: `$sync$or$plane(mem, in_terms, out_terms);`
+
+---
+
+### `GPGA_SERVICE_KIND_ASYNC_NOR_PLANE`
+
+```cpp
+constant constexpr uint GPGA_SERVICE_KIND_ASYNC_NOR_PLANE = 40u;
+```
+
+**Description**: `$async$nor$plane` - PLA async NOR plane setup.
+
+**Verilog**: `$async$nor$plane(mem, in_terms, out_terms);`
+
+---
+
+### `GPGA_SERVICE_KIND_SYNC_NAND_PLANE`
+
+```cpp
+constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;
+```
+
+**Description**: `$sync$nand$plane` - PLA sync NAND plane setup.
+
+**Verilog**: `$sync$nand$plane(mem, in_terms, out_terms);`
+
+---
+
 ## Code Generation Macros
 
 ### `GPGA_SCHED_DEFINE_CONSTANTS`

@@ -86,6 +86,10 @@ constant constexpr uint GPGA_SERVICE_KIND_TIMEFORMAT = 34u;
 constant constexpr uint GPGA_SERVICE_KIND_PRINTTIMESCALE = 35u;
 constant constexpr uint GPGA_SERVICE_KIND_TESTPLUSARGS = 36u;
 constant constexpr uint GPGA_SERVICE_KIND_VALUEPLUSARGS = 37u;
+constant constexpr uint GPGA_SERVICE_KIND_ASYNC_AND_ARRAY = 38u;
+constant constexpr uint GPGA_SERVICE_KIND_SYNC_OR_PLANE = 39u;
+constant constexpr uint GPGA_SERVICE_KIND_ASYNC_NOR_PLANE = 40u;
+constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;
 
 #define GPGA_SCHED_DEFINE_CONSTANTS(proc_count, root_count, event_count, edge_count, edge_star_count, max_ready, max_time, max_nba, repeat_count, delay_count, max_dnba, monitor_count, monitor_max_args, strobe_count, service_max_args, service_wide_words, string_count, force_count, pcont_count) \
 constant constexpr uint GPGA_SCHED_PROC_COUNT = proc_count; \
@@ -140,9 +144,11 @@ struct GpgaServiceRecord { \
 };
 
 #define GPGA_SCHED_DEFINE_PROC_PARENT(...) \
-constant uint gpga_proc_parent[GPGA_SCHED_PROC_COUNT] = { __VA_ARGS__ };
+constant uint gpga_proc_parent[(GPGA_SCHED_PROC_COUNT > 0u) ? \
+    GPGA_SCHED_PROC_COUNT : 1u] = { __VA_ARGS__ };
 
 #define GPGA_SCHED_DEFINE_PROC_JOIN_TAG(...) \
-constant uint gpga_proc_join_tag[GPGA_SCHED_PROC_COUNT] = { __VA_ARGS__ };
+constant uint gpga_proc_join_tag[(GPGA_SCHED_PROC_COUNT > 0u) ? \
+    GPGA_SCHED_PROC_COUNT : 1u] = { __VA_ARGS__ };
 
 #endif  // GPGA_SCHED_H

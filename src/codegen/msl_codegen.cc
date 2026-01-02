@@ -54,6 +54,8 @@ std::string MslDecayName(const std::string& name) {
   return MslNameWithSuffix(name, "_decay_time");
 }
 
+bool IsSystemTaskName(const std::string& name);
+
 const Port* FindPort(const Module& module, const std::string& name) {
   for (const auto& port : module.ports) {
     if (port.name == name) {
@@ -218,6 +220,487 @@ Statement CloneStatement(const Statement& stmt) {
     out.default_branch.push_back(CloneStatement(inner));
   }
   return out;
+}
+
+struct TaskSubst {
+  std::unordered_map<std::string, const Expr*> exprs;
+  std::unordered_map<std::string, std::string> lvalues;
+};
+
+std::unique_ptr<Expr> CloneExprSubst(const Expr& expr, const TaskSubst& subst) {
+  if (expr.kind == ExprKind::kIdentifier) {
+    auto lv_it = subst.lvalues.find(expr.ident);
+    if (lv_it != subst.lvalues.end()) {
+      auto out = std::make_unique<Expr>();
+      out->kind = ExprKind::kIdentifier;
+      out->ident = lv_it->second;
+      return out;
+    }
+    auto ex_it = subst.exprs.find(expr.ident);
+    if (ex_it != subst.exprs.end() && ex_it->second) {
+      return CloneExpr(*ex_it->second);
+    }
+  }
+  auto out = std::make_unique<Expr>();
+  out->kind = expr.kind;
+  out->ident = expr.ident;
+  out->string_value = expr.string_value;
+  out->number = expr.number;
+  out->value_bits = expr.value_bits;
+  out->x_bits = expr.x_bits;
+  out->z_bits = expr.z_bits;
+  out->number_width = expr.number_width;
+  out->has_width = expr.has_width;
+  out->has_base = expr.has_base;
+  out->base_char = expr.base_char;
+  out->is_signed = expr.is_signed;
+  out->is_real_literal = expr.is_real_literal;
+  out->op = expr.op;
+  out->unary_op = expr.unary_op;
+  out->msb = expr.msb;
+  out->lsb = expr.lsb;
+  out->has_range = expr.has_range;
+  out->indexed_range = expr.indexed_range;
+  out->indexed_desc = expr.indexed_desc;
+  out->indexed_width = expr.indexed_width;
+  out->repeat = expr.repeat;
+  if (expr.operand) {
+    out->operand = CloneExprSubst(*expr.operand, subst);
+  }
+  if (expr.lhs) {
+    out->lhs = CloneExprSubst(*expr.lhs, subst);
+  }
+  if (expr.rhs) {
+    out->rhs = CloneExprSubst(*expr.rhs, subst);
+  }
+  if (expr.condition) {
+    out->condition = CloneExprSubst(*expr.condition, subst);
+  }
+  if (expr.then_expr) {
+    out->then_expr = CloneExprSubst(*expr.then_expr, subst);
+  }
+  if (expr.else_expr) {
+    out->else_expr = CloneExprSubst(*expr.else_expr, subst);
+  }
+  if (expr.base) {
+    out->base = CloneExprSubst(*expr.base, subst);
+  }
+  if (expr.index) {
+    out->index = CloneExprSubst(*expr.index, subst);
+  }
+  if (expr.msb_expr) {
+    out->msb_expr = CloneExprSubst(*expr.msb_expr, subst);
+  }
+  if (expr.lsb_expr) {
+    out->lsb_expr = CloneExprSubst(*expr.lsb_expr, subst);
+  }
+  if (expr.repeat_expr) {
+    out->repeat_expr = CloneExprSubst(*expr.repeat_expr, subst);
+  }
+  for (const auto& element : expr.elements) {
+    out->elements.push_back(CloneExprSubst(*element, subst));
+  }
+  for (const auto& arg : expr.call_args) {
+    out->call_args.push_back(CloneExprSubst(*arg, subst));
+  }
+  return out;
+}
+
+bool ResolveTaskLvalue(const Expr& expr, const TaskSubst& subst,
+                       std::string* out) {
+  if (!out) {
+    return false;
+  }
+  if (expr.kind != ExprKind::kIdentifier) {
+    return false;
+  }
+  auto lv_it = subst.lvalues.find(expr.ident);
+  if (lv_it != subst.lvalues.end()) {
+    *out = lv_it->second;
+    return true;
+  }
+  auto ex_it = subst.exprs.find(expr.ident);
+  if (ex_it != subst.exprs.end() && ex_it->second) {
+    if (ex_it->second->kind != ExprKind::kIdentifier) {
+      return false;
+    }
+    *out = ex_it->second->ident;
+    return true;
+  }
+  *out = expr.ident;
+  return true;
+}
+
+SequentialAssign CloneSequentialAssignSubst(const SequentialAssign& assign,
+                                            const TaskSubst& subst) {
+  SequentialAssign out;
+  out.lhs = assign.lhs;
+  out.lhs_has_range = assign.lhs_has_range;
+  out.lhs_indexed_range = assign.lhs_indexed_range;
+  out.lhs_indexed_desc = assign.lhs_indexed_desc;
+  out.lhs_indexed_width = assign.lhs_indexed_width;
+  out.lhs_msb = assign.lhs_msb;
+  out.lhs_lsb = assign.lhs_lsb;
+  out.nonblocking = assign.nonblocking;
+  auto lv_it = subst.lvalues.find(assign.lhs);
+  if (lv_it != subst.lvalues.end()) {
+    out.lhs = lv_it->second;
+  }
+  if (assign.lhs_index) {
+    out.lhs_index = CloneExprSubst(*assign.lhs_index, subst);
+  }
+  for (const auto& idx : assign.lhs_indices) {
+    out.lhs_indices.push_back(CloneExprSubst(*idx, subst));
+  }
+  if (assign.lhs_msb_expr) {
+    out.lhs_msb_expr = CloneExprSubst(*assign.lhs_msb_expr, subst);
+  }
+  if (assign.lhs_lsb_expr) {
+    out.lhs_lsb_expr = CloneExprSubst(*assign.lhs_lsb_expr, subst);
+  }
+  if (assign.rhs) {
+    out.rhs = CloneExprSubst(*assign.rhs, subst);
+  }
+  if (assign.delay) {
+    out.delay = CloneExprSubst(*assign.delay, subst);
+  }
+  return out;
+}
+
+EventItem CloneEventItemSubst(const EventItem& item, const TaskSubst& subst) {
+  EventItem out;
+  out.edge = item.edge;
+  if (item.expr) {
+    out.expr = CloneExprSubst(*item.expr, subst);
+  }
+  return out;
+}
+
+Statement CloneStatementShallowSubst(const Statement& stmt,
+                                     const TaskSubst& subst) {
+  Statement out;
+  out.kind = stmt.kind;
+  out.case_kind = stmt.case_kind;
+  out.assign = CloneSequentialAssignSubst(stmt.assign, subst);
+  out.is_procedural = stmt.is_procedural;
+  out.for_init_lhs = stmt.for_init_lhs;
+  if (stmt.for_init_rhs) {
+    out.for_init_rhs = CloneExprSubst(*stmt.for_init_rhs, subst);
+  }
+  if (stmt.for_condition) {
+    out.for_condition = CloneExprSubst(*stmt.for_condition, subst);
+  }
+  out.for_step_lhs = stmt.for_step_lhs;
+  if (stmt.for_step_rhs) {
+    out.for_step_rhs = CloneExprSubst(*stmt.for_step_rhs, subst);
+  }
+  if (stmt.while_condition) {
+    out.while_condition = CloneExprSubst(*stmt.while_condition, subst);
+  }
+  if (stmt.repeat_count) {
+    out.repeat_count = CloneExprSubst(*stmt.repeat_count, subst);
+  }
+  if (stmt.delay) {
+    out.delay = CloneExprSubst(*stmt.delay, subst);
+  }
+  out.event_edge = stmt.event_edge;
+  if (stmt.event_expr) {
+    out.event_expr = CloneExprSubst(*stmt.event_expr, subst);
+  }
+  for (const auto& item : stmt.event_items) {
+    out.event_items.push_back(CloneEventItemSubst(item, subst));
+  }
+  if (stmt.wait_condition) {
+    out.wait_condition = CloneExprSubst(*stmt.wait_condition, subst);
+  }
+  out.disable_target = stmt.disable_target;
+  out.task_name = stmt.task_name;
+  for (const auto& arg : stmt.task_args) {
+    out.task_args.push_back(arg ? CloneExprSubst(*arg, subst) : nullptr);
+  }
+  out.trigger_target = stmt.trigger_target;
+  out.force_target = stmt.force_target;
+  out.release_target = stmt.release_target;
+  if (stmt.condition) {
+    out.condition = CloneExprSubst(*stmt.condition, subst);
+  }
+  out.block_label = stmt.block_label;
+  if (stmt.case_expr) {
+    out.case_expr = CloneExprSubst(*stmt.case_expr, subst);
+  }
+  return out;
+}
+
+void ExpandTasksInStatements(const Module& module,
+                             const std::vector<Statement>& input,
+                             const TaskSubst& subst,
+                             std::vector<Statement>* output,
+                             std::unordered_set<std::string>* task_stack) {
+  if (!output) {
+    return;
+  }
+  auto make_zero_expr = []() {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = ExprKind::kNumber;
+    expr->number = 0;
+    expr->value_bits = 0;
+    expr->x_bits = 0;
+    expr->z_bits = 0;
+    expr->has_width = false;
+    expr->has_base = false;
+    return expr;
+  };
+  std::function<void(const Statement&, std::vector<Statement>*)> expand_stmt;
+  expand_stmt = [&](const Statement& stmt,
+                    std::vector<Statement>* out_vec) -> void {
+    if (!out_vec) {
+      return;
+    }
+    if (stmt.kind == StatementKind::kTaskCall &&
+        !IsSystemTaskName(stmt.task_name)) {
+      const Task* task = FindTask(module, stmt.task_name);
+      if (task && (!task_stack || task_stack->count(task->name) == 0u)) {
+        TaskSubst task_subst;
+        std::vector<std::unique_ptr<Expr>> arg_exprs;
+        bool ok = true;
+        for (size_t i = 0; i < task->args.size(); ++i) {
+          const auto& arg = task->args[i];
+          const Expr* call_arg =
+              (i < stmt.task_args.size()) ? stmt.task_args[i].get() : nullptr;
+          if (arg.dir == TaskArgDir::kInput) {
+            std::unique_ptr<Expr> expr =
+                call_arg ? CloneExprSubst(*call_arg, subst) : make_zero_expr();
+            arg_exprs.push_back(std::move(expr));
+            task_subst.exprs[arg.name] = arg_exprs.back().get();
+            continue;
+          }
+          if (!call_arg) {
+            ok = false;
+            break;
+          }
+          std::string lvalue;
+          if (!ResolveTaskLvalue(*call_arg, subst, &lvalue)) {
+            ok = false;
+            break;
+          }
+          task_subst.lvalues[arg.name] = lvalue;
+          auto lv_expr = std::make_unique<Expr>();
+          lv_expr->kind = ExprKind::kIdentifier;
+          lv_expr->ident = lvalue;
+          arg_exprs.push_back(std::move(lv_expr));
+          task_subst.exprs[arg.name] = arg_exprs.back().get();
+        }
+        if (ok) {
+          if (task_stack) {
+            task_stack->insert(task->name);
+          }
+          ExpandTasksInStatements(module, task->body, task_subst, out_vec,
+                                  task_stack);
+          if (task_stack) {
+            task_stack->erase(task->name);
+          }
+          return;
+        }
+      }
+    }
+    Statement out = CloneStatementShallowSubst(stmt, subst);
+    switch (stmt.kind) {
+      case StatementKind::kIf:
+        ExpandTasksInStatements(module, stmt.then_branch, subst,
+                                &out.then_branch, task_stack);
+        ExpandTasksInStatements(module, stmt.else_branch, subst,
+                                &out.else_branch, task_stack);
+        break;
+      case StatementKind::kBlock:
+        ExpandTasksInStatements(module, stmt.block, subst, &out.block,
+                                task_stack);
+        break;
+      case StatementKind::kCase:
+        for (const auto& item : stmt.case_items) {
+          CaseItem cloned;
+          for (const auto& label : item.labels) {
+            cloned.labels.push_back(CloneExprSubst(*label, subst));
+          }
+          ExpandTasksInStatements(module, item.body, subst, &cloned.body,
+                                  task_stack);
+          out.case_items.push_back(std::move(cloned));
+        }
+        ExpandTasksInStatements(module, stmt.default_branch, subst,
+                                &out.default_branch, task_stack);
+        break;
+      case StatementKind::kFor:
+        ExpandTasksInStatements(module, stmt.for_body, subst, &out.for_body,
+                                task_stack);
+        break;
+      case StatementKind::kWhile:
+        ExpandTasksInStatements(module, stmt.while_body, subst, &out.while_body,
+                                task_stack);
+        break;
+      case StatementKind::kRepeat:
+        ExpandTasksInStatements(module, stmt.repeat_body, subst,
+                                &out.repeat_body, task_stack);
+        break;
+      case StatementKind::kDelay:
+        ExpandTasksInStatements(module, stmt.delay_body, subst, &out.delay_body,
+                                task_stack);
+        break;
+      case StatementKind::kEventControl:
+        ExpandTasksInStatements(module, stmt.event_body, subst, &out.event_body,
+                                task_stack);
+        break;
+      case StatementKind::kWait:
+        ExpandTasksInStatements(module, stmt.wait_body, subst, &out.wait_body,
+                                task_stack);
+        break;
+      case StatementKind::kForever:
+        ExpandTasksInStatements(module, stmt.forever_body, subst,
+                                &out.forever_body, task_stack);
+        break;
+      case StatementKind::kFork: {
+        for (const auto& branch : stmt.fork_branches) {
+          std::vector<Statement> branch_out;
+          expand_stmt(branch, &branch_out);
+          if (branch_out.empty()) {
+            continue;
+          }
+          if (branch_out.size() == 1) {
+            out.fork_branches.push_back(std::move(branch_out.front()));
+          } else {
+            Statement block;
+            block.kind = StatementKind::kBlock;
+            block.block = std::move(branch_out);
+            out.fork_branches.push_back(std::move(block));
+          }
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    out_vec->push_back(std::move(out));
+  };
+  for (const auto& stmt : input) {
+    expand_stmt(stmt, output);
+  }
+}
+
+bool HasUserTaskCall(const Module& module, const Statement& stmt) {
+  if (stmt.kind == StatementKind::kTaskCall &&
+      !IsSystemTaskName(stmt.task_name) &&
+      FindTask(module, stmt.task_name)) {
+    return true;
+  }
+  if (stmt.kind == StatementKind::kIf) {
+    for (const auto& inner : stmt.then_branch) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    for (const auto& inner : stmt.else_branch) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kBlock) {
+    for (const auto& inner : stmt.block) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kCase) {
+    for (const auto& item : stmt.case_items) {
+      for (const auto& inner : item.body) {
+        if (HasUserTaskCall(module, inner)) {
+          return true;
+        }
+      }
+    }
+    for (const auto& inner : stmt.default_branch) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kFor) {
+    for (const auto& inner : stmt.for_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kWhile) {
+    for (const auto& inner : stmt.while_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kRepeat) {
+    for (const auto& inner : stmt.repeat_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kDelay) {
+    for (const auto& inner : stmt.delay_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kEventControl) {
+    for (const auto& inner : stmt.event_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kWait) {
+    for (const auto& inner : stmt.wait_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kForever) {
+    for (const auto& inner : stmt.forever_body) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (stmt.kind == StatementKind::kFork) {
+    for (const auto& inner : stmt.fork_branches) {
+      if (HasUserTaskCall(module, inner)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
+bool HasUserTaskCall(const Module& module,
+                     const std::vector<Statement>& stmts) {
+  for (const auto& stmt : stmts) {
+    if (HasUserTaskCall(module, stmt)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 const std::unordered_map<std::string, int>* g_task_arg_widths = nullptr;
@@ -495,6 +978,73 @@ uint8_t StringPadByte() {
   return pad;
 }
 
+enum class TimingSelectMode {
+  kFast,
+  kSlow,
+  kTyp,
+};
+
+TimingSelectMode GetTimingSelectMode() {
+  static bool cached = false;
+  static TimingSelectMode mode = TimingSelectMode::kTyp;
+  if (cached) {
+    return mode;
+  }
+  cached = true;
+  if (const char* env = std::getenv("METALFPGA_SPECIFY_DELAY_SELECT")) {
+    std::string lowered;
+    lowered.reserve(std::strlen(env));
+    for (const char* p = env; *p != '\0'; ++p) {
+      lowered.push_back(
+          static_cast<char>(std::tolower(static_cast<unsigned char>(*p))));
+    }
+    if (lowered == "fast") {
+      mode = TimingSelectMode::kFast;
+    } else if (lowered == "slow") {
+      mode = TimingSelectMode::kSlow;
+    }
+  }
+  return mode;
+}
+
+const Expr* SelectTimingLimitExpr(const TimingCheckLimit& limit,
+                                  TimingSelectMode mode) {
+  if (mode == TimingSelectMode::kFast) {
+    if (limit.min) {
+      return limit.min.get();
+    }
+    if (limit.typ) {
+      return limit.typ.get();
+    }
+    if (limit.max) {
+      return limit.max.get();
+    }
+    return nullptr;
+  }
+  if (mode == TimingSelectMode::kSlow) {
+    if (limit.max) {
+      return limit.max.get();
+    }
+    if (limit.typ) {
+      return limit.typ.get();
+    }
+    if (limit.min) {
+      return limit.min.get();
+    }
+    return nullptr;
+  }
+  if (limit.typ) {
+    return limit.typ.get();
+  }
+  if (limit.min) {
+    return limit.min.get();
+  }
+  if (limit.max) {
+    return limit.max.get();
+  }
+  return nullptr;
+}
+
 uint64_t StringLiteralBits(const std::string& value) {
   int width = static_cast<int>(value.size() * 8);
   if (width <= 0) {
@@ -692,6 +1242,42 @@ std::string TrimWhitespace(const std::string& text) {
   return text.substr(start, end - start);
 }
 
+bool ExtractCallArg(const std::string& expr, const std::string& prefix,
+                    std::string* arg_out) {
+  if (!arg_out) {
+    return false;
+  }
+  if (expr.rfind(prefix, 0) != 0) {
+    return false;
+  }
+  if (expr.empty() || expr.back() != ')') {
+    return false;
+  }
+  size_t start = prefix.size();
+  if (start >= expr.size() - 1) {
+    return false;
+  }
+  int depth = 0;
+  for (size_t i = start; i + 1 < expr.size(); ++i) {
+    char c = expr[i];
+    if (c == '(') {
+      ++depth;
+      continue;
+    }
+    if (c == ')') {
+      if (depth == 0) {
+        return false;
+      }
+      --depth;
+    }
+  }
+  if (depth != 0) {
+    return false;
+  }
+  *arg_out = TrimWhitespace(expr.substr(start, expr.size() - start - 1));
+  return !arg_out->empty();
+}
+
 bool SplitTopLevelBitwiseAnd(const std::string& expr, std::string* lhs_out,
                              std::string* rhs_out) {
   std::string trimmed = StripOuterParens(expr);
@@ -740,6 +1326,37 @@ bool IsWidthMaskLiteral(const std::string& expr, int width) {
   return ParseUIntLiteral(StripOuterParens(expr), &value) && value == mask;
 }
 
+bool IsFullDriveExpr(const std::string& expr, int width) {
+  std::string stripped = StripOuterParens(expr);
+  if (width > 64) {
+    return stripped == ("gpga_wide_mask_const_" + std::to_string(width) + "()");
+  }
+  if (width == 64) {
+    return stripped == "0xFFFFFFFFFFFFFFFFul";
+  }
+  return IsWidthMaskLiteral(stripped, width);
+}
+
+bool IsSimpleValueExpr(const std::string& expr) {
+  std::string stripped = StripOuterParens(expr);
+  if (stripped.empty()) {
+    return false;
+  }
+  uint64_t value = 0;
+  if (ParseUIntLiteral(stripped, &value)) {
+    return true;
+  }
+  for (char c : stripped) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || c == '_' || c == '[' || c == ']' ||
+        c == '.') {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 bool IsMaskedByWidth(const std::string& expr, int width) {
   if (width >= 64) {
     return false;
@@ -766,6 +1383,25 @@ bool IsZeroLiteral(const std::string& expr) {
 
 std::string MaskForWidthExpr(const std::string& expr, int width) {
   if (width > 64) {
+    std::string stripped = StripOuterParens(expr);
+    std::string mask_prefix =
+        "gpga_wide_mask_" + std::to_string(width) + "(";
+    std::string const_mask =
+        "gpga_wide_mask_const_" + std::to_string(width) + "()";
+    if (stripped == const_mask) {
+      return stripped;
+    }
+    if (stripped.rfind(mask_prefix, 0) == 0) {
+      std::string inner;
+      if (ExtractCallArg(stripped, mask_prefix, &inner)) {
+        std::string inner_stripped = StripOuterParens(inner);
+        if (inner_stripped == const_mask ||
+            inner_stripped.rfind(mask_prefix, 0) == 0) {
+          return inner_stripped;
+        }
+      }
+      return stripped;
+    }
     return "gpga_wide_mask_" + std::to_string(width) + "(" + expr + ")";
   }
   if (width >= 64) {
@@ -836,6 +1472,12 @@ std::string ExtendExpr(const std::string& expr, int expr_width,
     if (expr_width > 64) {
       if (expr_width == target_width) {
         return masked;
+      }
+      std::string stripped = StripOuterParens(masked);
+      std::string resize_prefix =
+          "gpga_wide_resize_" + std::to_string(target_width) + "_from_";
+      if (stripped.rfind(resize_prefix, 0) == 0) {
+        return stripped;
       }
       return "gpga_wide_resize_" + std::to_string(target_width) + "_from_" +
              std::to_string(expr_width) + "(" + masked + ")";
@@ -1285,6 +1927,24 @@ bool StatementHasFileSystemCall(const Statement& statement) {
   return false;
 }
 
+bool StatementIsEmptyBlock(const Statement& stmt);
+
+bool StatementListIsEmpty(const std::vector<Statement>& list) {
+  for (const auto& stmt : list) {
+    if (!StatementIsEmptyBlock(stmt)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool StatementIsEmptyBlock(const Statement& stmt) {
+  if (stmt.kind != StatementKind::kBlock) {
+    return false;
+  }
+  return StatementListIsEmpty(stmt.block);
+}
+
 bool ExtractFeofCondition(const Expr& expr, const Expr** fd_expr,
                           bool* invert) {
   if (expr.kind == ExprKind::kCall && expr.ident == "$feof") {
@@ -1342,7 +2002,9 @@ bool ExtractPlusargsCondition(const Expr& expr, const Expr** call_expr,
 bool TaskTreatsIdentifierAsString(const std::string& name) {
   return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
          name == "$writememh" || name == "$writememb" ||
-         name == "$printtimescale";
+         name == "$printtimescale" || name == "$async$and$array" ||
+         name == "$sync$or$plane" || name == "$async$nor$plane" ||
+         name == "$sync$nand$plane";
 }
 
 std::vector<char> ExtractFormatSpecs(const std::string& format) {
@@ -2036,6 +2698,50 @@ std::vector<int> CollectWideWidths(const Module& module) {
   for (const auto& task : module.tasks) {
     for (const auto& stmt : task.body) {
       CollectWideWidthsInfo(stmt, module, &widths);
+    }
+  }
+  for (const auto& check : module.timing_checks) {
+    if (check.data_event.expr) {
+      CollectWideWidthsExpr(*check.data_event.expr, module, &widths);
+    }
+    if (check.data_event.cond) {
+      CollectWideWidthsExpr(*check.data_event.cond, module, &widths);
+    }
+    if (check.ref_event.expr) {
+      CollectWideWidthsExpr(*check.ref_event.expr, module, &widths);
+    }
+    if (check.ref_event.cond) {
+      CollectWideWidthsExpr(*check.ref_event.cond, module, &widths);
+    }
+    if (check.limit.min) {
+      CollectWideWidthsExpr(*check.limit.min, module, &widths);
+    }
+    if (check.limit.typ) {
+      CollectWideWidthsExpr(*check.limit.typ, module, &widths);
+    }
+    if (check.limit.max) {
+      CollectWideWidthsExpr(*check.limit.max, module, &widths);
+    }
+    if (check.limit2.min) {
+      CollectWideWidthsExpr(*check.limit2.min, module, &widths);
+    }
+    if (check.limit2.typ) {
+      CollectWideWidthsExpr(*check.limit2.typ, module, &widths);
+    }
+    if (check.limit2.max) {
+      CollectWideWidthsExpr(*check.limit2.max, module, &widths);
+    }
+    if (check.threshold) {
+      CollectWideWidthsExpr(*check.threshold, module, &widths);
+    }
+    if (check.check_cond) {
+      CollectWideWidthsExpr(*check.check_cond, module, &widths);
+    }
+    if (check.event_based_flag) {
+      CollectWideWidthsExpr(*check.event_based_flag, module, &widths);
+    }
+    if (check.remain_active_flag) {
+      CollectWideWidthsExpr(*check.remain_active_flag, module, &widths);
     }
   }
   std::vector<int> result(widths.begin(), widths.end());
@@ -3715,6 +4421,52 @@ bool ModuleUsesReal(const Module& module) {
       return true;
     }
   }
+  for (const auto& check : module.timing_checks) {
+    if (check.data_event.expr && ExprUsesReal(*check.data_event.expr, module)) {
+      return true;
+    }
+    if (check.data_event.cond && ExprUsesReal(*check.data_event.cond, module)) {
+      return true;
+    }
+    if (check.ref_event.expr && ExprUsesReal(*check.ref_event.expr, module)) {
+      return true;
+    }
+    if (check.ref_event.cond && ExprUsesReal(*check.ref_event.cond, module)) {
+      return true;
+    }
+    if (check.limit.min && ExprUsesReal(*check.limit.min, module)) {
+      return true;
+    }
+    if (check.limit.typ && ExprUsesReal(*check.limit.typ, module)) {
+      return true;
+    }
+    if (check.limit.max && ExprUsesReal(*check.limit.max, module)) {
+      return true;
+    }
+    if (check.limit2.min && ExprUsesReal(*check.limit2.min, module)) {
+      return true;
+    }
+    if (check.limit2.typ && ExprUsesReal(*check.limit2.typ, module)) {
+      return true;
+    }
+    if (check.limit2.max && ExprUsesReal(*check.limit2.max, module)) {
+      return true;
+    }
+    if (check.threshold && ExprUsesReal(*check.threshold, module)) {
+      return true;
+    }
+    if (check.check_cond && ExprUsesReal(*check.check_cond, module)) {
+      return true;
+    }
+    if (check.event_based_flag &&
+        ExprUsesReal(*check.event_based_flag, module)) {
+      return true;
+    }
+    if (check.remain_active_flag &&
+        ExprUsesReal(*check.remain_active_flag, module)) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -3807,12 +4559,22 @@ bool StatementNeedsScheduler(const Statement& stmt) {
   return false;
 }
 
+bool AlwaysBlockNeedsScheduler(const AlwaysBlock& block) {
+  for (const auto& stmt : block.statements) {
+    if (StatementNeedsScheduler(stmt)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool ModuleNeedsScheduler(const Module& module) {
+  if (!module.timing_checks.empty()) {
+    return true;
+  }
   for (const auto& block : module.always_blocks) {
-    for (const auto& stmt : block.statements) {
-      if (StatementNeedsScheduler(stmt)) {
-        return true;
-      }
+    if (AlwaysBlockNeedsScheduler(block)) {
+      return true;
     }
   }
   return false;
@@ -4662,6 +5424,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "#include \"gpga_sched.h\"\n";
   }
   out << "\n";
+  if (!module.timing_checks.empty()) {
+    out << "// Specify timing checks (" << module.timing_checks.size() << ")\n";
+    for (const auto& check : module.timing_checks) {
+      out << "//   $" << check.name;
+      if (!check.edge.empty()) {
+        out << " " << check.edge;
+      }
+      if (!check.signal.empty()) {
+        out << " " << check.signal;
+      }
+      if (!check.condition.empty()) {
+        out << " &&& " << check.condition;
+      }
+      out << "\n";
+    }
+    out << "\n";
+  }
   if (!wide_widths.empty()) {
     out << "// Wide (>64-bit) helpers.\n";
     for (int width : wide_widths) {
@@ -4761,36 +5540,125 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     auto drive_zero = [&](int width) -> std::string {
       return literal_for_width(0, width);
     };
+    auto is_wide_zero = [&](const std::string& expr, int width) -> bool {
+      if (width <= 64) {
+        return false;
+      }
+      std::string stripped = StripOuterParens(expr);
+      std::string zero_from_u64 =
+          "gpga_wide_from_u64_" + std::to_string(width) + "(0ul)";
+      std::string zero_fn = "gpga_wide_zero_" + std::to_string(width) + "()";
+      return stripped == zero_from_u64 || stripped == zero_fn;
+    };
+    auto is_wide_mask = [&](const std::string& expr, int width) -> bool {
+      if (width <= 64) {
+        return false;
+      }
+      std::string stripped = StripOuterParens(expr);
+      std::string mask_fn =
+          "gpga_wide_mask_const_" + std::to_string(width) + "()";
+      return stripped == mask_fn;
+    };
     auto wide_not = [&](const std::string& expr, int width) -> std::string {
       return "gpga_wide_not_" + std::to_string(width) + "(" + expr + ")";
     };
+    auto is_same_wide_expr = [&](const std::string& lhs,
+                                 const std::string& rhs) -> bool {
+      return StripOuterParens(lhs) == StripOuterParens(rhs);
+    };
+    auto is_wide_not_of = [&](const std::string& expr,
+                              const std::string& other,
+                              int width) -> bool {
+      if (width <= 64) {
+        return false;
+      }
+      std::string stripped = StripOuterParens(expr);
+      std::string prefix =
+          "gpga_wide_not_" + std::to_string(width) + "(";
+      std::string arg;
+      if (!ExtractCallArg(stripped, prefix, &arg)) {
+        return false;
+      }
+      return StripOuterParens(arg) == StripOuterParens(other);
+    };
     auto wide_and = [&](const std::string& lhs, const std::string& rhs,
                         int width) -> std::string {
+      if (is_wide_zero(lhs, width) || is_wide_zero(rhs, width)) {
+        return drive_zero(width);
+      }
+      if (is_wide_mask(lhs, width)) {
+        return rhs;
+      }
+      if (is_wide_mask(rhs, width)) {
+        return lhs;
+      }
+      if (is_same_wide_expr(lhs, rhs)) {
+        return lhs;
+      }
+      if (is_wide_not_of(lhs, rhs, width) || is_wide_not_of(rhs, lhs, width)) {
+        return drive_zero(width);
+      }
       return "gpga_wide_and_" + std::to_string(width) + "(" + lhs + ", " + rhs +
              ")";
     };
     auto wide_or = [&](const std::string& lhs, const std::string& rhs,
                        int width) -> std::string {
+      if (is_wide_zero(lhs, width)) {
+        return rhs;
+      }
+      if (is_wide_zero(rhs, width)) {
+        return lhs;
+      }
+      if (is_wide_mask(lhs, width)) {
+        return lhs;
+      }
+      if (is_wide_mask(rhs, width)) {
+        return rhs;
+      }
+      if (is_same_wide_expr(lhs, rhs)) {
+        return lhs;
+      }
+      if (is_wide_not_of(lhs, rhs, width) || is_wide_not_of(rhs, lhs, width)) {
+        return mask_literal(width);
+      }
       return "gpga_wide_or_" + std::to_string(width) + "(" + lhs + ", " + rhs +
              ")";
     };
     auto wide_xor = [&](const std::string& lhs, const std::string& rhs,
                         int width) -> std::string {
+      if (is_wide_zero(lhs, width)) {
+        return rhs;
+      }
+      if (is_wide_zero(rhs, width)) {
+        return lhs;
+      }
+      if (is_same_wide_expr(lhs, rhs)) {
+        return drive_zero(width);
+      }
       return "gpga_wide_xor_" + std::to_string(width) + "(" + lhs + ", " + rhs +
              ")";
     };
     auto wide_shl = [&](const std::string& lhs, const std::string& rhs,
                         int width) -> std::string {
+      if (IsZeroLiteral(StripOuterParens(rhs))) {
+        return lhs;
+      }
       return "gpga_wide_shl_" + std::to_string(width) + "(" + lhs + ", " + rhs +
              ")";
     };
     auto wide_shr = [&](const std::string& lhs, const std::string& rhs,
                         int width) -> std::string {
+      if (IsZeroLiteral(StripOuterParens(rhs))) {
+        return lhs;
+      }
       return "gpga_wide_shr_" + std::to_string(width) + "(" + lhs + ", " + rhs +
              ")";
     };
     auto wide_sar = [&](const std::string& lhs, const std::string& rhs,
                         int width) -> std::string {
+      if (IsZeroLiteral(StripOuterParens(rhs))) {
+        return lhs;
+      }
       return "gpga_wide_sar_" + std::to_string(width) + "(" + lhs + ", " + rhs +
              ")";
     };
@@ -4867,6 +5735,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     std::unordered_set<std::string> initial_regs;
     std::unordered_set<std::string> initial_reads;
     bool has_initial = false;
+    bool needs_reg_init = false;
     for (const auto& block : module.always_blocks) {
       if (block.edge == EdgeKind::kCombinational ||
           block.edge == EdgeKind::kInitial) {
@@ -4886,9 +5755,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         CollectReadSignals(stmt, &initial_reads);
       }
     }
+    for (const auto& net : module.nets) {
+      if (net.type == NetType::kReg) {
+        needs_reg_init = true;
+        break;
+      }
+    }
+    if (needs_reg_init) {
+      has_initial = true;
+    }
     std::unordered_set<std::string> scheduled_reads;
     for (const auto& block : module.always_blocks) {
-      if (block.edge == EdgeKind::kCombinational) {
+      if (block.edge == EdgeKind::kCombinational &&
+          !AlwaysBlockNeedsScheduler(block)) {
         continue;
       }
       if (block.edge == EdgeKind::kPosedge || block.edge == EdgeKind::kNegedge) {
@@ -4988,6 +5867,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     };
 
     auto fs_make_expr = [&](const FsExpr& expr, int width) -> std::string {
+      auto base_from_val_xz = [&](const FsExpr& value) -> std::string {
+        std::string val = StripOuterParens(value.val);
+        std::string xz = StripOuterParens(value.xz);
+        const std::string val_suffix = ".val";
+        const std::string xz_suffix = ".xz";
+        if (val.size() <= val_suffix.size() ||
+            xz.size() <= xz_suffix.size()) {
+          return std::string();
+        }
+        if (val.compare(val.size() - val_suffix.size(), val_suffix.size(),
+                        val_suffix) != 0) {
+          return std::string();
+        }
+        std::string base = val.substr(0, val.size() - val_suffix.size());
+        if (xz == base + xz_suffix) {
+          return base;
+        }
+        return std::string();
+      };
       if (width > 64) {
         if (!expr.full.empty() && expr.width == width) {
           return expr.full;
@@ -5001,6 +5899,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return type + "{" + literal_for_width(expr.const_val, width) + ", " +
                literal_for_width(expr.const_xz, width) + "}";
       }
+      if (expr.full.empty() && expr.width == width) {
+        std::string base = base_from_val_xz(expr);
+        if (!base.empty()) {
+          return base;
+        }
+      }
       if (!expr.full.empty() && expr.width == width) {
         return expr.full;
       }
@@ -5012,10 +5916,38 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
              std::to_string(width) + "u)";
     };
 
+    auto fs_make_expr64 = [&](const FsExpr& expr, int width) -> std::string {
+      if (width > 64) {
+        return fs_make_expr(expr, width);
+      }
+      if (expr.is_const && expr.width == width) {
+        return "FourState64{" + literal_for_width(expr.const_val, width) + ", " +
+               literal_for_width(expr.const_xz, width) + "}";
+      }
+      if (expr.full.empty() && expr.width == width) {
+        std::string base = StripOuterParens(expr.val);
+        const std::string val_suffix = ".val";
+        if (base.size() > val_suffix.size() &&
+            base.compare(base.size() - val_suffix.size(), val_suffix.size(),
+                         val_suffix) == 0) {
+          base = base.substr(0, base.size() - val_suffix.size());
+          std::string xz = StripOuterParens(expr.xz);
+          if (xz == base + ".xz") {
+            return base;
+          }
+        }
+      }
+      return "fs_make64(" + expr.val + ", " + expr.xz + ", " +
+             std::to_string(width) + "u)";
+    };
+
     auto fs_resize_drive = [&](const FsExpr& expr, int width,
                                bool sign_extend) -> std::string {
       if (expr.width == width) {
         return expr.drive;
+      }
+      if (IsFullDriveExpr(expr.drive, expr.width)) {
+        return drive_full(width);
       }
       if (width < expr.width) {
         if (width > 64 || expr.width > 64) {
@@ -5107,10 +6039,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out.drive = fs_resize_drive(expr, width, false);
         return out;
       }
-      std::string func = (width > 32) ? "fs_resize64" : "fs_resize32";
-      std::string base = func + "(" + fs_make_expr(expr, expr.width) + ", " +
-                         std::to_string(width) + "u)";
+      bool use_64 = (width > 32) || (expr.width > 32);
       std::string drive = fs_resize_drive(expr, width, false);
+      if (use_64) {
+        std::string base = "fs_resize64(" + fs_make_expr64(expr, expr.width) +
+                           ", " + std::to_string(width) + "u)";
+        if (width <= 32) {
+          FsExpr out;
+          out.width = width;
+          out.val = "uint(" + base + ".val)";
+          out.xz = "uint(" + base + ".xz)";
+          out.drive = drive;
+          return out;
+        }
+        return fs_expr_from_base(base, drive, width);
+      }
+      std::string base = "fs_resize32(" + fs_make_expr(expr, expr.width) + ", " +
+                         std::to_string(width) + "u)";
       return fs_expr_from_base(base, drive, width);
     };
 
@@ -5134,8 +6079,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       std::string func = (width > 32) ? "fs_sext64" : "fs_sext32";
       std::string base =
-          func + "(" + fs_make_expr(expr, expr.width) + ", " +
-          std::to_string(expr.width) + "u, " + std::to_string(width) + "u)";
+          func + "(" +
+          (width > 32 ? fs_make_expr64(expr, expr.width)
+                      : fs_make_expr(expr, expr.width)) +
+          ", " + std::to_string(expr.width) + "u, " + std::to_string(width) +
+          "u)";
       std::string drive = fs_resize_drive(expr, width, true);
       return fs_expr_from_base(base, drive, width);
     };
@@ -5178,6 +6126,71 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                          bool signed_op) -> FsExpr {
       lhs = fs_extend_expr(lhs, width, signed_op);
       rhs = fs_extend_expr(rhs, width, signed_op);
+      if (width <= 64) {
+        uint64_t mask = MaskForWidth64(width);
+        auto known_const = [&](const FsExpr& expr, uint64_t* value) -> bool {
+          if (!value || !expr.is_const || expr.const_xz != 0) {
+            return false;
+          }
+          *value = expr.const_val & mask;
+          return true;
+        };
+        uint64_t lhs_val = 0;
+        uint64_t rhs_val = 0;
+        bool lhs_known = known_const(lhs, &lhs_val);
+        bool rhs_known = known_const(rhs, &rhs_val);
+        if (std::strcmp(op, "add") == 0) {
+          if (lhs_known && lhs_val == 0u) {
+            return rhs;
+          }
+          if (rhs_known && rhs_val == 0u) {
+            return lhs;
+          }
+        } else if (std::strcmp(op, "sub") == 0) {
+          if (rhs_known && rhs_val == 0u) {
+            return lhs;
+          }
+        } else if (std::strcmp(op, "mul") == 0) {
+          if (lhs_known && lhs_val == 1u) {
+            return rhs;
+          }
+          if (rhs_known && rhs_val == 1u) {
+            return lhs;
+          }
+        } else if (std::strcmp(op, "div") == 0) {
+          if (rhs_known && rhs_val == 1u) {
+            return lhs;
+          }
+        }
+        if (std::strcmp(op, "and") == 0) {
+          if ((lhs_known && lhs_val == 0u) || (rhs_known && rhs_val == 0u)) {
+            return fs_const_expr(0u, 0u, mask, width);
+          }
+          if (lhs_known && lhs_val == mask) {
+            return rhs;
+          }
+          if (rhs_known && rhs_val == mask) {
+            return lhs;
+          }
+        } else if (std::strcmp(op, "or") == 0) {
+          if ((lhs_known && lhs_val == mask) || (rhs_known && rhs_val == mask)) {
+            return fs_const_expr(mask, 0u, mask, width);
+          }
+          if (lhs_known && lhs_val == 0u) {
+            return rhs;
+          }
+          if (rhs_known && rhs_val == 0u) {
+            return lhs;
+          }
+        } else if (std::strcmp(op, "xor") == 0) {
+          if (lhs_known && lhs_val == 0u) {
+            return rhs;
+          }
+          if (rhs_known && rhs_val == 0u) {
+            return lhs;
+          }
+        }
+      }
       if (width > 64) {
         std::string mask = mask_literal(width);
         std::string lhs_val = MaskForWidthExpr(lhs.val, width);
@@ -5300,6 +6313,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                         int width) -> FsExpr {
       if (lhs.width != width) {
         lhs = fs_resize_expr(lhs, width);
+      }
+      if (rhs.is_const && rhs.const_xz == 0 && rhs.const_val == 0) {
+        return lhs;
       }
       if (width > 64) {
         std::string rhs_xz = (rhs.width > 64)
@@ -5628,7 +6644,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             shift -= width;
             std::string masked_val = MaskForWidthExpr(part.val, width);
             std::string masked_xz = MaskForWidthExpr(part.xz, width);
-            std::string masked_drive = MaskForWidthExpr(part.drive, width);
+            std::string masked_drive = IsFullDriveExpr(part.drive, width)
+                                           ? part.drive
+                                           : MaskForWidthExpr(part.drive,
+                                                              width);
             std::string part_val = ExtendExpr(masked_val, width, total_width);
             std::string part_xz = ExtendExpr(masked_xz, width, total_width);
             std::string part_drive =
@@ -5663,7 +6682,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           shift -= width;
           std::string masked_val = MaskForWidthExpr(part.val, width);
           std::string masked_xz = MaskForWidthExpr(part.xz, width);
-          std::string masked_drive = MaskForWidthExpr(part.drive, width);
+          std::string masked_drive = IsFullDriveExpr(part.drive, width)
+                                         ? part.drive
+                                         : MaskForWidthExpr(part.drive,
+                                                            width);
           std::string cast = CastForWidth(total_width);
           acc_val = "(" + acc_val + " | (" + cast + masked_val + " << " +
                     std::to_string(shift) + "u))";
@@ -6139,6 +7161,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             int width = std::max(lhs.width, rhs.width);
             lhs = fs_resize_expr(lhs, width);
             rhs = fs_resize_expr(rhs, width);
+            auto is_const_zero = [&](const FsExpr& expr) -> bool {
+              return expr.is_const && expr.const_xz == 0u &&
+                     expr.const_val == 0u;
+            };
+            auto is_const_nonzero = [&](const FsExpr& expr) -> bool {
+              return expr.is_const && expr.const_xz == 0u &&
+                     expr.const_val != 0u;
+            };
+            if (expr.op == 'A') {
+              if (is_const_zero(lhs) || is_const_zero(rhs)) {
+                return fs_const_expr(0u, 0u, 1u, 1);
+              }
+            } else {
+              if (is_const_nonzero(lhs) || is_const_nonzero(rhs)) {
+                return fs_const_expr(1u, 0u, 1u, 1);
+              }
+            }
             if (width > 64) {
               std::string ax = MaskForWidthExpr(lhs.xz, width);
               std::string bx = MaskForWidthExpr(rhs.xz, width);
@@ -6403,8 +7442,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           std::string func = (width > 32) ? "fs_mux64" : "fs_mux32";
           std::string base =
-              func + "(" + fs_make_expr(cond, cond.width) + ", " +
-              fs_make_expr(then_resized, width) + ", " +
+              func + "(" +
+              (width > 32 ? fs_make_expr64(cond, cond.width)
+                          : fs_make_expr(cond, cond.width)) +
+              ", " + fs_make_expr(then_resized, width) + ", " +
               fs_make_expr(else_resized, width) + ", " +
               std::to_string(width) + "u)";
           std::string cond_known = xz_is_zero(cond.xz, cond.width);
@@ -6839,6 +7880,81 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return func + "(" + fs_make_expr(case_w, width) + ", " +
              fs_make_expr(label_w, width) + ", " + std::to_string(width) + "u)";
     };
+    auto emit_case_cond4_prepared =
+        [&](CaseKind case_kind, const FsExpr& case_w, int width,
+            const Expr& label_expr, const Expr* case_expr_src) -> std::string {
+          FsExpr label = emit_expr4(label_expr);
+          FsExpr label_w = fs_resize_expr(label, width);
+          if (width > 64) {
+            std::string mask = mask_literal(width);
+            std::string ax = MaskForWidthExpr(case_w.xz, width);
+            std::string bx = MaskForWidthExpr(label_w.xz, width);
+            auto case_eq_pred = [&]() -> std::string {
+              std::string diff = wide_xor(ax, bx, width);
+              std::string known = wide_and(
+                  wide_not(wide_or(ax, bx, width), width), mask, width);
+              std::string val_diff = wide_and(
+                  wide_xor(case_w.val, label_w.val, width), known, width);
+              return "(!" + wide_any(diff, width) + " && !" +
+                     wide_any(val_diff, width) + ")";
+            };
+            if (case_kind == CaseKind::kCaseZ) {
+              if (label_expr.kind != ExprKind::kNumber) {
+                return case_eq_pred();
+              }
+              if (label_expr.x_bits != 0) {
+                return "false";
+              }
+              uint64_t ignore_bits = label_expr.z_bits;
+              if (case_expr_src && case_expr_src->kind == ExprKind::kNumber) {
+                ignore_bits |= case_expr_src->z_bits;
+              }
+              std::string ignore = literal_for_width(ignore_bits, width);
+              std::string cared =
+                  wide_and(wide_not(ignore, width), mask, width);
+              std::string bad = wide_and(ax, cared, width);
+              std::string val_diff = wide_and(
+                  wide_xor(case_w.val, label_w.val, width), cared, width);
+              return "(!" + wide_any(bad, width) + " && !" +
+                     wide_any(val_diff, width) + ")";
+            }
+            if (case_kind == CaseKind::kCaseX) {
+              std::string cared = wide_and(
+                  wide_not(wide_or(ax, bx, width), width), mask, width);
+              std::string val_diff = wide_and(
+                  wide_xor(case_w.val, label_w.val, width), cared, width);
+              return "(!" + wide_any(val_diff, width) + ")";
+            }
+            return case_eq_pred();
+          }
+          std::string func_suffix = (width > 32) ? "64" : "32";
+          std::string func = "fs_case_eq" + func_suffix;
+          if (case_kind == CaseKind::kCaseZ) {
+            if (label_expr.kind != ExprKind::kNumber) {
+              return func + "(" + fs_make_expr(case_w, width) + ", " +
+                     fs_make_expr(label_w, width) + ", " +
+                     std::to_string(width) + "u)";
+            }
+            uint64_t ignore_bits = label_expr.z_bits;
+            if (label_expr.x_bits != 0) {
+              return "false";
+            }
+            if (case_expr_src && case_expr_src->kind == ExprKind::kNumber) {
+              ignore_bits |= case_expr_src->z_bits;
+            }
+            std::string ignore_mask = literal_for_width(ignore_bits, width);
+            func = "fs_casez" + func_suffix;
+            return func + "(" + fs_make_expr(case_w, width) + ", " +
+                   fs_make_expr(label_w, width) + ", " + ignore_mask + ", " +
+                   std::to_string(width) + "u)";
+          }
+          if (case_kind == CaseKind::kCaseX) {
+            func = "fs_casex" + func_suffix;
+          }
+          return func + "(" + fs_make_expr(case_w, width) + ", " +
+                 fs_make_expr(label_w, width) + ", " +
+                 std::to_string(width) + "u)";
+        };
 
     auto emit_expr4_sized = [&](const Expr& expr, int target_width) -> FsExpr {
       if (ExprIsRealValue(expr, module)) {
@@ -6971,8 +8087,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return nullptr;
     };
 
-    auto emit_expr4_cached = [&](const Expr& expr, int target_width,
-                                 int indent, ExprCache* cache) -> FsExpr {
+    auto emit_expr4_cached_ex = [&](const Expr& expr, int target_width,
+                                    int indent, ExprCache* cache,
+                                    bool force_small) -> FsExpr {
       int width = target_width > 0 ? target_width : ExprWidth(expr, module);
       std::string key = expr_cache_key(expr, width);
       if (cache) {
@@ -6981,7 +8098,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       }
       FsExpr out_expr = emit_expr4_sized_with_cse(expr, width, indent);
-      out_expr = maybe_hoist_full(out_expr, indent, false, true);
+      out_expr = maybe_hoist_full(out_expr, indent, false, force_small);
+      if (cache) {
+        ExprCacheEntry entry;
+        entry.expr = out_expr;
+        CollectReadSignalsExpr(expr, &entry.deps);
+        cache->entries.emplace(key, std::move(entry));
+      }
+      return out_expr;
+    };
+
+    auto emit_expr4_cached = [&](const Expr& expr, int target_width,
+                                 int indent, ExprCache* cache) -> FsExpr {
+      return emit_expr4_cached_ex(expr, target_width, indent, cache, true);
+    };
+
+    auto emit_expr4_cached_relaxed = [&](const Expr& expr, int target_width,
+                                         int indent, ExprCache* cache) -> FsExpr {
+      return emit_expr4_cached_ex(expr, target_width, indent, cache, false);
+    };
+    auto emit_expr4_cached_drive = [&](const Expr& expr, int target_width,
+                                       int indent, ExprCache* cache,
+                                       bool force_small) -> FsExpr {
+      int width = target_width > 0 ? target_width : ExprWidth(expr, module);
+      std::string key = expr_cache_key(expr, width) + ":drive";
+      if (cache) {
+        if (const ExprCacheEntry* entry = cache_lookup(cache, key)) {
+          return entry->expr;
+        }
+      }
+      FsExpr out_expr = emit_expr4_sized_with_cse(expr, width, indent);
+      if (force_small) {
+        out_expr = maybe_hoist_full(out_expr, indent, true, true);
+      }
       if (cache) {
         ExprCacheEntry entry;
         entry.expr = out_expr;
@@ -7346,7 +8495,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         continue;
       }
       if (net.type == NetType::kReg && !IsOutputPort(module, net.name) &&
-          (initial_regs.count(net.name) > 0 ||
+          (needs_reg_init || initial_regs.count(net.name) > 0 ||
            initial_reads.count(net.name) > 0)) {
         init_reg_names.push_back(net.name);
       }
@@ -7635,21 +8784,70 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
 
     auto driven = CollectDrivenSignals(module);
+    auto is_output_only_port = [&](const std::string& name) -> bool {
+      const Port* port = FindPort(module, name);
+      return port && port->dir == PortDir::kOutput;
+    };
     for (const auto& net : module.nets) {
-      if (net.array_size > 0 || IsTriregNet(net.type)) {
+      if (net.array_size > 0 || IsTriregNet(net.type) ||
+          net.type == NetType::kReg) {
         continue;
       }
-      if (driven.count(net.name) > 0 || locals.count(net.name) == 0) {
+      if (net.type == NetType::kTri0 || net.type == NetType::kTri1 ||
+          net.type == NetType::kSupply0 || net.type == NetType::kSupply1) {
         continue;
       }
-      if (declared.insert(net.name).second) {
-        std::string type = TypeForWidth(net.width);
-        std::string zero = literal_for_width(0, net.width);
-        std::string mask = mask_literal(net.width);
-        out << "  " << type << " " << val_name(net.name) << " = " << zero
-            << ";\n";
-        out << "  " << type << " " << xz_name(net.name) << " = " << mask
-            << ";\n";
+      if (driven.count(net.name) > 0) {
+        continue;
+      }
+      std::string type = TypeForWidth(net.width);
+      std::string zero = literal_for_width(0, net.width);
+      std::string mask = mask_literal(net.width);
+      if (locals.count(net.name) > 0) {
+        if (declared.insert(net.name).second) {
+          out << "  " << type << " " << val_name(net.name) << " = " << zero
+              << ";\n";
+          out << "  " << type << " " << xz_name(net.name) << " = " << mask
+              << ";\n";
+        }
+        continue;
+      }
+      if (!is_output_only_port(net.name) &&
+          export_wire_set.count(net.name) == 0) {
+        continue;
+      }
+      out << "  " << val_name(net.name) << "[gid] = " << zero << ";\n";
+      out << "  " << xz_name(net.name) << "[gid] = " << mask << ";\n";
+    }
+
+    std::unordered_set<std::string> timing_check_locals;
+    if (!module.timing_checks.empty()) {
+      std::unordered_set<std::string> timing_idents;
+      auto collect_ids = [&](const Expr* expr) {
+        if (!expr) {
+          return;
+        }
+        CollectIdentifiers(*expr, &timing_idents);
+      };
+      for (const auto& check : module.timing_checks) {
+        collect_ids(check.data_event.expr.get());
+        collect_ids(check.data_event.cond.get());
+        collect_ids(check.ref_event.expr.get());
+        collect_ids(check.ref_event.cond.get());
+        collect_ids(check.check_cond.get());
+        collect_ids(check.event_based_flag.get());
+        collect_ids(check.remain_active_flag.get());
+        if (!check.delayed_ref.empty()) {
+          timing_idents.insert(check.delayed_ref);
+        }
+        if (!check.delayed_data.empty()) {
+          timing_idents.insert(check.delayed_data);
+        }
+      }
+      for (const auto& name : timing_idents) {
+        if (locals.count(name) > 0) {
+          timing_check_locals.insert(name);
+        }
       }
     }
 
@@ -7698,7 +8896,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     }
 
-    auto emit_driver = [&](const Assign& assign, const DriverInfo& info) {
+    auto emit_driver = [&](const Assign& assign, const DriverInfo& info,
+                           ExprCache* cache, bool force_small) {
       if (!assign.rhs) {
         return;
       }
@@ -7713,8 +8912,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
         int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
         int slice_width = hi - lo + 1;
-        FsExpr rhs = emit_expr4_sized_with_cse(*assign.rhs, slice_width, 2);
-        rhs = maybe_hoist_full(rhs, 2, true, true);
+        FsExpr rhs = emit_expr4_cached_drive(*assign.rhs, slice_width, 2,
+                                             cache, force_small);
         if (lhs_width > 64) {
           std::string idx = std::to_string(lo) + "u";
           std::string rhs_val_ext;
@@ -7759,9 +8958,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return;
       }
       FsExpr rhs = lhs_real ? emit_real_expr4(*assign.rhs)
-                            : emit_expr4_sized_with_cse(*assign.rhs, lhs_width,
-                                                        2);
-      rhs = maybe_hoist_full(rhs, 2, true, true);
+                            : emit_expr4_cached_drive(*assign.rhs, lhs_width,
+                                                      2, cache, force_small);
       out << "  " << type << " " << info.val << " = " << rhs.val << ";\n";
       out << "  " << type << " " << info.xz << " = " << rhs.xz << ";\n";
       out << "  " << type << " " << info.drive << " = " << rhs.drive << ";\n";
@@ -8104,10 +9302,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         [&](const std::unordered_set<std::string>& locals_ctx,
             const std::unordered_set<std::string>& regs_ctx,
             std::unordered_set<std::string>* declared_ctx) {
+          ExprCache assign_cache;
+          std::unordered_map<std::string, int> expr_use_counts;
+          expr_use_counts.reserve(module.assigns.size());
           std::unordered_map<std::string, size_t> drivers_remaining =
               drivers_remaining_template;
           std::unordered_map<std::string, std::vector<const Assign*>>
               partial_assigns;
+          auto count_rhs_expr = [&](const Assign& assign, int width) {
+            if (!assign.rhs || width <= 0) {
+              return;
+            }
+            if (SignalIsReal(module, assign.lhs)) {
+              return;
+            }
+            std::string key = expr_cache_key(*assign.rhs, width);
+            expr_use_counts[key] += 1;
+          };
           for (const auto& assign : module.assigns) {
             if (assign.lhs_has_range && multi_driver.count(assign.lhs) == 0) {
               if (SignalIsReal(module, assign.lhs)) {
@@ -8115,7 +9326,30 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               partial_assigns[assign.lhs].push_back(&assign);
             }
+            if (!assign.rhs) {
+              continue;
+            }
+            int lhs_width = SignalWidth(module, assign.lhs);
+            if (assign.lhs_has_range) {
+              int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+              int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+              int slice_width = hi - lo + 1;
+              count_rhs_expr(assign, slice_width);
+            } else {
+              count_rhs_expr(assign, lhs_width);
+            }
           }
+          auto force_small_for = [&](const Assign& assign, int width) -> bool {
+            if (!assign.rhs || width <= 0) {
+              return true;
+            }
+            if (SignalIsReal(module, assign.lhs)) {
+              return true;
+            }
+            std::string key = expr_cache_key(*assign.rhs, width);
+            auto it = expr_use_counts.find(key);
+            return it != expr_use_counts.end() && it->second > 1;
+          };
           for (size_t index : ordered_assigns) {
             const auto& assign = module.assigns[index];
             if (!assign.rhs) {
@@ -8124,7 +9358,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (multi_driver.count(assign.lhs) > 0) {
               auto info_it = driver_info.find(index);
               if (info_it != driver_info.end()) {
-                emit_driver(assign, info_it->second);
+                int lhs_width = SignalWidth(module, assign.lhs);
+                int rhs_width = lhs_width;
+                if (assign.lhs_has_range) {
+                  int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+                  int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+                  rhs_width = hi - lo + 1;
+                }
+                bool force_small = force_small_for(assign, rhs_width);
+                emit_driver(assign, info_it->second, &assign_cache,
+                            force_small);
               }
               auto remain_it = drivers_remaining.find(assign.lhs);
               if (remain_it != drivers_remaining.end()) {
@@ -8134,6 +9377,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 if (remain_it->second == 0) {
                   emit_resolve(assign.lhs, drivers_for_net[assign.lhs],
                                locals_ctx, regs_ctx, declared_ctx);
+                  assign_cache.blocked.insert(assign.lhs);
                 }
               }
               continue;
@@ -8146,11 +9390,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             bool lhs_real = SignalIsReal(module, assign.lhs);
+            bool force_small = force_small_for(assign, lhs.width);
             FsExpr rhs = lhs_real
                              ? emit_real_expr4(*assign.rhs)
-                             : emit_expr4_sized_with_cse(*assign.rhs, lhs.width,
-                                                         2);
-            rhs = maybe_hoist_full(rhs, 2, false, true);
+                             : emit_expr4_cached_ex(*assign.rhs, lhs.width, 2,
+                                                    &assign_cache,
+                                                    force_small);
             if (IsOutputPort(module, assign.lhs) ||
                 regs_ctx.count(assign.lhs) > 0) {
               out << "  " << lhs.val << " = " << rhs.val << ";\n";
@@ -8174,6 +9419,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                         drive_zero(lhs.width));
               out << "  " << drive_var << " = " << rhs.drive << ";\n";
             }
+            assign_cache.blocked.insert(assign.lhs);
           }
           for (const auto& entry : partial_assigns) {
             const std::string& name = entry.first;
@@ -8223,9 +9469,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               int lo = std::min(assign->lhs_msb, assign->lhs_lsb);
               int hi = std::max(assign->lhs_msb, assign->lhs_lsb);
               int slice_width = hi - lo + 1;
-              FsExpr rhs =
-                  emit_expr4_sized_with_cse(*assign->rhs, slice_width, 2);
-              rhs = maybe_hoist_full(rhs, 2, false, true);
+              bool force_small = force_small_for(*assign, slice_width);
+              FsExpr rhs = emit_expr4_cached_ex(*assign->rhs, slice_width, 2,
+                                                &assign_cache, force_small);
               if (lhs_width > 64) {
                 std::string mask;
                 if (slice_width > 64) {
@@ -8337,6 +9583,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                         drive_zero(lhs_width));
               out << "  " << drive_var << " = " << temp_drive << ";\n";
             }
+            assign_cache.blocked.insert(name);
+          }
+          for (const auto& entry : drivers_remaining) {
+            if (entry.second != 0) {
+              continue;
+            }
+            const auto& indices = drivers_for_net[entry.first];
+            if (!indices.empty()) {
+              continue;
+            }
+            emit_resolve(entry.first, indices, locals_ctx, regs_ctx,
+                         declared_ctx);
+            assign_cache.blocked.insert(entry.first);
           }
         };
     emit_continuous_assigns(locals, regs, &declared);
@@ -8352,6 +9611,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     std::unordered_set<std::string> comb_targets;
     for (const auto& block : module.always_blocks) {
       if (block.edge != EdgeKind::kCombinational) {
+        continue;
+      }
+      if (AlwaysBlockNeedsScheduler(block)) {
         continue;
       }
       for (const auto& stmt : block.statements) {
@@ -8610,13 +9872,36 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                            : FsExpr{literal_for_width(0, 1),
                                     literal_for_width(0, 1),
                                     drive_full(1), 1};
+        bool then_empty = StatementListIsEmpty(stmt.then_branch);
+        bool else_empty = StatementListIsEmpty(stmt.else_branch);
+        if (then_empty && else_empty) {
+          return;
+        }
         bool cond_value = false;
         if (eval_const_bool(cond, &cond_value)) {
           const auto& branch =
               cond_value ? stmt.then_branch : stmt.else_branch;
+          if (StatementListIsEmpty(branch)) {
+            return;
+          }
           for (const auto& inner : branch) {
             emit_comb_stmt(inner, indent, cache);
           }
+          return;
+        }
+        if (then_empty && !else_empty) {
+          out << pad << "if (!(" << cond_bool(cond) << ")) {\n";
+          ExprCache else_cache;
+          else_cache.parent = cache;
+          for (const auto& inner : stmt.else_branch) {
+            emit_comb_stmt(inner, indent + 2, &else_cache);
+          }
+          if (cache) {
+            for (const auto& name : else_cache.blocked) {
+              cache->blocked.insert(name);
+            }
+          }
+          out << pad << "}\n";
           return;
         }
         out << pad << "if (" << cond_bool(cond) << ") {\n";
@@ -8625,7 +9910,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         for (const auto& inner : stmt.then_branch) {
           emit_comb_stmt(inner, indent + 2, &then_cache);
         }
-        if (!stmt.else_branch.empty()) {
+        if (!else_empty) {
           out << pad << "} else {\n";
           ExprCache else_cache;
           else_cache.parent = cache;
@@ -8659,14 +9944,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                     cache)
                 : FsExpr{literal_for_width(0, 1), literal_for_width(0, 1),
                          drive_full(1), 1};
+        std::unordered_map<int, FsExpr> case_width_cache;
         bool first_case = true;
         std::unordered_set<std::string> case_blocked;
         for (const auto& item : stmt.case_items) {
           std::string cond;
           for (const auto& label : item.labels) {
-            std::string piece =
-                emit_case_cond4(stmt.case_kind, case_expr, *label,
-                                stmt.case_expr.get());
+            int label_width = ExprWidth(*label, module);
+            int width = std::max(case_expr.width, label_width);
+            FsExpr case_w;
+            auto cache_it = case_width_cache.find(width);
+            if (cache_it == case_width_cache.end()) {
+              case_w = fs_resize_expr(case_expr, width);
+              case_w = hoist_full_for_use(case_w, indent);
+              case_width_cache.emplace(width, case_w);
+            } else {
+              case_w = cache_it->second;
+            }
+            std::string piece = emit_case_cond4_prepared(
+                stmt.case_kind, case_w, width, *label, stmt.case_expr.get());
             if (!cond.empty()) {
               cond += " || ";
             }
@@ -8712,6 +10008,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return;
       }
       if (stmt.kind == StatementKind::kBlock) {
+        if (StatementListIsEmpty(stmt.block)) {
+          return;
+        }
+        if (stmt.block.size() == 1) {
+          emit_comb_stmt(stmt.block.front(), indent, cache);
+          return;
+        }
         out << pad << "{\n";
         for (const auto& inner : stmt.block) {
           emit_comb_stmt(inner, indent + 2, cache);
@@ -8783,6 +10086,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
     for (const auto& block : module.always_blocks) {
       if (block.edge != EdgeKind::kCombinational) {
+        continue;
+      }
+      if (AlwaysBlockNeedsScheduler(block)) {
         continue;
       }
       ExprCache block_cache;
@@ -8951,7 +10257,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       bool has_comb = !module.assigns.empty() || !module.switches.empty();
       if (!has_comb) {
         for (const auto& block : module.always_blocks) {
-          if (block.edge == EdgeKind::kCombinational) {
+          if (block.edge == EdgeKind::kCombinational &&
+              !AlwaysBlockNeedsScheduler(block)) {
             has_comb = true;
             break;
           }
@@ -8963,6 +10270,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string pad(indent, ' ');
       out << pad << "{\n";
       std::unordered_set<std::string> comb_declared;
+      if (!timing_check_locals.empty()) {
+        comb_declared.insert(timing_check_locals.begin(),
+                             timing_check_locals.end());
+      }
       emit_continuous_assigns(locals, regs, &comb_declared);
 
       for (const auto& name : switch_nets) {
@@ -8976,6 +10287,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::unordered_set<std::string> comb_targets;
       for (const auto& block : module.always_blocks) {
         if (block.edge != EdgeKind::kCombinational) {
+          continue;
+        }
+        if (AlwaysBlockNeedsScheduler(block)) {
           continue;
         }
         for (const auto& stmt : block.statements) {
@@ -9002,6 +10316,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       for (const auto& block : module.always_blocks) {
         if (block.edge != EdgeKind::kCombinational) {
+          continue;
+        }
+        if (AlwaysBlockNeedsScheduler(block)) {
           continue;
         }
         ExprCache block_cache;
@@ -9241,6 +10558,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       for (const auto* reg : trireg_nets) {
         out << "  " << decay_name(reg->name) << "[gid] = 0ul;\n";
       }
+      if (needs_reg_init) {
+        for (const auto& net : module.nets) {
+          if (net.type != NetType::kReg) {
+            continue;
+          }
+          if (port_names.count(net.name) > 0 &&
+              !IsOutputPort(module, net.name)) {
+            continue;
+          }
+          std::string mask = mask_literal(net.width);
+          if (net.array_size > 0) {
+            out << "  for (uint i = 0u; i < " << net.array_size << "u; ++i) {\n";
+            out << "    uint idx = (gid * " << net.array_size << "u) + i;\n";
+            out << "    " << val_name(net.name) << "[idx] = " << mask << ";\n";
+            out << "    " << xz_name(net.name) << "[idx] = " << mask << ";\n";
+            out << "  }\n";
+          } else {
+            out << "  " << val_name(net.name) << "[gid] = " << mask << ";\n";
+            out << "  " << xz_name(net.name) << "[gid] = " << mask << ";\n";
+          }
+        }
+      }
 
       std::unordered_set<std::string> init_locals;
       std::unordered_set<std::string> init_regs;
@@ -9366,18 +10705,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                                           module),
                                                 indent, cache)
                             : fs_allx_expr(1);
+          bool then_empty = StatementListIsEmpty(stmt.then_branch);
+          bool else_empty = StatementListIsEmpty(stmt.else_branch);
+          if (then_empty && else_empty) {
+            return;
+          }
           bool cond_value = false;
           if (eval_const_bool(cond, &cond_value)) {
             const auto& branch =
                 cond_value ? stmt.then_branch : stmt.else_branch;
+            if (StatementListIsEmpty(branch)) {
+              return;
+            }
             emit_init_block(branch, indent, cache);
+            return;
+          }
+          if (then_empty && !else_empty) {
+            out << pad << "if (!(" << cond_bool(cond) << ")) {\n";
+            ExprCache else_cache;
+            else_cache.parent = cache;
+            emit_init_block(stmt.else_branch, indent + 2, &else_cache);
+            if (cache) {
+              for (const auto& name : else_cache.blocked) {
+                cache->blocked.insert(name);
+              }
+            }
+            out << pad << "}\n";
             return;
           }
           out << pad << "if (" << cond_bool(cond) << ") {\n";
           ExprCache then_cache;
           then_cache.parent = cache;
           emit_init_block(stmt.then_branch, indent + 2, &then_cache);
-          if (!stmt.else_branch.empty()) {
+          if (!else_empty) {
             out << pad << "} else {\n";
             ExprCache else_cache;
             else_cache.parent = cache;
@@ -9413,13 +10773,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             emit_init_block(stmt.default_branch, indent, cache);
             return;
           }
+          std::unordered_map<int, FsExpr> case_width_cache;
           bool first_case = true;
           std::unordered_set<std::string> case_blocked;
           for (const auto& item : stmt.case_items) {
             std::string cond;
             for (const auto& label : item.labels) {
-              std::string piece = emit_case_cond4(
-                  stmt.case_kind, case_expr, *label, stmt.case_expr.get());
+              int label_width = ExprWidth(*label, module);
+              int width = std::max(case_expr.width, label_width);
+              FsExpr case_w;
+              auto cache_it = case_width_cache.find(width);
+              if (cache_it == case_width_cache.end()) {
+                case_w = fs_resize_expr(case_expr, width);
+                case_w = hoist_full_for_use(case_w, indent);
+                case_width_cache.emplace(width, case_w);
+              } else {
+                case_w = cache_it->second;
+              }
+              std::string piece = emit_case_cond4_prepared(
+                  stmt.case_kind, case_w, width, *label, stmt.case_expr.get());
               if (!cond.empty()) {
                 cond += " || ";
               }
@@ -9461,6 +10833,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         if (stmt.kind == StatementKind::kBlock) {
+          if (StatementListIsEmpty(stmt.block)) {
+            return;
+          }
+          if (stmt.block.size() == 1) {
+            emit_init_stmt(stmt.block.front(), indent, cache);
+            return;
+          }
           out << pad << "{\n";
           emit_init_block(stmt.block, indent + 2, cache);
           out << pad << "}\n";
@@ -9583,7 +10962,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
     }
 
-    if (has_sequential) {
+    if (has_sequential && !needs_scheduler) {
       out << "\n";
       out << "kernel void gpga_" << MslName(module.name) << "_tick(";
       buffer_index = 0;
@@ -9857,13 +11236,36 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                              : FsExpr{literal_for_width(0, 1),
                                       literal_for_width(0, 1),
                                       drive_full(1), 1};
+          bool then_empty = StatementListIsEmpty(stmt.then_branch);
+          bool else_empty = StatementListIsEmpty(stmt.else_branch);
+          if (then_empty && else_empty) {
+            return;
+          }
           bool cond_value = false;
           if (eval_const_bool(cond, &cond_value)) {
             const auto& branch =
                 cond_value ? stmt.then_branch : stmt.else_branch;
+            if (StatementListIsEmpty(branch)) {
+              return;
+            }
             for (const auto& inner : branch) {
               emit_stmt(inner, indent, cache);
             }
+            return;
+          }
+          if (then_empty && !else_empty) {
+            out << pad << "if (!(" << cond_bool(cond) << ")) {\n";
+            ExprCache else_cache;
+            else_cache.parent = cache;
+            for (const auto& inner : stmt.else_branch) {
+              emit_stmt(inner, indent + 2, &else_cache);
+            }
+            if (cache) {
+              for (const auto& name : else_cache.blocked) {
+                cache->blocked.insert(name);
+              }
+            }
+            out << pad << "}\n";
             return;
           }
           out << pad << "if (" << cond_bool(cond) << ") {\n";
@@ -9872,7 +11274,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           for (const auto& inner : stmt.then_branch) {
             emit_stmt(inner, indent + 2, &then_cache);
           }
-          if (!stmt.else_branch.empty()) {
+          if (!else_empty) {
             out << pad << "} else {\n";
             ExprCache else_cache;
             else_cache.parent = cache;
@@ -9906,14 +11308,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                       indent, cache)
                   : FsExpr{literal_for_width(0, 1),
                            literal_for_width(0, 1), drive_full(1), 1};
+          std::unordered_map<int, FsExpr> case_width_cache;
           bool first_case = true;
           std::unordered_set<std::string> case_blocked;
           for (const auto& item : stmt.case_items) {
             std::string cond;
             for (const auto& label : item.labels) {
-              std::string piece =
-                  emit_case_cond4(stmt.case_kind, case_expr, *label,
-                                  stmt.case_expr.get());
+              int label_width = ExprWidth(*label, module);
+              int width = std::max(case_expr.width, label_width);
+              FsExpr case_w;
+              auto cache_it = case_width_cache.find(width);
+              if (cache_it == case_width_cache.end()) {
+                case_w = fs_resize_expr(case_expr, width);
+                case_w = hoist_full_for_use(case_w, indent);
+                case_width_cache.emplace(width, case_w);
+              } else {
+                case_w = cache_it->second;
+              }
+              std::string piece = emit_case_cond4_prepared(
+                  stmt.case_kind, case_w, width, *label, stmt.case_expr.get());
               if (!cond.empty()) {
                 cond += " || ";
               }
@@ -9959,6 +11372,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return;
         }
         if (stmt.kind == StatementKind::kBlock) {
+          if (StatementListIsEmpty(stmt.block)) {
+            return;
+          }
+          if (stmt.block.size() == 1) {
+            emit_stmt(stmt.block.front(), indent, cache);
+            return;
+          }
           out << pad << "{\n";
           for (const auto& inner : stmt.block) {
             emit_stmt(inner, indent + 2, cache);
@@ -10084,16 +11504,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
       std::vector<const AlwaysBlock*> initial_blocks;
       std::vector<const AlwaysBlock*> edge_blocks;
+      std::vector<const AlwaysBlock*> comb_blocks;
       for (const auto& block : module.always_blocks) {
         if (block.edge == EdgeKind::kInitial) {
           initial_blocks.push_back(&block);
         } else if (block.edge == EdgeKind::kPosedge ||
                    block.edge == EdgeKind::kNegedge) {
           edge_blocks.push_back(&block);
+        } else if (block.edge == EdgeKind::kCombinational &&
+                   AlwaysBlockNeedsScheduler(block)) {
+          comb_blocks.push_back(&block);
         }
       }
 
-      if (!initial_blocks.empty() || !edge_blocks.empty()) {
+      if (!initial_blocks.empty() || !edge_blocks.empty() ||
+          !comb_blocks.empty() || !module.timing_checks.empty()) {
         std::unordered_map<std::string, int> event_ids;
         for (size_t i = 0; i < module.events.size(); ++i) {
           event_ids[module.events[i].name] = static_cast<int>(i);
@@ -10107,10 +11532,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::unordered_map<const Statement*, ForkInfo> fork_info;
         std::unordered_map<int, std::unordered_map<std::string, int>>
             fork_child_labels;
+        std::unordered_map<std::string, int> fork_label_targets;
+        std::unordered_map<std::string, std::pair<int, int>>
+            global_block_targets;
         std::vector<ProcDef> procs;
         std::vector<int> proc_parent;
         std::vector<int> proc_join_tag;
         std::vector<std::unique_ptr<Statement>> always_wrappers;
+        std::unordered_set<const Statement*> loop_heads;
 
         int next_pid = 0;
         for (const auto* block : initial_blocks) {
@@ -10119,7 +11548,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           proc_join_tag.push_back(-1);
           ++next_pid;
         }
-        always_wrappers.reserve(edge_blocks.size());
+        always_wrappers.reserve(edge_blocks.size() + comb_blocks.size());
         auto make_edge_wrapper = [&](const AlwaysBlock& block) {
           auto forever_stmt = std::make_unique<Statement>();
           forever_stmt->kind = StatementKind::kForever;
@@ -10139,6 +11568,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           forever_stmt->forever_body.push_back(std::move(event_stmt));
           return forever_stmt;
         };
+        auto make_comb_wrapper = [&](const AlwaysBlock& block) {
+          auto event_stmt = std::make_unique<Statement>();
+          event_stmt->kind = StatementKind::kEventControl;
+          event_stmt->event_edge = EventEdgeKind::kAny;
+          event_stmt->event_body.reserve(block.statements.size());
+          for (const auto& stmt : block.statements) {
+            event_stmt->event_body.push_back(CloneStatement(stmt));
+          }
+          loop_heads.insert(event_stmt.get());
+          return event_stmt;
+        };
         for (const auto* block : edge_blocks) {
           auto wrapper = make_edge_wrapper(*block);
           procs.push_back(ProcDef{next_pid, nullptr, wrapper.get()});
@@ -10147,8 +11587,45 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           always_wrappers.push_back(std::move(wrapper));
           ++next_pid;
         }
+        for (const auto* block : comb_blocks) {
+          auto wrapper = make_comb_wrapper(*block);
+          procs.push_back(ProcDef{next_pid, nullptr, wrapper.get()});
+          proc_parent.push_back(-1);
+          proc_join_tag.push_back(-1);
+          always_wrappers.push_back(std::move(wrapper));
+          ++next_pid;
+        }
         const int root_proc_count = next_pid;
         int next_fork_tag = 0;
+
+        std::vector<std::unique_ptr<std::vector<Statement>>>
+            expanded_proc_bodies;
+        std::unordered_set<std::string> task_stack;
+        TaskSubst empty_subst;
+        for (auto& proc : procs) {
+          if (proc.body && !HasUserTaskCall(module, *proc.body)) {
+            continue;
+          }
+          if (proc.single && !HasUserTaskCall(module, *proc.single)) {
+            continue;
+          }
+          std::vector<Statement> single_input;
+          const std::vector<Statement>* input = proc.body;
+          if (!input && proc.single) {
+            single_input.push_back(CloneStatement(*proc.single));
+            input = &single_input;
+          }
+          if (!input) {
+            continue;
+          }
+          task_stack.clear();
+          auto expanded = std::make_unique<std::vector<Statement>>();
+          ExpandTasksInStatements(module, *input, empty_subst, expanded.get(),
+                                  &task_stack);
+          expanded_proc_bodies.push_back(std::move(expanded));
+          proc.body = expanded_proc_bodies.back().get();
+          proc.single = nullptr;
+        }
 
         std::function<void(const Statement&, int)> collect_forks;
         std::function<void(const std::vector<Statement>&, int)>
@@ -10252,6 +11729,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             collect_forks_in_list(*procs[i].body, procs[i].pid);
           } else if (procs[i].single) {
             collect_forks(*procs[i].single, procs[i].pid);
+          }
+        }
+        for (const auto& entry : fork_child_labels) {
+          for (const auto& label_entry : entry.second) {
+            if (fork_label_targets.count(label_entry.first) == 0u) {
+              fork_label_targets[label_entry.first] = label_entry.second;
+            }
           }
         }
 
@@ -11186,6 +12670,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             system_task_info.has_system_tasks
                 ? static_cast<uint32_t>(system_task_info.string_table.size())
                 : 0u;
+        const uint32_t timing_check_count =
+            static_cast<uint32_t>(module.timing_checks.size());
         out << "GPGA_SCHED_DEFINE_CONSTANTS(" << procs.size() << "u, "
             << root_proc_count << "u, " << module.events.size() << "u, "
             << edge_item_count << "u, " << edge_star_count << "u, "
@@ -11196,6 +12682,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << service_max_args << "u, " << service_wide_words_local << "u, "
             << string_count << "u, " << force_target_list.size() << "u, "
             << passign_target_list.size() << "u)\n";
+        out << "constant constexpr uint GPGA_SCHED_TIMING_CHECK_COUNT = "
+            << timing_check_count << "u;\n";
         if (system_task_info.has_system_tasks) {
           if (service_wide_words_local > 0u) {
             out << "GPGA_SCHED_DEFINE_SERVICE_RECORD_WIDE()\n";
@@ -11333,6 +12821,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           emit_param("  device ulong* sched_edge_star_prev_xz [[buffer(" +
                      std::to_string(buffer_index++) + ")]]");
         }
+        if (timing_check_count > 0u) {
+          emit_param("  device ulong* sched_timing_prev_val [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_timing_prev_xz [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_timing_data_time [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_timing_ref_time [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_timing_window_start [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+          emit_param("  device ulong* sched_timing_window_end [[buffer(" +
+                     std::to_string(buffer_index++) + ")]]");
+        }
         emit_param("  device ulong* sched_wait_time [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device uint* sched_join_count [[buffer(" +
@@ -11424,6 +12926,56 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         emit_packed_nb_setup("sched.count");
         emit_packed_force_setup("sched.count");
+        std::unordered_set<std::string> sched_predeclared_locals;
+        if (!timing_check_locals.empty()) {
+          for (const auto& name : timing_check_locals) {
+            std::string type = TypeForWidth(SignalWidth(module, name));
+            std::string zero = literal_for_width(0, SignalWidth(module, name));
+            std::string mask = mask_literal(SignalWidth(module, name));
+            out << "  " << type << " " << val_name(name) << " = " << zero
+                << ";\n";
+            out << "  " << type << " " << xz_name(name) << " = " << mask
+                << ";\n";
+            sched_predeclared_locals.insert(name);
+          }
+        }
+        auto sched_driven = CollectDrivenSignals(module);
+        auto is_output_only_port = [&](const std::string& name) -> bool {
+          const Port* port = FindPort(module, name);
+          return port && port->dir == PortDir::kOutput;
+        };
+        for (const auto& net : module.nets) {
+          if (net.array_size > 0 || IsTriregNet(net.type) ||
+              net.type == NetType::kReg) {
+            continue;
+          }
+          if (net.type == NetType::kTri0 || net.type == NetType::kTri1 ||
+              net.type == NetType::kSupply0 || net.type == NetType::kSupply1) {
+            continue;
+          }
+          if (sched_driven.count(net.name) > 0) {
+            continue;
+          }
+          std::string type = TypeForWidth(net.width);
+          std::string zero = literal_for_width(0, net.width);
+          std::string mask = mask_literal(net.width);
+          if (sched_locals.count(net.name) > 0) {
+            if (sched_predeclared_locals.count(net.name) > 0) {
+              continue;
+            }
+            out << "  " << type << " " << val_name(net.name) << " = " << zero
+                << ";\n";
+            out << "  " << type << " " << xz_name(net.name) << " = " << mask
+                << ";\n";
+            continue;
+          }
+          if (!is_output_only_port(net.name) &&
+              export_wire_set.count(net.name) == 0) {
+            continue;
+          }
+          out << "  " << val_name(net.name) << "[gid] = " << zero << ";\n";
+          out << "  " << xz_name(net.name) << "[gid] = " << mask << ";\n";
+        }
         if (system_task_info.has_system_tasks) {
           out << "  sched_service_count[gid] = 0u;\n";
         }
@@ -11434,6 +12986,34 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
         out << "    sched_flags[gid] = GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "    sched_error[gid] = 0u;\n";
+        if (needs_reg_init) {
+          for (const auto& net : module.nets) {
+            if (net.type != NetType::kReg) {
+              continue;
+            }
+            if (port_names.count(net.name) > 0 &&
+                !IsOutputPort(module, net.name)) {
+              continue;
+            }
+            std::string mask = mask_literal(net.width);
+            if (net.array_size > 0) {
+              out << "    for (uint i = 0u; i < " << net.array_size
+                  << "u; ++i) {\n";
+              out << "      uint idx = (gid * " << net.array_size
+                  << "u) + i;\n";
+              out << "      " << val_name(net.name) << "[idx] = " << mask
+                  << ";\n";
+              out << "      " << xz_name(net.name) << "[idx] = " << mask
+                  << ";\n";
+              out << "    }\n";
+            } else {
+              out << "    " << val_name(net.name) << "[gid] = " << mask
+                  << ";\n";
+              out << "    " << xz_name(net.name) << "[gid] = " << mask
+                  << ";\n";
+            }
+          }
+        }
         for (const auto* reg : trireg_nets) {
           out << "    " << decay_name(reg->name) << "[gid] = 0ul;\n";
         }
@@ -11457,6 +13037,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
           out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
           out << "      sched_edge_star_prev_xz[sidx] = 0ul;\n";
+          out << "    }\n";
+        }
+        if (timing_check_count > 0u) {
+          out << "    for (uint t = 0u; t < GPGA_SCHED_TIMING_CHECK_COUNT; ++t) {\n";
+          out << "      uint tslot = (gid * GPGA_SCHED_TIMING_CHECK_COUNT) + t;\n";
+          out << "      sched_timing_data_time[tslot] = ~0ul;\n";
+          out << "      sched_timing_ref_time[tslot] = ~0ul;\n";
+          out << "      sched_timing_window_start[tslot] = ~0ul;\n";
+          out << "      sched_timing_window_end[tslot] = 0ul;\n";
+          out << "    }\n";
+          out << "    for (uint t = 0u; t < (GPGA_SCHED_TIMING_CHECK_COUNT * 2u); ++t) {\n";
+          out << "      uint tslot = (gid * (GPGA_SCHED_TIMING_CHECK_COUNT * 2u)) + t;\n";
+          out << "      sched_timing_prev_val[tslot] = 0ul;\n";
+          out << "      sched_timing_prev_xz[tslot] = 0ul;\n";
           out << "    }\n";
         }
       if (!system_task_info.monitor_stmts.empty()) {
@@ -11736,6 +13330,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << pad << target_xz << " = " << rhs.xz << ";\n";
             };
 
+        std::function<void(const SequentialAssign&, const FsExpr&, int,
+                           const std::unordered_set<std::string>&)>
+            emit_lvalue_assign;
         emit_force_overrides = [&](int indent) -> void {
           if (override_target_list.empty()) {
             return;
@@ -11845,6 +13442,507 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << pad << "}\n";
         };
 
+        TimingSelectMode timing_select_mode = GetTimingSelectMode();
+        auto emit_timing_checks = [&](int indent) -> void {
+          if (module.timing_checks.empty()) {
+            return;
+          }
+          std::string pad(indent, ' ');
+          auto emit_limit_expr = [&](const TimingCheckLimit& limit) -> std::string {
+            const Expr* expr = SelectTimingLimitExpr(limit, timing_select_mode);
+            if (!expr) {
+              return "0l";
+            }
+            if (ExprIsRealValue(*expr, module)) {
+              return "long(" +
+                     EmitRealToIntExpr(*expr, 64, true, module, sched_locals,
+                                       sched_regs) +
+                     ")";
+            }
+            std::string raw =
+                EmitExprSized(*expr, 64, module, sched_locals, sched_regs);
+            return "long(" + raw + ")";
+          };
+          auto emit_value_expr = [&](const Expr* expr) -> std::string {
+            if (!expr) {
+              return "0l";
+            }
+            if (ExprIsRealValue(*expr, module)) {
+              return "long(" +
+                     EmitRealToIntExpr(*expr, 64, true, module, sched_locals,
+                                       sched_regs) +
+                     ")";
+            }
+            std::string raw =
+                EmitExprSized(*expr, 64, module, sched_locals, sched_regs);
+            return "long(" + raw + ")";
+          };
+          auto edge_list_direction = [&](const TimingCheckEvent& event,
+                                         bool* rise, bool* fall) {
+            if (rise) {
+              *rise = false;
+            }
+            if (fall) {
+              *fall = false;
+            }
+            for (const auto& pattern : event.edge_list) {
+              bool is_rise = false;
+              bool is_fall = false;
+              if (pattern.to == TimingEdgeState::k1) {
+                is_rise = true;
+              } else if (pattern.to == TimingEdgeState::k0) {
+                is_fall = true;
+              } else if (pattern.to == TimingEdgeState::kX) {
+                if (pattern.from == TimingEdgeState::k0) {
+                  is_rise = true;
+                } else if (pattern.from == TimingEdgeState::k1) {
+                  is_fall = true;
+                } else {
+                  is_rise = true;
+                  is_fall = true;
+                }
+              } else if (pattern.to == TimingEdgeState::kZ) {
+                if (pattern.from == TimingEdgeState::k0) {
+                  is_rise = true;
+                } else if (pattern.from == TimingEdgeState::k1) {
+                  is_fall = true;
+                } else {
+                  is_rise = true;
+                  is_fall = true;
+                }
+              }
+              if (rise && is_rise) {
+                *rise = true;
+              }
+              if (fall && is_fall) {
+                *fall = true;
+              }
+            }
+          };
+          auto emit_event_eval = [&](const TimingCheckEvent& event,
+                                     const std::string& prev_val_ref,
+                                     const std::string& prev_xz_ref,
+                                     const std::string& prefix,
+                                     int inner_indent,
+                                     const Expr* override_expr) -> void {
+            std::string pad(inner_indent, ' ');
+            out << pad << "bool " << prefix << "_edge = false;\n";
+            out << pad << "bool " << prefix << "_pos = false;\n";
+            out << pad << "bool " << prefix << "_neg = false;\n";
+            const Expr* expr = override_expr ? override_expr : event.expr.get();
+            if (!expr) {
+              return;
+            }
+            FsExpr curr = emit_expr4(*expr);
+            curr = hoist_full_for_use(curr, inner_indent);
+            std::string mask =
+                literal_for_width(MaskForWidth64(curr.width), 64);
+            out << pad << "ulong " << prefix << "_prev_val = "
+                << prev_val_ref << ";\n";
+            out << pad << "ulong " << prefix << "_prev_xz = " << prev_xz_ref
+                << ";\n";
+            out << pad << "ulong " << prefix << "_curr_val = ((ulong)("
+                << curr.val << ")) & " << mask << ";\n";
+            out << pad << "ulong " << prefix << "_curr_xz = ((ulong)("
+                << curr.xz << ")) & " << mask << ";\n";
+            out << pad << "ulong " << prefix << "_prev_zero = (~"
+                << prefix << "_prev_val) & (~" << prefix
+                << "_prev_xz) & " << mask << ";\n";
+            out << pad << "ulong " << prefix << "_prev_one = " << prefix
+                << "_prev_val & (~" << prefix << "_prev_xz) & " << mask
+                << ";\n";
+            out << pad << "ulong " << prefix << "_prev_unk = " << prefix
+                << "_prev_xz & " << mask << ";\n";
+            out << pad << "ulong " << prefix << "_curr_zero = (~"
+                << prefix << "_curr_val) & (~" << prefix
+                << "_curr_xz) & " << mask << ";\n";
+            out << pad << "ulong " << prefix << "_curr_one = " << prefix
+                << "_curr_val & (~" << prefix << "_curr_xz) & " << mask
+                << ";\n";
+            out << pad << "ulong " << prefix << "_curr_unk = " << prefix
+                << "_curr_xz & " << mask << ";\n";
+            out << pad << "ulong " << prefix << "_pos_mask = (" << prefix
+                << "_prev_zero & (" << prefix << "_curr_one | " << prefix
+                << "_curr_unk)) | (" << prefix << "_prev_unk & " << prefix
+                << "_curr_one);\n";
+            out << pad << "ulong " << prefix << "_neg_mask = (" << prefix
+                << "_prev_one & (" << prefix << "_curr_zero | " << prefix
+                << "_curr_unk)) | (" << prefix << "_prev_unk & " << prefix
+                << "_curr_zero);\n";
+            out << pad << prefix << "_pos = (" << prefix
+                << "_pos_mask != 0ul);\n";
+            out << pad << prefix << "_neg = (" << prefix
+                << "_neg_mask != 0ul);\n";
+            out << pad << "bool " << prefix << "_any = (" << prefix
+                << "_curr_val != " << prefix << "_prev_val || " << prefix
+                << "_curr_xz != " << prefix << "_prev_xz);\n";
+            if (event.has_edge_list) {
+              out << pad << "ulong " << prefix << "_prev_x = " << prefix
+                  << "_prev_xz & " << prefix << "_prev_val & " << mask
+                  << ";\n";
+              out << pad << "ulong " << prefix << "_prev_z = " << prefix
+                  << "_prev_xz & (~" << prefix << "_prev_val) & " << mask
+                  << ";\n";
+              out << pad << "ulong " << prefix << "_curr_x = " << prefix
+                  << "_curr_xz & " << prefix << "_curr_val & " << mask
+                  << ";\n";
+              out << pad << "ulong " << prefix << "_curr_z = " << prefix
+                  << "_curr_xz & (~" << prefix << "_curr_val) & " << mask
+                  << ";\n";
+              out << pad << "ulong " << prefix << "_list_mask = 0ul;\n";
+              for (const auto& pattern : event.edge_list) {
+                auto from_mask = [&](TimingEdgeState state) -> std::string {
+                  switch (state) {
+                    case TimingEdgeState::k0:
+                      return prefix + "_prev_zero";
+                    case TimingEdgeState::k1:
+                      return prefix + "_prev_one";
+                    case TimingEdgeState::kX:
+                      return prefix + "_prev_x";
+                    case TimingEdgeState::kZ:
+                      return prefix + "_prev_z";
+                  }
+                  return prefix + "_prev_zero";
+                };
+                auto to_mask = [&](TimingEdgeState state) -> std::string {
+                  switch (state) {
+                    case TimingEdgeState::k0:
+                      return prefix + "_curr_zero";
+                    case TimingEdgeState::k1:
+                      return prefix + "_curr_one";
+                    case TimingEdgeState::kX:
+                      return prefix + "_curr_x";
+                    case TimingEdgeState::kZ:
+                      return prefix + "_curr_z";
+                  }
+                  return prefix + "_curr_zero";
+                };
+                out << pad << prefix << "_list_mask |= (" << from_mask(pattern.from)
+                    << " & " << to_mask(pattern.to) << ");\n";
+              }
+              out << pad << prefix << "_edge = (" << prefix
+                  << "_list_mask != 0ul);\n";
+            } else if (event.edge == EventEdgeKind::kPosedge) {
+              out << pad << prefix << "_edge = " << prefix << "_pos;\n";
+            } else if (event.edge == EventEdgeKind::kNegedge) {
+              out << pad << prefix << "_edge = " << prefix << "_neg;\n";
+            } else {
+              out << pad << prefix << "_edge = " << prefix << "_any;\n";
+            }
+            if (event.cond) {
+              FsExpr cond = emit_expr4(*event.cond);
+              cond = hoist_full_for_use(cond, inner_indent);
+              out << pad << prefix << "_edge = (" << prefix << "_edge && ("
+                  << cond_bool(cond) << "));\n";
+            }
+            out << pad << prev_val_ref << " = " << prefix << "_curr_val;\n";
+            out << pad << prev_xz_ref << " = " << prefix << "_curr_xz;\n";
+          };
+          out << pad << "// Timing checks.\n";
+          for (size_t tc = 0; tc < module.timing_checks.size(); ++tc) {
+            const TimingCheck& check = module.timing_checks[tc];
+            std::string data_prev_val =
+                "sched_timing_prev_val[__gpga_tc_prev + 0u]";
+            std::string data_prev_xz =
+                "sched_timing_prev_xz[__gpga_tc_prev + 0u]";
+            std::string ref_prev_val =
+                "sched_timing_prev_val[__gpga_tc_prev + 1u]";
+            std::string ref_prev_xz =
+                "sched_timing_prev_xz[__gpga_tc_prev + 1u]";
+            out << pad << "{\n";
+            out << pad << "  uint __gpga_tc = " << tc << "u;\n";
+            out << pad << "  uint __gpga_tc_slot = (gid * "
+                << "GPGA_SCHED_TIMING_CHECK_COUNT) + __gpga_tc;\n";
+            out << pad << "  uint __gpga_tc_prev = (gid * "
+                << "(GPGA_SCHED_TIMING_CHECK_COUNT * 2u)) + (__gpga_tc * 2u);\n";
+            out << pad << "  bool __gpga_check_enabled = true;\n";
+            if (check.check_cond) {
+              FsExpr cond = emit_expr4(*check.check_cond);
+              cond = hoist_full_for_use(cond, indent + 2);
+              out << pad << "  __gpga_check_enabled = __gpga_check_enabled && ("
+                  << cond_bool(cond) << ");\n";
+            }
+            if (check.event_based_flag) {
+              FsExpr cond = emit_expr4(*check.event_based_flag);
+              cond = hoist_full_for_use(cond, indent + 2);
+              out << pad << "  __gpga_check_enabled = __gpga_check_enabled && ("
+                  << cond_bool(cond) << ");\n";
+            }
+            if (check.remain_active_flag) {
+              FsExpr cond = emit_expr4(*check.remain_active_flag);
+              cond = hoist_full_for_use(cond, indent + 2);
+              out << pad << "  __gpga_check_enabled = __gpga_check_enabled && ("
+                  << cond_bool(cond) << ");\n";
+            }
+            out << pad << "  long __gpga_limit = " << emit_limit_expr(check.limit)
+                << ";\n";
+            out << pad << "  long __gpga_limit2 = "
+                << emit_limit_expr(check.limit2) << ";\n";
+            out << pad << "  long __gpga_threshold = "
+                << emit_value_expr(check.threshold.get()) << ";\n";
+            out << pad << "  ulong __gpga_data_time = "
+                << "sched_timing_data_time[__gpga_tc_slot];\n";
+            out << pad << "  ulong __gpga_ref_time = "
+                << "sched_timing_ref_time[__gpga_tc_slot];\n";
+            out << pad << "  ulong __gpga_window_start = "
+                << "sched_timing_window_start[__gpga_tc_slot];\n";
+            out << pad << "  ulong __gpga_window_end = "
+                << "sched_timing_window_end[__gpga_tc_slot];\n";
+            Expr data_override_expr;
+            const Expr* data_expr = nullptr;
+            if (!check.delayed_data.empty()) {
+              data_override_expr.kind = ExprKind::kIdentifier;
+              data_override_expr.ident = check.delayed_data;
+              data_expr = &data_override_expr;
+            }
+            Expr ref_override_expr;
+            const Expr* ref_expr = nullptr;
+            if (!check.delayed_ref.empty()) {
+              ref_override_expr.kind = ExprKind::kIdentifier;
+              ref_override_expr.ident = check.delayed_ref;
+              ref_expr = &ref_override_expr;
+            }
+            emit_event_eval(check.data_event, data_prev_val, data_prev_xz,
+                            "__gpga_data", indent + 2, data_expr);
+            emit_event_eval(check.ref_event, ref_prev_val, ref_prev_xz,
+                            "__gpga_ref", indent + 2, ref_expr);
+            out << pad << "  if (!__gpga_check_enabled) {\n";
+            out << pad << "    __gpga_data_edge = false;\n";
+            out << pad << "    __gpga_ref_edge = false;\n";
+            out << pad << "    __gpga_data_pos = false;\n";
+            out << pad << "    __gpga_data_neg = false;\n";
+            out << pad << "    __gpga_ref_pos = false;\n";
+            out << pad << "    __gpga_ref_neg = false;\n";
+            out << pad << "  }\n";
+            out << pad << "  bool __gpga_violation = false;\n";
+            switch (check.kind) {
+              case TimingCheckKind::kSetup:
+              case TimingCheckKind::kRecovery: {
+                out << pad << "  if (__gpga_data_edge) {\n";
+                out << pad << "    __gpga_data_time = __gpga_time;\n";
+                out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    if (__gpga_data_time != ~0ul) {\n";
+                out << pad << "      ulong __gpga_delta_u = (__gpga_time >= __gpga_data_time)\n";
+                out << pad << "          ? (__gpga_time - __gpga_data_time) : 0ul;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+                break;
+              }
+              case TimingCheckKind::kHold:
+              case TimingCheckKind::kRemoval: {
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_data_edge) {\n";
+                out << pad << "    if (__gpga_ref_time != ~0ul && __gpga_time >= __gpga_ref_time) {\n";
+                out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_data_time = __gpga_time;\n";
+                out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                out << pad << "  }\n";
+                break;
+              }
+              case TimingCheckKind::kSetupHold:
+              case TimingCheckKind::kRecRem: {
+                out << pad << "  if (__gpga_data_edge) {\n";
+                out << pad << "    if (__gpga_ref_time != ~0ul && __gpga_time >= __gpga_ref_time) {\n";
+                out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      if (__gpga_delta < __gpga_limit2) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_data_time = __gpga_time;\n";
+                out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    if (__gpga_data_time != ~0ul) {\n";
+                out << pad << "      ulong __gpga_delta_u = (__gpga_time >= __gpga_data_time)\n";
+                out << pad << "          ? (__gpga_time - __gpga_data_time) : 0ul;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+                break;
+              }
+              case TimingCheckKind::kPeriod: {
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    if (__gpga_ref_time != ~0ul) {\n";
+                out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+                break;
+              }
+              case TimingCheckKind::kWidth:
+              case TimingCheckKind::kPulseWidth: {
+                bool width_rise = false;
+                bool width_fall = false;
+                bool width_any = false;
+                if (check.ref_event.edge == EventEdgeKind::kPosedge) {
+                  width_rise = true;
+                } else if (check.ref_event.edge == EventEdgeKind::kNegedge) {
+                  width_fall = true;
+                } else if (check.ref_event.has_edge_list) {
+                  edge_list_direction(check.ref_event, &width_rise, &width_fall);
+                  if (width_rise && width_fall) {
+                    width_any = true;
+                    width_rise = false;
+                    width_fall = false;
+                  } else if (!width_rise && !width_fall) {
+                    width_any = true;
+                  }
+                } else {
+                  width_any = true;
+                }
+                if (width_any) {
+                  out << pad << "  if (__gpga_ref_edge) {\n";
+                  out << pad << "    if (__gpga_ref_time != ~0ul) {\n";
+                  out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                  out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                  out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+                  out << pad << "        __gpga_violation = true;\n";
+                  out << pad << "      }\n";
+                  out << pad << "    }\n";
+                  out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                  out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                  out << pad << "  }\n";
+                } else if (width_rise) {
+                  out << pad << "  if (__gpga_ref_pos) {\n";
+                  out << pad << "    __gpga_data_time = __gpga_time;\n";
+                  out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                  out << pad << "  }\n";
+                  out << pad << "  if (__gpga_ref_neg) {\n";
+                  out << pad << "    if (__gpga_data_time != ~0ul) {\n";
+                  out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_data_time;\n";
+                  out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                  out << pad << "      long __gpga_width_limit = __gpga_limit;\n";
+                  if (check.kind == TimingCheckKind::kPulseWidth) {
+                    out << pad << "      long __gpga_width_alt = (__gpga_limit2 != 0l) ? __gpga_limit2 : __gpga_limit;\n";
+                    out << pad << "      __gpga_width_limit = __gpga_limit;\n";
+                  }
+                  out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
+                  out << pad << "        __gpga_violation = true;\n";
+                  out << pad << "      }\n";
+                  out << pad << "    }\n";
+                  out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                  out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                  out << pad << "  }\n";
+                } else {
+                  out << pad << "  if (__gpga_ref_neg) {\n";
+                  out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                  out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                  out << pad << "  }\n";
+                  out << pad << "  if (__gpga_ref_pos) {\n";
+                  out << pad << "    if (__gpga_ref_time != ~0ul) {\n";
+                  out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                  out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                  out << pad << "      long __gpga_width_limit = __gpga_limit;\n";
+                  if (check.kind == TimingCheckKind::kPulseWidth) {
+                    out << pad << "      long __gpga_width_alt = (__gpga_limit2 != 0l) ? __gpga_limit2 : __gpga_limit;\n";
+                    out << pad << "      __gpga_width_limit = __gpga_width_alt;\n";
+                  }
+                  out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
+                  out << pad << "        __gpga_violation = true;\n";
+                  out << pad << "      }\n";
+                  out << pad << "    }\n";
+                  out << pad << "    __gpga_data_time = __gpga_time;\n";
+                  out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                  out << pad << "  }\n";
+                }
+                out << pad << "  (void)__gpga_threshold;\n";
+                break;
+              }
+              case TimingCheckKind::kSkew:
+              case TimingCheckKind::kTimeSkew:
+              case TimingCheckKind::kFullSkew: {
+                out << pad << "  if (__gpga_data_edge) {\n";
+                out << pad << "    __gpga_data_time = __gpga_time;\n";
+                out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if ((__gpga_data_edge || __gpga_ref_edge) &&\n";
+                out << pad << "      __gpga_data_time != ~0ul && __gpga_ref_time != ~0ul) {\n";
+                out << pad << "    ulong __gpga_delta_u = (__gpga_data_time >= __gpga_ref_time)\n";
+                out << pad << "        ? (__gpga_data_time - __gpga_ref_time)\n";
+                out << pad << "        : (__gpga_ref_time - __gpga_data_time);\n";
+                out << pad << "    long __gpga_delta = (long)__gpga_delta_u;\n";
+                if (check.kind == TimingCheckKind::kFullSkew) {
+                  out << pad << "    long __gpga_max = (__gpga_limit2 != 0l) ? __gpga_limit2 : __gpga_limit;\n";
+                  out << pad << "    if (__gpga_delta < __gpga_limit || (__gpga_max >= 0l && __gpga_delta > __gpga_max)) {\n";
+                  out << pad << "      __gpga_violation = true;\n";
+                  out << pad << "    }\n";
+                } else {
+                  out << pad << "    if (__gpga_delta > __gpga_limit) {\n";
+                  out << pad << "      __gpga_violation = true;\n";
+                  out << pad << "    }\n";
+                }
+                out << pad << "  }\n";
+                break;
+              }
+              case TimingCheckKind::kNoChange: {
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    long __gpga_start = __gpga_limit;\n";
+                out << pad << "    long __gpga_end = __gpga_limit2;\n";
+                out << pad << "    ulong __gpga_start_u = __gpga_time + (ulong)((__gpga_start > 0l) ? __gpga_start : 0l);\n";
+                out << pad << "    ulong __gpga_end_u = __gpga_time + (ulong)((__gpga_end > 0l) ? __gpga_end : 0l);\n";
+                out << pad << "    __gpga_window_start = __gpga_start_u;\n";
+                out << pad << "    __gpga_window_end = __gpga_end_u;\n";
+                out << pad << "    sched_timing_window_start[__gpga_tc_slot] = __gpga_window_start;\n";
+                out << pad << "    sched_timing_window_end[__gpga_tc_slot] = __gpga_window_end;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_data_edge) {\n";
+                out << pad << "    if (__gpga_window_start != ~0ul && __gpga_time >= __gpga_window_start && __gpga_time <= __gpga_window_end) {\n";
+                out << pad << "      __gpga_violation = true;\n";
+                out << pad << "    }\n";
+                out << pad << "  }\n";
+                break;
+              }
+              default:
+                break;
+            }
+            if (!check.notifier.empty()) {
+              int width = SignalWidth(module, check.notifier);
+              if (width > 0) {
+                std::string mask = MaskLiteralForWidth(width);
+                FsExpr xval{mask, mask, drive_full(width), width};
+                SequentialAssign assign;
+                assign.lhs = check.notifier;
+                assign.nonblocking = false;
+                out << pad << "  if (__gpga_violation) {\n";
+                emit_lvalue_assign(assign, xval, indent + 4, sched_locals);
+                out << pad << "  }\n";
+              }
+            }
+            out << pad << "}\n";
+          }
+        };
+
         out << "  sched_status[gid] = GPGA_SCHED_STATUS_RUNNING;\n";
         out << "  bool finished = false;\n";
         out << "  bool stopped = false;\n";
@@ -11921,7 +14019,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         auto emit_inline_assign =
             [&](const SequentialAssign& assign, int indent,
-                const std::unordered_set<std::string>& locals_override) -> void {
+                const std::unordered_set<std::string>& locals_override,
+                ExprCache* cache) -> void {
           if (!assign.rhs) {
             return;
           }
@@ -11934,8 +14033,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           bool lhs_real = SignalIsReal(module, assign.lhs);
           FsExpr rhs = lhs_real
                            ? emit_real_expr4(*assign.rhs)
-                           : emit_expr4_sized_with_cse(*assign.rhs, lhs.width,
-                                                       indent);
+                           : emit_expr4_cached_relaxed(*assign.rhs, lhs.width,
+                                                       indent, cache);
           rhs = maybe_hoist_full(rhs, indent, false, true);
           if (assign.nonblocking) {
             if (assign.lhs_index) {
@@ -12022,13 +14121,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "} else {\n";
             emit_store(lhs.val, lhs.xz, indent + 2);
             out << pad << "}\n";
+            if (cache) {
+              cache->blocked.insert(assign.lhs);
+            }
             return;
           }
           emit_store(lhs.val, lhs.xz, indent);
+          if (cache) {
+            cache->blocked.insert(assign.lhs);
+          }
           return;
         };
 
-        auto emit_lvalue_assign =
+        emit_lvalue_assign =
             [&](const SequentialAssign& assign, const FsExpr& rhs, int indent,
                 const std::unordered_set<std::string>& locals_override) -> void {
           std::string pad(indent, ' ');
@@ -12946,6 +15051,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_TIMEFORMAT";
           } else if (name == "$printtimescale") {
             kind_expr = "GPGA_SERVICE_KIND_PRINTTIMESCALE";
+          } else if (name == "$async$and$array") {
+            kind_expr = "GPGA_SERVICE_KIND_ASYNC_AND_ARRAY";
+          } else if (name == "$sync$or$plane") {
+            kind_expr = "GPGA_SERVICE_KIND_SYNC_OR_PLANE";
+          } else if (name == "$async$nor$plane") {
+            kind_expr = "GPGA_SERVICE_KIND_ASYNC_NOR_PLANE";
+          } else if (name == "$sync$nand$plane") {
+            kind_expr = "GPGA_SERVICE_KIND_SYNC_NAND_PLANE";
           } else {
             out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
             out << std::string(indent, ' ')
@@ -13053,7 +15166,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           case StatementKind::kWait:
           case StatementKind::kForever:
           case StatementKind::kFork:
-          case StatementKind::kDisable:
             return true;
           default:
             break;
@@ -13118,7 +15230,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       auto emit_inline_stmt =
           [&](const Statement& stmt, int indent,
               const std::unordered_set<std::string>& locals_override,
-              int resume_pc, const auto& self) -> void {
+              int resume_pc, ExprCache* cache, const auto& self) -> void {
           std::string pad(indent, ' ');
           if (stmt.kind == StatementKind::kTaskCall &&
               IsSystemTaskName(stmt.task_name)) {
@@ -13134,6 +15246,48 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             out << pad << "sched_event_pending[(gid * "
                 << "GPGA_SCHED_EVENT_COUNT) + " << it->second << "u] = 1u;\n";
+            return;
+          }
+          if (stmt.kind == StatementKind::kDisable) {
+            auto fork_it = fork_label_targets.find(stmt.disable_target);
+            if (fork_it != fork_label_targets.end()) {
+              out << pad << "{\n";
+              out << pad << "  uint __gpga_didx = gpga_sched_index(gid, "
+                  << fork_it->second << "u);\n";
+              out << pad << "  if (sched_state[__gpga_didx] != GPGA_SCHED_PROC_DONE) {\n";
+              out << pad << "    sched_state[__gpga_didx] = GPGA_SCHED_PROC_DONE;\n";
+              out << pad << "    uint parent = sched_parent[__gpga_didx];\n";
+              out << pad << "    if (parent != GPGA_SCHED_NO_PARENT) {\n";
+              out << pad << "      uint pidx = gpga_sched_index(gid, parent);\n";
+              out << pad << "      if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+              out << pad << "          sched_wait_id[pidx] == sched_join_tag[__gpga_didx]) {\n";
+              out << pad << "        if (sched_join_count[pidx] > 0u) {\n";
+              out << pad << "          sched_join_count[pidx] -= 1u;\n";
+              out << pad << "        }\n";
+              out << pad << "        if (sched_join_count[pidx] == 0u) {\n";
+              out << pad << "          sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+              out << pad << "          sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+              out << pad << "        }\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "  }\n";
+              out << pad << "}\n";
+              return;
+            }
+            auto it = global_block_targets.find(stmt.disable_target);
+            if (it == global_block_targets.end()) {
+              out << pad << "sched_error[gid] = 1u;\n";
+              out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              return;
+            }
+            out << pad << "{\n";
+            out << pad << "  uint __gpga_didx = gpga_sched_index(gid, "
+                << it->second.first << "u);\n";
+            out << pad << "  sched_pc[__gpga_didx] = " << it->second.second
+                << "u;\n";
+            out << pad << "  sched_wait_kind[__gpga_didx] = GPGA_SCHED_WAIT_NONE;\n";
+            out << pad << "  sched_state[__gpga_didx] = GPGA_SCHED_PROC_READY;\n";
+            out << pad << "}\n";
             return;
           }
           if (stmt.kind == StatementKind::kForce ||
@@ -13200,6 +15354,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     << id_it->second << "u;\n";
                 emit_force_value_assign(stmt, lhs.val, lhs.xz, indent);
               }
+              if (cache) {
+                cache->blocked.insert(target);
+              }
               return;
             }
             std::string slot =
@@ -13222,6 +15379,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   out << pad << xz_name(target) << "[gid] = "
                       << shadow_xz_name(target) << "[gid];\n";
                 }
+              }
+              if (cache) {
+                cache->blocked.insert(target);
               }
               return;
             }
@@ -13252,6 +15412,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << pad << xz_name(target) << "[gid] = "
                   << shadow_xz_name(target) << "[gid];\n";
             }
+            if (cache) {
+              cache->blocked.insert(target);
+            }
             return;
           }
           if (stmt.kind == StatementKind::kAssign) {
@@ -13264,9 +15427,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 stmt.assign.rhs->kind == ExprKind::kCall &&
                 IsFileSystemFunctionName(stmt.assign.rhs->ident)) {
               emit_syscall_assign(stmt, *stmt.assign.rhs, resume_pc, indent);
+              if (!stmt.assign.nonblocking && cache) {
+                cache->blocked.insert(stmt.assign.lhs);
+              }
               return;
             }
-            emit_inline_assign(stmt.assign, indent, locals_override);
+            emit_inline_assign(stmt.assign, indent, locals_override, cache);
             return;
           }
           if (inline_needs_scheduler(stmt)) {
@@ -13276,26 +15442,98 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           if (stmt.kind == StatementKind::kIf) {
             FsExpr cond = stmt.condition
-                               ? emit_expr4(*stmt.condition)
+                               ? emit_expr4_cached_relaxed(
+                                     *stmt.condition,
+                                     ExprWidth(*stmt.condition, module),
+                                     indent, cache)
                                : FsExpr{literal_for_width(0, 1),
                                         literal_for_width(0, 1),
                                         drive_full(1), 1};
             cond = hoist_full_for_use(cond, indent);
-            out << pad << "if (" << cond_bool(cond) << ") {\n";
+            std::string cond_expr = cond_bool(cond);
+            bool then_empty = StatementListIsEmpty(stmt.then_branch);
+            bool else_empty = StatementListIsEmpty(stmt.else_branch);
+            bool single_then = stmt.then_branch.size() == 1;
+            bool single_else = stmt.else_branch.size() == 1;
+            if (then_empty && else_empty) {
+              return;
+            }
+            if (then_empty && !else_empty) {
+              ExprCache else_cache;
+              else_cache.parent = cache;
+              if (single_else) {
+                out << pad << "if (!(" << cond_expr
+                    << ") && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                self(stmt.else_branch.front(), indent + 2, locals_override,
+                     resume_pc, &else_cache, self);
+                out << pad << "}\n";
+              } else {
+                out << pad << "if (!(" << cond_expr << ")) {\n";
+                for (const auto& inner : stmt.else_branch) {
+                  out << pad
+                      << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                  self(inner, indent + 4, locals_override, resume_pc,
+                       &else_cache, self);
+                  out << pad << "  }\n";
+                }
+                out << pad << "}\n";
+              }
+              if (cache) {
+                for (const auto& name : else_cache.blocked) {
+                  cache->blocked.insert(name);
+                }
+              }
+              return;
+            }
+            if (!then_empty && else_empty && single_then) {
+              ExprCache then_cache;
+              then_cache.parent = cache;
+              out << pad << "if (" << cond_expr
+                  << " && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(stmt.then_branch.front(), indent + 2, locals_override,
+                   resume_pc, &then_cache, self);
+              out << pad << "}\n";
+              if (cache) {
+                for (const auto& name : then_cache.blocked) {
+                  cache->blocked.insert(name);
+                }
+              }
+              return;
+            }
+            out << pad << "if (" << cond_expr << ") {\n";
+            ExprCache then_cache;
+            then_cache.parent = cache;
             for (const auto& inner : stmt.then_branch) {
               out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-              self(inner, indent + 4, locals_override, resume_pc, self);
+              self(inner, indent + 4, locals_override, resume_pc, &then_cache,
+                   self);
               out << pad << "  }\n";
             }
-            if (!stmt.else_branch.empty()) {
+            if (!else_empty) {
               out << pad << "} else {\n";
+              ExprCache else_cache;
+              else_cache.parent = cache;
               for (const auto& inner : stmt.else_branch) {
                 out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-                self(inner, indent + 4, locals_override, resume_pc, self);
+                self(inner, indent + 4, locals_override, resume_pc, &else_cache,
+                     self);
                 out << pad << "  }\n";
+              }
+              if (cache) {
+                for (const auto& name : then_cache.blocked) {
+                  cache->blocked.insert(name);
+                }
+                for (const auto& name : else_cache.blocked) {
+                  cache->blocked.insert(name);
+                }
               }
               out << pad << "}\n";
             } else {
+              if (cache) {
+                for (const auto& name : then_cache.blocked) {
+                  cache->blocked.insert(name);
+                }
+              }
               out << pad << "}\n";
             }
             return;
@@ -13304,15 +15542,33 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!stmt.case_expr) {
               return;
             }
-            FsExpr case_expr = emit_expr4(*stmt.case_expr);
+            FsExpr case_expr = emit_expr4_cached_relaxed(
+                *stmt.case_expr, ExprWidth(*stmt.case_expr, module), indent,
+                cache);
             case_expr = hoist_full_for_use(case_expr, indent);
+            std::unordered_map<int, FsExpr> case_width_cache;
             bool first = true;
+            std::unordered_set<std::string> case_blocked;
             for (const auto& item : stmt.case_items) {
+              if (StatementListIsEmpty(item.body)) {
+                continue;
+              }
               std::string cond;
               for (const auto& label : item.labels) {
-                std::string piece =
-                    emit_case_cond4(stmt.case_kind, case_expr, *label,
-                                    stmt.case_expr.get());
+                int label_width = ExprWidth(*label, module);
+                int width = std::max(case_expr.width, label_width);
+                FsExpr case_w;
+                auto cache_it = case_width_cache.find(width);
+                if (cache_it == case_width_cache.end()) {
+                  case_w = fs_resize_expr(case_expr, width);
+                  case_w = hoist_full_for_use(case_w, indent);
+                  case_width_cache.emplace(width, case_w);
+                } else {
+                  case_w = cache_it->second;
+                }
+                std::string piece = emit_case_cond4_prepared(
+                    stmt.case_kind, case_w, width, *label,
+                    stmt.case_expr.get());
                 if (!cond.empty()) {
                   cond += " || ";
                 }
@@ -13327,65 +15583,120 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               } else {
                 out << pad << "} else if (" << cond << ") {\n";
               }
+              ExprCache branch_cache;
+              branch_cache.parent = cache;
               for (const auto& inner : item.body) {
                 out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-                self(inner, indent + 4, locals_override, resume_pc, self);
+                self(inner, indent + 4, locals_override, resume_pc, &branch_cache,
+                     self);
                 out << pad << "  }\n";
+              }
+              for (const auto& name : branch_cache.blocked) {
+                case_blocked.insert(name);
               }
             }
-            if (!stmt.default_branch.empty()) {
-              out << pad << "} else {\n";
-              for (const auto& inner : stmt.default_branch) {
-                out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-                self(inner, indent + 4, locals_override, resume_pc, self);
-                out << pad << "  }\n";
+            if (!StatementListIsEmpty(stmt.default_branch)) {
+              ExprCache branch_cache;
+              branch_cache.parent = cache;
+              if (first) {
+                for (const auto& inner : stmt.default_branch) {
+                  out << pad
+                      << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                  self(inner, indent + 4, locals_override, resume_pc,
+                       &branch_cache, self);
+                  out << pad << "  }\n";
+                }
+              } else {
+                out << pad << "} else {\n";
+                for (const auto& inner : stmt.default_branch) {
+                  out << pad
+                      << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                  self(inner, indent + 4, locals_override, resume_pc,
+                       &branch_cache, self);
+                  out << pad << "  }\n";
+                }
+                out << pad << "}\n";
               }
-              out << pad << "}\n";
+              for (const auto& name : branch_cache.blocked) {
+                case_blocked.insert(name);
+              }
             } else if (!first) {
               out << pad << "}\n";
             }
+            if (cache) {
+              for (const auto& name : case_blocked) {
+                cache->blocked.insert(name);
+              }
+            }
             return;
+          }
+          if (stmt.kind == StatementKind::kBlock) {
+            if (StatementListIsEmpty(stmt.block)) {
+              return;
+            }
+            if (stmt.block_label.empty() && stmt.block.size() == 1) {
+              self(stmt.block.front(), indent, locals_override, resume_pc, cache,
+                   self);
+              return;
+            }
           }
           if (stmt.kind == StatementKind::kFor) {
             int width = SignalWidth(module, stmt.for_init_lhs);
             FsExpr init =
-                stmt.for_init_rhs ? emit_expr4_sized(*stmt.for_init_rhs, width)
+                stmt.for_init_rhs
+                    ? emit_expr4_cached_relaxed(*stmt.for_init_rhs, width,
+                                                indent, cache)
                                   : FsExpr{literal_for_width(0, width),
                                            literal_for_width(0, width),
                                            drive_full(width), width};
             emit_lvalue_store(stmt.for_init_lhs, init, indent, locals_override);
+            if (cache) {
+              cache->blocked.insert(stmt.for_init_lhs);
+            }
             FsExpr cond =
-                stmt.for_condition ? emit_expr4(*stmt.for_condition)
+                stmt.for_condition
+                    ? emit_expr4_cached_relaxed(
+                          *stmt.for_condition,
+                          ExprWidth(*stmt.for_condition, module), indent, cache)
                                    : FsExpr{literal_for_width(0, 1),
                                             literal_for_width(0, 1),
                                             drive_full(1), 1};
             cond = hoist_full_for_use(cond, indent);
             out << pad << "while (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.for_body) {
-              self(inner, indent + 2, locals_override, resume_pc, self);
+              self(inner, indent + 2, locals_override, resume_pc, cache, self);
               out << pad << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) { break; }\n";
             }
             int step_width = SignalWidth(module, stmt.for_step_lhs);
             FsExpr step =
-                stmt.for_step_rhs ? emit_expr4_sized(*stmt.for_step_rhs, step_width)
+                stmt.for_step_rhs
+                    ? emit_expr4_cached_relaxed(*stmt.for_step_rhs, step_width,
+                                                indent + 2, cache)
                                   : FsExpr{literal_for_width(0, step_width),
                                            literal_for_width(0, step_width),
                                            drive_full(step_width), step_width};
             emit_lvalue_store(stmt.for_step_lhs, step, indent + 2,
                               locals_override);
+            if (cache) {
+              cache->blocked.insert(stmt.for_step_lhs);
+            }
             out << pad << "}\n";
             return;
           }
           if (stmt.kind == StatementKind::kWhile) {
             FsExpr cond =
-                stmt.while_condition ? emit_expr4(*stmt.while_condition)
+                stmt.while_condition
+                    ? emit_expr4_cached_relaxed(
+                          *stmt.while_condition,
+                          ExprWidth(*stmt.while_condition, module), indent,
+                          cache)
                                      : FsExpr{literal_for_width(0, 1),
                                               literal_for_width(0, 1),
                                               drive_full(1), 1};
             cond = hoist_full_for_use(cond, indent);
             out << pad << "while (" << cond_bool(cond) << ") {\n";
             for (const auto& inner : stmt.while_body) {
-              self(inner, indent + 2, locals_override, resume_pc, self);
+              self(inner, indent + 2, locals_override, resume_pc, cache, self);
               out << pad << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) { break; }\n";
             }
             out << pad << "}\n";
@@ -13394,13 +15705,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (stmt.kind == StatementKind::kRepeat) {
             FsExpr count =
                 stmt.repeat_count
-                    ? emit_expr4_sized(*stmt.repeat_count, 32)
+                    ? emit_expr4_cached_relaxed(*stmt.repeat_count, 32, indent,
+                                                cache)
                     : FsExpr{literal_for_width(0, 32), literal_for_width(0, 32),
                              drive_full(32), 32};
             out << pad << "for (uint __gpga_rep = 0u; __gpga_rep < " << count.val
                 << "; ++__gpga_rep) {\n";
             for (const auto& inner : stmt.repeat_body) {
-              self(inner, indent + 2, locals_override, resume_pc, self);
+              self(inner, indent + 2, locals_override, resume_pc, cache, self);
               out << pad << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) { break; }\n";
             }
             out << pad << "}\n";
@@ -13410,7 +15722,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "{\n";
             for (const auto& inner : stmt.block) {
               out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-              self(inner, indent + 4, locals_override, resume_pc, self);
+              self(inner, indent + 4, locals_override, resume_pc, cache, self);
               out << pad << "  }\n";
             }
             out << pad << "}\n";
@@ -13420,7 +15732,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         auto emit_task_call =
             [&](const Statement& stmt, int indent, int resume_pc,
-                const auto& emit_inline_stmt_fn) -> void {
+                ExprCache* cache, const auto& emit_inline_stmt_fn) -> void {
           if (IsSystemTaskName(stmt.task_name)) {
             emit_system_task(stmt, indent);
             return;
@@ -13438,6 +15750,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::unordered_map<std::string, bool> task_real;
           struct TaskOutArg {
             std::string name;
+            std::string target_name;
             Lvalue4 target;
             int target_width = 0;
           };
@@ -13461,7 +15774,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             std::string type = TypeForWidth(arg.width);
             if (arg.dir == TaskArgDir::kInput) {
-              FsExpr expr = call_arg ? emit_expr4_sized(*call_arg, arg.width)
+              FsExpr expr = call_arg
+                                ? emit_expr4_cached_relaxed(*call_arg,
+                                                            arg.width, indent,
+                                                            cache)
                                      : FsExpr{literal_for_width(0, arg.width),
                                               literal_for_width(0, arg.width),
                                               drive_full(arg.width),
@@ -13479,7 +15795,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
               return;
             }
-            FsExpr init = emit_expr4_sized(*call_arg, arg.width);
+            FsExpr init = emit_expr4_cached_relaxed(*call_arg, arg.width,
+                                                    indent, cache);
             out << std::string(indent, ' ') << type << " "
                 << val_name(arg.name) << " = " << init.val << ";\n";
             out << std::string(indent, ' ') << type << " "
@@ -13492,7 +15809,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 build_lvalue4(target_assign, sched_locals, sched_regs, false,
                               indent);
             int target_width = ExprWidth(*call_arg, module);
-            task_outs.push_back(TaskOutArg{arg.name, target, target_width});
+            task_outs.push_back(
+                TaskOutArg{arg.name, call_arg->ident, target, target_width});
           }
 
           const auto* prev_widths = g_task_arg_widths;
@@ -13501,9 +15819,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           g_task_arg_widths = &task_widths;
           g_task_arg_signed = &task_signed;
           g_task_arg_real = &task_real;
+          ExprCache task_cache;
+          task_cache.parent = cache;
           for (const auto& inner : task->body) {
             emit_inline_stmt_fn(inner, indent, task_locals, resume_pc,
-                                emit_inline_stmt_fn);
+                                &task_cache, emit_inline_stmt_fn);
+          }
+          if (cache) {
+            for (const auto& name : task_cache.blocked) {
+              cache->blocked.insert(name);
+            }
           }
           for (const auto& out_arg : task_outs) {
             if (!out_arg.target.ok) {
@@ -13531,6 +15856,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << std::string(indent, ' ') << out_arg.target.xz << " = "
                   << value.xz << ";\n";
             }
+            if (cache) {
+              cache->blocked.insert(out_arg.target_name);
+            }
           }
           g_task_arg_widths = prev_widths;
           g_task_arg_signed = prev_signed;
@@ -13542,8 +15870,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::unordered_map<const Statement*,
                              std::pair<const Statement*, const Statement*>>
               repeat_spans;
+          std::unordered_map<const Statement*,
+                             std::pair<const Statement*, const Statement*>>
+              loop_spans;
+          std::unordered_map<const Statement*,
+                             std::pair<const Statement*, const Statement*>>
+              block_spans;
           std::function<void(const Statement&)> append_stmt;
           append_stmt = [&](const Statement& stmt) -> void {
+            if (stmt.kind == StatementKind::kBlock &&
+                !stmt.block_label.empty()) {
+              stmts.push_back(&stmt);
+              size_t body_start = stmts.size();
+              for (const auto& inner : stmt.block) {
+                append_stmt(inner);
+              }
+              size_t body_end = stmts.size();
+              const Statement* first =
+                  (body_end > body_start) ? stmts[body_start] : nullptr;
+              const Statement* last =
+                  (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+              block_spans[&stmt] = std::make_pair(first, last);
+              return;
+            }
             if (stmt.kind == StatementKind::kBlock &&
                 stmt.block_label.empty()) {
               for (const auto& inner : stmt.block) {
@@ -13576,6 +15925,64 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               const Statement* last =
                   (body_end > body_start) ? stmts[body_end - 1] : nullptr;
               repeat_spans[&stmt] = std::make_pair(first, last);
+              return;
+            }
+            if (stmt.kind == StatementKind::kDelay &&
+                !stmt.delay_body.empty()) {
+              stmts.push_back(&stmt);
+              for (const auto& inner : stmt.delay_body) {
+                append_stmt(inner);
+              }
+              return;
+            }
+            if (stmt.kind == StatementKind::kWait &&
+                !stmt.wait_body.empty()) {
+              stmts.push_back(&stmt);
+              for (const auto& inner : stmt.wait_body) {
+                append_stmt(inner);
+              }
+              return;
+            }
+            if (stmt.kind == StatementKind::kEventControl &&
+                !stmt.event_body.empty()) {
+              stmts.push_back(&stmt);
+              size_t body_start = stmts.size();
+              for (const auto& inner : stmt.event_body) {
+                append_stmt(inner);
+              }
+              size_t body_end = stmts.size();
+              if (loop_heads.count(&stmt) > 0) {
+                const Statement* first =
+                    (body_end > body_start) ? stmts[body_start] : nullptr;
+                const Statement* last =
+                    (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+                loop_spans[&stmt] = std::make_pair(first, last);
+              }
+              return;
+            }
+            if (stmt.kind == StatementKind::kForever) {
+              bool needs_sched = false;
+              for (const auto& inner : stmt.forever_body) {
+                if (inline_needs_scheduler(inner)) {
+                  needs_sched = true;
+                  break;
+                }
+              }
+              if (needs_sched) {
+                stmts.push_back(&stmt);
+                size_t body_start = stmts.size();
+                for (const auto& inner : stmt.forever_body) {
+                  append_stmt(inner);
+                }
+                size_t body_end = stmts.size();
+                const Statement* first =
+                    (body_end > body_start) ? stmts[body_start] : nullptr;
+                const Statement* last =
+                    (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+                loop_spans[&stmt] = std::make_pair(first, last);
+                return;
+              }
+              stmts.push_back(&stmt);
               return;
             }
             stmts.push_back(&stmt);
@@ -13635,22 +16042,50 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             repeat_runtime[stmt_ptr] =
                 RepeatRuntime{id_it->second, body_pc, after_pc};
           }
+          for (const auto& entry : loop_spans) {
+            const Statement* stmt_ptr = entry.first;
+            const Statement* last = entry.second.second;
+            if (!last) {
+              continue;
+            }
+            next_pc_override[last] = pc_for_stmt[stmt_ptr];
+          }
         body_cases.clear();
 
           std::unordered_map<std::string, int> block_end_pc;
           for (size_t i = 0; i < stmts.size(); ++i) {
             const auto* stmt = stmts[i];
-          if (stmt->kind == StatementKind::kBlock &&
-              !stmt->block_label.empty()) {
-            int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
-                                                 : pc_done;
-            auto next_override_it = next_pc_override.find(stmt);
-            if (next_override_it != next_pc_override.end()) {
-              next_pc = next_override_it->second;
+            if (stmt->kind == StatementKind::kBlock &&
+                !stmt->block_label.empty()) {
+              int end_pc = -1;
+              auto span_it = block_spans.find(stmt);
+              if (span_it != block_spans.end()) {
+                const Statement* last = span_it->second.second;
+                if (last) {
+                  auto last_it = stmt_index.find(last);
+                  if (last_it != stmt_index.end()) {
+                    size_t after_index = last_it->second + 1;
+                    end_pc = (after_index < stmts.size())
+                                 ? pc_for_stmt[stmts[after_index]]
+                                 : pc_done;
+                  }
+                }
+              }
+              if (end_pc < 0) {
+                size_t after_index = i + 1;
+                end_pc = (after_index < stmts.size())
+                             ? pc_for_stmt[stmts[after_index]]
+                             : pc_done;
+              }
+              block_end_pc[stmt->block_label] = end_pc;
             }
-            block_end_pc[stmt->block_label] = next_pc;
-          }
         }
+          for (const auto& entry : block_end_pc) {
+            if (global_block_targets.count(entry.first) == 0u) {
+              global_block_targets[entry.first] =
+                  std::make_pair(proc.pid, entry.second);
+            }
+          }
 
           out << "            case " << proc.pid << ": {\n";
           out << "              uint pc = sched_pc[idx];\n";
@@ -13792,7 +16227,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 out << "                }\n";
                 continue;
               }
-              emit_inline_stmt(stmt, 18, sched_locals, next_pc,
+              ExprCache inline_cache;
+              emit_inline_stmt(stmt, 18, sched_locals, next_pc, &inline_cache,
                                emit_inline_stmt);
               out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
                 out << "                    sched_pc[idx] = " << next_pc << "u;\n";
@@ -13864,18 +16300,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             if (stmt.kind == StatementKind::kDelay) {
-              int body_pc = -1;
-              if (!stmt.delay_body.empty()) {
-                body_pc = pc_counter++;
-                BodyCase body_case;
-                body_case.pc = body_pc;
-                body_case.owner = &stmt;
-                body_case.next_pc = next_pc;
-                for (const auto& inner : stmt.delay_body) {
-                  body_case.body.push_back(&inner);
-                }
-                body_cases.push_back(std::move(body_case));
-              }
               std::string delay_val =
                   stmt.delay ? emit_delay_value4(*stmt.delay) : "0ul";
               out << "                  ulong __gpga_delay = " << delay_val
@@ -13885,28 +16309,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                      "GPGA_SCHED_WAIT_TIME;\n";
               out << "                  sched_wait_time[idx] = __gpga_time + "
                      "__gpga_delay;\n";
-              out << "                  sched_pc[idx] = "
-                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
-                                   : std::to_string(next_pc) + "u")
-                  << ";\n";
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
             }
             if (stmt.kind == StatementKind::kEventControl) {
-              int body_pc = -1;
-              if (!stmt.event_body.empty()) {
-                body_pc = pc_counter++;
-                BodyCase body_case;
-                body_case.pc = body_pc;
-                body_case.owner = &stmt;
-                body_case.next_pc = next_pc;
-                for (const auto& inner : stmt.event_body) {
-                  body_case.body.push_back(&inner);
-                }
-                body_cases.push_back(std::move(body_case));
-              }
               int event_id = -1;
               bool named_event = false;
               const Expr* named_expr = nullptr;
@@ -13953,11 +16362,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 } else if (stmt.event_edge == EventEdgeKind::kNegedge) {
                   edge_kind = "GPGA_SCHED_EDGE_NEGEDGE";
                 }
-                out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EDGE;\n";
-                out << "                  sched_wait_id[idx] = " << edge_id
-                    << "u;\n";
-                out << "                  sched_wait_edge_kind[idx] = " << edge_kind
-                    << ";\n";
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_EDGE;\n";
+              out << "                  sched_wait_id[idx] = " << edge_id
+                  << "u;\n";
+              out << "                  sched_wait_edge_kind[idx] = " << edge_kind
+                  << ";\n";
                 if (!info.items.empty()) {
                   out << "                  uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
                       << info.item_offset << "u;\n";
@@ -14009,28 +16418,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   }
                 }
               }
-              out << "                  sched_pc[idx] = "
-                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
-                                   : std::to_string(next_pc) + "u")
-                  << ";\n";
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
             }
             if (stmt.kind == StatementKind::kWait) {
-              int body_pc = -1;
-              if (!stmt.wait_body.empty()) {
-                body_pc = pc_counter++;
-                BodyCase body_case;
-                body_case.pc = body_pc;
-                body_case.owner = &stmt;
-                body_case.next_pc = next_pc;
-                for (const auto& inner : stmt.wait_body) {
-                  body_case.body.push_back(&inner);
-                }
-                body_cases.push_back(std::move(body_case));
-              }
               int wait_id = -1;
               auto it = wait_ids.find(&stmt);
               if (it != wait_ids.end()) {
@@ -14046,27 +16440,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               FsExpr cond = emit_expr4(*stmt.wait_condition);
               cond = hoist_full_for_use(cond, 18);
               out << "                  if (" << cond_bool(cond) << ") {\n";
-              if (body_pc >= 0) {
-                out << "                    sched_pc[idx] = " << body_pc << "u;\n";
-                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-              } else {
-                out << "                    sched_pc[idx] = " << next_pc << "u;\n";
-                out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-              }
+              out << "                    sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
               out << "                    break;\n";
               out << "                  }\n";
               out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_COND;\n";
               out << "                  sched_wait_id[idx] = " << wait_id << "u;\n";
-              out << "                  sched_pc[idx] = "
-                  << (body_pc >= 0 ? std::to_string(body_pc) + "u"
-                                   : std::to_string(next_pc) + "u")
-                  << ";\n";
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
             }
             if (stmt.kind == StatementKind::kForever) {
+              if (loop_spans.count(&stmt) > 0) {
+                out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
               if (stmt.forever_body.empty()) {
                 out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
                 out << "                  break;\n";
@@ -14074,15 +16467,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 continue;
               }
               const Statement& body_stmt = stmt.forever_body.front();
-              if (body_stmt.kind != StatementKind::kDelay &&
-                  body_stmt.kind != StatementKind::kEventControl) {
-                out << "                  sched_error[gid] = 1u;\n";
-                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-                out << "                  break;\n";
-                out << "                }\n";
-                continue;
-              }
-              if (body_stmt.kind == StatementKind::kDelay) {
+              if (body_stmt.kind == StatementKind::kDelay &&
+                  stmt.forever_body.size() == 1) {
                 int body_pc = pc_counter++;
                 BodyCase body_case;
                 body_case.pc = body_pc;
@@ -14103,6 +16489,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                        "GPGA_SCHED_WAIT_TIME;\n";
                 out << "                  sched_wait_time[idx] = __gpga_time + "
                        "__gpga_delay;\n";
+                out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+                out << "                  break;\n";
+                out << "                }\n";
+                continue;
+              }
+              if (body_stmt.kind != StatementKind::kEventControl ||
+                  stmt.forever_body.size() != 1) {
+                int body_pc = pc_counter++;
+                BodyCase body_case;
+                body_case.pc = body_pc;
+                body_case.owner = &stmt;
+                body_case.next_pc = pc;
+                body_case.loop_pc = pc;
+                body_case.is_forever_body = true;
+                for (const auto& inner : stmt.forever_body) {
+                  body_case.body.push_back(&inner);
+                }
+                body_cases.push_back(std::move(body_case));
+                out << "                  ulong __gpga_delay = 0ul;\n";
+                out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_DELTA;\n";
+                out << "                  sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
                 out << "                  sched_pc[idx] = " << body_pc << "u;\n";
                 out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
                 out << "                  break;\n";
@@ -14292,8 +16700,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   }
                 }
                 if (disable_pid < 0) {
-                  out << "                  sched_error[gid] = 1u;\n";
-                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  auto global_it =
+                      global_block_targets.find(stmt.disable_target);
+                  if (global_it == global_block_targets.end()) {
+                    out << "                  sched_error[gid] = 1u;\n";
+                    out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                    out << "                  break;\n";
+                    out << "                }\n";
+                    continue;
+                  }
+                  out << "                  {\n";
+                  out << "                    uint __gpga_didx = gpga_sched_index(gid, "
+                      << global_it->second.first << "u);\n";
+                  out << "                    sched_pc[__gpga_didx] = "
+                      << global_it->second.second << "u;\n";
+                  out << "                    sched_wait_kind[__gpga_didx] = GPGA_SCHED_WAIT_NONE;\n";
+                  out << "                    sched_state[__gpga_didx] = GPGA_SCHED_PROC_READY;\n";
+                  out << "                  }\n";
+                  out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
                   out << "                  break;\n";
                   out << "                }\n";
                   continue;
@@ -14357,11 +16782,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             if (stmt.kind == StatementKind::kTaskCall) {
-              emit_task_call(stmt, 18, next_pc, emit_inline_stmt);
+              ExprCache inline_cache;
+              emit_task_call(stmt, 18, next_pc, &inline_cache,
+                             emit_inline_stmt);
               out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
               out << "                    sched_pc[idx] = " << next_pc << "u;\n";
               out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
               out << "                  }\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (stmt.kind == StatementKind::kBlock &&
+                !stmt.block_label.empty()) {
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
               out << "                  break;\n";
               out << "                }\n";
               continue;
@@ -14581,8 +17016,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 stmt.kind == StatementKind::kRepeat) {
               inline_resume_pc = pc;
             }
+            ExprCache inline_cache;
             emit_inline_stmt(stmt, 18, sched_locals, inline_resume_pc,
-                             emit_inline_stmt);
+                             &inline_cache, emit_inline_stmt);
             out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
             out << "                    sched_pc[idx] = " << next_pc << "u;\n";
             out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
@@ -14664,9 +17100,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
             } else {
               int inline_resume_pc = body_case.next_pc;
+              ExprCache inline_cache;
               for (const auto* inner : body_case.body) {
                 emit_inline_stmt(*inner, 18, sched_locals, inline_resume_pc,
-                                 emit_inline_stmt);
+                                 &inline_cache, emit_inline_stmt);
               }
             }
             out << "                  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -14717,6 +17154,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "        }\n";
         out << "      }\n";
         out << "      if (!did_work) {\n";
+        emit_timing_checks(8);
         out << "        bool any_ready = false;\n";
         out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "          uint idx = gpga_sched_index(gid, pid);\n";
@@ -14964,6 +17402,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
         }
         emit_sched_comb_update(6);
+        emit_timing_checks(6);
         if (!system_task_info.monitor_stmts.empty()) {
           out << "      // Monitor change detection.\n";
           for (size_t i = 0; i < system_task_info.monitor_stmts.size(); ++i) {
@@ -15309,7 +17748,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
   std::unordered_set<std::string> scheduled_reads;
   for (const auto& block : module.always_blocks) {
-    if (block.edge == EdgeKind::kCombinational) {
+    if (block.edge == EdgeKind::kCombinational &&
+        !AlwaysBlockNeedsScheduler(block)) {
       continue;
     }
     if (block.edge == EdgeKind::kPosedge || block.edge == EdgeKind::kNegedge) {
@@ -15643,6 +18083,37 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
   }
 
+  std::unordered_set<std::string> timing_check_locals;
+  if (!module.timing_checks.empty()) {
+    std::unordered_set<std::string> timing_idents;
+    auto collect_ids = [&](const Expr* expr) {
+      if (!expr) {
+        return;
+      }
+      CollectIdentifiers(*expr, &timing_idents);
+    };
+    for (const auto& check : module.timing_checks) {
+      collect_ids(check.data_event.expr.get());
+      collect_ids(check.data_event.cond.get());
+      collect_ids(check.ref_event.expr.get());
+      collect_ids(check.ref_event.cond.get());
+      collect_ids(check.check_cond.get());
+      collect_ids(check.event_based_flag.get());
+      collect_ids(check.remain_active_flag.get());
+      if (!check.delayed_ref.empty()) {
+        timing_idents.insert(check.delayed_ref);
+      }
+      if (!check.delayed_data.empty()) {
+        timing_idents.insert(check.delayed_data);
+      }
+    }
+    for (const auto& name : timing_idents) {
+      if (locals.count(name) > 0) {
+        timing_check_locals.insert(name);
+      }
+    }
+  }
+
   auto driven = CollectDrivenSignals(module);
   for (const auto& net : module.nets) {
     if (net.array_size > 0 || net.type == NetType::kReg) {
@@ -15797,7 +18268,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  : emit_drive_expr(*assign.rhs, lhs_width);
     out << "  " << type << " " << info.val << " = " << rhs << ";\n";
     out << "  " << type << " " << info.drive << " = "
-        << MaskForWidthExpr(drive, lhs_width) << ";\n";
+        << (IsFullDriveExpr(drive, lhs_width)
+                ? drive
+                : MaskForWidthExpr(drive, lhs_width))
+        << ";\n";
   };
 
   auto emit_resolve = [&](const std::string& name,
@@ -16110,7 +18584,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 ensure_drive_declared(assign.lhs, lhs_width,
                                       ZeroForWidth(lhs_width));
             out << "  " << drive_var << " = "
-                << MaskForWidthExpr(drive, lhs_width) << ";\n";
+                << (IsFullDriveExpr(drive, lhs_width)
+                        ? drive
+                        : MaskForWidthExpr(drive, lhs_width))
+                << ";\n";
           }
         }
         for (const auto& entry : drivers_remaining) {
@@ -16221,6 +18698,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     if (block.edge != EdgeKind::kCombinational) {
       continue;
     }
+    if (AlwaysBlockNeedsScheduler(block)) {
+      continue;
+    }
     for (const auto& stmt : block.statements) {
       CollectAssignedSignals(stmt, &comb_targets);
     }
@@ -16235,6 +18715,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
 
   std::function<void(const Statement&, int)> emit_comb_stmt;
+  int case_temp_index = 0;
+  auto maybe_hoist_case_value = [&](const std::string& expr, int width,
+                                    int indent) -> std::string {
+    if (IsSimpleValueExpr(expr)) {
+      return expr;
+    }
+    std::string temp = "__gpga_case_" + std::to_string(case_temp_index++);
+    out << std::string(indent, ' ') << TypeForWidth(width) << " " << temp
+        << " = " << expr << ";\n";
+    return temp;
+  };
   auto emit_case_cond = [&](const std::string& case_value, int case_width,
                             const Expr& label) -> std::string {
     int label_width = ExprWidth(label, module);
@@ -16315,11 +18806,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                              ? EmitCondExpr(*stmt.condition, module, locals,
                                             regs)
                              : "false";
+      bool then_empty = StatementListIsEmpty(stmt.then_branch);
+      bool else_empty = StatementListIsEmpty(stmt.else_branch);
+      if (then_empty && else_empty) {
+        return;
+      }
+      if (then_empty && !else_empty) {
+        out << pad << "if (!(" << cond << ")) {\n";
+        for (const auto& inner : stmt.else_branch) {
+          emit_comb_stmt(inner, indent + 2);
+        }
+        out << pad << "}\n";
+        return;
+      }
       out << pad << "if (" << cond << ") {\n";
       for (const auto& inner : stmt.then_branch) {
         emit_comb_stmt(inner, indent + 2);
       }
-      if (!stmt.else_branch.empty()) {
+      if (!else_empty) {
         out << pad << "} else {\n";
         for (const auto& inner : stmt.else_branch) {
           emit_comb_stmt(inner, indent + 2);
@@ -16337,6 +18841,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::string case_value =
           EmitExpr(*stmt.case_expr, module, locals, regs);
       int case_width = ExprWidth(*stmt.case_expr, module);
+      case_value = maybe_hoist_case_value(case_value, case_width, indent);
       if (stmt.case_items.empty()) {
         for (const auto& inner : stmt.default_branch) {
           emit_comb_stmt(inner, indent);
@@ -16378,6 +18883,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       return;
     }
     if (stmt.kind == StatementKind::kBlock) {
+      if (StatementListIsEmpty(stmt.block)) {
+        return;
+      }
+      if (stmt.block.size() == 1) {
+        emit_comb_stmt(stmt.block.front(), indent);
+        return;
+      }
       out << pad << "{\n";
       for (const auto& inner : stmt.block) {
         emit_comb_stmt(inner, indent + 2);
@@ -16388,6 +18900,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
   for (const auto& block : module.always_blocks) {
     if (block.edge != EdgeKind::kCombinational) {
+      continue;
+    }
+    if (AlwaysBlockNeedsScheduler(block)) {
       continue;
     }
     for (const auto& stmt : block.statements) {
@@ -16507,7 +19022,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     bool has_comb = !module.assigns.empty() || !module.switches.empty();
     if (!has_comb) {
       for (const auto& block : module.always_blocks) {
-        if (block.edge == EdgeKind::kCombinational) {
+        if (block.edge == EdgeKind::kCombinational &&
+            !AlwaysBlockNeedsScheduler(block)) {
           has_comb = true;
           break;
         }
@@ -16519,6 +19035,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     std::string pad(indent, ' ');
     out << pad << "{\n";
     std::unordered_set<std::string> comb_declared;
+    if (!timing_check_locals.empty()) {
+      comb_declared.insert(timing_check_locals.begin(),
+                           timing_check_locals.end());
+    }
     emit_continuous_assigns(locals, regs, &comb_declared);
 
     for (const auto& name : switch_nets) {
@@ -16532,6 +19052,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     std::unordered_set<std::string> comb_targets;
     for (const auto& block : module.always_blocks) {
       if (block.edge != EdgeKind::kCombinational) {
+        continue;
+      }
+      if (AlwaysBlockNeedsScheduler(block)) {
         continue;
       }
       for (const auto& stmt : block.statements) {
@@ -16556,6 +19079,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     for (const auto& block : module.always_blocks) {
       if (block.edge != EdgeKind::kCombinational) {
+        continue;
+      }
+      if (AlwaysBlockNeedsScheduler(block)) {
         continue;
       }
       for (const auto& stmt : block.statements) {
@@ -16750,6 +19276,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
 
     std::function<void(const Statement&, int)> emit_init_stmt;
+    int case_temp_index = 0;
+    auto maybe_hoist_case_value = [&](const std::string& expr, int width,
+                                      int indent) -> std::string {
+      if (IsSimpleValueExpr(expr)) {
+        return expr;
+      }
+      std::string temp = "__gpga_case_" + std::to_string(case_temp_index++);
+      out << std::string(indent, ' ') << TypeForWidth(width) << " " << temp
+          << " = " << expr << ";\n";
+      return temp;
+    };
     auto emit_case_cond_init = [&](const std::string& case_value,
                                    int case_width,
                                    const Expr& label) -> std::string {
@@ -16832,11 +19369,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                ? EmitCondExpr(*stmt.condition, module,
                                               init_locals, init_regs)
                                : "false";
+        bool then_empty = StatementListIsEmpty(stmt.then_branch);
+        bool else_empty = StatementListIsEmpty(stmt.else_branch);
+        if (then_empty && else_empty) {
+          return;
+        }
+        if (then_empty && !else_empty) {
+          out << pad << "if (!(" << cond << ")) {\n";
+          for (const auto& inner : stmt.else_branch) {
+            emit_init_stmt(inner, indent + 2);
+          }
+          out << pad << "}\n";
+          return;
+        }
         out << pad << "if (" << cond << ") {\n";
         for (const auto& inner : stmt.then_branch) {
           emit_init_stmt(inner, indent + 2);
         }
-        if (!stmt.else_branch.empty()) {
+        if (!else_empty) {
           out << pad << "} else {\n";
           for (const auto& inner : stmt.else_branch) {
             emit_init_stmt(inner, indent + 2);
@@ -16854,6 +19404,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string case_value =
             EmitExpr(*stmt.case_expr, module, init_locals, init_regs);
         int case_width = ExprWidth(*stmt.case_expr, module);
+        case_value = maybe_hoist_case_value(case_value, case_width, indent);
         if (stmt.case_items.empty()) {
           for (const auto& inner : stmt.default_branch) {
             emit_init_stmt(inner, indent);
@@ -16896,6 +19447,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return;
       }
       if (stmt.kind == StatementKind::kBlock) {
+        if (StatementListIsEmpty(stmt.block)) {
+          return;
+        }
+        if (stmt.block.size() == 1) {
+          emit_init_stmt(stmt.block.front(), indent);
+          return;
+        }
         out << pad << "{\n";
         for (const auto& inner : stmt.block) {
           emit_init_stmt(inner, indent + 2);
@@ -16924,9 +19482,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
   }
 
-  if (has_sequential) {
-    out << "\n";
-    out << "kernel void gpga_" << MslName(module.name) << "_tick(";
+    if (has_sequential && !needs_scheduler) {
+      out << "\n";
+      out << "kernel void gpga_" << MslName(module.name) << "_tick(";
     buffer_index = 0;
     first = true;
     if (pack_signals) {
@@ -17040,6 +19598,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     std::function<void(const Statement&, int,
                        const std::unordered_map<std::string, std::string>&)>
         emit_stmt;
+    int case_temp_index = 0;
+    auto maybe_hoist_case_value = [&](const std::string& expr, int width,
+                                      int indent) -> std::string {
+      if (IsSimpleValueExpr(expr)) {
+        return expr;
+      }
+      std::string temp = "__gpga_case_" + std::to_string(case_temp_index++);
+      out << std::string(indent, ' ') << TypeForWidth(width) << " " << temp
+          << " = " << expr << ";\n";
+      return temp;
+    };
     auto emit_case_cond_tick = [&](const std::string& case_value,
                                    int case_width,
                                    const Expr& label) -> std::string {
@@ -17189,11 +19758,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                ? EmitCondExpr(*stmt.condition, module,
                                               tick_locals, tick_regs)
                                : "false";
+        bool then_empty = StatementListIsEmpty(stmt.then_branch);
+        bool else_empty = StatementListIsEmpty(stmt.else_branch);
+        if (then_empty && else_empty) {
+          return;
+        }
+        if (then_empty && !else_empty) {
+          out << pad << "if (!(" << cond << ")) {\n";
+          for (const auto& inner : stmt.else_branch) {
+            emit_stmt(inner, indent + 2, nb_map);
+          }
+          out << pad << "}\n";
+          return;
+        }
         out << pad << "if (" << cond << ") {\n";
         for (const auto& inner : stmt.then_branch) {
           emit_stmt(inner, indent + 2, nb_map);
         }
-        if (!stmt.else_branch.empty()) {
+        if (!else_empty) {
           out << pad << "} else {\n";
           for (const auto& inner : stmt.else_branch) {
             emit_stmt(inner, indent + 2, nb_map);
@@ -17211,6 +19793,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string case_value =
             EmitExpr(*stmt.case_expr, module, tick_locals, tick_regs);
         int case_width = ExprWidth(*stmt.case_expr, module);
+        case_value = maybe_hoist_case_value(case_value, case_width, indent);
         if (stmt.case_items.empty()) {
           for (const auto& inner : stmt.default_branch) {
             emit_stmt(inner, indent, nb_map);
@@ -17253,6 +19836,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         return;
       }
       if (stmt.kind == StatementKind::kBlock) {
+        if (StatementListIsEmpty(stmt.block)) {
+          return;
+        }
+        if (stmt.block.size() == 1) {
+          emit_stmt(stmt.block.front(), indent, nb_map);
+          return;
+        }
         out << pad << "{\n";
         for (const auto& inner : stmt.block) {
           emit_stmt(inner, indent + 2, nb_map);
@@ -17344,18 +19934,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       const Statement* single = nullptr;
     };
 
-    std::vector<const AlwaysBlock*> initial_blocks;
-    std::vector<const AlwaysBlock*> edge_blocks;
-    for (const auto& block : module.always_blocks) {
-      if (block.edge == EdgeKind::kInitial) {
-        initial_blocks.push_back(&block);
-      } else if (block.edge == EdgeKind::kPosedge ||
-                 block.edge == EdgeKind::kNegedge) {
-        edge_blocks.push_back(&block);
+      std::vector<const AlwaysBlock*> initial_blocks;
+      std::vector<const AlwaysBlock*> edge_blocks;
+      std::vector<const AlwaysBlock*> comb_blocks;
+      for (const auto& block : module.always_blocks) {
+        if (block.edge == EdgeKind::kInitial) {
+          initial_blocks.push_back(&block);
+        } else if (block.edge == EdgeKind::kPosedge ||
+                   block.edge == EdgeKind::kNegedge) {
+          edge_blocks.push_back(&block);
+        } else if (block.edge == EdgeKind::kCombinational &&
+                   AlwaysBlockNeedsScheduler(block)) {
+          comb_blocks.push_back(&block);
+        }
       }
-    }
 
-    if (!initial_blocks.empty() || !edge_blocks.empty()) {
+      if (!initial_blocks.empty() || !edge_blocks.empty() ||
+          !comb_blocks.empty() || !module.timing_checks.empty()) {
       std::unordered_map<std::string, int> event_ids;
       for (size_t i = 0; i < module.events.size(); ++i) {
         event_ids[module.events[i].name] = static_cast<int>(i);
@@ -17369,10 +19964,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::unordered_map<const Statement*, ForkInfo> fork_info;
       std::unordered_map<int, std::unordered_map<std::string, int>>
           fork_child_labels;
+      std::unordered_map<std::string, int> fork_label_targets;
+      std::unordered_map<std::string, std::pair<int, int>>
+          global_block_targets;
       std::vector<ProcDef> procs;
       std::vector<int> proc_parent;
       std::vector<int> proc_join_tag;
       std::vector<std::unique_ptr<Statement>> always_wrappers;
+      std::unordered_set<const Statement*> loop_heads;
 
       int next_pid = 0;
       for (const auto* block : initial_blocks) {
@@ -17381,7 +19980,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         proc_join_tag.push_back(-1);
         ++next_pid;
       }
-      always_wrappers.reserve(edge_blocks.size());
+      always_wrappers.reserve(edge_blocks.size() + comb_blocks.size());
       auto make_edge_wrapper = [&](const AlwaysBlock& block) {
         auto forever_stmt = std::make_unique<Statement>();
         forever_stmt->kind = StatementKind::kForever;
@@ -17401,6 +20000,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         forever_stmt->forever_body.push_back(std::move(event_stmt));
         return forever_stmt;
       };
+      auto make_comb_wrapper = [&](const AlwaysBlock& block) {
+        auto event_stmt = std::make_unique<Statement>();
+        event_stmt->kind = StatementKind::kEventControl;
+        event_stmt->event_edge = EventEdgeKind::kAny;
+        event_stmt->event_body.reserve(block.statements.size());
+        for (const auto& stmt : block.statements) {
+          event_stmt->event_body.push_back(CloneStatement(stmt));
+        }
+        loop_heads.insert(event_stmt.get());
+        return event_stmt;
+      };
       for (const auto* block : edge_blocks) {
         auto wrapper = make_edge_wrapper(*block);
         procs.push_back(ProcDef{next_pid, nullptr, wrapper.get()});
@@ -17409,8 +20019,45 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         always_wrappers.push_back(std::move(wrapper));
         ++next_pid;
       }
+      for (const auto* block : comb_blocks) {
+        auto wrapper = make_comb_wrapper(*block);
+        procs.push_back(ProcDef{next_pid, nullptr, wrapper.get()});
+        proc_parent.push_back(-1);
+        proc_join_tag.push_back(-1);
+        always_wrappers.push_back(std::move(wrapper));
+        ++next_pid;
+      }
       const int root_proc_count = next_pid;
       int next_fork_tag = 0;
+
+      std::vector<std::unique_ptr<std::vector<Statement>>>
+          expanded_proc_bodies;
+      std::unordered_set<std::string> task_stack;
+      TaskSubst empty_subst;
+      for (auto& proc : procs) {
+        if (proc.body && !HasUserTaskCall(module, *proc.body)) {
+          continue;
+        }
+        if (proc.single && !HasUserTaskCall(module, *proc.single)) {
+          continue;
+        }
+        std::vector<Statement> single_input;
+        const std::vector<Statement>* input = proc.body;
+        if (!input && proc.single) {
+          single_input.push_back(CloneStatement(*proc.single));
+          input = &single_input;
+        }
+        if (!input) {
+          continue;
+        }
+        task_stack.clear();
+        auto expanded = std::make_unique<std::vector<Statement>>();
+        ExpandTasksInStatements(module, *input, empty_subst, expanded.get(),
+                                &task_stack);
+        expanded_proc_bodies.push_back(std::move(expanded));
+        proc.body = expanded_proc_bodies.back().get();
+        proc.single = nullptr;
+      }
 
       std::function<void(const Statement&, int)> collect_forks;
       std::function<void(const std::vector<Statement>&, int)>
@@ -17514,6 +20161,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           collect_forks_in_list(*procs[i].body, procs[i].pid);
         } else if (procs[i].single) {
           collect_forks(*procs[i].single, procs[i].pid);
+        }
+      }
+      for (const auto& entry : fork_child_labels) {
+        for (const auto& label_entry : entry.second) {
+          if (fork_label_targets.count(label_entry.first) == 0u) {
+            fork_label_targets[label_entry.first] = label_entry.second;
+          }
         }
       }
 
@@ -18417,6 +21071,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
 
       out << "\n";
+      const uint32_t timing_check_count =
+          static_cast<uint32_t>(module.timing_checks.size());
       out << "struct GpgaSchedParams { uint count; uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
       out << "constant constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size() << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
@@ -18427,6 +21083,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = " << edge_star_count
           << "u;\n";
+      out << "constant constexpr uint GPGA_SCHED_TIMING_CHECK_COUNT = "
+          << timing_check_count << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_MAX_READY = " << procs.size() << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
       out << "constant constexpr uint GPGA_SCHED_MAX_NBA = " << nb_targets_sorted.size()
@@ -18536,6 +21194,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_KIND_PRINTTIMESCALE = 35u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_TESTPLUSARGS = 36u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_VALUEPLUSARGS = 37u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_ASYNC_AND_ARRAY = 38u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_SYNC_OR_PLANE = 39u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_ASYNC_NOR_PLANE = 40u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -18665,6 +21327,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
       }
+      if (timing_check_count > 0u) {
+        emit_param("  device ulong* sched_timing_prev_val [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_timing_data_time [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_timing_ref_time [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_timing_window_start [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+        emit_param("  device ulong* sched_timing_window_end [[buffer(" +
+                   std::to_string(buffer_index++) + ")]]");
+      }
       emit_param("  device ulong* sched_wait_time [[buffer(" +
                  std::to_string(buffer_index++) + ")]]");
       emit_param("  device uint* sched_join_count [[buffer(" +
@@ -18744,6 +21418,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     }
     emit_packed_nb_setup("sched.count");
     emit_packed_force_setup("sched.count");
+    if (!timing_check_locals.empty()) {
+      for (const auto& name : timing_check_locals) {
+        std::string type = TypeForWidth(SignalWidth(module, name));
+        std::string zero = literal_for_width(0, SignalWidth(module, name));
+        out << "  " << type << " " << MslName(name) << " = " << zero << ";\n";
+      }
+    }
     if (system_task_info.has_system_tasks) {
       out << "  sched_service_count[gid] = 0u;\n";
     }
@@ -18775,6 +21456,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
       out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
       out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
+      out << "    }\n";
+    }
+    if (timing_check_count > 0u) {
+      out << "    for (uint t = 0u; t < GPGA_SCHED_TIMING_CHECK_COUNT; ++t) {\n";
+      out << "      uint tslot = (gid * GPGA_SCHED_TIMING_CHECK_COUNT) + t;\n";
+      out << "      sched_timing_data_time[tslot] = ~0ul;\n";
+      out << "      sched_timing_ref_time[tslot] = ~0ul;\n";
+      out << "      sched_timing_window_start[tslot] = ~0ul;\n";
+      out << "      sched_timing_window_end[tslot] = 0ul;\n";
+      out << "    }\n";
+      out << "    for (uint t = 0u; t < (GPGA_SCHED_TIMING_CHECK_COUNT * 2u); ++t) {\n";
+      out << "      uint tslot = (gid * (GPGA_SCHED_TIMING_CHECK_COUNT * 2u)) + t;\n";
+      out << "      sched_timing_prev_val[tslot] = 0ul;\n";
       out << "    }\n";
     }
     if (!system_task_info.monitor_stmts.empty()) {
@@ -19170,6 +21864,509 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "  }\n";
             out << pad << "}\n";
           };
+
+      TimingSelectMode timing_select_mode = GetTimingSelectMode();
+      auto emit_timing_checks = [&](int indent) -> void {
+        if (module.timing_checks.empty()) {
+          return;
+        }
+        std::string pad(indent, ' ');
+        auto emit_limit_expr =
+            [&](const TimingCheckLimit& limit) -> std::string {
+          const Expr* expr = SelectTimingLimitExpr(limit, timing_select_mode);
+          if (!expr) {
+            return "0l";
+          }
+          if (ExprIsRealValue(*expr, module)) {
+            return "long(" +
+                   EmitRealToIntExpr(*expr, 64, true, module, sched_locals,
+                                     sched_regs) +
+                   ")";
+          }
+          std::string raw =
+              EmitExprSized(*expr, 64, module, sched_locals, sched_regs);
+          return "long(" + raw + ")";
+        };
+        auto emit_value_expr = [&](const Expr* expr) -> std::string {
+          if (!expr) {
+            return "0l";
+          }
+          if (ExprIsRealValue(*expr, module)) {
+            return "long(" +
+                   EmitRealToIntExpr(*expr, 64, true, module, sched_locals,
+                                     sched_regs) +
+                   ")";
+          }
+          std::string raw =
+              EmitExprSized(*expr, 64, module, sched_locals, sched_regs);
+          return "long(" + raw + ")";
+        };
+        auto edge_list_direction = [&](const TimingCheckEvent& event,
+                                       bool* rise, bool* fall) {
+          if (rise) {
+            *rise = false;
+          }
+          if (fall) {
+            *fall = false;
+          }
+          for (const auto& pattern : event.edge_list) {
+            bool is_rise = false;
+            bool is_fall = false;
+            if (pattern.to == TimingEdgeState::k1) {
+              is_rise = true;
+            } else if (pattern.to == TimingEdgeState::k0) {
+              is_fall = true;
+            } else if (pattern.to == TimingEdgeState::kX) {
+              if (pattern.from == TimingEdgeState::k0) {
+                is_rise = true;
+              } else if (pattern.from == TimingEdgeState::k1) {
+                is_fall = true;
+              } else {
+                is_rise = true;
+                is_fall = true;
+              }
+            } else if (pattern.to == TimingEdgeState::kZ) {
+              if (pattern.from == TimingEdgeState::k0) {
+                is_rise = true;
+              } else if (pattern.from == TimingEdgeState::k1) {
+                is_fall = true;
+              } else {
+                is_rise = true;
+                is_fall = true;
+              }
+            }
+            if (rise && is_rise) {
+              *rise = true;
+            }
+            if (fall && is_fall) {
+              *fall = true;
+            }
+          }
+        };
+        auto emit_event_eval = [&](const TimingCheckEvent& event,
+                                   const std::string& prev_ref,
+                                   const std::string& prefix,
+                                   int inner_indent,
+                                   const Expr* override_expr) -> void {
+          std::string pad(inner_indent, ' ');
+          out << pad << "bool " << prefix << "_edge = false;\n";
+          out << pad << "bool " << prefix << "_pos = false;\n";
+          out << pad << "bool " << prefix << "_neg = false;\n";
+          const Expr* expr = override_expr ? override_expr : event.expr.get();
+          if (!expr) {
+            return;
+          }
+          int width = ExprWidth(*expr, module);
+          if (width <= 0) {
+            width = 1;
+          }
+          std::string curr =
+              EmitExprSized(*expr, width, module, sched_locals, sched_regs);
+          std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
+          out << pad << "ulong " << prefix << "_prev = " << prev_ref << ";\n";
+          out << pad << "ulong " << prefix << "_curr = ((ulong)(" << curr
+              << ")) & " << mask << ";\n";
+          out << pad << "ulong " << prefix << "_prev_zero = (~" << prefix
+              << "_prev) & " << mask << ";\n";
+          out << pad << "ulong " << prefix << "_prev_one = " << prefix
+              << "_prev & " << mask << ";\n";
+          out << pad << "ulong " << prefix << "_curr_zero = (~" << prefix
+              << "_curr) & " << mask << ";\n";
+          out << pad << "ulong " << prefix << "_curr_one = " << prefix
+              << "_curr & " << mask << ";\n";
+          out << pad << "ulong " << prefix << "_pos_mask = " << prefix
+              << "_prev_zero & " << prefix << "_curr_one;\n";
+          out << pad << "ulong " << prefix << "_neg_mask = " << prefix
+              << "_prev_one & " << prefix << "_curr_zero;\n";
+          out << pad << prefix << "_pos = (" << prefix
+              << "_pos_mask != 0ul);\n";
+          out << pad << prefix << "_neg = (" << prefix
+              << "_neg_mask != 0ul);\n";
+          out << pad << "bool " << prefix << "_any = (" << prefix
+              << "_curr != " << prefix << "_prev);\n";
+          if (event.has_edge_list) {
+            out << pad << "ulong " << prefix << "_list_mask = 0ul;\n";
+            for (const auto& pattern : event.edge_list) {
+              auto from_mask = [&](TimingEdgeState state) -> std::string {
+                switch (state) {
+                  case TimingEdgeState::k0:
+                    return prefix + "_prev_zero";
+                  case TimingEdgeState::k1:
+                    return prefix + "_prev_one";
+                  case TimingEdgeState::kX:
+                  case TimingEdgeState::kZ:
+                    return "(" + prefix + "_prev_zero | " + prefix + "_prev_one)";
+                }
+                return prefix + "_prev_zero";
+              };
+              auto to_mask = [&](TimingEdgeState state) -> std::string {
+                switch (state) {
+                  case TimingEdgeState::k0:
+                    return prefix + "_curr_zero";
+                  case TimingEdgeState::k1:
+                    return prefix + "_curr_one";
+                  case TimingEdgeState::kX:
+                  case TimingEdgeState::kZ:
+                    return "(" + prefix + "_curr_zero | " + prefix + "_curr_one)";
+                }
+                return prefix + "_curr_zero";
+              };
+              out << pad << prefix << "_list_mask |= (" << from_mask(pattern.from)
+                  << " & " << to_mask(pattern.to) << ");\n";
+            }
+            out << pad << prefix << "_edge = (" << prefix
+                << "_list_mask != 0ul);\n";
+          } else if (event.edge == EventEdgeKind::kPosedge) {
+            out << pad << prefix << "_edge = " << prefix << "_pos;\n";
+          } else if (event.edge == EventEdgeKind::kNegedge) {
+            out << pad << prefix << "_edge = " << prefix << "_neg;\n";
+          } else {
+            out << pad << prefix << "_edge = " << prefix << "_any;\n";
+          }
+          if (event.cond) {
+            std::string cond =
+                EmitCondExpr(*event.cond, module, sched_locals, sched_regs);
+            out << pad << prefix << "_edge = (" << prefix << "_edge && ("
+                << cond << "));\n";
+          }
+          out << pad << prev_ref << " = " << prefix << "_curr;\n";
+        };
+        auto emit_notifier_assign = [&](const std::string& name,
+                                        int inner_indent) -> void {
+          int width = SignalWidth(module, name);
+          if (width <= 0) {
+            return;
+          }
+          SequentialAssign assign;
+          assign.lhs = name;
+          assign.nonblocking = false;
+          LvalueInfo lhs =
+              BuildLvalue(assign, module, sched_locals, sched_regs, false);
+          if (!lhs.ok) {
+            return;
+          }
+          std::string pad(inner_indent, ' ');
+          std::string rhs = MaskLiteralForWidth(lhs.width);
+          auto emit_store = [&](int store_indent) -> void {
+            std::string store_pad(store_indent, ' ');
+            if (lhs.is_bit_select) {
+              std::string update = EmitBitSelectUpdate(
+                  lhs.expr, lhs.bit_index, lhs.base_width, rhs);
+              out << store_pad << lhs.expr << " = " << update << ";\n";
+              return;
+            }
+            if (lhs.is_range) {
+              std::string index_expr =
+                  lhs.is_indexed_range ? lhs.range_index
+                                       : std::to_string(lhs.range_lsb);
+              std::string update = EmitRangeSelectUpdate(
+                  lhs.expr, index_expr, lhs.base_width, lhs.width, rhs);
+              out << store_pad << lhs.expr << " = " << update << ";\n";
+              return;
+            }
+            out << store_pad << lhs.expr << " = " << rhs << ";\n";
+          };
+          if (!lhs.guard.empty()) {
+            out << pad << "if " << lhs.guard << " {\n";
+            emit_store(inner_indent + 2);
+            out << pad << "}\n";
+          } else {
+            emit_store(inner_indent);
+          }
+        };
+        out << pad << "// Timing checks.\n";
+        for (size_t tc = 0; tc < module.timing_checks.size(); ++tc) {
+          const TimingCheck& check = module.timing_checks[tc];
+          std::string data_prev =
+              "sched_timing_prev_val[__gpga_tc_prev + 0u]";
+          std::string ref_prev =
+              "sched_timing_prev_val[__gpga_tc_prev + 1u]";
+          out << pad << "{\n";
+          out << pad << "  uint __gpga_tc = " << tc << "u;\n";
+          out << pad << "  uint __gpga_tc_slot = (gid * "
+              << "GPGA_SCHED_TIMING_CHECK_COUNT) + __gpga_tc;\n";
+          out << pad << "  uint __gpga_tc_prev = (gid * "
+              << "(GPGA_SCHED_TIMING_CHECK_COUNT * 2u)) + (__gpga_tc * 2u);\n";
+          out << pad << "  bool __gpga_check_enabled = true;\n";
+          if (check.check_cond) {
+            std::string cond =
+                EmitCondExpr(*check.check_cond, module, sched_locals, sched_regs);
+            out << pad << "  __gpga_check_enabled = __gpga_check_enabled && ("
+                << cond << ");\n";
+          }
+          if (check.event_based_flag) {
+            std::string cond =
+                EmitCondExpr(*check.event_based_flag, module, sched_locals, sched_regs);
+            out << pad << "  __gpga_check_enabled = __gpga_check_enabled && ("
+                << cond << ");\n";
+          }
+          if (check.remain_active_flag) {
+            std::string cond =
+                EmitCondExpr(*check.remain_active_flag, module, sched_locals,
+                             sched_regs);
+            out << pad << "  __gpga_check_enabled = __gpga_check_enabled && ("
+                << cond << ");\n";
+          }
+          out << pad << "  long __gpga_limit = " << emit_limit_expr(check.limit)
+              << ";\n";
+          out << pad << "  long __gpga_limit2 = "
+              << emit_limit_expr(check.limit2) << ";\n";
+          out << pad << "  long __gpga_threshold = "
+              << emit_value_expr(check.threshold.get()) << ";\n";
+          out << pad << "  ulong __gpga_data_time = "
+              << "sched_timing_data_time[__gpga_tc_slot];\n";
+          out << pad << "  ulong __gpga_ref_time = "
+              << "sched_timing_ref_time[__gpga_tc_slot];\n";
+          out << pad << "  ulong __gpga_window_start = "
+              << "sched_timing_window_start[__gpga_tc_slot];\n";
+          out << pad << "  ulong __gpga_window_end = "
+              << "sched_timing_window_end[__gpga_tc_slot];\n";
+          Expr data_override_expr;
+          const Expr* data_expr = nullptr;
+          if (!check.delayed_data.empty()) {
+            data_override_expr.kind = ExprKind::kIdentifier;
+            data_override_expr.ident = check.delayed_data;
+            data_expr = &data_override_expr;
+          }
+          Expr ref_override_expr;
+          const Expr* ref_expr = nullptr;
+          if (!check.delayed_ref.empty()) {
+            ref_override_expr.kind = ExprKind::kIdentifier;
+            ref_override_expr.ident = check.delayed_ref;
+            ref_expr = &ref_override_expr;
+          }
+          emit_event_eval(check.data_event, data_prev, "__gpga_data",
+                          indent + 2, data_expr);
+          emit_event_eval(check.ref_event, ref_prev, "__gpga_ref", indent + 2,
+                          ref_expr);
+          out << pad << "  if (!__gpga_check_enabled) {\n";
+          out << pad << "    __gpga_data_edge = false;\n";
+          out << pad << "    __gpga_ref_edge = false;\n";
+          out << pad << "    __gpga_data_pos = false;\n";
+          out << pad << "    __gpga_data_neg = false;\n";
+          out << pad << "    __gpga_ref_pos = false;\n";
+          out << pad << "    __gpga_ref_neg = false;\n";
+          out << pad << "  }\n";
+          out << pad << "  bool __gpga_violation = false;\n";
+          switch (check.kind) {
+            case TimingCheckKind::kSetup:
+            case TimingCheckKind::kRecovery: {
+              out << pad << "  if (__gpga_data_edge) {\n";
+              out << pad << "    __gpga_data_time = __gpga_time;\n";
+              out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+              out << pad << "  }\n";
+              out << pad << "  if (__gpga_ref_edge) {\n";
+              out << pad << "    if (__gpga_data_time != ~0ul) {\n";
+              out << pad << "      ulong __gpga_delta_u = (__gpga_time >= __gpga_data_time)\n";
+              out << pad << "          ? (__gpga_time - __gpga_data_time) : 0ul;\n";
+              out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+              out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+              out << pad << "        __gpga_violation = true;\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "    __gpga_ref_time = __gpga_time;\n";
+              out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+              out << pad << "  }\n";
+              break;
+            }
+            case TimingCheckKind::kHold:
+            case TimingCheckKind::kRemoval: {
+              out << pad << "  if (__gpga_ref_edge) {\n";
+              out << pad << "    __gpga_ref_time = __gpga_time;\n";
+              out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+              out << pad << "  }\n";
+              out << pad << "  if (__gpga_data_edge) {\n";
+              out << pad << "    if (__gpga_ref_time != ~0ul && __gpga_time >= __gpga_ref_time) {\n";
+              out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+              out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+              out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+              out << pad << "        __gpga_violation = true;\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "    __gpga_data_time = __gpga_time;\n";
+              out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+              out << pad << "  }\n";
+              break;
+            }
+            case TimingCheckKind::kSetupHold:
+            case TimingCheckKind::kRecRem: {
+              out << pad << "  if (__gpga_data_edge) {\n";
+              out << pad << "    if (__gpga_ref_time != ~0ul && __gpga_time >= __gpga_ref_time) {\n";
+              out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+              out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+              out << pad << "      if (__gpga_delta < __gpga_limit2) {\n";
+              out << pad << "        __gpga_violation = true;\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "    __gpga_data_time = __gpga_time;\n";
+              out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+              out << pad << "  }\n";
+              out << pad << "  if (__gpga_ref_edge) {\n";
+              out << pad << "    if (__gpga_data_time != ~0ul) {\n";
+              out << pad << "      ulong __gpga_delta_u = (__gpga_time >= __gpga_data_time)\n";
+              out << pad << "          ? (__gpga_time - __gpga_data_time) : 0ul;\n";
+              out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+              out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+              out << pad << "        __gpga_violation = true;\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "    __gpga_ref_time = __gpga_time;\n";
+              out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+              out << pad << "  }\n";
+              break;
+            }
+            case TimingCheckKind::kPeriod: {
+              out << pad << "  if (__gpga_ref_edge) {\n";
+              out << pad << "    if (__gpga_ref_time != ~0ul) {\n";
+              out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+              out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+              out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+              out << pad << "        __gpga_violation = true;\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "    __gpga_ref_time = __gpga_time;\n";
+              out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+              out << pad << "  }\n";
+              break;
+            }
+            case TimingCheckKind::kWidth:
+            case TimingCheckKind::kPulseWidth: {
+              bool width_rise = false;
+              bool width_fall = false;
+              bool width_any = false;
+              if (check.ref_event.edge == EventEdgeKind::kPosedge) {
+                width_rise = true;
+              } else if (check.ref_event.edge == EventEdgeKind::kNegedge) {
+                width_fall = true;
+              } else if (check.ref_event.has_edge_list) {
+                edge_list_direction(check.ref_event, &width_rise, &width_fall);
+                if (width_rise && width_fall) {
+                  width_any = true;
+                  width_rise = false;
+                  width_fall = false;
+                } else if (!width_rise && !width_fall) {
+                  width_any = true;
+                }
+              } else {
+                width_any = true;
+              }
+              if (width_any) {
+                out << pad << "  if (__gpga_ref_edge) {\n";
+                out << pad << "    if (__gpga_ref_time != ~0ul) {\n";
+                out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+              } else if (width_rise) {
+                out << pad << "  if (__gpga_ref_pos) {\n";
+                out << pad << "    __gpga_data_time = __gpga_time;\n";
+                out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_ref_neg) {\n";
+                out << pad << "    if (__gpga_data_time != ~0ul) {\n";
+                out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_data_time;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      long __gpga_width_limit = __gpga_limit;\n";
+                if (check.kind == TimingCheckKind::kPulseWidth) {
+                  out << pad << "      long __gpga_width_alt = (__gpga_limit2 != 0l) ? __gpga_limit2 : __gpga_limit;\n";
+                  out << pad << "      __gpga_width_limit = __gpga_limit;\n";
+                }
+                out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+              } else {
+                out << pad << "  if (__gpga_ref_neg) {\n";
+                out << pad << "    __gpga_ref_time = __gpga_time;\n";
+                out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+                out << pad << "  }\n";
+                out << pad << "  if (__gpga_ref_pos) {\n";
+                out << pad << "    if (__gpga_ref_time != ~0ul) {\n";
+                out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
+                out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
+                out << pad << "      long __gpga_width_limit = __gpga_limit;\n";
+                if (check.kind == TimingCheckKind::kPulseWidth) {
+                  out << pad << "      long __gpga_width_alt = (__gpga_limit2 != 0l) ? __gpga_limit2 : __gpga_limit;\n";
+                  out << pad << "      __gpga_width_limit = __gpga_width_alt;\n";
+                }
+                out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
+                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "    __gpga_data_time = __gpga_time;\n";
+                out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+                out << pad << "  }\n";
+              }
+              out << pad << "  (void)__gpga_threshold;\n";
+              break;
+            }
+            case TimingCheckKind::kSkew:
+            case TimingCheckKind::kTimeSkew:
+            case TimingCheckKind::kFullSkew: {
+              out << pad << "  if (__gpga_data_edge) {\n";
+              out << pad << "    __gpga_data_time = __gpga_time;\n";
+              out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
+              out << pad << "  }\n";
+              out << pad << "  if (__gpga_ref_edge) {\n";
+              out << pad << "    __gpga_ref_time = __gpga_time;\n";
+              out << pad << "    sched_timing_ref_time[__gpga_tc_slot] = __gpga_ref_time;\n";
+              out << pad << "  }\n";
+              out << pad << "  if ((__gpga_data_edge || __gpga_ref_edge) &&\n";
+              out << pad << "      __gpga_data_time != ~0ul && __gpga_ref_time != ~0ul) {\n";
+              out << pad << "    ulong __gpga_delta_u = (__gpga_data_time >= __gpga_ref_time)\n";
+              out << pad << "        ? (__gpga_data_time - __gpga_ref_time)\n";
+              out << pad << "        : (__gpga_ref_time - __gpga_data_time);\n";
+              out << pad << "    long __gpga_delta = (long)__gpga_delta_u;\n";
+              if (check.kind == TimingCheckKind::kFullSkew) {
+                out << pad << "    long __gpga_max = (__gpga_limit2 != 0l) ? __gpga_limit2 : __gpga_limit;\n";
+                out << pad << "    if (__gpga_delta < __gpga_limit || (__gpga_max >= 0l && __gpga_delta > __gpga_max)) {\n";
+                out << pad << "      __gpga_violation = true;\n";
+                out << pad << "    }\n";
+              } else {
+                out << pad << "    if (__gpga_delta > __gpga_limit) {\n";
+                out << pad << "      __gpga_violation = true;\n";
+                out << pad << "    }\n";
+              }
+              out << pad << "  }\n";
+              break;
+            }
+            case TimingCheckKind::kNoChange: {
+              out << pad << "  if (__gpga_ref_edge) {\n";
+              out << pad << "    long __gpga_start = __gpga_limit;\n";
+              out << pad << "    long __gpga_end = __gpga_limit2;\n";
+              out << pad << "    ulong __gpga_start_u = __gpga_time + (ulong)((__gpga_start > 0l) ? __gpga_start : 0l);\n";
+              out << pad << "    ulong __gpga_end_u = __gpga_time + (ulong)((__gpga_end > 0l) ? __gpga_end : 0l);\n";
+              out << pad << "    __gpga_window_start = __gpga_start_u;\n";
+              out << pad << "    __gpga_window_end = __gpga_end_u;\n";
+              out << pad << "    sched_timing_window_start[__gpga_tc_slot] = __gpga_window_start;\n";
+              out << pad << "    sched_timing_window_end[__gpga_tc_slot] = __gpga_window_end;\n";
+              out << pad << "  }\n";
+              out << pad << "  if (__gpga_data_edge) {\n";
+              out << pad << "    if (__gpga_window_start != ~0ul && __gpga_time >= __gpga_window_start && __gpga_time <= __gpga_window_end) {\n";
+              out << pad << "      __gpga_violation = true;\n";
+              out << pad << "    }\n";
+              out << pad << "  }\n";
+              break;
+            }
+            default:
+              break;
+          }
+          if (!check.notifier.empty()) {
+            out << pad << "  if (__gpga_violation) {\n";
+            emit_notifier_assign(check.notifier, indent + 4);
+            out << pad << "  }\n";
+          }
+          out << pad << "}\n";
+        }
+      };
 
       out << "  sched_status[gid] = GPGA_SCHED_STATUS_RUNNING;\n";
       out << "  bool finished = false;\n";
@@ -20126,19 +23323,27 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             kind_expr = "GPGA_SERVICE_KIND_DUMPON";
         } else if (name == "$dumpflush") {
           kind_expr = "GPGA_SERVICE_KIND_DUMPFLUSH";
-        } else if (name == "$dumpall") {
-          kind_expr = "GPGA_SERVICE_KIND_DUMPALL";
-        } else if (name == "$dumplimit") {
-          kind_expr = "GPGA_SERVICE_KIND_DUMPLIMIT";
-        } else if (name == "$timeformat") {
-          kind_expr = "GPGA_SERVICE_KIND_TIMEFORMAT";
-        } else if (name == "$printtimescale") {
-          kind_expr = "GPGA_SERVICE_KIND_PRINTTIMESCALE";
-        } else {
-          out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
-          out << std::string(indent, ' ')
-              << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          return;
+          } else if (name == "$dumpall") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPALL";
+          } else if (name == "$dumplimit") {
+            kind_expr = "GPGA_SERVICE_KIND_DUMPLIMIT";
+          } else if (name == "$timeformat") {
+            kind_expr = "GPGA_SERVICE_KIND_TIMEFORMAT";
+          } else if (name == "$printtimescale") {
+            kind_expr = "GPGA_SERVICE_KIND_PRINTTIMESCALE";
+          } else if (name == "$async$and$array") {
+            kind_expr = "GPGA_SERVICE_KIND_ASYNC_AND_ARRAY";
+          } else if (name == "$sync$or$plane") {
+            kind_expr = "GPGA_SERVICE_KIND_SYNC_OR_PLANE";
+          } else if (name == "$async$nor$plane") {
+            kind_expr = "GPGA_SERVICE_KIND_ASYNC_NOR_PLANE";
+          } else if (name == "$sync$nand$plane") {
+            kind_expr = "GPGA_SERVICE_KIND_SYNC_NAND_PLANE";
+          } else {
+            out << std::string(indent, ' ') << "sched_error[gid] = 1u;\n";
+            out << std::string(indent, ' ')
+                << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
         }
 
         std::string format_id_expr;
@@ -20230,17 +23435,16 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (stmt.kind == StatementKind::kEventTrigger) {
             return false;
           }
-          switch (stmt.kind) {
-            case StatementKind::kDelay:
-            case StatementKind::kEventControl:
-            case StatementKind::kWait:
-            case StatementKind::kForever:
-            case StatementKind::kFork:
-            case StatementKind::kDisable:
-              return true;
-            default:
-              break;
-          }
+        switch (stmt.kind) {
+          case StatementKind::kDelay:
+          case StatementKind::kEventControl:
+          case StatementKind::kWait:
+          case StatementKind::kForever:
+          case StatementKind::kFork:
+            return true;
+          default:
+            break;
+        }
           if (stmt.kind == StatementKind::kIf) {
             for (const auto& inner : stmt.then_branch) {
               if (inline_needs_scheduler(inner)) {
@@ -20298,6 +23502,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           return false;
         };
 
+        int case_temp_index = 0;
+        auto maybe_hoist_case_value = [&](const std::string& expr, int width,
+                                          int indent) -> std::string {
+          if (IsSimpleValueExpr(expr)) {
+            return expr;
+          }
+          std::string temp = "__gpga_case_" + std::to_string(case_temp_index++);
+          out << std::string(indent, ' ') << TypeForWidth(width) << " " << temp
+              << " = " << expr << ";\n";
+          return temp;
+        };
         auto emit_inline_stmt =
             [&](const Statement& stmt, int indent,
                 const std::unordered_set<std::string>& locals_override,
@@ -20317,6 +23532,48 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
           out << pad << "sched_event_pending[(gid * "
               << "GPGA_SCHED_EVENT_COUNT) + " << it->second << "u] = 1u;\n";
+          return;
+        }
+        if (stmt.kind == StatementKind::kDisable) {
+          auto fork_it = fork_label_targets.find(stmt.disable_target);
+          if (fork_it != fork_label_targets.end()) {
+            out << pad << "{\n";
+            out << pad << "  uint __gpga_didx = gpga_sched_index(gid, "
+                << fork_it->second << "u);\n";
+            out << pad << "  if (sched_state[__gpga_didx] != GPGA_SCHED_PROC_DONE) {\n";
+            out << pad << "    sched_state[__gpga_didx] = GPGA_SCHED_PROC_DONE;\n";
+            out << pad << "    uint parent = sched_parent[__gpga_didx];\n";
+            out << pad << "    if (parent != GPGA_SCHED_NO_PARENT) {\n";
+            out << pad << "      uint pidx = gpga_sched_index(gid, parent);\n";
+            out << pad << "      if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+            out << pad << "          sched_wait_id[pidx] == sched_join_tag[__gpga_didx]) {\n";
+            out << pad << "        if (sched_join_count[pidx] > 0u) {\n";
+            out << pad << "          sched_join_count[pidx] -= 1u;\n";
+            out << pad << "        }\n";
+            out << pad << "        if (sched_join_count[pidx] == 0u) {\n";
+            out << pad << "          sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+            out << pad << "          sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+            out << pad << "        }\n";
+            out << pad << "      }\n";
+            out << pad << "    }\n";
+            out << pad << "  }\n";
+            out << pad << "}\n";
+            return;
+          }
+          auto it = global_block_targets.find(stmt.disable_target);
+          if (it == global_block_targets.end()) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          out << pad << "{\n";
+          out << pad << "  uint __gpga_didx = gpga_sched_index(gid, "
+              << it->second.first << "u);\n";
+          out << pad << "  sched_pc[__gpga_didx] = " << it->second.second
+              << "u;\n";
+          out << pad << "  sched_wait_kind[__gpga_didx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << pad << "  sched_state[__gpga_didx] = GPGA_SCHED_PROC_READY;\n";
+          out << pad << "}\n";
           return;
         }
         if (stmt.kind == StatementKind::kForce ||
@@ -20451,13 +23708,47 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                  ? EmitCondExpr(*stmt.condition, module,
                                                 locals_override, sched_regs)
                                  : "false";
+          bool then_empty = StatementListIsEmpty(stmt.then_branch);
+          bool else_empty = StatementListIsEmpty(stmt.else_branch);
+          bool single_then = stmt.then_branch.size() == 1;
+          bool single_else = stmt.else_branch.size() == 1;
+          if (then_empty && else_empty) {
+            return;
+          }
+          if (then_empty && !else_empty) {
+            if (single_else) {
+              out << pad << "if (!(" << cond
+                  << ") && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+              self(stmt.else_branch.front(), indent + 2, locals_override,
+                   resume_pc, self);
+              out << pad << "}\n";
+            } else {
+              out << pad << "if (!(" << cond << ")) {\n";
+              for (const auto& inner : stmt.else_branch) {
+                out << pad
+                    << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+                self(inner, indent + 4, locals_override, resume_pc, self);
+                out << pad << "  }\n";
+              }
+              out << pad << "}\n";
+            }
+            return;
+          }
+          if (!then_empty && else_empty && single_then) {
+            out << pad << "if (" << cond
+                << " && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+            self(stmt.then_branch.front(), indent + 2, locals_override,
+                 resume_pc, self);
+            out << pad << "}\n";
+            return;
+          }
           out << pad << "if (" << cond << ") {\n";
           for (const auto& inner : stmt.then_branch) {
             out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
             self(inner, indent + 4, locals_override, resume_pc, self);
             out << pad << "  }\n";
           }
-          if (!stmt.else_branch.empty()) {
+          if (!else_empty) {
             out << pad << "} else {\n";
             for (const auto& inner : stmt.else_branch) {
               out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -20477,8 +23768,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::string case_value =
               EmitExpr(*stmt.case_expr, module, locals_override, sched_regs);
           int case_width = ExprWidth(*stmt.case_expr, module);
+          case_value = maybe_hoist_case_value(case_value, case_width, indent);
           bool first = true;
           for (const auto& item : stmt.case_items) {
+            if (StatementListIsEmpty(item.body)) {
+              continue;
+            }
             std::string cond;
             for (const auto& label : item.labels) {
               int label_width = ExprWidth(*label, module);
@@ -20508,7 +23803,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               out << pad << "  }\n";
             }
           }
-          if (!stmt.default_branch.empty()) {
+          if (!StatementListIsEmpty(stmt.default_branch)) {
             out << pad << "} else {\n";
             for (const auto& inner : stmt.default_branch) {
               out << pad << "  if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -20520,6 +23815,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << pad << "}\n";
           }
           return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          if (StatementListIsEmpty(stmt.block)) {
+            return;
+          }
+          if (stmt.block_label.empty() && stmt.block.size() == 1) {
+            self(stmt.block.front(), indent, locals_override, resume_pc, self);
+            return;
+          }
         }
         if (stmt.kind == StatementKind::kFor) {
           std::string init = stmt.for_init_rhs
@@ -20705,8 +24009,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::unordered_map<const Statement*,
                            std::pair<const Statement*, const Statement*>>
             repeat_spans;
+        std::unordered_map<const Statement*,
+                           std::pair<const Statement*, const Statement*>>
+            loop_spans;
+        std::unordered_map<const Statement*,
+                           std::pair<const Statement*, const Statement*>>
+            block_spans;
         std::function<void(const Statement&)> append_stmt;
         append_stmt = [&](const Statement& stmt) -> void {
+          if (stmt.kind == StatementKind::kBlock &&
+              !stmt.block_label.empty()) {
+            stmts.push_back(&stmt);
+            size_t body_start = stmts.size();
+            for (const auto& inner : stmt.block) {
+              append_stmt(inner);
+            }
+            size_t body_end = stmts.size();
+            const Statement* first =
+                (body_end > body_start) ? stmts[body_start] : nullptr;
+            const Statement* last =
+                (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+            block_spans[&stmt] = std::make_pair(first, last);
+            return;
+          }
           if (stmt.kind == StatementKind::kBlock && stmt.block_label.empty()) {
             for (const auto& inner : stmt.block) {
               append_stmt(inner);
@@ -20740,8 +24065,66 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             repeat_spans[&stmt] = std::make_pair(first, last);
             return;
           }
+          if (stmt.kind == StatementKind::kDelay &&
+              !stmt.delay_body.empty()) {
+            stmts.push_back(&stmt);
+            for (const auto& inner : stmt.delay_body) {
+              append_stmt(inner);
+            }
+            return;
+          }
+          if (stmt.kind == StatementKind::kWait &&
+              !stmt.wait_body.empty()) {
+            stmts.push_back(&stmt);
+            for (const auto& inner : stmt.wait_body) {
+              append_stmt(inner);
+            }
+            return;
+          }
+        if (stmt.kind == StatementKind::kEventControl &&
+            !stmt.event_body.empty()) {
           stmts.push_back(&stmt);
-        };
+          size_t body_start = stmts.size();
+          for (const auto& inner : stmt.event_body) {
+            append_stmt(inner);
+          }
+          size_t body_end = stmts.size();
+          if (loop_heads.count(&stmt) > 0) {
+            const Statement* first =
+                (body_end > body_start) ? stmts[body_start] : nullptr;
+            const Statement* last =
+                (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+            loop_spans[&stmt] = std::make_pair(first, last);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kForever) {
+          bool needs_sched = false;
+          for (const auto& inner : stmt.forever_body) {
+            if (inline_needs_scheduler(inner)) {
+              needs_sched = true;
+              break;
+            }
+          }
+          if (needs_sched) {
+            stmts.push_back(&stmt);
+            size_t body_start = stmts.size();
+            for (const auto& inner : stmt.forever_body) {
+              append_stmt(inner);
+            }
+            size_t body_end = stmts.size();
+            const Statement* first =
+                (body_end > body_start) ? stmts[body_start] : nullptr;
+            const Statement* last =
+                (body_end > body_start) ? stmts[body_end - 1] : nullptr;
+            loop_spans[&stmt] = std::make_pair(first, last);
+            return;
+          }
+          stmts.push_back(&stmt);
+          return;
+        }
+        stmts.push_back(&stmt);
+      };
         if (proc.body) {
           for (const auto& stmt : *proc.body) {
             append_stmt(stmt);
@@ -20796,6 +24179,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           repeat_runtime[stmt_ptr] =
               RepeatRuntime{id_it->second, body_pc, after_pc};
         }
+        for (const auto& entry : loop_spans) {
+          const Statement* stmt_ptr = entry.first;
+          const Statement* last = entry.second.second;
+          if (!last) {
+            continue;
+          }
+          next_pc_override[last] = pc_for_stmt[stmt_ptr];
+        }
         body_cases.clear();
 
         std::unordered_map<std::string, int> block_end_pc;
@@ -20803,13 +24194,33 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           const auto* stmt = stmts[i];
           if (stmt->kind == StatementKind::kBlock &&
               !stmt->block_label.empty()) {
-            int next_pc = (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]]
-                                                 : pc_done;
-            auto next_override_it = next_pc_override.find(stmt);
-            if (next_override_it != next_pc_override.end()) {
-              next_pc = next_override_it->second;
+            int end_pc = -1;
+            auto span_it = block_spans.find(stmt);
+            if (span_it != block_spans.end()) {
+              const Statement* last = span_it->second.second;
+              if (last) {
+                auto last_it = stmt_index.find(last);
+                if (last_it != stmt_index.end()) {
+                  size_t after_index = last_it->second + 1;
+                  end_pc = (after_index < stmts.size())
+                               ? pc_for_stmt[stmts[after_index]]
+                               : pc_done;
+                }
+              }
             }
-            block_end_pc[stmt->block_label] = next_pc;
+            if (end_pc < 0) {
+              size_t after_index = i + 1;
+              end_pc = (after_index < stmts.size())
+                           ? pc_for_stmt[stmts[after_index]]
+                           : pc_done;
+            }
+            block_end_pc[stmt->block_label] = end_pc;
+          }
+        }
+        for (const auto& entry : block_end_pc) {
+          if (global_block_targets.count(entry.first) == 0u) {
+            global_block_targets[entry.first] =
+                std::make_pair(proc.pid, entry.second);
           }
         }
 
@@ -20999,18 +24410,6 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             continue;
           }
           if (stmt.kind == StatementKind::kDelay) {
-            int body_pc = -1;
-            if (!stmt.delay_body.empty()) {
-              body_pc = pc_counter++;
-              BodyCase body_case;
-              body_case.pc = body_pc;
-              body_case.owner = &stmt;
-              body_case.next_pc = next_pc;
-              for (const auto& inner : stmt.delay_body) {
-                body_case.body.push_back(&inner);
-              }
-              body_cases.push_back(std::move(body_case));
-            }
             std::string delay =
                 stmt.delay ? emit_delay_value2(*stmt.delay) : "0ul";
             out << "                  ulong __gpga_delay = " << delay << ";\n";
@@ -21019,28 +24418,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    "GPGA_SCHED_WAIT_TIME;\n";
             out << "                  sched_wait_time[idx] = __gpga_time + "
                    "__gpga_delay;\n";
-            out << "                  sched_pc[idx] = "
-                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
-                                 : std::to_string(next_pc) + "u")
-                << ";\n";
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
             out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
             out << "                  break;\n";
             out << "                }\n";
             continue;
           }
           if (stmt.kind == StatementKind::kEventControl) {
-            int body_pc = -1;
-            if (!stmt.event_body.empty()) {
-              body_pc = pc_counter++;
-              BodyCase body_case;
-              body_case.pc = body_pc;
-              body_case.owner = &stmt;
-              body_case.next_pc = next_pc;
-              for (const auto& inner : stmt.event_body) {
-                body_case.body.push_back(&inner);
-              }
-              body_cases.push_back(std::move(body_case));
-            }
             int event_id = -1;
             bool named_event = false;
             const Expr* named_expr = nullptr;
@@ -21139,28 +24523,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
               }
             }
-            out << "                  sched_pc[idx] = "
-                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
-                                 : std::to_string(next_pc) + "u")
-                << ";\n";
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
             out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
             out << "                  break;\n";
             out << "                }\n";
             continue;
           }
           if (stmt.kind == StatementKind::kWait) {
-            int body_pc = -1;
-            if (!stmt.wait_body.empty()) {
-              body_pc = pc_counter++;
-              BodyCase body_case;
-              body_case.pc = body_pc;
-              body_case.owner = &stmt;
-              body_case.next_pc = next_pc;
-              for (const auto& inner : stmt.wait_body) {
-                body_case.body.push_back(&inner);
-              }
-              body_cases.push_back(std::move(body_case));
-            }
             int wait_id = -1;
             auto it = wait_ids.find(&stmt);
             if (it != wait_ids.end()) {
@@ -21177,27 +24546,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 EmitCondExpr(*stmt.wait_condition, module, sched_locals,
                              sched_regs);
             out << "                  if ((" << cond << ") != 0u) {\n";
-            if (body_pc >= 0) {
-              out << "                    sched_pc[idx] = " << body_pc << "u;\n";
-              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-            } else {
-              out << "                    sched_pc[idx] = " << next_pc << "u;\n";
-              out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-            }
+            out << "                    sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
             out << "                    break;\n";
             out << "                  }\n";
             out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_COND;\n";
             out << "                  sched_wait_id[idx] = " << wait_id << "u;\n";
-            out << "                  sched_pc[idx] = "
-                << (body_pc >= 0 ? std::to_string(body_pc) + "u"
-                                 : std::to_string(next_pc) + "u")
-                << ";\n";
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
             out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
             out << "                  break;\n";
             out << "                }\n";
             continue;
           }
           if (stmt.kind == StatementKind::kForever) {
+            if (loop_spans.count(&stmt) > 0) {
+              out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
             if (stmt.forever_body.empty()) {
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
               out << "                  break;\n";
@@ -21205,15 +24573,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             const Statement& body_stmt = stmt.forever_body.front();
-            if (body_stmt.kind != StatementKind::kDelay &&
-                body_stmt.kind != StatementKind::kEventControl) {
-              out << "                  sched_error[gid] = 1u;\n";
-              out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "                  break;\n";
-              out << "                }\n";
-              continue;
-            }
-            if (body_stmt.kind == StatementKind::kDelay) {
+            if (body_stmt.kind == StatementKind::kDelay &&
+                stmt.forever_body.size() == 1) {
               int body_pc = pc_counter++;
               BodyCase body_case;
               body_case.pc = body_pc;
@@ -21233,6 +24594,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                      "GPGA_SCHED_WAIT_TIME;\n";
               out << "                  sched_wait_time[idx] = __gpga_time + "
                      "__gpga_delay;\n";
+              out << "                  sched_pc[idx] = " << body_pc << "u;\n";
+              out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+              out << "                  break;\n";
+              out << "                }\n";
+              continue;
+            }
+            if (body_stmt.kind != StatementKind::kEventControl ||
+                stmt.forever_body.size() != 1) {
+              int body_pc = pc_counter++;
+              BodyCase body_case;
+              body_case.pc = body_pc;
+              body_case.owner = &stmt;
+              body_case.next_pc = pc;
+              body_case.loop_pc = pc;
+              body_case.is_forever_body = true;
+              for (const auto& inner : stmt.forever_body) {
+                body_case.body.push_back(&inner);
+              }
+              body_cases.push_back(std::move(body_case));
+              out << "                  ulong __gpga_delay = 0ul;\n";
+              out << "                  sched_wait_kind[idx] = GPGA_SCHED_WAIT_DELTA;\n";
+              out << "                  sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
               out << "                  sched_pc[idx] = " << body_pc << "u;\n";
               out << "                  sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
               out << "                  break;\n";
@@ -21418,8 +24801,25 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
               }
               if (disable_pid < 0) {
-                out << "                  sched_error[gid] = 1u;\n";
-                out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                auto global_it =
+                    global_block_targets.find(stmt.disable_target);
+                if (global_it == global_block_targets.end()) {
+                  out << "                  sched_error[gid] = 1u;\n";
+                  out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "                  break;\n";
+                  out << "                }\n";
+                  continue;
+                }
+                out << "                  {\n";
+                out << "                    uint __gpga_didx = gpga_sched_index(gid, "
+                    << global_it->second.first << "u);\n";
+                out << "                    sched_pc[__gpga_didx] = "
+                    << global_it->second.second << "u;\n";
+                out << "                    sched_wait_kind[__gpga_didx] = GPGA_SCHED_WAIT_NONE;\n";
+                out << "                    sched_state[__gpga_didx] = GPGA_SCHED_PROC_READY;\n";
+                out << "                  }\n";
+                out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+                out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
                 out << "                  break;\n";
                 out << "                }\n";
                 continue;
@@ -21488,6 +24888,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "                    sched_pc[idx] = " << next_pc << "u;\n";
             out << "                    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
             out << "                  }\n";
+            out << "                  break;\n";
+            out << "                }\n";
+            continue;
+          }
+          if (stmt.kind == StatementKind::kBlock &&
+              !stmt.block_label.empty()) {
+            out << "                  sched_pc[idx] = " << next_pc << "u;\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
             out << "                  break;\n";
             out << "                }\n";
             continue;
@@ -21814,6 +25222,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "        }\n";
       out << "      }\n";
       out << "      if (!did_work) {\n";
+      emit_timing_checks(8);
       out << "        bool any_ready = false;\n";
       out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "          uint idx = gpga_sched_index(gid, pid);\n";
@@ -22022,6 +25431,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
       }
       emit_sched_comb_update(6);
+      emit_timing_checks(6);
       if (!system_task_info.monitor_stmts.empty()) {
         out << "      // Monitor change detection.\n";
         for (size_t i = 0; i < system_task_info.monitor_stmts.size(); ++i) {

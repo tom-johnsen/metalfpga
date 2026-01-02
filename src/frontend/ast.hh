@@ -258,6 +258,51 @@ enum class EventEdgeKind {
   kNegedge,
 };
 
+enum class TimingCheckKind {
+  kSetup,
+  kHold,
+  kSetupHold,
+  kRecovery,
+  kRemoval,
+  kRecRem,
+  kSkew,
+  kTimeSkew,
+  kFullSkew,
+  kWidth,
+  kPeriod,
+  kPulseWidth,
+  kNoChange,
+};
+
+enum class TimingEdgeState {
+  k0,
+  k1,
+  kX,
+  kZ,
+};
+
+struct TimingEdgePattern {
+  TimingEdgeState from = TimingEdgeState::k0;
+  TimingEdgeState to = TimingEdgeState::k0;
+  std::string raw;
+};
+
+struct TimingCheckLimit {
+  std::unique_ptr<Expr> min;
+  std::unique_ptr<Expr> typ;
+  std::unique_ptr<Expr> max;
+};
+
+struct TimingCheckEvent {
+  EventEdgeKind edge = EventEdgeKind::kAny;
+  bool has_edge_list = false;
+  std::vector<TimingEdgePattern> edge_list;
+  std::unique_ptr<Expr> expr;
+  std::unique_ptr<Expr> cond;
+  std::string raw_expr;
+  std::string raw_cond;
+};
+
 struct EventItem {
   EventEdgeKind edge = EventEdgeKind::kAny;
   std::unique_ptr<Expr> expr;
@@ -384,6 +429,18 @@ struct TimingCheck {
   std::string edge;
   std::string signal;
   std::string condition;
+  TimingCheckKind kind = TimingCheckKind::kSetup;
+  TimingCheckEvent data_event;
+  TimingCheckEvent ref_event;
+  TimingCheckLimit limit;
+  TimingCheckLimit limit2;
+  std::unique_ptr<Expr> threshold;
+  std::unique_ptr<Expr> check_cond;
+  std::unique_ptr<Expr> event_based_flag;
+  std::unique_ptr<Expr> remain_active_flag;
+  std::string notifier;
+  std::string delayed_ref;
+  std::string delayed_data;
   int line = 0;
   int column = 0;
 };

@@ -122,9 +122,7 @@ See `docs/CRLIBM_ULP_COMPARE.md` for methodology and artifact layout.
 
 ## Documentation
 
-- Verilog test coverage: `docs/VERILOG_TEST_OVERVIEW.md`
 - Implementation-defined behavior decisions: `docs/IEEE_1364_2005_IMPLEMENTATION_DEFINED_BEHAVIORS.md`
-- Open work and runtime gaps: `docs/LOOSE_ENDS.md`
 - VARY decisions: `docs/IEEE_1364_2005_VARY_DECISIONS.md`
 - Real math API: `docs/GPGA_REAL_API.md`
 - 4-state API: `docs/GPGA_4STATE_API.md`

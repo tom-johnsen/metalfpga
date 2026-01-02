@@ -57,6 +57,10 @@ enum class ServiceKind : uint32_t {
   kPrinttimescale = 35u,
   kTestPlusargs = 36u,
   kValuePlusargs = 37u,
+  kAsyncAndArray = 38u,
+  kSyncOrPlane = 39u,
+  kAsyncNorPlane = 40u,
+  kSyncNandPlane = 41u,
 };
 
 struct ServiceStringTable {
@@ -134,6 +138,7 @@ struct SchedulerConstants {
   uint32_t string_count = 0;
   uint32_t force_count = 0;
   uint32_t pcont_count = 0;
+  uint32_t timing_check_count = 0;
   bool has_services = false;
 };
 

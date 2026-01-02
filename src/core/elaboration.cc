@@ -536,6 +536,7 @@ std::unique_ptr<Expr> MakeTernaryExpr(std::unique_ptr<Expr> condition,
                                       std::unique_ptr<Expr> then_expr,
                                       std::unique_ptr<Expr> else_expr);
 std::unique_ptr<Expr> MakeAllXExpr(int width);
+std::unique_ptr<Expr> MakeAllZExpr(int width);
 std::unique_ptr<Expr> MakeRealLiteralExpr(double value);
 using BindingMap = std::unordered_map<std::string, const Expr*>;
 std::unique_ptr<Expr> CloneExprWithParams(
@@ -3741,6 +3742,18 @@ std::unique_ptr<Expr> MakeAllXExpr(int width) {
   return expr;
 }
 
+std::unique_ptr<Expr> MakeAllZExpr(int width) {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kNumber;
+  expr->number = 0;
+  expr->value_bits = 0;
+  expr->x_bits = 0;
+  expr->z_bits = MaskForWidth64(width);
+  expr->has_width = true;
+  expr->number_width = width;
+  return expr;
+}
+
 bool IsArrayNet(const Module& module, const std::string& name,
                 int* element_width) {
   for (const auto& net : module.nets) {
@@ -5512,8 +5525,68 @@ bool ValidateCombinationalAcyclic(const Module& flat,
   }
 
   if (visited != count) {
-    diagnostics->Add(Severity::kWarning,
-                     "combinational cycle detected in continuous assigns");
+    bool has_explicit_cycle = false;
+    std::vector<int> index(count, -1);
+    std::vector<int> lowlink(count, -1);
+    std::vector<bool> onstack(count, false);
+    std::vector<size_t> stack;
+    int current = 0;
+    auto dfs = [&](auto&& self, size_t v) -> void {
+      index[v] = current;
+      lowlink[v] = current;
+      current++;
+      stack.push_back(v);
+      onstack[v] = true;
+      for (size_t w : edges[v]) {
+        if (index[w] == -1) {
+          self(self, w);
+          lowlink[v] = std::min(lowlink[v], lowlink[w]);
+        } else if (onstack[w]) {
+          lowlink[v] = std::min(lowlink[v], index[w]);
+        }
+      }
+      if (lowlink[v] != index[v]) {
+        return;
+      }
+      std::vector<size_t> scc;
+      while (!stack.empty()) {
+        size_t w = stack.back();
+        stack.pop_back();
+        onstack[w] = false;
+        scc.push_back(w);
+        if (w == v) {
+          break;
+        }
+      }
+      bool is_cycle = scc.size() > 1;
+      if (!is_cycle && scc.size() == 1) {
+        size_t node = scc.front();
+        for (size_t w : edges[node]) {
+          if (w == node) {
+            is_cycle = true;
+            break;
+          }
+        }
+      }
+      if (!is_cycle) {
+        return;
+      }
+      for (size_t node : scc) {
+        if (!flat.assigns[node].is_implicit) {
+          has_explicit_cycle = true;
+          break;
+        }
+      }
+    };
+    for (size_t i = 0; i < count; ++i) {
+      if (index[i] == -1) {
+        dfs(dfs, i);
+      }
+    }
+    if (has_explicit_cycle) {
+      diagnostics->Add(Severity::kWarning,
+                       "combinational cycle detected in continuous assigns");
+    }
     return true;
   }
   return true;
@@ -5607,7 +5680,7 @@ void WarnUndrivenWires(const Module& flat, Diagnostics* diagnostics,
     }
     diagnostics->Add(Severity::kWarning,
                      "undriven wire '" + net.name + "' defaults to " +
-                         std::string(enable_4state ? "X" : "0") +
+                         std::string(enable_4state ? "Z" : "0") +
                          " in v0");
   }
 }
@@ -6416,6 +6489,87 @@ bool InlineModule(const Program& program, const Module& module,
     out->always_blocks.push_back(std::move(flattened));
   }
 
+  auto clone_timing_expr = [&](const std::unique_ptr<Expr>& expr)
+      -> std::unique_ptr<Expr> {
+    if (!expr) {
+      return nullptr;
+    }
+    auto cloned = CloneExprWithParams(*expr, rename, params, &module,
+                                      diagnostics, nullptr);
+    if (!cloned) {
+      return nullptr;
+    }
+    return SimplifyExpr(std::move(cloned), *out);
+  };
+  auto clone_timing_event = [&](const TimingCheckEvent& event,
+                                TimingCheckEvent* out_event) -> bool {
+    if (!out_event) {
+      return false;
+    }
+    out_event->edge = event.edge;
+    out_event->has_edge_list = event.has_edge_list;
+    out_event->edge_list = event.edge_list;
+    out_event->raw_expr = event.raw_expr;
+    out_event->raw_cond = event.raw_cond;
+    out_event->expr = clone_timing_expr(event.expr);
+    out_event->cond = clone_timing_expr(event.cond);
+    if ((event.expr && !out_event->expr) || (event.cond && !out_event->cond)) {
+      return false;
+    }
+    return true;
+  };
+
+  for (const auto& check : module.timing_checks) {
+    TimingCheck flattened;
+    flattened.name = check.name;
+    flattened.edge = check.edge;
+    flattened.signal = check.signal;
+    flattened.condition = check.condition;
+    flattened.kind = check.kind;
+    flattened.line = check.line;
+    flattened.column = check.column;
+    if (!clone_timing_event(check.data_event, &flattened.data_event)) {
+      return false;
+    }
+    if (!clone_timing_event(check.ref_event, &flattened.ref_event)) {
+      return false;
+    }
+    flattened.limit.min = clone_timing_expr(check.limit.min);
+    flattened.limit.typ = clone_timing_expr(check.limit.typ);
+    flattened.limit.max = clone_timing_expr(check.limit.max);
+    flattened.limit2.min = clone_timing_expr(check.limit2.min);
+    flattened.limit2.typ = clone_timing_expr(check.limit2.typ);
+    flattened.limit2.max = clone_timing_expr(check.limit2.max);
+    if ((check.limit.min && !flattened.limit.min) ||
+        (check.limit.typ && !flattened.limit.typ) ||
+        (check.limit.max && !flattened.limit.max) ||
+        (check.limit2.min && !flattened.limit2.min) ||
+        (check.limit2.typ && !flattened.limit2.typ) ||
+        (check.limit2.max && !flattened.limit2.max)) {
+      return false;
+    }
+    flattened.threshold = clone_timing_expr(check.threshold);
+    flattened.check_cond = clone_timing_expr(check.check_cond);
+    flattened.event_based_flag = clone_timing_expr(check.event_based_flag);
+    flattened.remain_active_flag = clone_timing_expr(check.remain_active_flag);
+    if ((check.threshold && !flattened.threshold) ||
+        (check.check_cond && !flattened.check_cond) ||
+        (check.event_based_flag && !flattened.event_based_flag) ||
+        (check.remain_active_flag && !flattened.remain_active_flag)) {
+      return false;
+    }
+    if (!check.notifier.empty()) {
+      flattened.notifier = rename(check.notifier);
+    }
+    if (!check.delayed_ref.empty()) {
+      flattened.delayed_ref = rename(check.delayed_ref);
+    }
+    if (!check.delayed_data.empty()) {
+      flattened.delayed_data = rename(check.delayed_data);
+    }
+    out->timing_checks.push_back(std::move(flattened));
+  }
+
   for (const auto& instance : module.instances) {
     const Module* child = FindModule(program, instance.module_name);
     if (!child) {
@@ -6741,10 +6895,10 @@ bool InlineModule(const Program& program, const Module& module,
               default_assign.strength1 = Strength::kPull;
               break;
             case UnconnectedDrive::kNone:
-              default_label = enable_4state ? "X" : "0";
+              default_label = enable_4state ? "Z" : "0";
               default_assign.rhs =
                   enable_4state
-                      ? MakeAllXExpr(child_port_widths[port_name])
+                      ? MakeAllZExpr(child_port_widths[port_name])
                       : MakeNumberExpr(0u);
               break;
           }
@@ -6778,7 +6932,8 @@ bool InlineModule(const Program& program, const Module& module,
 }  // namespace
 
 bool Elaborate(const Program& program, ElaboratedDesign* out_design,
-               Diagnostics* diagnostics, bool enable_4state) {
+               Diagnostics* diagnostics, bool enable_4state,
+               bool verbose_warnings) {
   if (!out_design || !diagnostics) {
     return false;
   }
@@ -6795,12 +6950,13 @@ bool Elaborate(const Program& program, ElaboratedDesign* out_design,
   if (!FindTopModule(program, &top_name, diagnostics)) {
     return false;
   }
-  return Elaborate(program, top_name, out_design, diagnostics, enable_4state);
+  return Elaborate(program, top_name, out_design, diagnostics, enable_4state,
+                   verbose_warnings);
 }
 
 bool Elaborate(const Program& program, const std::string& top_name,
                ElaboratedDesign* out_design, Diagnostics* diagnostics,
-               bool enable_4state) {
+               bool enable_4state, bool verbose_warnings) {
   if (!out_design || !diagnostics) {
     return false;
   }
@@ -6879,7 +7035,9 @@ bool Elaborate(const Program& program, const std::string& top_name,
   WarnUndeclaredClocks(flat, diagnostics);
   WarnNonblockingInCombAlways(flat, diagnostics);
   WarnNonblockingArrayWrites(flat, diagnostics);
-  WarnUndrivenWires(flat, diagnostics, enable_4state);
+  if (verbose_warnings) {
+    WarnUndrivenWires(flat, diagnostics, enable_4state);
+  }
 
   out_design->top = std::move(flat);
   out_design->flat_to_hier = std::move(flat_to_hier);

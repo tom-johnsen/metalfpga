@@ -3508,20 +3508,286 @@ class Parser {
     return ToLowerAscii(out);
   }
 
+  std::string JoinTokenText(const std::vector<Token>& tokens) {
+    std::string out;
+    for (const auto& token : tokens) {
+      out += token.text;
+    }
+    return out;
+  }
+
+  std::unique_ptr<Expr> ParseExprFromTokens(const std::vector<Token>& tokens,
+                                            const Token& start_token,
+                                            const char* label) {
+    if (tokens.empty()) {
+      return nullptr;
+    }
+    std::vector<Token> expr_tokens = tokens;
+    Token end;
+    end.kind = TokenKind::kEnd;
+    end.text = "";
+    end.line = tokens.back().line;
+    end.column = tokens.back().column;
+    expr_tokens.push_back(end);
+    Parser sub(path_, std::move(expr_tokens), diagnostics_, options_, {});
+    sub.current_specparams_ = current_specparams_;
+    std::unique_ptr<Expr> expr = sub.ParseExpr();
+    if (!expr) {
+      diagnostics_->Add(Severity::kError,
+                        std::string("failed to parse ") + label,
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return nullptr;
+    }
+    if (!sub.IsAtEnd()) {
+      const Token& extra = sub.Peek();
+      diagnostics_->Add(Severity::kError,
+                        std::string("unexpected token in ") + label,
+                        SourceLocation{path_, extra.line, extra.column});
+      return nullptr;
+    }
+    return expr;
+  }
+
+  bool ParseTimingEdgePattern(const std::string& text,
+                              TimingEdgePattern* out,
+                              const Token& start_token) {
+    if (!out) {
+      return false;
+    }
+    std::string lowered = ToLowerAscii(text);
+    std::string cleaned;
+    cleaned.reserve(lowered.size());
+    for (char c : lowered) {
+      if (c != '_') {
+        cleaned.push_back(c);
+      }
+    }
+    if (cleaned.size() != 2u) {
+      diagnostics_->Add(Severity::kError,
+                        "invalid edge list entry '" + text + "'",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    auto parse_state = [&](char c, TimingEdgeState* state) -> bool {
+      if (!state) {
+        return false;
+      }
+      if (c == '0') {
+        *state = TimingEdgeState::k0;
+      } else if (c == '1') {
+        *state = TimingEdgeState::k1;
+      } else if (c == 'x') {
+        *state = TimingEdgeState::kX;
+      } else if (c == 'z') {
+        *state = TimingEdgeState::kZ;
+      } else {
+        return false;
+      }
+      return true;
+    };
+    TimingEdgePattern pattern;
+    pattern.raw = cleaned;
+    if (!parse_state(cleaned[0], &pattern.from) ||
+        !parse_state(cleaned[1], &pattern.to)) {
+      diagnostics_->Add(Severity::kError,
+                        "invalid edge list entry '" + text + "'",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    *out = std::move(pattern);
+    return true;
+  }
+
+  bool ParseTimingEdgeList(const std::vector<Token>& tokens,
+                           size_t start_index,
+                           std::vector<TimingEdgePattern>* out_patterns,
+                           size_t* out_next,
+                           const Token& start_token) {
+    if (!out_patterns || !out_next) {
+      return false;
+    }
+    out_patterns->clear();
+    *out_next = start_index;
+    if (start_index >= tokens.size() ||
+        tokens[start_index].kind != TokenKind::kSymbol ||
+        tokens[start_index].text != "[") {
+      diagnostics_->Add(Severity::kError,
+                        "expected '[' after edge keyword",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    std::vector<Token> current;
+    int bracket_depth = 0;
+    for (size_t i = start_index; i < tokens.size(); ++i) {
+      const Token& token = tokens[i];
+      if (token.kind == TokenKind::kSymbol && token.text == "[") {
+        ++bracket_depth;
+        if (bracket_depth == 1) {
+          continue;
+        }
+      }
+      if (token.kind == TokenKind::kSymbol && token.text == "]") {
+        if (bracket_depth == 1) {
+          if (!current.empty()) {
+            std::string raw = JoinTokenText(current);
+            TimingEdgePattern pattern;
+            if (!ParseTimingEdgePattern(raw, &pattern, start_token)) {
+              return false;
+            }
+            out_patterns->push_back(std::move(pattern));
+            current.clear();
+          }
+          *out_next = i + 1;
+          return true;
+        }
+        if (bracket_depth > 0) {
+          --bracket_depth;
+        }
+      }
+      if (bracket_depth == 1 &&
+          token.kind == TokenKind::kSymbol && token.text == ",") {
+        if (!current.empty()) {
+          std::string raw = JoinTokenText(current);
+          TimingEdgePattern pattern;
+          if (!ParseTimingEdgePattern(raw, &pattern, start_token)) {
+            return false;
+          }
+          out_patterns->push_back(std::move(pattern));
+          current.clear();
+        }
+        continue;
+      }
+      current.push_back(token);
+    }
+    diagnostics_->Add(Severity::kError,
+                      "expected ']' to close edge list",
+                      SourceLocation{path_, start_token.line,
+                                     start_token.column});
+    return false;
+  }
+
+  TimingCheckEvent ParseTimingEventTokens(
+      const std::vector<Token>& tokens,
+      const Token& start_token,
+      const char* label) {
+    TimingCheckEvent event;
+    if (tokens.empty()) {
+      return event;
+    }
+    std::vector<Token> event_tokens;
+    std::vector<Token> cond_tokens;
+    SplitTimingCondition(tokens, &event_tokens, &cond_tokens);
+    event_tokens = StripOuterParensTokens(event_tokens);
+    cond_tokens = StripOuterParensTokens(cond_tokens);
+    event.raw_expr = NormalizeTokenExpr(event_tokens);
+    event.raw_cond = NormalizeTokenExpr(cond_tokens);
+    if (!cond_tokens.empty()) {
+      event.cond = ParseExprFromTokens(cond_tokens, start_token,
+                                       "timing check condition");
+    }
+    if (event_tokens.empty()) {
+      return event;
+    }
+    size_t i = 0;
+    if (event_tokens[i].kind == TokenKind::kIdentifier) {
+      std::string head = ToLowerAscii(event_tokens[i].text);
+      if (head == "edge") {
+        event.has_edge_list = true;
+        i += 1;
+        size_t next = i;
+        if (!ParseTimingEdgeList(event_tokens, i, &event.edge_list, &next,
+                                 start_token)) {
+          return event;
+        }
+        i = next;
+      } else if (head == "posedge") {
+        event.edge = EventEdgeKind::kPosedge;
+        i += 1;
+      } else if (head == "negedge") {
+        event.edge = EventEdgeKind::kNegedge;
+        i += 1;
+      }
+    }
+    if (i < event_tokens.size()) {
+      std::vector<Token> expr_tokens(event_tokens.begin() + i,
+                                     event_tokens.end());
+      expr_tokens = StripOuterParensTokens(expr_tokens);
+      event.expr = ParseExprFromTokens(expr_tokens, start_token, label);
+    }
+    return event;
+  }
+
+  TimingCheckLimit ParseTimingLimitTokens(const std::vector<Token>& tokens,
+                                          const Token& start_token,
+                                          const char* label) {
+    TimingCheckLimit limit;
+    if (tokens.empty()) {
+      return limit;
+    }
+    std::vector<std::vector<Token>> parts;
+    std::vector<Token> current;
+    int paren_depth = 0;
+    int bracket_depth = 0;
+    int brace_depth = 0;
+    for (const auto& token : tokens) {
+      if (token.kind == TokenKind::kSymbol && token.text == ":" &&
+          paren_depth == 0 && bracket_depth == 0 && brace_depth == 0) {
+        parts.push_back(std::move(current));
+        current.clear();
+        continue;
+      }
+      UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
+      current.push_back(token);
+    }
+    parts.push_back(std::move(current));
+    if (!parts.empty()) {
+      if (!parts[0].empty()) {
+        limit.min = ParseExprFromTokens(parts[0], start_token, label);
+      }
+      if (parts.size() > 1 && !parts[1].empty()) {
+        limit.typ = ParseExprFromTokens(parts[1], start_token, label);
+      }
+      if (parts.size() > 2 && !parts[2].empty()) {
+        limit.max = ParseExprFromTokens(parts[2], start_token, label);
+      }
+    }
+    return limit;
+  }
+
+  std::string ParseTimingName(const std::vector<Token>& tokens) {
+    if (tokens.empty()) {
+      return "";
+    }
+    return JoinTokenText(tokens);
+  }
+
   bool HandleSpecifyTimingCheck(Module* module,
                                 const std::vector<Token>& tokens,
                                 const Token& start_token,
                                 NegativeSetupMode negative_setup_mode) {
-    if (tokens.size() < 2 || tokens[1].kind != TokenKind::kIdentifier) {
+    size_t name_index = 1;
+    if (!tokens.empty() && tokens[0].kind == TokenKind::kIdentifier &&
+        !tokens[0].text.empty() && tokens[0].text[0] == '$') {
+      name_index = 0;
+    }
+    if (tokens.size() <= name_index ||
+        tokens[name_index].kind != TokenKind::kIdentifier) {
       diagnostics_->Add(Severity::kError,
                         "expected system task name after '$'",
                         SourceLocation{path_, start_token.line,
                                        start_token.column});
       return false;
     }
-    const std::string& name = tokens[1].text;
+    std::string name = tokens[name_index].text;
+    if (!name.empty() && name[0] == '$') {
+      name = name.substr(1);
+    }
     size_t lparen_index = 0;
-    for (size_t i = 2; i < tokens.size(); ++i) {
+    for (size_t i = name_index + 1; i < tokens.size(); ++i) {
       if (tokens[i].kind == TokenKind::kSymbol && tokens[i].text == "(") {
         lparen_index = i;
         break;
@@ -3565,33 +3831,203 @@ class Parser {
       }
     }
     if (module && !args.empty()) {
-      std::vector<Token> event_tokens;
-      std::vector<Token> cond_tokens;
-      SplitTimingCondition(args[0], &event_tokens, &cond_tokens);
-      event_tokens = StripOuterParensTokens(event_tokens);
-      cond_tokens = StripOuterParensTokens(cond_tokens);
-      std::string edge;
-      size_t signal_start = 0;
-      if (!event_tokens.empty()) {
-        std::string first = ToLowerAscii(event_tokens.front().text);
-        if (first == "posedge" || first == "negedge") {
-          edge = first;
-          signal_start = 1;
-        }
-      }
-      std::vector<Token> signal_tokens;
-      if (signal_start < event_tokens.size()) {
-        signal_tokens.assign(event_tokens.begin() + signal_start,
-                             event_tokens.end());
-      }
-      signal_tokens = StripOuterParensTokens(signal_tokens);
       TimingCheck timing;
       timing.name = ToLowerAscii(name);
-      timing.edge = edge;
-      timing.signal = NormalizeTokenExpr(signal_tokens);
-      timing.condition = NormalizeTokenExpr(cond_tokens);
       timing.line = start_token.line;
       timing.column = start_token.column;
+      auto set_kind = [&](TimingCheckKind kind) {
+        timing.kind = kind;
+      };
+      if (timing.name == "setup") {
+        set_kind(TimingCheckKind::kSetup);
+      } else if (timing.name == "hold") {
+        set_kind(TimingCheckKind::kHold);
+      } else if (timing.name == "setuphold") {
+        set_kind(TimingCheckKind::kSetupHold);
+      } else if (timing.name == "recovery") {
+        set_kind(TimingCheckKind::kRecovery);
+      } else if (timing.name == "removal") {
+        set_kind(TimingCheckKind::kRemoval);
+      } else if (timing.name == "recrem") {
+        set_kind(TimingCheckKind::kRecRem);
+      } else if (timing.name == "skew") {
+        set_kind(TimingCheckKind::kSkew);
+      } else if (timing.name == "timeskew") {
+        set_kind(TimingCheckKind::kTimeSkew);
+      } else if (timing.name == "fullskew") {
+        set_kind(TimingCheckKind::kFullSkew);
+      } else if (timing.name == "width") {
+        set_kind(TimingCheckKind::kWidth);
+      } else if (timing.name == "period") {
+        set_kind(TimingCheckKind::kPeriod);
+      } else if (timing.name == "pulsewidth") {
+        set_kind(TimingCheckKind::kPulseWidth);
+      } else if (timing.name == "nochange") {
+        set_kind(TimingCheckKind::kNoChange);
+      }
+      auto arg_tokens = [&](size_t idx) -> const std::vector<Token>* {
+        if (idx >= args.size()) {
+          return nullptr;
+        }
+        return &args[idx];
+      };
+      auto parse_event = [&](size_t idx, const char* label)
+          -> TimingCheckEvent {
+        const std::vector<Token>* tokens_ptr = arg_tokens(idx);
+        if (!tokens_ptr || tokens_ptr->empty()) {
+          return TimingCheckEvent{};
+        }
+        return ParseTimingEventTokens(*tokens_ptr, start_token, label);
+      };
+      auto parse_limit = [&](size_t idx, const char* label) -> TimingCheckLimit {
+        const std::vector<Token>* tokens_ptr = arg_tokens(idx);
+        if (!tokens_ptr || tokens_ptr->empty()) {
+          return TimingCheckLimit{};
+        }
+        return ParseTimingLimitTokens(*tokens_ptr, start_token, label);
+      };
+      auto parse_expr = [&](size_t idx, const char* label)
+          -> std::unique_ptr<Expr> {
+        const std::vector<Token>* tokens_ptr = arg_tokens(idx);
+        if (!tokens_ptr || tokens_ptr->empty()) {
+          return nullptr;
+        }
+        return ParseExprFromTokens(*tokens_ptr, start_token, label);
+      };
+      auto parse_name = [&](size_t idx) -> std::string {
+        const std::vector<Token>* tokens_ptr = arg_tokens(idx);
+        if (!tokens_ptr || tokens_ptr->empty()) {
+          return "";
+        }
+        return ParseTimingName(*tokens_ptr);
+      };
+      if (timing.kind == TimingCheckKind::kSetup) {
+        timing.data_event = parse_event(0, "setup data event");
+        timing.ref_event = parse_event(1, "setup reference event");
+        timing.limit = parse_limit(2, "setup limit");
+        timing.notifier = parse_name(3);
+      } else if (timing.kind == TimingCheckKind::kHold) {
+        timing.ref_event = parse_event(0, "hold reference event");
+        timing.data_event = parse_event(1, "hold data event");
+        timing.limit = parse_limit(2, "hold limit");
+        timing.notifier = parse_name(3);
+      } else if (timing.kind == TimingCheckKind::kSetupHold) {
+        timing.ref_event = parse_event(0, "setuphold reference event");
+        timing.data_event = parse_event(1, "setuphold data event");
+        timing.limit = parse_limit(2, "setuphold setup limit");
+        timing.limit2 = parse_limit(3, "setuphold hold limit");
+        timing.notifier = parse_name(4);
+        timing.check_cond = parse_expr(6, "setuphold start condition");
+        timing.delayed_ref = parse_name(7);
+        timing.delayed_data = parse_name(8);
+      } else if (timing.kind == TimingCheckKind::kRecovery ||
+                 timing.kind == TimingCheckKind::kRemoval) {
+        timing.data_event = parse_event(0, "recovery/removal data event");
+        timing.ref_event = parse_event(1, "recovery/removal reference event");
+        timing.limit = parse_limit(2, "recovery/removal limit");
+        timing.notifier = parse_name(3);
+      } else if (timing.kind == TimingCheckKind::kRecRem) {
+        timing.data_event = parse_event(0, "recrem data event");
+        timing.ref_event = parse_event(1, "recrem reference event");
+        timing.limit = parse_limit(2, "recrem recovery limit");
+        timing.limit2 = parse_limit(3, "recrem removal limit");
+        timing.notifier = parse_name(4);
+        timing.check_cond = parse_expr(6, "recrem start condition");
+        timing.delayed_ref = parse_name(7);
+        timing.delayed_data = parse_name(8);
+      } else if (timing.kind == TimingCheckKind::kSkew ||
+                 timing.kind == TimingCheckKind::kTimeSkew ||
+                 timing.kind == TimingCheckKind::kFullSkew) {
+        timing.data_event = parse_event(0, "skew data event");
+        timing.ref_event = parse_event(1, "skew reference event");
+        timing.limit = parse_limit(2, "skew limit");
+        if (timing.kind == TimingCheckKind::kFullSkew) {
+          timing.limit2 = parse_limit(3, "fullskew second limit");
+          timing.notifier = parse_name(4);
+          timing.event_based_flag = parse_expr(6, "event_based_flag");
+          timing.remain_active_flag = parse_expr(7, "remain_active_flag");
+        } else {
+          timing.notifier = parse_name(3);
+          timing.event_based_flag = parse_expr(4, "event_based_flag");
+          timing.remain_active_flag = parse_expr(5, "remain_active_flag");
+        }
+      } else if (timing.kind == TimingCheckKind::kWidth ||
+                 timing.kind == TimingCheckKind::kPulseWidth) {
+        timing.ref_event = parse_event(0, "width event");
+        timing.limit = parse_limit(1, "width limit");
+        if (timing.kind == TimingCheckKind::kPulseWidth) {
+          timing.limit2 = parse_limit(2, "pulsewidth limit2");
+          timing.threshold = parse_expr(3, "pulsewidth threshold");
+          timing.notifier = parse_name(4);
+        } else {
+          timing.threshold = parse_expr(2, "width threshold");
+          timing.notifier = parse_name(3);
+        }
+      } else if (timing.kind == TimingCheckKind::kPeriod) {
+        timing.ref_event = parse_event(0, "period event");
+        timing.limit = parse_limit(1, "period limit");
+        timing.notifier = parse_name(2);
+      } else if (timing.kind == TimingCheckKind::kNoChange) {
+        timing.ref_event = parse_event(0, "nochange reference event");
+        timing.data_event = parse_event(1, "nochange data event");
+        timing.limit = parse_limit(2, "nochange start");
+        timing.limit2 = parse_limit(3, "nochange end");
+        timing.notifier = parse_name(4);
+      }
+
+      const TimingCheckEvent* sdf_event = nullptr;
+      if (timing.ref_event.expr) {
+        sdf_event = &timing.ref_event;
+      } else if (timing.data_event.expr) {
+        sdf_event = &timing.data_event;
+      }
+      if (sdf_event) {
+        if (sdf_event->edge == EventEdgeKind::kPosedge) {
+          timing.edge = "posedge";
+        } else if (sdf_event->edge == EventEdgeKind::kNegedge) {
+          timing.edge = "negedge";
+        }
+        timing.signal = sdf_event->raw_expr;
+        timing.condition = sdf_event->raw_cond;
+      }
+      auto ensure_implicit_name = [&](size_t idx) -> bool {
+        const std::vector<Token>* tokens_ptr = arg_tokens(idx);
+        if (!tokens_ptr || tokens_ptr->empty()) {
+          return true;
+        }
+        if (tokens_ptr->size() == 1 &&
+            (*tokens_ptr)[0].kind == TokenKind::kIdentifier) {
+          return EnsureImplicitNet(module, (*tokens_ptr)[0].text);
+        }
+        return true;
+      };
+      if (!timing.delayed_ref.empty() &&
+          !ensure_implicit_name(7)) {
+        return false;
+      }
+      if (!timing.delayed_data.empty() &&
+          !ensure_implicit_name(8)) {
+        return false;
+      }
+      auto ensure_event_nets = [&](const TimingCheckEvent& event) -> bool {
+        if (event.expr &&
+            !EnsureImplicitNetsFromExpr(module, *event.expr)) {
+          return false;
+        }
+        if (event.cond &&
+            !EnsureImplicitNetsFromExpr(module, *event.cond)) {
+          return false;
+        }
+        return true;
+      };
+      if (!ensure_event_nets(timing.data_event) ||
+          !ensure_event_nets(timing.ref_event)) {
+        return false;
+      }
+      if (timing.check_cond &&
+          !EnsureImplicitNetsFromExpr(module, *timing.check_cond)) {
+        return false;
+      }
       module->timing_checks.push_back(std::move(timing));
     }
     return true;
@@ -3714,6 +4150,14 @@ class Parser {
         bool show = stmt_start.text == "showcancelled";
         if (!HandleSpecifyShowCancelled(stmt_tokens, &state, show,
                                         stmt_start)) {
+          return false;
+        }
+        continue;
+      }
+      if (stmt_start.kind == TokenKind::kIdentifier &&
+          !stmt_start.text.empty() && stmt_start.text[0] == '$') {
+        if (!HandleSpecifyTimingCheck(module, stmt_tokens, stmt_start,
+                                      negative_config.mode)) {
           return false;
         }
         continue;
