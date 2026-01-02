@@ -1021,6 +1021,21 @@ constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;
 
 ---
 
+### `GPGA_SERVICE_KIND_SHOWCANCELLED`
+
+```cpp
+constant constexpr uint GPGA_SERVICE_KIND_SHOWCANCELLED = 42u;
+```
+
+**Description**: Cancellation report for specify-path delays when
+`showcancelled` is in effect.
+
+**Verilog**: `showcancelled` / `noshowcancelled` path options.
+
+**Arguments** (numeric): `delay_id`, `index_val`, `index_xz`, `time`.
+
+---
+
 ## Code Generation Macros
 
 ### `GPGA_SCHED_DEFINE_CONSTANTS`

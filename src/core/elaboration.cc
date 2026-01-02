@@ -55,6 +55,13 @@ Instance CloneInstance(const Instance& instance) {
   Instance out;
   out.module_name = instance.module_name;
   out.name = instance.name;
+  out.has_array = instance.has_array;
+  if (instance.array_msb) {
+    out.array_msb = CloneExpr(*instance.array_msb);
+  }
+  if (instance.array_lsb) {
+    out.array_lsb = CloneExpr(*instance.array_lsb);
+  }
   for (const auto& override_item : instance.param_overrides) {
     ParamOverride param;
     param.name = override_item.name;
@@ -6518,6 +6525,51 @@ bool InlineModule(const Program& program, const Module& module,
     }
     return true;
   };
+  auto clone_assign_target = [&](const SequentialAssign& assign,
+                                 SequentialAssign* out_assign) -> bool {
+    if (!out_assign) {
+      return false;
+    }
+    out_assign->lhs = rename(assign.lhs);
+    out_assign->lhs_has_range = assign.lhs_has_range;
+    out_assign->lhs_indexed_range = assign.lhs_indexed_range;
+    out_assign->lhs_indexed_desc = assign.lhs_indexed_desc;
+    out_assign->lhs_indexed_width = assign.lhs_indexed_width;
+    out_assign->lhs_msb = assign.lhs_msb;
+    out_assign->lhs_lsb = assign.lhs_lsb;
+    out_assign->nonblocking = assign.nonblocking;
+    out_assign->lhs_indices.clear();
+    out_assign->lhs_indices.reserve(assign.lhs_indices.size());
+    for (const auto& index : assign.lhs_indices) {
+      if (!index) {
+        continue;
+      }
+      auto cloned = clone_timing_expr(index);
+      if (!cloned) {
+        return false;
+      }
+      out_assign->lhs_indices.push_back(std::move(cloned));
+    }
+    if (assign.lhs_index) {
+      out_assign->lhs_index = clone_timing_expr(assign.lhs_index);
+      if (!out_assign->lhs_index) {
+        return false;
+      }
+    }
+    if (assign.lhs_msb_expr) {
+      out_assign->lhs_msb_expr = clone_timing_expr(assign.lhs_msb_expr);
+      if (!out_assign->lhs_msb_expr) {
+        return false;
+      }
+    }
+    if (assign.lhs_lsb_expr) {
+      out_assign->lhs_lsb_expr = clone_timing_expr(assign.lhs_lsb_expr);
+      if (!out_assign->lhs_lsb_expr) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   for (const auto& check : module.timing_checks) {
     TimingCheck flattened;
@@ -6570,44 +6622,195 @@ bool InlineModule(const Program& program, const Module& module,
     out->timing_checks.push_back(std::move(flattened));
   }
 
-  for (const auto& instance : module.instances) {
-    const Module* child = FindModule(program, instance.module_name);
-    if (!child) {
+  for (const auto& path : module.specify_paths) {
+    SpecifyPath flattened;
+    flattened.kind = path.kind;
+    flattened.polarity = path.polarity;
+    flattened.is_conditional = path.is_conditional;
+    flattened.is_ifnone = path.is_ifnone;
+    flattened.showcancelled = path.showcancelled;
+    flattened.line = path.line;
+    flattened.column = path.column;
+    if (!clone_timing_event(path.input_event, &flattened.input_event)) {
+      return false;
+    }
+    flattened.data_expr = clone_timing_expr(path.data_expr);
+    if (path.data_expr && !flattened.data_expr) {
+      return false;
+    }
+    flattened.condition = clone_timing_expr(path.condition);
+    if (path.condition && !flattened.condition) {
+      return false;
+    }
+    if (!clone_assign_target(path.target, &flattened.target)) {
+      return false;
+    }
+    flattened.pulse_input = rename(path.pulse_input);
+    auto find_pathpulse = [&](const std::string& input,
+                              const std::string& output)
+        -> const PathPulseSpec* {
+      std::string key;
+      if (!input.empty() && !output.empty()) {
+        key = "PATHPULSE$" + input + "$" + output;
+        auto it = module.path_pulses.find(key);
+        if (it != module.path_pulses.end()) {
+          return &it->second;
+        }
+      }
+      if (!output.empty()) {
+        key = "PATHPULSE$" + output;
+        auto it = module.path_pulses.find(key);
+        if (it != module.path_pulses.end()) {
+          return &it->second;
+        }
+      }
+      auto it = module.path_pulses.find("PATHPULSE$");
+      if (it != module.path_pulses.end()) {
+        return &it->second;
+      }
+      return nullptr;
+    };
+    const PathPulseSpec* pulse =
+        find_pathpulse(path.pulse_input, path.target.lhs);
+    if (pulse) {
+      flattened.has_pulse = true;
+      flattened.pulse_reject.min = clone_timing_expr(pulse->reject.min);
+      flattened.pulse_reject.typ = clone_timing_expr(pulse->reject.typ);
+      flattened.pulse_reject.max = clone_timing_expr(pulse->reject.max);
+      if ((pulse->reject.min && !flattened.pulse_reject.min) ||
+          (pulse->reject.typ && !flattened.pulse_reject.typ) ||
+          (pulse->reject.max && !flattened.pulse_reject.max)) {
+        return false;
+      }
+      if (pulse->has_error) {
+        flattened.has_pulse_error = true;
+        flattened.pulse_error.min = clone_timing_expr(pulse->error.min);
+        flattened.pulse_error.typ = clone_timing_expr(pulse->error.typ);
+        flattened.pulse_error.max = clone_timing_expr(pulse->error.max);
+        if ((pulse->error.min && !flattened.pulse_error.min) ||
+            (pulse->error.typ && !flattened.pulse_error.typ) ||
+            (pulse->error.max && !flattened.pulse_error.max)) {
+          return false;
+        }
+      }
+    }
+    flattened.delays.reserve(path.delays.size());
+    for (const auto& delay : path.delays) {
+      TimingCheckLimit cloned;
+      cloned.min = clone_timing_expr(delay.min);
+      cloned.typ = clone_timing_expr(delay.typ);
+      cloned.max = clone_timing_expr(delay.max);
+      if ((delay.min && !cloned.min) || (delay.typ && !cloned.typ) ||
+          (delay.max && !cloned.max)) {
+        return false;
+      }
+      flattened.delays.push_back(std::move(cloned));
+    }
+    out->specify_paths.push_back(std::move(flattened));
+  }
+
+  struct ExpandedInstance {
+    Instance instance;
+    size_t array_slot = 0;
+    size_t array_count = 1;
+  };
+  auto expand_instance_array =
+      [&](const Instance& instance,
+          std::vector<ExpandedInstance>* out_instances) -> bool {
+    if (!out_instances) {
+      return false;
+    }
+    if (!instance.has_array) {
+      out_instances->push_back(ExpandedInstance{CloneInstance(instance), 0u, 1u});
+      return true;
+    }
+    if (!instance.array_msb) {
       diagnostics->Add(Severity::kError,
-                       "unknown module '" + instance.module_name + "'");
+                       "instance array requires msb expression");
       return false;
     }
+    int64_t msb = 0;
+    int64_t lsb = 0;
+    if (!EvalConstExprWithParams(*instance.array_msb, params, &msb,
+                                 diagnostics, "instance array msb")) {
+      return false;
+    }
+    if (instance.array_lsb) {
+      if (!EvalConstExprWithParams(*instance.array_lsb, params, &lsb,
+                                   diagnostics, "instance array lsb")) {
+        return false;
+      }
+    } else {
+      lsb = msb;
+    }
+    std::vector<int64_t> indices;
+    int64_t step = (msb <= lsb) ? 1 : -1;
+    for (int64_t value = msb;; value += step) {
+      indices.push_back(value);
+      if (value == lsb) {
+        break;
+      }
+    }
+    const size_t count = indices.size();
+    for (size_t slot = 0; slot < count; ++slot) {
+      ExpandedInstance expanded;
+      expanded.instance = CloneInstance(instance);
+      expanded.instance.name =
+          instance.name + "__" + std::to_string(indices[slot]);
+      expanded.instance.has_array = false;
+      expanded.instance.array_msb.reset();
+      expanded.instance.array_lsb.reset();
+      expanded.array_slot = slot;
+      expanded.array_count = count;
+      out_instances->push_back(std::move(expanded));
+    }
+    return true;
+  };
 
-    Instance effective_instance = CloneInstance(instance);
-    std::vector<DefParam> child_defparams;
-    if (!ApplyDefparamsToInstance(module.defparams, instance,
-                                  &effective_instance, &child_defparams,
-                                  diagnostics)) {
+  for (const auto& instance : module.instances) {
+    std::vector<ExpandedInstance> expanded_instances;
+    if (!expand_instance_array(instance, &expanded_instances)) {
       return false;
     }
-    if (inherited_defparams &&
-        !ApplyDefparamsToInstance(*inherited_defparams, instance,
-                                  &effective_instance, &child_defparams,
-                                  diagnostics)) {
-      return false;
-    }
+    for (const auto& expanded : expanded_instances) {
+      const Instance& inst = expanded.instance;
+      const Module* child = FindModule(program, inst.module_name);
+      if (!child) {
+        diagnostics->Add(Severity::kError,
+                         "unknown module '" + inst.module_name + "'");
+        return false;
+      }
 
-    ParamBindings child_params;
-    if (!BuildParamBindings(*child, &effective_instance, &params, &child_params,
-                            diagnostics)) {
-      return false;
-    }
+      Instance effective_instance = CloneInstance(inst);
+      std::vector<DefParam> child_defparams;
+      if (!ApplyDefparamsToInstance(module.defparams, inst,
+                                    &effective_instance, &child_defparams,
+                                    diagnostics)) {
+        return false;
+      }
+      if (inherited_defparams &&
+          !ApplyDefparamsToInstance(*inherited_defparams, inst,
+                                    &effective_instance, &child_defparams,
+                                    diagnostics)) {
+        return false;
+      }
 
-    std::string child_prefix = prefix + instance.name + "__";
-    std::string child_hier = hier_prefix + "." + instance.name;
-    std::unordered_map<std::string, PortBinding> child_port_map;
-    std::unordered_set<std::string> child_ports;
-    std::unordered_map<std::string, PortDir> child_port_dirs;
-    std::unordered_map<std::string, int> child_port_widths;
-    std::unordered_map<std::string, bool> child_port_signed;
-    std::unordered_map<std::string, bool> child_port_real;
-    std::unordered_map<std::string, NetType> child_port_types;
-    std::unordered_map<std::string, ChargeStrength> child_port_charge;
+      ParamBindings child_params;
+      if (!BuildParamBindings(*child, &effective_instance, &params,
+                              &child_params, diagnostics)) {
+        return false;
+      }
+
+      std::string child_prefix = prefix + inst.name + "__";
+      std::string child_hier = hier_prefix + "." + inst.name;
+      std::unordered_map<std::string, PortBinding> child_port_map;
+      std::unordered_set<std::string> child_ports;
+      std::unordered_map<std::string, PortDir> child_port_dirs;
+      std::unordered_map<std::string, int> child_port_widths;
+      std::unordered_map<std::string, bool> child_port_signed;
+      std::unordered_map<std::string, bool> child_port_real;
+      std::unordered_map<std::string, NetType> child_port_types;
+      std::unordered_map<std::string, ChargeStrength> child_port_charge;
     for (const auto& port : child->ports) {
       int width = port.width;
       if (!ResolveRangeWidth(port.width, port.msb_expr, port.lsb_expr,
@@ -6632,20 +6835,114 @@ bool InlineModule(const Program& program, const Module& module,
       child_port_charge[port.name] = port_charge;
       child_port_map[port.name] = PortBinding{child_prefix + port.name};
     }
+    auto resolve_connection_expr = [&](const Expr& expr,
+                                       int port_width) -> std::unique_ptr<Expr> {
+      auto resolved = CloneExprWithParams(expr, rename, params, &module,
+                                          diagnostics, nullptr);
+      if (!resolved) {
+        return nullptr;
+      }
+      resolved = SimplifyExpr(std::move(resolved), *out);
+      auto slice_concat =
+          [&](const Expr& concat, int slice_msb,
+              int slice_lsb) -> std::unique_ptr<Expr> {
+        int total_width = ExprWidth(concat, *out);
+        if (total_width <= 0) {
+          return nullptr;
+        }
+        int cursor = total_width;
+        std::vector<std::unique_ptr<Expr>> parts;
+        for (const auto& element : concat.elements) {
+          if (!element) {
+            return nullptr;
+          }
+          int width = ExprWidth(*element, *out);
+          if (width <= 0) {
+            return nullptr;
+          }
+          int elem_msb = cursor - 1;
+          int elem_lsb = cursor - width;
+          cursor = elem_lsb;
+          if (slice_msb < elem_lsb || slice_lsb > elem_msb) {
+            continue;
+          }
+          int over_msb = std::min(slice_msb, elem_msb);
+          int over_lsb = std::max(slice_lsb, elem_lsb);
+          int local_msb = over_msb - elem_lsb;
+          int local_lsb = over_lsb - elem_lsb;
+          auto part = CloneExpr(*element);
+          if (!part) {
+            return nullptr;
+          }
+          if (!(local_msb == width - 1 && local_lsb == 0)) {
+            part = MakeRangeSelectExpr(std::move(part), local_msb, local_lsb);
+            if (local_msb == local_lsb) {
+              part->has_range = false;
+            }
+          }
+          parts.push_back(std::move(part));
+        }
+        if (parts.empty()) {
+          return nullptr;
+        }
+        if (parts.size() == 1) {
+          return std::move(parts[0]);
+        }
+        auto result = std::make_unique<Expr>();
+        result->kind = ExprKind::kConcat;
+        result->repeat = 1;
+        for (auto& part : parts) {
+          result->elements.push_back(std::move(part));
+        }
+        return result;
+      };
+      if (expanded.array_count > 1 && port_width > 0) {
+        if (resolved->kind == ExprKind::kConcat && resolved->repeat == 1 &&
+            resolved->elements.size() == expanded.array_count) {
+          auto element = std::move(resolved->elements[expanded.array_slot]);
+          if (!element) {
+            return nullptr;
+          }
+          return SimplifyExpr(std::move(element), *out);
+        }
+        int expr_width = ExprWidth(*resolved, *out);
+        int expected = static_cast<int>(expanded.array_count) * port_width;
+        if (expr_width == expected) {
+          int slice_msb =
+              expected - 1 - static_cast<int>(expanded.array_slot) * port_width;
+          int slice_lsb = slice_msb - port_width + 1;
+          if (resolved->kind == ExprKind::kConcat && resolved->repeat == 1) {
+            auto sliced = slice_concat(*resolved, slice_msb, slice_lsb);
+            if (!sliced) {
+              return nullptr;
+            }
+            return SimplifyExpr(std::move(sliced), *out);
+          } else {
+            auto sliced =
+                MakeRangeSelectExpr(std::move(resolved), slice_msb, slice_lsb);
+            if (port_width == 1) {
+              sliced->has_range = false;
+            }
+            return SimplifyExpr(std::move(sliced), *out);
+          }
+        }
+      }
+      return resolved;
+    };
     std::unordered_set<std::string> seen_ports;
     std::unordered_set<std::string> connected_ports;
-    const bool positional = !instance.connections.empty() &&
-                            !instance.connections.front().port.empty() &&
+    const bool positional = !inst.connections.empty() &&
+                            !inst.connections.front().port.empty() &&
                             std::isdigit(static_cast<unsigned char>(
-                                instance.connections.front().port[0]));
+                                inst.connections.front().port[0]));
     size_t position = 0;
-    for (const auto& connection : instance.connections) {
+    for (const auto& connection : inst.connections) {
       std::string port_name;
       if (positional) {
         if (position >= child->ports.size()) {
           diagnostics->Add(Severity::kError,
                            "too many positional connections in instance '" +
-                               instance.name + "'");
+                               inst.name + "'");
           return false;
         }
         port_name = child->ports[position].name;
@@ -6657,13 +6954,13 @@ bool InlineModule(const Program& program, const Module& module,
       if (child_ports.count(port_name) == 0) {
         diagnostics->Add(Severity::kError,
                          "unknown port '" + port_name +
-                             "' in instance '" + instance.name + "'");
+                             "' in instance '" + inst.name + "'");
         return false;
       }
       if (seen_ports.count(port_name) > 0) {
         diagnostics->Add(Severity::kError,
                          "duplicate connection for port '" + port_name +
-                             "' in instance '" + instance.name + "'");
+                             "' in instance '" + inst.name + "'");
         return false;
       }
       seen_ports.insert(port_name);
@@ -6671,8 +6968,9 @@ bool InlineModule(const Program& program, const Module& module,
         continue;
       }
       connected_ports.insert(port_name);
-      auto resolved_expr = CloneExprWithParams(*connection.expr, rename, params,
-                                               &module, diagnostics, nullptr);
+      auto resolved_expr =
+          resolve_connection_expr(*connection.expr,
+                                  child_port_widths[port_name]);
       if (!resolved_expr) {
         return false;
       }
@@ -6904,13 +7202,13 @@ bool InlineModule(const Program& program, const Module& module,
           }
           diagnostics->Add(Severity::kWarning,
                            "unconnected input '" + port.name +
-                               "' in instance '" + instance.name +
+                               "' in instance '" + inst.name +
                                "' (defaulting to " + default_label + ")");
           out->assigns.push_back(std::move(default_assign));
         } else {
           diagnostics->Add(Severity::kWarning,
                            "unconnected output '" + port.name +
-                               "' in instance '" + instance.name + "'");
+                               "' in instance '" + inst.name + "'");
         }
       }
     }
@@ -6921,6 +7219,7 @@ bool InlineModule(const Program& program, const Module& module,
                       child_port_map, out, diagnostics, stack, net_names,
                       flat_to_hier, enable_4state, child_defparam_ptr)) {
       return false;
+    }
     }
   }
 

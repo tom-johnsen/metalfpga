@@ -3118,6 +3118,14 @@ class Parser {
     SpecifyDestKind kind = SpecifyDestKind::kNone;
   };
 
+  struct SpecifyPathArrow {
+    size_t index = 0;
+    size_t token_count = 0;
+    SpecifyPathKind kind = SpecifyPathKind::kParallel;
+    SpecifyPathPolarity polarity = SpecifyPathPolarity::kNone;
+    bool valid = false;
+  };
+
   struct SpecifyState {
     std::unordered_map<std::string, SpecifyDestKind> conditional_dest_kind;
     std::unordered_set<std::string> path_outputs;
@@ -3292,9 +3300,17 @@ class Parser {
   std::vector<SpecifyDestInfo> ParseSpecifyDestinations(
       const std::vector<Token>& tokens) {
     std::vector<SpecifyDestInfo> outputs;
+    int paren_depth = 0;
+    int brace_depth = 0;
     size_t i = 0;
     while (i < tokens.size()) {
       const Token& token = tokens[i];
+      bool at_top = (paren_depth == 0 && brace_depth == 0);
+      if (token.kind == TokenKind::kSymbol &&
+          (token.text == ":" || token.text == "+:" || token.text == "-:") &&
+          at_top) {
+        break;
+      }
       if (token.kind == TokenKind::kIdentifier) {
         SpecifyDestInfo info;
         info.name = ConsumeHierNameFromTokens(tokens, &i);
@@ -3310,6 +3326,17 @@ class Parser {
       if (token.kind == TokenKind::kSymbol && token.text == "[") {
         i = SkipBracketTokens(tokens, i);
         continue;
+      }
+      if (token.kind == TokenKind::kSymbol) {
+        if (token.text == "(") {
+          ++paren_depth;
+        } else if (token.text == ")" && paren_depth > 0) {
+          --paren_depth;
+        } else if (token.text == "{") {
+          ++brace_depth;
+        } else if (token.text == "}" && brace_depth > 0) {
+          --brace_depth;
+        }
       }
       ++i;
     }
@@ -3342,20 +3369,58 @@ class Parser {
     return outputs;
   }
 
-  size_t FindPathArrow(const std::vector<Token>& tokens) {
-    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
-      if (tokens[i].kind != TokenKind::kSymbol ||
-          tokens[i + 1].kind != TokenKind::kSymbol) {
+  SpecifyPathArrow FindSpecifyPathArrow(const std::vector<Token>& tokens,
+                                        size_t start_index) {
+    SpecifyPathArrow arrow;
+    for (size_t i = start_index; i + 1 < tokens.size(); ++i) {
+      if (tokens[i].kind != TokenKind::kSymbol) {
         continue;
       }
-      if (tokens[i].text == "=" && tokens[i + 1].text == ">") {
-        return i;
+      std::string first = tokens[i].text;
+      std::string second =
+          (i + 1 < tokens.size() && tokens[i + 1].kind == TokenKind::kSymbol)
+              ? tokens[i + 1].text
+              : "";
+      std::string third =
+          (i + 2 < tokens.size() && tokens[i + 2].kind == TokenKind::kSymbol)
+              ? tokens[i + 2].text
+              : "";
+      if ((first == "+" || first == "-") && second == "=" && third == ">") {
+        arrow.index = i;
+        arrow.token_count = 3;
+        arrow.kind = SpecifyPathKind::kParallel;
+        arrow.polarity = (first == "+") ? SpecifyPathPolarity::kPositive
+                                        : SpecifyPathPolarity::kNegative;
+        arrow.valid = true;
+        return arrow;
       }
-      if (tokens[i].text == "*" && tokens[i + 1].text == ">") {
-        return i;
+      if ((first == "+" || first == "-") && second == "*" && third == ">") {
+        arrow.index = i;
+        arrow.token_count = 3;
+        arrow.kind = SpecifyPathKind::kFull;
+        arrow.polarity = (first == "+") ? SpecifyPathPolarity::kPositive
+                                        : SpecifyPathPolarity::kNegative;
+        arrow.valid = true;
+        return arrow;
+      }
+      if (first == "=" && second == ">") {
+        arrow.index = i;
+        arrow.token_count = 2;
+        arrow.kind = SpecifyPathKind::kParallel;
+        arrow.polarity = SpecifyPathPolarity::kNone;
+        arrow.valid = true;
+        return arrow;
+      }
+      if (first == "*" && second == ">") {
+        arrow.index = i;
+        arrow.token_count = 2;
+        arrow.kind = SpecifyPathKind::kFull;
+        arrow.polarity = SpecifyPathPolarity::kNone;
+        arrow.valid = true;
+        return arrow;
       }
     }
-    return tokens.size();
+    return arrow;
   }
 
   size_t FindDelayAssignIndex(const std::vector<Token>& tokens,
@@ -3375,6 +3440,296 @@ class Parser {
       UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
     }
     return tokens.size();
+  }
+
+  bool ParseSpecifyCondition(const std::vector<Token>& tokens,
+                             size_t* out_path_start,
+                             std::unique_ptr<Expr>* out_cond,
+                             bool* out_ifnone,
+                             bool* out_conditional,
+                             const Token& start_token) {
+    if (out_path_start) {
+      *out_path_start = 0;
+    }
+    if (out_cond) {
+      out_cond->reset();
+    }
+    if (out_ifnone) {
+      *out_ifnone = false;
+    }
+    if (out_conditional) {
+      *out_conditional = false;
+    }
+    if (tokens.empty()) {
+      return true;
+    }
+    if (tokens[0].kind != TokenKind::kIdentifier) {
+      return true;
+    }
+    std::string head = tokens[0].text;
+    if (head != "if" && head != "ifnone") {
+      return true;
+    }
+    if (out_conditional) {
+      *out_conditional = true;
+    }
+    if (head == "ifnone") {
+      if (out_ifnone) {
+        *out_ifnone = true;
+      }
+      if (out_path_start) {
+        *out_path_start = 1;
+      }
+      return true;
+    }
+    size_t i = 1;
+    if (i >= tokens.size() || tokens[i].kind != TokenKind::kSymbol ||
+        tokens[i].text != "(") {
+      diagnostics_->Add(Severity::kError,
+                        "expected '(' after if in specify path",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    int depth = 0;
+    size_t cond_start = i + 1;
+    size_t cond_end = tokens.size();
+    for (; i < tokens.size(); ++i) {
+      if (tokens[i].kind == TokenKind::kSymbol) {
+        if (tokens[i].text == "(") {
+          ++depth;
+        } else if (tokens[i].text == ")") {
+          --depth;
+          if (depth == 0) {
+            cond_end = i;
+            break;
+          }
+        }
+      }
+    }
+    if (cond_end <= cond_start || cond_end >= tokens.size()) {
+      diagnostics_->Add(Severity::kError,
+                        "expected ')' to close specify if condition",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    std::vector<Token> cond_tokens(tokens.begin() + cond_start,
+                                   tokens.begin() + cond_end);
+    if (out_cond) {
+      *out_cond = ParseExprFromTokens(cond_tokens, start_token,
+                                      "specify path condition");
+      if (!*out_cond) {
+        return false;
+      }
+    }
+    if (out_path_start) {
+      *out_path_start = cond_end + 1;
+    }
+    return true;
+  }
+
+  bool BuildSpecifyTargetFromExpr(const Expr& expr, SequentialAssign* out) {
+    if (!out) {
+      return false;
+    }
+    if (expr.kind == ExprKind::kIdentifier) {
+      out->lhs = expr.ident;
+      return true;
+    }
+    GateOutputInfo info;
+    if (!ResolveGateOutput(expr, &info, false)) {
+      return false;
+    }
+    out->lhs = info.name;
+    out->lhs_has_range = info.has_range;
+    out->lhs_msb = info.msb;
+    out->lhs_lsb = info.lsb;
+    out->lhs_msb_expr = std::move(info.msb_expr);
+    out->lhs_lsb_expr = std::move(info.lsb_expr);
+    for (auto& idx : info.indices) {
+      out->lhs_indices.push_back(std::move(idx));
+    }
+    return true;
+  }
+
+  bool ParseSpecifyOutputDescriptor(
+      const std::vector<Token>& tokens, SpecifyPathPolarity* out_polarity,
+      std::unique_ptr<Expr>* out_data,
+      std::vector<SequentialAssign>* out_targets,
+      const Token& start_token) {
+    if (out_polarity) {
+      *out_polarity = SpecifyPathPolarity::kNone;
+    }
+    if (out_data) {
+      out_data->reset();
+    }
+    if (!out_targets) {
+      return false;
+    }
+    out_targets->clear();
+    std::vector<Token> stripped = StripOuterParensTokens(tokens);
+    int paren_depth = 0;
+    int bracket_depth = 0;
+    int brace_depth = 0;
+    size_t split_index = stripped.size();
+    std::string split_token;
+    for (size_t i = 0; i < stripped.size(); ++i) {
+      const Token& token = stripped[i];
+      UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
+      if (paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 &&
+          token.kind == TokenKind::kSymbol &&
+          (token.text == ":" || token.text == "+:" || token.text == "-:")) {
+        split_index = i;
+        split_token = token.text;
+        break;
+      }
+    }
+    SpecifyPathPolarity polarity = SpecifyPathPolarity::kNone;
+    size_t output_end = split_index;
+    if (split_index < stripped.size()) {
+      if (split_token == "+:") {
+        polarity = SpecifyPathPolarity::kPositive;
+        output_end = split_index;
+      } else if (split_token == "-:") {
+        polarity = SpecifyPathPolarity::kNegative;
+        output_end = split_index;
+      } else if (split_index > 0 &&
+                 stripped[split_index - 1].kind == TokenKind::kSymbol) {
+        if (stripped[split_index - 1].text == "+") {
+          polarity = SpecifyPathPolarity::kPositive;
+          output_end = split_index - 1;
+        } else if (stripped[split_index - 1].text == "-") {
+          polarity = SpecifyPathPolarity::kNegative;
+          output_end = split_index - 1;
+        }
+      }
+    }
+    if (out_polarity) {
+      *out_polarity = polarity;
+    }
+    std::vector<Token> output_tokens(stripped.begin(),
+                                     stripped.begin() + output_end);
+    if (output_tokens.empty()) {
+      diagnostics_->Add(Severity::kError,
+                        "specify path output is missing",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    std::vector<std::vector<Token>> outputs;
+    std::vector<Token> current;
+    paren_depth = 0;
+    bracket_depth = 0;
+    brace_depth = 0;
+    for (const auto& token : output_tokens) {
+      bool at_top = (paren_depth == 0 && bracket_depth == 0 &&
+                     brace_depth == 0);
+      if (token.kind == TokenKind::kSymbol && token.text == "," && at_top) {
+        if (current.empty()) {
+          diagnostics_->Add(Severity::kError,
+                            "specify path output is missing",
+                            SourceLocation{path_, start_token.line,
+                                           start_token.column});
+          return false;
+        }
+        outputs.push_back(std::move(current));
+        current.clear();
+        continue;
+      }
+      UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
+      current.push_back(token);
+    }
+    if (!current.empty()) {
+      outputs.push_back(std::move(current));
+    }
+    if (outputs.empty()) {
+      diagnostics_->Add(Severity::kError,
+                        "specify path output is missing",
+                        SourceLocation{path_, start_token.line,
+                                       start_token.column});
+      return false;
+    }
+    for (auto& entry : outputs) {
+      if (entry.empty()) {
+        diagnostics_->Add(Severity::kError,
+                          "specify path output is missing",
+                          SourceLocation{path_, start_token.line,
+                                         start_token.column});
+        return false;
+      }
+      std::vector<Token> entry_tokens = StripOuterParensTokens(entry);
+      std::unique_ptr<Expr> output_expr =
+          ParseExprFromTokens(entry_tokens, start_token,
+                              "specify path output");
+      if (!output_expr) {
+        return false;
+      }
+      SequentialAssign target;
+      if (!BuildSpecifyTargetFromExpr(*output_expr, &target)) {
+        return false;
+      }
+      out_targets->push_back(std::move(target));
+    }
+    if (split_index < stripped.size()) {
+      std::vector<Token> data_tokens(stripped.begin() + split_index + 1,
+                                     stripped.end());
+      if (data_tokens.empty()) {
+        diagnostics_->Add(Severity::kError,
+                          "specify path data is missing",
+                          SourceLocation{path_, start_token.line,
+                                         start_token.column});
+        return false;
+      }
+      if (out_data) {
+        *out_data = ParseExprFromTokens(data_tokens, start_token,
+                                        "specify path data");
+        if (!*out_data) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool ParseSpecifyPathDelays(const std::vector<Token>& tokens,
+                              const Token& start_token,
+                              std::vector<TimingCheckLimit>* out_delays) {
+    if (!out_delays) {
+      return false;
+    }
+    out_delays->clear();
+    std::vector<Token> stripped = StripOuterParensTokens(tokens);
+    if (stripped.empty()) {
+      return true;
+    }
+    std::vector<std::vector<Token>> entries;
+    std::vector<Token> current;
+    int paren_depth = 0;
+    int bracket_depth = 0;
+    int brace_depth = 0;
+    for (const auto& token : stripped) {
+      bool at_top = (paren_depth == 0 && bracket_depth == 0 && brace_depth == 0);
+      if (token.kind == TokenKind::kSymbol && token.text == "," && at_top) {
+        entries.push_back(std::move(current));
+        current.clear();
+        continue;
+      }
+      UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
+      current.push_back(token);
+    }
+    if (!current.empty()) {
+      entries.push_back(std::move(current));
+    }
+    for (const auto& entry : entries) {
+      if (entry.empty()) {
+        continue;
+      }
+      TimingCheckLimit limit = ParseTimingLimitTokens(entry, start_token,
+                                                      "specify path delay");
+      out_delays->push_back(std::move(limit));
+    }
+    return true;
   }
 
   bool SplitSpecifyCallArgs(const std::vector<Token>& tokens,
@@ -4033,28 +4388,40 @@ class Parser {
     return true;
   }
 
-  bool HandleSpecifyPath(const std::vector<Token>& tokens,
+  bool HandleSpecifyPath(Module* module, const std::vector<Token>& tokens,
                          SpecifyState* state, const Token& start_token) {
-    if (!state) {
+    if (!state || !module) {
       return false;
     }
-    size_t arrow_index = FindPathArrow(tokens);
-    if (arrow_index >= tokens.size()) {
-      return true;
-    }
+    size_t path_start = 0;
+    std::unique_ptr<Expr> condition;
+    bool is_ifnone = false;
     bool is_conditional = false;
-    if (!tokens.empty() && tokens[0].kind == TokenKind::kIdentifier) {
-      if (tokens[0].text == "if" || tokens[0].text == "ifnone") {
-        is_conditional = true;
-      }
+    if (!ParseSpecifyCondition(tokens, &path_start, &condition, &is_ifnone,
+                               &is_conditional, start_token)) {
+      return false;
     }
-    size_t dest_start = arrow_index + 2;
-    size_t dest_end = FindDelayAssignIndex(tokens, dest_start);
-    if (dest_end <= dest_start || dest_end > tokens.size()) {
+    std::vector<Token> path_tokens(tokens.begin() + path_start, tokens.end());
+    SpecifyPathArrow arrow = FindSpecifyPathArrow(path_tokens, 0);
+    if (!arrow.valid) {
       return true;
     }
-    std::vector<Token> dest_tokens(tokens.begin() + dest_start,
-                                   tokens.begin() + dest_end);
+    size_t dest_start = arrow.index + arrow.token_count;
+    size_t dest_end = FindDelayAssignIndex(path_tokens, dest_start);
+    if (dest_end <= dest_start || dest_end > path_tokens.size()) {
+      return true;
+    }
+    std::vector<Token> path_body(path_tokens.begin(),
+                                 path_tokens.begin() + dest_end);
+    path_body = StripOuterParensTokens(path_body);
+    arrow = FindSpecifyPathArrow(path_body, 0);
+    if (!arrow.valid) {
+      return true;
+    }
+    dest_start = arrow.index + arrow.token_count;
+    std::vector<Token> dest_tokens(path_body.begin() + dest_start,
+                                   path_body.end());
+    dest_tokens = StripOuterParensTokens(dest_tokens);
     std::vector<SpecifyDestInfo> dests =
         ParseSpecifyDestinations(dest_tokens);
     for (const auto& dest : dests) {
@@ -4077,6 +4444,145 @@ class Parser {
                           SourceLocation{path_, start_token.line,
                                          start_token.column});
         return false;
+      }
+    }
+    std::vector<Token> src_tokens(path_body.begin(),
+                                  path_body.begin() + arrow.index);
+    src_tokens = StripOuterParensTokens(src_tokens);
+    std::vector<std::vector<Token>> input_entries;
+    {
+      std::vector<Token> current;
+      int paren_depth = 0;
+      int bracket_depth = 0;
+      int brace_depth = 0;
+      for (const auto& token : src_tokens) {
+        bool at_top = (paren_depth == 0 && bracket_depth == 0 &&
+                       brace_depth == 0);
+        if (token.kind == TokenKind::kSymbol && token.text == "," && at_top) {
+          if (!current.empty()) {
+            input_entries.push_back(std::move(current));
+            current.clear();
+          }
+          continue;
+        }
+        UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
+        current.push_back(token);
+      }
+      if (!current.empty()) {
+        input_entries.push_back(std::move(current));
+      }
+      if (input_entries.empty()) {
+        input_entries.push_back(std::move(src_tokens));
+      }
+    }
+    std::vector<TimingCheckEvent> input_events;
+    input_events.reserve(input_entries.size());
+    for (auto& entry : input_entries) {
+      std::vector<Token> entry_tokens = StripOuterParensTokens(entry);
+      TimingCheckEvent input_event = ParseTimingEventTokens(
+          entry_tokens, start_token, "specify path input");
+      if (!input_event.expr) {
+        return true;
+      }
+      input_events.push_back(std::move(input_event));
+    }
+    std::string pulse_input;
+    if (!input_events.empty()) {
+      const TimingCheckEvent& first_event = input_events.front();
+      if (first_event.expr &&
+          first_event.expr->kind == ExprKind::kIdentifier) {
+        pulse_input = first_event.expr->ident;
+      } else {
+        pulse_input = first_event.raw_expr;
+      }
+    }
+    SpecifyPathPolarity dest_polarity = SpecifyPathPolarity::kNone;
+    std::unique_ptr<Expr> data_expr;
+    std::vector<SequentialAssign> targets;
+    if (!ParseSpecifyOutputDescriptor(dest_tokens, &dest_polarity, &data_expr,
+                                      &targets, start_token)) {
+      return false;
+    }
+    std::vector<Token> delay_tokens;
+    if (dest_end + 1 <= path_tokens.size()) {
+      delay_tokens.assign(path_tokens.begin() + dest_end + 1,
+                          path_tokens.end());
+    }
+    std::vector<TimingCheckLimit> delays;
+    if (!ParseSpecifyPathDelays(delay_tokens, start_token, &delays)) {
+      return false;
+    }
+    auto clone_expr = [](const std::unique_ptr<Expr>& expr) {
+      return expr ? CloneExpr(*expr) : nullptr;
+    };
+    auto clone_event = [&](const TimingCheckEvent& event) {
+      TimingCheckEvent out;
+      out.edge = event.edge;
+      out.has_edge_list = event.has_edge_list;
+      out.edge_list = event.edge_list;
+      out.raw_expr = event.raw_expr;
+      out.raw_cond = event.raw_cond;
+      out.expr = clone_expr(event.expr);
+      out.cond = clone_expr(event.cond);
+      return out;
+    };
+    auto clone_limit = [&](const TimingCheckLimit& limit) {
+      TimingCheckLimit out;
+      out.min = clone_expr(limit.min);
+      out.typ = clone_expr(limit.typ);
+      out.max = clone_expr(limit.max);
+      return out;
+    };
+    auto clone_limits = [&](const std::vector<TimingCheckLimit>& limits) {
+      std::vector<TimingCheckLimit> out;
+      out.reserve(limits.size());
+      for (const auto& limit : limits) {
+        out.push_back(clone_limit(limit));
+      }
+      return out;
+    };
+    auto clone_assign = [&](const SequentialAssign& assign) {
+      SequentialAssign out;
+      out.lhs = assign.lhs;
+      out.lhs_index = clone_expr(assign.lhs_index);
+      out.lhs_indices.reserve(assign.lhs_indices.size());
+      for (const auto& idx : assign.lhs_indices) {
+        out.lhs_indices.push_back(clone_expr(idx));
+      }
+      out.lhs_has_range = assign.lhs_has_range;
+      out.lhs_indexed_range = assign.lhs_indexed_range;
+      out.lhs_indexed_desc = assign.lhs_indexed_desc;
+      out.lhs_indexed_width = assign.lhs_indexed_width;
+      out.lhs_msb = assign.lhs_msb;
+      out.lhs_lsb = assign.lhs_lsb;
+      out.lhs_msb_expr = clone_expr(assign.lhs_msb_expr);
+      out.lhs_lsb_expr = clone_expr(assign.lhs_lsb_expr);
+      out.rhs = clone_expr(assign.rhs);
+      out.delay = clone_expr(assign.delay);
+      out.nonblocking = assign.nonblocking;
+      return out;
+    };
+    for (const auto& input_event : input_events) {
+      for (const auto& target : targets) {
+        SpecifyPath path;
+        path.kind = arrow.kind;
+        path.polarity =
+            (dest_polarity != SpecifyPathPolarity::kNone)
+                ? dest_polarity
+                : arrow.polarity;
+        path.input_event = clone_event(input_event);
+        path.data_expr = clone_expr(data_expr);
+        path.target = clone_assign(target);
+        path.condition = clone_expr(condition);
+        path.is_conditional = is_conditional;
+        path.is_ifnone = is_ifnone;
+        path.showcancelled =
+            (state->showcancelled_outputs.count(path.target.lhs) != 0u);
+        path.pulse_input = pulse_input;
+        path.line = start_token.line;
+        path.column = start_token.column;
+        path.delays = clone_limits(delays);
+        module->specify_paths.push_back(std::move(path));
       }
     }
     return true;
@@ -4169,7 +4675,7 @@ class Parser {
         }
         continue;
       }
-      if (!HandleSpecifyPath(stmt_tokens, &state, stmt_start)) {
+      if (!HandleSpecifyPath(module, stmt_tokens, &state, stmt_start)) {
         return false;
       }
     }
@@ -5920,27 +6426,107 @@ class Parser {
   }
 
   std::unique_ptr<Expr> ParseSpecparamValue(const std::string& name) {
-    if (name.rfind("PATHPULSE$", 0) != 0) {
-      return ParseExpr();
+    (void)name;
+    return ParseExpr();
+  }
+
+  bool ParsePathPulseSpecparamValue(const std::string& name,
+                                    const Token& name_token, Module* module,
+                                    std::unique_ptr<Expr>* out_expr) {
+    if (!module || !out_expr) {
+      return false;
     }
-    if (MatchSymbol("(")) {
-      std::unique_ptr<Expr> first = ParseExpr();
-      if (!first) {
-        return nullptr;
+    PathPulseSpec spec;
+    spec.name = name;
+    std::string suffix = name.substr(std::string("PATHPULSE$").size());
+    if (!suffix.empty()) {
+      size_t delim = suffix.find('$');
+      if (delim == std::string::npos) {
+        spec.output = suffix;
+      } else {
+        spec.input = suffix.substr(0, delim);
+        spec.output = suffix.substr(delim + 1);
       }
-      if (MatchSymbol(",")) {
-        std::unique_ptr<Expr> second = ParseExpr();
-        if (!second) {
-          return nullptr;
+    }
+
+    auto collect_tokens = [&](const std::unordered_set<std::string>& stop,
+                              std::vector<Token>* out_tokens) -> bool {
+      if (!out_tokens) {
+        return false;
+      }
+      int paren_depth = 0;
+      int bracket_depth = 0;
+      int brace_depth = 0;
+      while (!IsAtEnd()) {
+        if (Peek().kind == TokenKind::kSymbol && paren_depth == 0 &&
+            bracket_depth == 0 && brace_depth == 0 &&
+            stop.count(Peek().text) != 0) {
+          break;
         }
+        const Token& token = Peek();
+        UpdateDepthForToken(token, &paren_depth, &bracket_depth, &brace_depth);
+        out_tokens->push_back(token);
+        Advance();
+      }
+      return !out_tokens->empty();
+    };
+
+    auto parse_limit = [&](const std::vector<Token>& tokens,
+                           const char* label) -> TimingCheckLimit {
+      return ParseTimingLimitTokens(tokens, name_token, label);
+    };
+
+    if (MatchSymbol("(")) {
+      std::vector<Token> reject_tokens;
+      if (!collect_tokens({",", ")"}, &reject_tokens)) {
+        ErrorHere("expected PATHPULSE reject limit");
+        return false;
+      }
+      spec.reject = parse_limit(reject_tokens, "PATHPULSE reject");
+      if (MatchSymbol(",")) {
+        std::vector<Token> error_tokens;
+        if (!collect_tokens({")"}, &error_tokens)) {
+          ErrorHere("expected PATHPULSE error limit");
+          return false;
+        }
+        spec.error = parse_limit(error_tokens, "PATHPULSE error");
+        spec.has_error = true;
       }
       if (!MatchSymbol(")")) {
         ErrorHere("expected ')' after PATHPULSE specparam");
-        return nullptr;
+        return false;
       }
-      return first;
+    } else {
+      std::vector<Token> value_tokens;
+      if (!collect_tokens({",", ";"}, &value_tokens)) {
+        ErrorHere("expected PATHPULSE value");
+        return false;
+      }
+      spec.reject = parse_limit(value_tokens, "PATHPULSE reject");
     }
-    return ParseExpr();
+
+    auto pick_expr = [&](const TimingCheckLimit& limit)
+        -> std::unique_ptr<Expr> {
+      if (limit.typ) {
+        return CloneExprSimple(*limit.typ);
+      }
+      if (limit.min) {
+        return CloneExprSimple(*limit.min);
+      }
+      if (limit.max) {
+        return CloneExprSimple(*limit.max);
+      }
+      return nullptr;
+    };
+
+    std::unique_ptr<Expr> picked = pick_expr(spec.reject);
+    if (!picked) {
+      ErrorHere("invalid PATHPULSE specparam value");
+      return false;
+    }
+    module->path_pulses[spec.name] = std::move(spec);
+    *out_expr = std::move(picked);
+    return true;
   }
 
   bool ParseParameterItem(Module* module, bool is_local, bool is_specparam,
@@ -5999,8 +6585,14 @@ class Parser {
       ErrorHere("expected '=' in parameter assignment");
       return false;
     }
-    std::unique_ptr<Expr> expr =
-        is_specparam ? ParseSpecparamValue(name) : ParseExpr();
+    std::unique_ptr<Expr> expr;
+    if (is_specparam && name.rfind("PATHPULSE$", 0) == 0) {
+      if (!ParsePathPulseSpecparamValue(name, name_token, module, &expr)) {
+        return false;
+      }
+    } else {
+      expr = is_specparam ? ParseSpecparamValue(name) : ParseExpr();
+    }
     if (!expr) {
       return false;
     }
@@ -11078,45 +11670,6 @@ class Parser {
         }
       }
     }
-    auto clone_array_expr = [&](const Expr& expr, size_t count,
-                                size_t slot) -> std::unique_ptr<Expr> {
-      if (expr.kind == ExprKind::kConcat && expr.elements.size() == count) {
-        return CloneExprSimple(*expr.elements[slot]);
-      }
-      return CloneExprSimple(expr);
-    };
-    auto append_instance = [&](Instance& instance,
-                               const std::vector<int64_t>& indices) -> bool {
-      if (indices.empty()) {
-        out_instances->push_back(std::move(instance));
-        return true;
-      }
-      const size_t count = indices.size();
-      for (size_t slot = 0; slot < count; ++slot) {
-        Instance expanded;
-        expanded.module_name = instance.module_name;
-        expanded.name =
-            instance.name + "__" + std::to_string(indices[slot]);
-        for (const auto& override_item : instance.param_overrides) {
-          ParamOverride param;
-          param.name = override_item.name;
-          if (override_item.expr) {
-            param.expr = CloneExprSimple(*override_item.expr);
-          }
-          expanded.param_overrides.push_back(std::move(param));
-        }
-        for (const auto& conn : instance.connections) {
-          Connection connection;
-          connection.port = conn.port;
-          if (conn.expr) {
-            connection.expr = clone_array_expr(*conn.expr, count, slot);
-          }
-          expanded.connections.push_back(std::move(connection));
-        }
-        out_instances->push_back(std::move(expanded));
-      }
-      return true;
-    };
     while (true) {
       std::string instance_name;
       bool has_name = false;
@@ -11139,35 +11692,31 @@ class Parser {
         instance.param_overrides.push_back(std::move(param));
       }
       instance.name = std::move(instance_name);
-      std::vector<int64_t> indices;
       if (MatchSymbol("[")) {
         if (!has_name) {
           ErrorHere("instance array requires a name");
           return false;
         }
-        int64_t msb = 0;
-        int64_t lsb = 0;
-        if (!ParseConstExpr(nullptr, &msb, "instance array msb")) {
+        std::unique_ptr<Expr> msb_expr = ParseExpr();
+        if (!msb_expr) {
           return false;
         }
+        std::unique_ptr<Expr> lsb_expr;
         if (MatchSymbol(":")) {
-          if (!ParseConstExpr(nullptr, &lsb, "instance array lsb")) {
+          lsb_expr = ParseExpr();
+          if (!lsb_expr) {
             return false;
           }
         } else {
-          lsb = msb;
+          lsb_expr = CloneExprSimple(*msb_expr);
         }
         if (!MatchSymbol("]")) {
           ErrorHere("expected ']' after instance array");
           return false;
         }
-        int64_t step = (msb <= lsb) ? 1 : -1;
-        for (int64_t value = msb;; value += step) {
-          indices.push_back(value);
-          if (value == lsb) {
-            break;
-          }
-        }
+        instance.has_array = true;
+        instance.array_msb = std::move(msb_expr);
+        instance.array_lsb = std::move(lsb_expr);
       }
       if (!MatchSymbol("(")) {
         ErrorHere("expected '(' after instance name");
@@ -11248,9 +11797,7 @@ class Parser {
           return false;
         }
       }
-      if (!append_instance(instance, indices)) {
-        return false;
-      }
+      out_instances->push_back(std::move(instance));
       if (MatchSymbol(",")) {
         continue;
       }

@@ -124,6 +124,19 @@ struct SdfTimingCheck {
   std::string signal;
   std::string condition;
   bool has_cond = false;
+  struct Value {
+    bool valid = false;
+    bool is_real = false;
+    double real_value = 0.0;
+    int64_t int_value = 0;
+  };
+  struct Limit {
+    Value min;
+    Value typ;
+    Value max;
+    bool HasAny() const { return min.valid || typ.valid || max.valid; }
+  };
+  std::vector<Limit> limits;
   int line = 0;
   int column = 0;
 };
@@ -378,6 +391,130 @@ bool IsTimingCheckName(const std::string& name) {
   return names.count(name) != 0u;
 }
 
+bool ParseSdfNumber(const std::string& text, SdfTimingCheck::Value* out) {
+  if (!out) {
+    return false;
+  }
+  *out = {};
+  if (text.empty() || text == "*") {
+    return false;
+  }
+  bool has_float = false;
+  for (char ch : text) {
+    if (ch == '.' || ch == 'e' || ch == 'E') {
+      has_float = true;
+      break;
+    }
+  }
+  char* end = nullptr;
+  if (has_float) {
+    double value = std::strtod(text.c_str(), &end);
+    if (end == text.c_str() || (end && *end != '\0')) {
+      return false;
+    }
+    out->valid = true;
+    out->is_real = true;
+    out->real_value = value;
+    return true;
+  }
+  long long value = std::strtoll(text.c_str(), &end, 10);
+  if (end == text.c_str() || (end && *end != '\0')) {
+    double real_value = std::strtod(text.c_str(), &end);
+    if (end == text.c_str() || (end && *end != '\0')) {
+      return false;
+    }
+    out->valid = true;
+    out->is_real = true;
+    out->real_value = real_value;
+    return true;
+  }
+  out->valid = true;
+  out->is_real = false;
+  out->int_value = static_cast<int64_t>(value);
+  return true;
+}
+
+SdfTimingCheck::Limit ParseSdfLimitToken(const std::string& text) {
+  SdfTimingCheck::Limit limit;
+  if (text.empty()) {
+    return limit;
+  }
+  std::vector<std::string> parts;
+  size_t start = 0;
+  for (size_t i = 0; i <= text.size(); ++i) {
+    if (i == text.size() || text[i] == ':') {
+      parts.push_back(text.substr(start, i - start));
+      start = i + 1;
+    }
+  }
+  auto parse_value = [&](const std::string& token,
+                         SdfTimingCheck::Value* out) {
+    if (!token.empty()) {
+      ParseSdfNumber(token, out);
+    }
+  };
+  if (parts.size() == 1) {
+    parse_value(parts[0], &limit.min);
+    limit.typ = limit.min;
+    limit.max = limit.min;
+  } else if (parts.size() == 2) {
+    parse_value(parts[0], &limit.min);
+    parse_value(parts[1], &limit.max);
+  } else {
+    parse_value(parts[0], &limit.min);
+    parse_value(parts[1], &limit.typ);
+    parse_value(parts[2], &limit.max);
+  }
+  return limit;
+}
+
+void AppendSdfValueTokens(const SdfNode& node,
+                          std::vector<std::string>* out) {
+  if (!out) {
+    return;
+  }
+  if (node.is_atom) {
+    out->push_back(ToLowerAscii(node.text));
+    return;
+  }
+  if (!node.children.empty() && node.children[0].is_atom) {
+    std::string head = ToLowerAscii(node.children[0].text);
+    if (head == "cond" || head == "posedge" || head == "negedge") {
+      return;
+    }
+  }
+  for (const auto& child : node.children) {
+    if (child.is_atom) {
+      out->push_back(ToLowerAscii(child.text));
+    } else {
+      std::string normalized = NormalizeSdfExpr(child);
+      if (!normalized.empty()) {
+        out->push_back(normalized);
+      }
+    }
+  }
+}
+
+size_t SdfEventCountForCheck(const std::string& name) {
+  if (name == "period" || name == "width" || name == "pulsewidth") {
+    return 1u;
+  }
+  return 2u;
+}
+
+size_t SdfRefEventIndexForCheck(const std::string& name,
+                                size_t event_count) {
+  if (event_count == 0u) {
+    return 0u;
+  }
+  if ((name == "setup" || name == "recovery" || name == "removal" ||
+       name == "recrem") &&
+      event_count > 1u) {
+    return 1u;
+  }
+  return 0u;
+}
+
 void ExtractEventFromSdfNode(const SdfNode& node, std::string* edge,
                              std::string* signal) {
   edge->clear();
@@ -415,27 +552,25 @@ bool ParseSdfTimingCheck(const SdfNode& node, SdfTimingCheck* out) {
   if (!IsTimingCheckName(name)) {
     return false;
   }
-  const SdfNode* event_node = nullptr;
-  for (size_t i = 1; i < node.children.size(); ++i) {
-    const SdfNode& child = node.children[i];
-    if (!child.is_atom && !child.children.empty()) {
-      if (child.children[0].is_atom) {
-        std::string head = ToLowerAscii(child.children[0].text);
-        if (head == "cond" || head == "posedge" || head == "negedge") {
-          event_node = &child;
-          break;
-        }
-      }
-    }
+  size_t event_needed = SdfEventCountForCheck(name);
+  std::vector<const SdfNode*> event_nodes;
+  size_t value_start = 1;
+  while (value_start < node.children.size() &&
+         event_nodes.size() < event_needed) {
+    event_nodes.push_back(&node.children[value_start]);
+    ++value_start;
   }
-  if (!event_node) {
+  if (event_nodes.empty()) {
     return false;
   }
+  size_t ref_index = SdfRefEventIndexForCheck(name, event_nodes.size());
+  const SdfNode* event_node = event_nodes[ref_index];
   out->name = name;
   out->edge.clear();
   out->signal.clear();
   out->condition.clear();
   out->has_cond = false;
+  out->limits.clear();
   out->line = node.line;
   out->column = node.column;
   if (!event_node->children.empty() && event_node->children[0].is_atom) {
@@ -452,6 +587,16 @@ bool ParseSdfTimingCheck(const SdfNode& node, SdfTimingCheck* out) {
     }
   }
   ExtractEventFromSdfNode(*event_node, &out->edge, &out->signal);
+  std::vector<std::string> value_tokens;
+  for (size_t i = value_start; i < node.children.size(); ++i) {
+    AppendSdfValueTokens(node.children[i], &value_tokens);
+  }
+  for (const auto& token : value_tokens) {
+    SdfTimingCheck::Limit limit = ParseSdfLimitToken(token);
+    if (limit.HasAny()) {
+      out->limits.push_back(std::move(limit));
+    }
+  }
   return !out->signal.empty();
 }
 
@@ -504,17 +649,99 @@ bool LoadSdfTimingChecks(const std::string& path,
   return true;
 }
 
-void MatchSdfTimingChecks(const std::string& path,
+uint64_t DoubleToBits(double value) {
+  uint64_t bits = 0;
+  static_assert(sizeof(bits) == sizeof(value), "double size mismatch");
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+std::unique_ptr<gpga::Expr> MakeSdfRealExpr(double value) {
+  uint64_t bits = DoubleToBits(value);
+  auto expr = std::make_unique<gpga::Expr>();
+  expr->kind = gpga::ExprKind::kNumber;
+  expr->number = bits;
+  expr->value_bits = bits;
+  expr->has_width = true;
+  expr->number_width = 64;
+  expr->is_real_literal = true;
+  return expr;
+}
+
+std::unique_ptr<gpga::Expr> MakeSdfIntegerExpr(int64_t value) {
+  auto expr = std::make_unique<gpga::Expr>();
+  expr->kind = gpga::ExprKind::kNumber;
+  expr->is_signed = value < 0;
+  expr->has_width = true;
+  expr->number_width = 64;
+  uint64_t bits = static_cast<uint64_t>(value);
+  expr->number = bits;
+  expr->value_bits = bits;
+  return expr;
+}
+
+std::unique_ptr<gpga::Expr> MakeSdfValueExpr(
+    const SdfTimingCheck::Value& value) {
+  if (!value.valid) {
+    return nullptr;
+  }
+  if (value.is_real) {
+    return MakeSdfRealExpr(value.real_value);
+  }
+  return MakeSdfIntegerExpr(value.int_value);
+}
+
+void ClearTimingLimit(gpga::TimingCheckLimit* limit) {
+  if (!limit) {
+    return;
+  }
+  limit->min.reset();
+  limit->typ.reset();
+  limit->max.reset();
+}
+
+void ApplySdfLimit(const SdfTimingCheck::Limit& src,
+                   gpga::TimingCheckLimit* dest) {
+  if (!dest || !src.HasAny()) {
+    return;
+  }
+  ClearTimingLimit(dest);
+  dest->min = MakeSdfValueExpr(src.min);
+  dest->typ = MakeSdfValueExpr(src.typ);
+  dest->max = MakeSdfValueExpr(src.max);
+}
+
+size_t TimingCheckLimitCount(const gpga::TimingCheck& check) {
+  switch (check.kind) {
+    case gpga::TimingCheckKind::kSetupHold:
+    case gpga::TimingCheckKind::kRecRem:
+    case gpga::TimingCheckKind::kFullSkew:
+    case gpga::TimingCheckKind::kPulseWidth:
+    case gpga::TimingCheckKind::kNoChange:
+      return 2u;
+    default:
+      return 1u;
+  }
+}
+
+std::string TimingCheckKey(const std::string& name, const std::string& edge,
+                           const std::string& signal,
+                           const std::string& condition) {
+  return name + "|" + edge + "|" + signal + "|" + condition;
+}
+
+void ApplySdfTimingChecks(const std::string& path,
                           const std::vector<SdfTimingCheck>& sdf_checks,
-                          const gpga::Program& program,
+                          gpga::Program* program,
                           gpga::Diagnostics* diagnostics) {
-  std::unordered_set<std::string> keys;
-  std::vector<std::pair<std::string, const gpga::TimingCheck*>> check_keys;
-  for (const auto& module : program.modules) {
-    for (const auto& check : module.timing_checks) {
-      std::string key = check.name + "|" + check.edge + "|" + check.signal +
-                        "|" + check.condition;
-      keys.insert(key);
+  std::unordered_map<std::string, std::vector<gpga::TimingCheck*>>
+      checks_by_key;
+  std::vector<std::pair<std::string, gpga::TimingCheck*>> check_keys;
+  for (auto& module : program->modules) {
+    for (auto& check : module.timing_checks) {
+      std::string key = TimingCheckKey(check.name, check.edge, check.signal,
+                                       check.condition);
+      checks_by_key[key].push_back(&check);
       check_keys.emplace_back(module.name, &check);
     }
   }
@@ -522,11 +749,22 @@ void MatchSdfTimingChecks(const std::string& path,
   bool verbose = verbose_env && *verbose_env != '\0';
   std::unordered_set<std::string> matched_keys;
   for (const auto& sdf : sdf_checks) {
-    std::string key = sdf.name + "|" + sdf.edge + "|" + sdf.signal + "|" +
-                      sdf.condition;
-    bool matched = keys.count(key) != 0u;
-    if (matched) {
+    std::string key = TimingCheckKey(sdf.name, sdf.edge, sdf.signal,
+                                     sdf.condition);
+    auto it = checks_by_key.find(key);
+    if (it != checks_by_key.end()) {
       matched_keys.insert(key);
+      if (!sdf.limits.empty()) {
+        for (gpga::TimingCheck* check : it->second) {
+          size_t limit_count = TimingCheckLimitCount(*check);
+          if (limit_count > 0u) {
+            ApplySdfLimit(sdf.limits[0], &check->limit);
+          }
+          if (limit_count > 1u && sdf.limits.size() > 1u) {
+            ApplySdfLimit(sdf.limits[1], &check->limit2);
+          }
+        }
+      }
       if (verbose) {
         std::cerr << "SDF match: " << sdf.name;
         if (!sdf.edge.empty()) {
@@ -559,22 +797,21 @@ void MatchSdfTimingChecks(const std::string& path,
   }
   if (verbose) {
     for (const auto& entry : check_keys) {
-      const std::string key = entry.second->name + "|" + entry.second->edge +
-                              "|" + entry.second->signal + "|" +
-                              entry.second->condition;
+      const gpga::TimingCheck* check = entry.second;
+      const std::string key = TimingCheckKey(check->name, check->edge,
+                                             check->signal, check->condition);
       if (matched_keys.count(key) != 0u) {
         continue;
       }
-      std::cerr << "SDF unannotated: " << entry.first << "."
-                << entry.second->name;
-      if (!entry.second->edge.empty()) {
-        std::cerr << " " << entry.second->edge;
+      std::cerr << "SDF unannotated: " << entry.first << "." << check->name;
+      if (!check->edge.empty()) {
+        std::cerr << " " << check->edge;
       }
-      if (!entry.second->signal.empty()) {
-        std::cerr << " " << entry.second->signal;
+      if (!check->signal.empty()) {
+        std::cerr << " " << check->signal;
       }
-      if (!entry.second->condition.empty()) {
-        std::cerr << " &&& " << entry.second->condition;
+      if (!check->condition.empty()) {
+        std::cerr << " &&& " << check->condition;
       }
       std::cerr << "\n";
     }
@@ -4160,6 +4397,25 @@ bool HandleServiceRecords(
         std::cout << "\n";
         break;
       }
+      case gpga::ServiceKind::kShowcancelled: {
+        std::cout << "$showcancelled (pid=" << rec.pid << ")";
+        if (!rec.args.empty()) {
+          std::cout << " delay_id=" << FormatNumeric(rec.args[0], 'h',
+                                                     four_state);
+        }
+        if (rec.args.size() > 1) {
+          std::cout << " index=" << FormatNumeric(rec.args[1], 'h', four_state);
+        }
+        if (rec.args.size() > 2) {
+          std::cout << " index_xz="
+                    << FormatNumeric(rec.args[2], 'h', four_state);
+        }
+        if (rec.args.size() > 3) {
+          std::cout << " time=" << FormatNumeric(rec.args[3], 'd', four_state);
+        }
+        std::cout << "\n";
+        break;
+      }
       case gpga::ServiceKind::kFinish: {
         if (result) {
           result->saw_finish = true;
@@ -6818,7 +7074,7 @@ int main(int argc, char** argv) {
       diagnostics.RenderTo(std::cerr);
       return 1;
     }
-    MatchSdfTimingChecks(sdf_path, sdf_checks, program, &diagnostics);
+    ApplySdfTimingChecks(sdf_path, sdf_checks, &program, &diagnostics);
     if (diagnostics.HasErrors()) {
       diagnostics.RenderTo(std::cerr);
       return 1;

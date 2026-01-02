@@ -55,6 +55,8 @@ std::string MslDecayName(const std::string& name) {
 }
 
 bool IsSystemTaskName(const std::string& name);
+bool ExprUsesReal(const Expr& expr, const Module& module);
+bool ExprSigned(const Expr& expr, const Module& module);
 
 const Port* FindPort(const Module& module, const std::string& name) {
   for (const auto& port : module.ports) {
@@ -1043,6 +1045,581 @@ const Expr* SelectTimingLimitExpr(const TimingCheckLimit& limit,
     return limit.max.get();
   }
   return nullptr;
+}
+
+EventEdgeKind EffectiveSpecifyEdge(const TimingCheckEvent& event) {
+  if (!event.has_edge_list) {
+    return event.edge;
+  }
+  bool saw_rise = false;
+  bool saw_fall = false;
+  bool saw_other = false;
+  for (const auto& pattern : event.edge_list) {
+    if (pattern.to == TimingEdgeState::k1 &&
+        pattern.from != TimingEdgeState::k1) {
+      saw_rise = true;
+      continue;
+    }
+    if (pattern.to == TimingEdgeState::k0 &&
+        pattern.from != TimingEdgeState::k0) {
+      saw_fall = true;
+      continue;
+    }
+    saw_other = true;
+  }
+  if (saw_rise && !saw_fall && !saw_other) {
+    return EventEdgeKind::kPosedge;
+  }
+  if (saw_fall && !saw_rise && !saw_other) {
+    return EventEdgeKind::kNegedge;
+  }
+  return EventEdgeKind::kAny;
+}
+
+size_t SelectSpecifyDelayIndex(size_t entry_count, EventEdgeKind edge) {
+  if (entry_count == 0) {
+    return 0;
+  }
+  if (entry_count == 1) {
+    return 0;
+  }
+  if (entry_count == 2) {
+    return (edge == EventEdgeKind::kNegedge) ? 1u : 0u;
+  }
+  if (edge == EventEdgeKind::kPosedge) {
+    return 0u;
+  }
+  if (edge == EventEdgeKind::kNegedge) {
+    return 1u;
+  }
+  if (entry_count >= 3) {
+    return 2u;
+  }
+  return std::min<size_t>(2u, entry_count - 1u);
+}
+
+bool TryHintEdgeFromConst(const Expr& expr, const Module& module,
+                          EventEdgeKind* out_edge) {
+  if (!out_edge) {
+    return false;
+  }
+  if (ExprUsesReal(expr, module)) {
+    return false;
+  }
+  const std::unordered_map<std::string, int64_t> kEmptyParams;
+  FourStateValue value;
+  if (!EvalConstExpr4State(expr, kEmptyParams, &value, nullptr)) {
+    return false;
+  }
+  int width = std::max(1, value.width);
+  uint64_t mask = MaskForWidth64(width);
+  uint64_t xz = (value.x_bits | value.z_bits) & mask;
+  if (xz != 0) {
+    return false;
+  }
+  uint64_t val = value.value_bits & mask;
+  if (val == 0ull) {
+    *out_edge = EventEdgeKind::kNegedge;
+    return true;
+  }
+  if (val == mask) {
+    *out_edge = EventEdgeKind::kPosedge;
+    return true;
+  }
+  return false;
+}
+
+std::unique_ptr<Expr> MakeBinaryExpr(char op, std::unique_ptr<Expr> lhs,
+                                     std::unique_ptr<Expr> rhs) {
+  if (!lhs) {
+    return rhs;
+  }
+  if (!rhs) {
+    return lhs;
+  }
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kBinary;
+  out->op = op;
+  out->lhs = std::move(lhs);
+  out->rhs = std::move(rhs);
+  return out;
+}
+
+std::unique_ptr<Expr> MakeUnaryExpr(char op, std::unique_ptr<Expr> operand) {
+  if (!operand) {
+    return nullptr;
+  }
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kUnary;
+  out->unary_op = op;
+  out->operand = std::move(operand);
+  return out;
+}
+
+std::unique_ptr<Expr> MakeTernaryExpr(std::unique_ptr<Expr> condition,
+                                      std::unique_ptr<Expr> then_expr,
+                                      std::unique_ptr<Expr> else_expr) {
+  if (!condition) {
+    return else_expr;
+  }
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kTernary;
+  out->condition = std::move(condition);
+  out->then_expr = std::move(then_expr);
+  out->else_expr = std::move(else_expr);
+  return out;
+}
+
+std::unique_ptr<Expr> MakeNumberExpr(uint64_t value, int width,
+                                     uint64_t x_bits, uint64_t z_bits,
+                                     bool has_width) {
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kNumber;
+  out->number = value;
+  out->value_bits = value;
+  out->x_bits = x_bits;
+  out->z_bits = z_bits;
+  out->number_width = width;
+  out->has_width = has_width;
+  out->has_base = false;
+  out->base_char = 'd';
+  return out;
+}
+
+std::unique_ptr<Expr> MakeStateConst(char state) {
+  uint64_t val = 0u;
+  uint64_t x_bits = 0u;
+  uint64_t z_bits = 0u;
+  switch (state) {
+    case '1':
+      val = 1u;
+      break;
+    case 'x':
+    case 'X':
+      val = 1u;
+      x_bits = 1u;
+      break;
+    case 'z':
+    case 'Z':
+      z_bits = 1u;
+      break;
+    case '0':
+    default:
+      break;
+  }
+  return MakeNumberExpr(val, 1, x_bits, z_bits, true);
+}
+
+std::unique_ptr<Expr> MakeUnsizedNumber(uint64_t value) {
+  return MakeNumberExpr(value, 0, 0u, 0u, false);
+}
+
+std::unique_ptr<Expr> MakeIdentifierExpr(const std::string& name) {
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kIdentifier;
+  out->ident = name;
+  return out;
+}
+
+std::unique_ptr<Expr> MakeBitSelectExpr(std::unique_ptr<Expr> base,
+                                        int index) {
+  if (!base) {
+    return nullptr;
+  }
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kSelect;
+  out->base = std::move(base);
+  out->msb = index;
+  out->lsb = index;
+  out->has_range = false;
+  out->msb_expr = MakeUnsizedNumber(static_cast<uint64_t>(index));
+  out->lsb_expr = MakeUnsizedNumber(static_cast<uint64_t>(index));
+  return out;
+}
+
+std::unique_ptr<Expr> MakeIndexedSelectExpr(std::unique_ptr<Expr> base,
+                                            std::unique_ptr<Expr> index) {
+  if (!base || !index) {
+    return nullptr;
+  }
+  auto out = std::make_unique<Expr>();
+  out->kind = ExprKind::kSelect;
+  out->base = std::move(base);
+  out->indexed_range = true;
+  out->indexed_desc = false;
+  out->indexed_width = 1;
+  out->lsb_expr = std::move(index);
+  return out;
+}
+
+std::unique_ptr<Expr> MakeEqExpr(std::unique_ptr<Expr> lhs,
+                                 std::unique_ptr<Expr> rhs,
+                                 bool case_eq) {
+  return MakeBinaryExpr(case_eq ? 'C' : 'E', std::move(lhs), std::move(rhs));
+}
+
+std::string MakeSpecifyEventKey(const SpecifyPath& path) {
+  std::string key = path.target.lhs;
+  key += "|";
+  key += path.input_event.raw_expr;
+  key += "|";
+  key += path.input_event.raw_cond;
+  key += "|";
+  key += std::to_string(static_cast<int>(EffectiveSpecifyEdge(path.input_event)));
+  return key;
+}
+
+struct SpecifyPathBlock {
+  AlwaysBlock block;
+  bool showcancelled = false;
+  bool has_pulse = false;
+  bool has_pulse_error = false;
+  TimingCheckLimit pulse_reject;
+  TimingCheckLimit pulse_error;
+};
+
+std::vector<SpecifyPathBlock> BuildSpecifyPathBlocks(const Module& module) {
+  std::vector<SpecifyPathBlock> blocks;
+  if (module.specify_paths.empty()) {
+    return blocks;
+  }
+  struct CondSpec {
+    const Expr* cond = nullptr;
+    const Expr* event_cond = nullptr;
+  };
+  std::unordered_map<std::string, std::vector<CondSpec>>
+      conditional_by_output;
+  for (const auto& path : module.specify_paths) {
+    if (path.is_conditional && !path.is_ifnone && path.condition) {
+      conditional_by_output[MakeSpecifyEventKey(path)].push_back(
+          CondSpec{path.condition.get(), path.input_event.cond.get()});
+    }
+  }
+
+  TimingSelectMode timing_select_mode = GetTimingSelectMode();
+  for (const auto& path : module.specify_paths) {
+    if (!path.input_event.expr) {
+      continue;
+    }
+    auto clone_limit = [&](const TimingCheckLimit& limit) {
+      TimingCheckLimit out;
+      if (limit.min) {
+        out.min = CloneExpr(*limit.min);
+      }
+      if (limit.typ) {
+        out.typ = CloneExpr(*limit.typ);
+      }
+      if (limit.max) {
+        out.max = CloneExpr(*limit.max);
+      }
+      return out;
+    };
+    std::unique_ptr<Expr> rhs =
+        path.data_expr ? CloneExpr(*path.data_expr)
+                       : CloneExpr(*path.input_event.expr);
+    if (!rhs) {
+      continue;
+    }
+    if (path.polarity == SpecifyPathPolarity::kNegative) {
+      rhs = MakeUnaryExpr('~', std::move(rhs));
+    }
+    SequentialAssign base_assign = CloneSequentialAssign(path.target);
+    base_assign.nonblocking = true;
+    base_assign.rhs = std::move(rhs);
+
+    int target_width = SignalWidth(module, path.target.lhs);
+    int range_width = target_width;
+    bool has_simple_range =
+        path.target.lhs_has_range && !path.target.lhs_indexed_range;
+    if (has_simple_range) {
+      int lo = std::min(path.target.lhs_msb, path.target.lhs_lsb);
+      int hi = std::max(path.target.lhs_msb, path.target.lhs_lsb);
+      range_width = hi - lo + 1;
+    }
+    if (path.target.lhs_indexed_range && path.target.lhs_indexed_width > 0) {
+      range_width = path.target.lhs_indexed_width;
+    }
+
+    auto delay_for = [&](size_t idx) -> std::unique_ptr<Expr> {
+      if (idx >= path.delays.size()) {
+        return MakeUnsizedNumber(0u);
+      }
+      const Expr* expr =
+          SelectTimingLimitExpr(path.delays[idx], timing_select_mode);
+      if (!expr) {
+        return MakeUnsizedNumber(0u);
+      }
+      return CloneExpr(*expr);
+    };
+
+    auto build_transition_delay = [&](std::unique_ptr<Expr> curr,
+                                      std::unique_ptr<Expr> next)
+        -> std::unique_ptr<Expr> {
+      if (!curr || !next || path.delays.empty()) {
+        return nullptr;
+      }
+      auto eq_curr = [&](char state) {
+        return MakeEqExpr(CloneExpr(*curr), MakeStateConst(state), true);
+      };
+      auto eq_next = [&](char state) {
+        return MakeEqExpr(CloneExpr(*next), MakeStateConst(state), true);
+      };
+      auto rise = MakeBinaryExpr('A', eq_curr('0'), eq_next('1'));
+      auto fall = MakeBinaryExpr('A', eq_curr('1'), eq_next('0'));
+      auto zero_z = MakeBinaryExpr('A', eq_curr('0'), eq_next('z'));
+      auto z_one = MakeBinaryExpr('A', eq_curr('z'), eq_next('1'));
+      auto one_z = MakeBinaryExpr('A', eq_curr('1'), eq_next('z'));
+      auto z_zero = MakeBinaryExpr('A', eq_curr('z'), eq_next('0'));
+      std::unique_ptr<Expr> expr;
+      if (path.delays.size() >= 12) {
+        auto zero_x = MakeBinaryExpr('A', eq_curr('0'), eq_next('x'));
+        auto x_one = MakeBinaryExpr('A', eq_curr('x'), eq_next('1'));
+        auto one_x = MakeBinaryExpr('A', eq_curr('1'), eq_next('x'));
+        auto x_zero = MakeBinaryExpr('A', eq_curr('x'), eq_next('0'));
+        auto x_z = MakeBinaryExpr('A', eq_curr('x'), eq_next('z'));
+        auto z_x = MakeBinaryExpr('A', eq_curr('z'), eq_next('x'));
+        expr = MakeUnsizedNumber(0u);
+        expr = MakeTernaryExpr(std::move(z_x), delay_for(11),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(x_z), delay_for(10),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(x_zero), delay_for(9),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(one_x), delay_for(8),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(x_one), delay_for(7),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(zero_x), delay_for(6),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(z_zero), delay_for(5),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(one_z), delay_for(4),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(z_one), delay_for(3),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(zero_z), delay_for(2),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(fall), delay_for(1),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(rise), delay_for(0),
+                               std::move(expr));
+      } else {
+        expr = delay_for(2);
+        if (path.delays.size() >= 6) {
+          expr = MakeTernaryExpr(std::move(z_zero), delay_for(5),
+                                 std::move(expr));
+          expr = MakeTernaryExpr(std::move(one_z), delay_for(4),
+                                 std::move(expr));
+          expr = MakeTernaryExpr(std::move(z_one), delay_for(3),
+                                 std::move(expr));
+          expr = MakeTernaryExpr(std::move(zero_z), delay_for(2),
+                                 std::move(expr));
+        }
+        expr = MakeTernaryExpr(std::move(fall), delay_for(1),
+                               std::move(expr));
+        expr = MakeTernaryExpr(std::move(rise), delay_for(0),
+                               std::move(expr));
+      }
+      return expr;
+    };
+
+    std::vector<SequentialAssign> assigns;
+    bool can_split =
+        (path.delays.size() >= 3 && range_width > 1 &&
+         path.target.lhs_index == nullptr && path.target.lhs_indices.empty());
+    int rhs_width =
+        base_assign.rhs ? ExprWidth(*base_assign.rhs, module) : 0;
+    bool rhs_signed =
+        base_assign.rhs ? ExprSigned(*base_assign.rhs, module) : false;
+    if (rhs_width <= 0) {
+      rhs_width = range_width > 0 ? range_width : 1;
+    }
+    if (can_split) {
+      bool desc = path.target.lhs_has_range
+                      ? (path.target.lhs_msb >= path.target.lhs_lsb)
+                      : true;
+      int base_msb = path.target.lhs_has_range ? path.target.lhs_msb
+                                               : (range_width - 1);
+      for (int offset = 0; offset < range_width; ++offset) {
+        int lhs_index = desc ? (base_msb - offset) : (base_msb + offset);
+        int rhs_index = offset;
+        SequentialAssign bit_assign = CloneSequentialAssign(base_assign);
+        bit_assign.lhs_has_range = false;
+        bit_assign.lhs_indexed_range = false;
+        bit_assign.lhs_indexed_desc = false;
+        bit_assign.lhs_indexed_width = 0;
+        bit_assign.lhs_msb = 0;
+        bit_assign.lhs_lsb = 0;
+        bit_assign.lhs_msb_expr.reset();
+        bit_assign.lhs_lsb_expr.reset();
+        std::unique_ptr<Expr> lhs_index_expr;
+        if (path.target.lhs_indexed_range && path.target.lhs_lsb_expr) {
+          lhs_index_expr = CloneExpr(*path.target.lhs_lsb_expr);
+          if (offset > 0) {
+            std::unique_ptr<Expr> offset_expr =
+                MakeUnsizedNumber(static_cast<uint64_t>(offset));
+            lhs_index_expr = MakeBinaryExpr(
+                path.target.lhs_indexed_desc ? '-' : '+',
+                std::move(lhs_index_expr), std::move(offset_expr));
+          }
+          bit_assign.lhs_index = CloneExpr(*lhs_index_expr);
+        } else {
+          bit_assign.lhs_index = MakeUnsizedNumber(
+              static_cast<uint64_t>(lhs_index));
+        }
+        bit_assign.lhs_indices.clear();
+        if (rhs_index < rhs_width) {
+          bit_assign.rhs =
+              MakeBitSelectExpr(CloneExpr(*base_assign.rhs), rhs_index);
+        } else if (rhs_signed && rhs_width > 0) {
+          bit_assign.rhs =
+              MakeBitSelectExpr(CloneExpr(*base_assign.rhs), rhs_width - 1);
+        } else {
+          bit_assign.rhs = MakeStateConst('0');
+        }
+        std::unique_ptr<Expr> curr;
+        if (path.target.lhs_indexed_range && lhs_index_expr) {
+          curr = MakeIndexedSelectExpr(MakeIdentifierExpr(path.target.lhs),
+                                       std::move(lhs_index_expr));
+        } else {
+          curr = MakeBitSelectExpr(MakeIdentifierExpr(path.target.lhs),
+                                   lhs_index);
+        }
+        std::unique_ptr<Expr> next =
+            bit_assign.rhs ? CloneExpr(*bit_assign.rhs) : nullptr;
+        bit_assign.delay = build_transition_delay(std::move(curr),
+                                                 std::move(next));
+        assigns.push_back(std::move(bit_assign));
+      }
+    } else {
+      SequentialAssign assign = CloneSequentialAssign(base_assign);
+      if (!path.delays.empty()) {
+        const Expr* delay_expr = nullptr;
+        EventEdgeKind edge = EffectiveSpecifyEdge(path.input_event);
+        bool edge_hinted = false;
+        if (edge == EventEdgeKind::kAny && path.delays.size() >= 2) {
+          EventEdgeKind hinted = EventEdgeKind::kAny;
+          if (TryHintEdgeFromConst(*assign.rhs, module, &hinted)) {
+            edge = hinted;
+            edge_hinted = true;
+          }
+        }
+        bool allow_transition =
+            (range_width == 1 && path.target.lhs_index == nullptr &&
+             path.target.lhs_indices.empty() && !path.target.lhs_indexed_range);
+        if (allow_transition && path.delays.size() >= 3) {
+          std::unique_ptr<Expr> curr = MakeIdentifierExpr(path.target.lhs);
+          std::unique_ptr<Expr> next = CloneExpr(*assign.rhs);
+          assign.delay =
+              build_transition_delay(std::move(curr), std::move(next));
+        } else {
+          EventEdgeKind edge_for_delay = edge;
+          if (!edge_hinted &&
+              path.polarity == SpecifyPathPolarity::kNegative) {
+            if (edge_for_delay == EventEdgeKind::kPosedge) {
+              edge_for_delay = EventEdgeKind::kNegedge;
+            } else if (edge_for_delay == EventEdgeKind::kNegedge) {
+              edge_for_delay = EventEdgeKind::kPosedge;
+            }
+          }
+          size_t delay_index =
+              SelectSpecifyDelayIndex(path.delays.size(), edge_for_delay);
+          delay_expr = SelectTimingLimitExpr(path.delays[delay_index],
+                                             timing_select_mode);
+          if (delay_expr) {
+            assign.delay = CloneExpr(*delay_expr);
+          }
+        }
+      }
+      assigns.push_back(std::move(assign));
+    }
+
+    std::unique_ptr<Expr> guard;
+    auto append_guard = [&](std::unique_ptr<Expr> extra) {
+      if (!extra) {
+        return;
+      }
+      guard = MakeBinaryExpr('A', std::move(guard), std::move(extra));
+    };
+    if (path.condition) {
+      append_guard(CloneExpr(*path.condition));
+    }
+    if (path.input_event.cond) {
+      append_guard(CloneExpr(*path.input_event.cond));
+    }
+    if (path.is_ifnone) {
+      auto it = conditional_by_output.find(MakeSpecifyEventKey(path));
+      if (it != conditional_by_output.end() && !it->second.empty()) {
+        std::unique_ptr<Expr> any;
+        for (const auto& cond_spec : it->second) {
+          std::unique_ptr<Expr> entry;
+          if (cond_spec.cond) {
+            entry = CloneExpr(*cond_spec.cond);
+          }
+          if (cond_spec.event_cond) {
+            entry = MakeBinaryExpr('A', std::move(entry),
+                                   CloneExpr(*cond_spec.event_cond));
+          }
+          if (!entry) {
+            continue;
+          }
+          any = MakeBinaryExpr('O', std::move(any), std::move(entry));
+        }
+        if (any) {
+          append_guard(MakeUnaryExpr('!', std::move(any)));
+        }
+      }
+    }
+
+    std::vector<Statement> assign_stmts;
+    assign_stmts.reserve(assigns.size());
+    for (auto& assign : assigns) {
+      Statement assign_stmt;
+      assign_stmt.kind = StatementKind::kAssign;
+      assign_stmt.assign = std::move(assign);
+      assign_stmts.push_back(std::move(assign_stmt));
+    }
+
+    Statement event_stmt;
+    event_stmt.kind = StatementKind::kEventControl;
+    event_stmt.event_edge = EffectiveSpecifyEdge(path.input_event);
+    event_stmt.event_expr = CloneExpr(*path.input_event.expr);
+    if (guard) {
+      Statement if_stmt;
+      if_stmt.kind = StatementKind::kIf;
+      if_stmt.condition = std::move(guard);
+      for (auto& stmt : assign_stmts) {
+        if_stmt.then_branch.push_back(std::move(stmt));
+      }
+      event_stmt.event_body.push_back(std::move(if_stmt));
+    } else {
+      for (auto& stmt : assign_stmts) {
+        event_stmt.event_body.push_back(std::move(stmt));
+      }
+    }
+
+    Statement forever_stmt;
+    forever_stmt.kind = StatementKind::kForever;
+    forever_stmt.forever_body.push_back(std::move(event_stmt));
+
+    AlwaysBlock block;
+    block.edge = EdgeKind::kInitial;
+    block.is_synthesized = true;
+    block.statements.push_back(std::move(forever_stmt));
+    SpecifyPathBlock entry;
+    entry.block = std::move(block);
+    entry.showcancelled = path.showcancelled;
+    entry.has_pulse = path.has_pulse;
+    entry.has_pulse_error = path.has_pulse_error;
+    if (path.has_pulse) {
+      entry.pulse_reject = clone_limit(path.pulse_reject);
+      if (path.has_pulse_error) {
+        entry.pulse_error = clone_limit(path.pulse_error);
+      }
+    }
+    blocks.push_back(std::move(entry));
+  }
+  return blocks;
 }
 
 uint64_t StringLiteralBits(const std::string& value) {
@@ -4572,6 +5149,9 @@ bool ModuleNeedsScheduler(const Module& module) {
   if (!module.timing_checks.empty()) {
     return true;
   }
+  if (!module.specify_paths.empty()) {
+    return true;
+  }
   for (const auto& block : module.always_blocks) {
     if (AlwaysBlockNeedsScheduler(block)) {
       return true;
@@ -4584,6 +5164,9 @@ std::unordered_set<std::string> CollectDrivenSignals(const Module& module) {
   std::unordered_set<std::string> driven;
   for (const auto& assign : module.assigns) {
     driven.insert(assign.lhs);
+  }
+  for (const auto& path : module.specify_paths) {
+    driven.insert(path.target.lhs);
   }
   for (const auto& block : module.always_blocks) {
     for (const auto& stmt : block.statements) {
@@ -11505,6 +12088,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::vector<const AlwaysBlock*> initial_blocks;
       std::vector<const AlwaysBlock*> edge_blocks;
       std::vector<const AlwaysBlock*> comb_blocks;
+      std::vector<SpecifyPathBlock> specify_blocks =
+          BuildSpecifyPathBlocks(module);
       for (const auto& block : module.always_blocks) {
         if (block.edge == EdgeKind::kInitial) {
           initial_blocks.push_back(&block);
@@ -11515,6 +12100,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    AlwaysBlockNeedsScheduler(block)) {
           comb_blocks.push_back(&block);
         }
+      }
+      for (const auto& block : specify_blocks) {
+        initial_blocks.push_back(&block.block);
       }
 
       if (!initial_blocks.empty() || !edge_blocks.empty() ||
@@ -11597,6 +12185,111 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         const int root_proc_count = next_pid;
         int next_fork_tag = 0;
+
+        struct PathPulseRef {
+          const TimingCheckLimit* reject = nullptr;
+          const TimingCheckLimit* error = nullptr;
+          bool has_pulse = false;
+          bool has_error = false;
+        };
+        std::unordered_map<const Statement*, bool> specify_delay_showcancelled;
+        std::unordered_map<const Statement*, PathPulseRef> specify_delay_pulse;
+        bool has_showcancelled = false;
+        auto collect_specify_delay = [&](const Statement& stmt,
+                                         bool showcancelled,
+                                         const PathPulseRef& pulse,
+                                         const auto& self) -> void {
+          if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
+            specify_delay_showcancelled[&stmt] = showcancelled;
+            if (showcancelled) {
+              has_showcancelled = true;
+            }
+            if (pulse.has_pulse) {
+              specify_delay_pulse[&stmt] = pulse;
+            }
+          }
+          switch (stmt.kind) {
+            case StatementKind::kIf:
+              for (const auto& inner : stmt.then_branch) {
+                self(inner, showcancelled, pulse, self);
+              }
+              for (const auto& inner : stmt.else_branch) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kBlock:
+              for (const auto& inner : stmt.block) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kFor:
+              for (const auto& inner : stmt.for_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kWhile:
+              for (const auto& inner : stmt.while_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kRepeat:
+              for (const auto& inner : stmt.repeat_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kDelay:
+              for (const auto& inner : stmt.delay_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kEventControl:
+              for (const auto& inner : stmt.event_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kWait:
+              for (const auto& inner : stmt.wait_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kForever:
+              for (const auto& inner : stmt.forever_body) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kFork:
+              for (const auto& inner : stmt.fork_branches) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            case StatementKind::kCase:
+              for (const auto& item : stmt.case_items) {
+                for (const auto& inner : item.body) {
+                  self(inner, showcancelled, pulse, self);
+                }
+              }
+              for (const auto& inner : stmt.default_branch) {
+                self(inner, showcancelled, pulse, self);
+              }
+              return;
+            default:
+              return;
+          }
+        };
+        for (const auto& block : specify_blocks) {
+          PathPulseRef pulse;
+          if (block.has_pulse) {
+            pulse.has_pulse = true;
+            pulse.has_error = block.has_pulse_error;
+            pulse.reject = &block.pulse_reject;
+            pulse.error =
+                block.has_pulse_error ? &block.pulse_error : &block.pulse_reject;
+          }
+          for (const auto& stmt : block.block.statements) {
+            collect_specify_delay(stmt, block.showcancelled, pulse,
+                                  collect_specify_delay);
+          }
+        }
 
         std::vector<std::unique_ptr<std::vector<Statement>>>
             expanded_proc_bodies;
@@ -12232,6 +12925,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           const Statement* stmt = nullptr;
           std::string lhs;
           bool nonblocking = false;
+          bool inertial = false;
+          bool showcancelled = false;
+          bool has_pulse = false;
+          bool has_pulse_error = false;
+          const TimingCheckLimit* pulse_reject = nullptr;
+          const TimingCheckLimit* pulse_error = nullptr;
           bool lhs_real = false;
           bool is_array = false;
           bool is_bit_select = false;
@@ -12254,6 +12953,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             info.stmt = &stmt;
             info.lhs = stmt.assign.lhs;
             info.nonblocking = stmt.assign.nonblocking;
+            auto show_it = specify_delay_showcancelled.find(&stmt);
+            bool specify_delay = (show_it != specify_delay_showcancelled.end());
+            info.inertial = specify_delay;
+            info.showcancelled = specify_delay && show_it->second;
+            auto pulse_it = specify_delay_pulse.find(&stmt);
+            if (pulse_it != specify_delay_pulse.end()) {
+              info.has_pulse = pulse_it->second.has_pulse;
+              info.has_pulse_error = pulse_it->second.has_error;
+              info.pulse_reject = pulse_it->second.reject;
+              info.pulse_error = pulse_it->second.error;
+            }
             info.lhs_real = SignalIsReal(module, stmt.assign.lhs);
             info.base_width = SignalWidth(module, stmt.assign.lhs);
             int element_width = 0;
@@ -12659,10 +13369,14 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 : 0u;
         const uint32_t strobe_count =
             static_cast<uint32_t>(system_task_info.strobe_stmts.size());
+        const bool has_services =
+            system_task_info.has_system_tasks || has_showcancelled;
+        const uint32_t showcancelled_args = has_showcancelled ? 4u : 0u;
         const uint32_t service_max_args =
-            system_task_info.has_system_tasks
-                ? static_cast<uint32_t>(
-                      std::max<size_t>(1, system_task_info.max_args))
+            has_services
+                ? static_cast<uint32_t>(std::max<size_t>(
+                      std::max<size_t>(1, system_task_info.max_args),
+                      showcancelled_args))
                 : 0u;
         const uint32_t service_wide_words_local =
             system_task_info.has_system_tasks ? service_wide_words : 0u;
@@ -12684,7 +13398,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << passign_target_list.size() << "u)\n";
         out << "constant constexpr uint GPGA_SCHED_TIMING_CHECK_COUNT = "
             << timing_check_count << "u;\n";
-        if (system_task_info.has_system_tasks) {
+        if (has_services) {
           if (service_wide_words_local > 0u) {
             out << "GPGA_SCHED_DEFINE_SERVICE_RECORD_WIDE()\n";
           } else {
@@ -12909,7 +13623,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           emit_param("  device uint* sched_strobe_pending [[buffer(" +
                      std::to_string(buffer_index++) + ")]]");
         }
-        if (system_task_info.has_system_tasks) {
+        if (has_services) {
           emit_param("  device uint* sched_service_count [[buffer(" +
                      std::to_string(buffer_index++) + ")]]");
           emit_param("  device GpgaServiceRecord* sched_service [[buffer(" +
@@ -12976,7 +13690,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "  " << val_name(net.name) << "[gid] = " << zero << ";\n";
           out << "  " << xz_name(net.name) << "[gid] = " << mask << ";\n";
         }
-        if (system_task_info.has_system_tasks) {
+        if (has_services) {
           out << "  sched_service_count[gid] = 0u;\n";
         }
         out << "  ulong __gpga_time = sched_time[gid];\n";
@@ -13259,6 +13973,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           std::string zero = literal_for_width(0, delay_expr.width);
           return "(" + delay_expr.xz + " == " + zero + " ? " + delay_expr.val +
                  " : 0ul)";
+        };
+        auto emit_delay_limit4 =
+            [&](const TimingCheckLimit& limit) -> std::string {
+          const Expr* expr =
+              SelectTimingLimitExpr(limit, GetTimingSelectMode());
+          if (!expr) {
+            return "0ul";
+          }
+          return emit_delay_value4(*expr);
         };
         auto force_slot_expr = [&](const std::string& target) -> std::string {
           auto it = force_target_index.find(target);
@@ -13728,7 +14451,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 out << pad << "          ? (__gpga_time - __gpga_data_time) : 0ul;\n";
                 out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
                 out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
-                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "        if (__gpga_threshold <= 0l || __gpga_delta >= __gpga_threshold) {\n";
+                out << pad << "          __gpga_violation = true;\n";
+                out << pad << "        }\n";
                 out << pad << "      }\n";
                 out << pad << "    }\n";
                 out << pad << "    __gpga_ref_time = __gpga_time;\n";
@@ -13823,7 +14548,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   out << pad << "      ulong __gpga_delta_u = __gpga_time - __gpga_ref_time;\n";
                   out << pad << "      long __gpga_delta = (long)__gpga_delta_u;\n";
                   out << pad << "      if (__gpga_delta < __gpga_limit) {\n";
-                  out << pad << "        __gpga_violation = true;\n";
+                  out << pad << "        if (__gpga_threshold <= 0l || __gpga_delta >= __gpga_threshold) {\n";
+                  out << pad << "          __gpga_violation = true;\n";
+                  out << pad << "        }\n";
                   out << pad << "      }\n";
                   out << pad << "    }\n";
                   out << pad << "    __gpga_ref_time = __gpga_time;\n";
@@ -13844,7 +14571,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     out << pad << "      __gpga_width_limit = __gpga_limit;\n";
                   }
                   out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
-                  out << pad << "        __gpga_violation = true;\n";
+                  out << pad << "        if (__gpga_threshold <= 0l || __gpga_delta >= __gpga_threshold) {\n";
+                  out << pad << "          __gpga_violation = true;\n";
+                  out << pad << "        }\n";
                   out << pad << "      }\n";
                   out << pad << "    }\n";
                   out << pad << "    __gpga_ref_time = __gpga_time;\n";
@@ -13865,14 +14594,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                     out << pad << "      __gpga_width_limit = __gpga_width_alt;\n";
                   }
                   out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
-                  out << pad << "        __gpga_violation = true;\n";
+                  out << pad << "        if (__gpga_threshold <= 0l || __gpga_delta >= __gpga_threshold) {\n";
+                  out << pad << "          __gpga_violation = true;\n";
+                  out << pad << "        }\n";
                   out << pad << "      }\n";
                   out << pad << "    }\n";
                   out << pad << "    __gpga_data_time = __gpga_time;\n";
                   out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
                   out << pad << "  }\n";
                 }
-                out << pad << "  (void)__gpga_threshold;\n";
                 break;
               }
               case TimingCheckKind::kSkew:
@@ -16172,11 +16902,105 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                           "__gpga_didx_val", "__gpga_didx_xz",
                                           true, 20);
                   out << "                  } else {\n";
+                  out << "                    uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
                   out << "                    uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+                  if (info.inertial && info.has_pulse) {
+                    std::string pulse_reject_expr =
+                        info.pulse_reject ? emit_delay_limit4(*info.pulse_reject)
+                                          : "0ul";
+                    std::string pulse_error_expr = pulse_reject_expr;
+                    if (info.has_pulse_error && info.pulse_error) {
+                      pulse_error_expr = emit_delay_limit4(*info.pulse_error);
+                    }
+                    out << "                    bool __gpga_pulse_suppress = false;\n";
+                    out << "                    bool __gpga_pulse_x = false;\n";
+                    out << "                    ulong __gpga_pulse_reject = "
+                        << pulse_reject_expr << ";\n";
+                    out << "                    ulong __gpga_pulse_error = "
+                        << pulse_error_expr << ";\n";
+                    out << "                    ulong __gpga_new_time = __gpga_time + __gpga_delay;\n";
+                  }
+                  if (info.inertial) {
+                    std::vector<ServiceArg> cancel_args;
+                    if (info.showcancelled) {
+                      cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                       32,
+                                                       std::to_string(delay_id) +
+                                                           "u",
+                                                       "0ul",
+                                                       false});
+                      cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                       32,
+                                                       "sched_dnba_index_val[__gpga_dnba_idx]",
+                                                       "0ul",
+                                                       false});
+                      cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                       32,
+                                                       "sched_dnba_index_xz[__gpga_dnba_idx]",
+                                                       "0ul",
+                                                       false});
+                      cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                       64,
+                                                       "sched_dnba_time[__gpga_dnba_idx]",
+                                                       "0ul",
+                                                       false});
+                    }
+                    out << "                    if (__gpga_dnba_count != 0u) {\n";
+                    out << "                      uint __gpga_dnba_write = 0u;\n";
+                    out << "                      for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+                    out << "                        uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
+                    out << "                        if (sched_dnba_id[__gpga_dnba_idx] == "
+                        << delay_id << "u &&\n";
+                    out << "                            sched_dnba_index_val[__gpga_dnba_idx] == __gpga_didx_val &&\n";
+                    out << "                            sched_dnba_index_xz[__gpga_dnba_idx] == __gpga_didx_xz) {\n";
+                    if (info.has_pulse) {
+                      out << "                          ulong __gpga_pulse_width = (__gpga_new_time >= sched_dnba_time[__gpga_dnba_idx])\n";
+                      out << "                              ? (__gpga_new_time - sched_dnba_time[__gpga_dnba_idx])\n";
+                      out << "                              : (sched_dnba_time[__gpga_dnba_idx] - __gpga_new_time);\n";
+                      out << "                          if (__gpga_pulse_width < __gpga_pulse_reject) {\n";
+                      out << "                            __gpga_pulse_suppress = true;\n";
+                      out << "                          } else if (__gpga_pulse_width < __gpga_pulse_error) {\n";
+                      out << "                            __gpga_pulse_x = true;\n";
+                      out << "                          }\n";
+                    }
+                    if (info.showcancelled) {
+                      emit_service_record("GPGA_SERVICE_KIND_SHOWCANCELLED",
+                                          "GPGA_SERVICE_INVALID_ID",
+                                          cancel_args,
+                                          26);
+                    }
+                    out << "                          continue;\n";
+                    out << "                        }\n";
+                    out << "                        uint __gpga_dnba_out = __gpga_dnba_base + __gpga_dnba_write;\n";
+                    out << "                        if (__gpga_dnba_out != __gpga_dnba_idx) {\n";
+                    out << "                          sched_dnba_time[__gpga_dnba_out] = sched_dnba_time[__gpga_dnba_idx];\n";
+                    out << "                          sched_dnba_id[__gpga_dnba_out] = sched_dnba_id[__gpga_dnba_idx];\n";
+                    out << "                          sched_dnba_val[__gpga_dnba_out] = sched_dnba_val[__gpga_dnba_idx];\n";
+                    out << "                          sched_dnba_xz[__gpga_dnba_out] = sched_dnba_xz[__gpga_dnba_idx];\n";
+                    out << "                          sched_dnba_index_val[__gpga_dnba_out] = sched_dnba_index_val[__gpga_dnba_idx];\n";
+                    out << "                          sched_dnba_index_xz[__gpga_dnba_out] = sched_dnba_index_xz[__gpga_dnba_idx];\n";
+                    out << "                        }\n";
+                    out << "                        __gpga_dnba_write += 1u;\n";
+                    out << "                      }\n";
+                    out << "                      __gpga_dnba_count = __gpga_dnba_write;\n";
+                    out << "                      sched_dnba_count[gid] = __gpga_dnba_write;\n";
+                    out << "                    }\n";
+                  }
+                  if (info.has_pulse) {
+                    out << "                    if (__gpga_pulse_suppress) {\n";
+                    out << "                      sched_pc[idx] = " << next_pc << "u;\n";
+                    out << "                      sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                    out << "                      break;\n";
+                    out << "                    }\n";
+                    out << "                    if (__gpga_pulse_x) {\n";
+                    out << "                      __gpga_dval = 0ul;\n";
+                    out << "                      __gpga_dxz = " << mask << ";\n";
+                    out << "                    }\n";
+                  }
                   out << "                    if (__gpga_dnba_count >= GPGA_SCHED_MAX_DNBA) {\n";
                   out << "                      sched_error[gid] = 1u;\n";
                   out << "                    } else {\n";
-                  out << "                      uint __gpga_dnba_slot = (gid * GPGA_SCHED_MAX_DNBA) + __gpga_dnba_count;\n";
+                  out << "                      uint __gpga_dnba_slot = __gpga_dnba_base + __gpga_dnba_count;\n";
                   out << "                      sched_dnba_count[gid] = __gpga_dnba_count + 1u;\n";
                   out << "                      sched_dnba_time[__gpga_dnba_slot] = __gpga_time + __gpga_delay;\n";
                   out << "                      sched_dnba_id[__gpga_dnba_slot] = "
@@ -19937,6 +20761,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::vector<const AlwaysBlock*> initial_blocks;
       std::vector<const AlwaysBlock*> edge_blocks;
       std::vector<const AlwaysBlock*> comb_blocks;
+      std::vector<SpecifyPathBlock> specify_blocks =
+          BuildSpecifyPathBlocks(module);
       for (const auto& block : module.always_blocks) {
         if (block.edge == EdgeKind::kInitial) {
           initial_blocks.push_back(&block);
@@ -19947,6 +20773,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                    AlwaysBlockNeedsScheduler(block)) {
           comb_blocks.push_back(&block);
         }
+      }
+      for (const auto& block : specify_blocks) {
+        initial_blocks.push_back(&block.block);
       }
 
       if (!initial_blocks.empty() || !edge_blocks.empty() ||
@@ -20029,6 +20858,111 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       const int root_proc_count = next_pid;
       int next_fork_tag = 0;
+
+      struct PathPulseRef {
+        const TimingCheckLimit* reject = nullptr;
+        const TimingCheckLimit* error = nullptr;
+        bool has_pulse = false;
+        bool has_error = false;
+      };
+      std::unordered_map<const Statement*, bool> specify_delay_showcancelled;
+      std::unordered_map<const Statement*, PathPulseRef> specify_delay_pulse;
+      bool has_showcancelled = false;
+      auto collect_specify_delay = [&](const Statement& stmt,
+                                       bool showcancelled,
+                                       const PathPulseRef& pulse,
+                                       const auto& self) -> void {
+        if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
+          specify_delay_showcancelled[&stmt] = showcancelled;
+          if (showcancelled) {
+            has_showcancelled = true;
+          }
+          if (pulse.has_pulse) {
+            specify_delay_pulse[&stmt] = pulse;
+          }
+        }
+        switch (stmt.kind) {
+          case StatementKind::kIf:
+            for (const auto& inner : stmt.then_branch) {
+              self(inner, showcancelled, pulse, self);
+            }
+            for (const auto& inner : stmt.else_branch) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kBlock:
+            for (const auto& inner : stmt.block) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kFor:
+            for (const auto& inner : stmt.for_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kWhile:
+            for (const auto& inner : stmt.while_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kRepeat:
+            for (const auto& inner : stmt.repeat_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kDelay:
+            for (const auto& inner : stmt.delay_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kEventControl:
+            for (const auto& inner : stmt.event_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kWait:
+            for (const auto& inner : stmt.wait_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kForever:
+            for (const auto& inner : stmt.forever_body) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kFork:
+            for (const auto& inner : stmt.fork_branches) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          case StatementKind::kCase:
+            for (const auto& item : stmt.case_items) {
+              for (const auto& inner : item.body) {
+                self(inner, showcancelled, pulse, self);
+              }
+            }
+            for (const auto& inner : stmt.default_branch) {
+              self(inner, showcancelled, pulse, self);
+            }
+            return;
+          default:
+            return;
+        }
+      };
+      for (const auto& block : specify_blocks) {
+        PathPulseRef pulse;
+        if (block.has_pulse) {
+          pulse.has_pulse = true;
+          pulse.has_error = block.has_pulse_error;
+          pulse.reject = &block.pulse_reject;
+          pulse.error =
+              block.has_pulse_error ? &block.pulse_error : &block.pulse_reject;
+        }
+        for (const auto& stmt : block.block.statements) {
+          collect_specify_delay(stmt, block.showcancelled, pulse,
+                                collect_specify_delay);
+        }
+      }
 
       std::vector<std::unique_ptr<std::vector<Statement>>>
           expanded_proc_bodies;
@@ -20564,6 +21498,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         const Statement* stmt = nullptr;
         std::string lhs;
         bool nonblocking = false;
+        bool inertial = false;
+        bool showcancelled = false;
+        bool has_pulse = false;
+        bool has_pulse_error = false;
+        const TimingCheckLimit* pulse_reject = nullptr;
+        const TimingCheckLimit* pulse_error = nullptr;
         bool lhs_real = false;
         bool is_array = false;
         bool is_bit_select = false;
@@ -20586,7 +21526,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           info.stmt = &stmt;
           info.lhs = stmt.assign.lhs;
           info.nonblocking = stmt.assign.nonblocking;
-          info.lhs_real = SignalIsReal(module, stmt.assign.lhs);
+        auto show_it = specify_delay_showcancelled.find(&stmt);
+        bool specify_delay = (show_it != specify_delay_showcancelled.end());
+        info.inertial = specify_delay;
+        info.showcancelled = specify_delay && show_it->second;
+        auto pulse_it = specify_delay_pulse.find(&stmt);
+        if (pulse_it != specify_delay_pulse.end()) {
+          info.has_pulse = pulse_it->second.has_pulse;
+          info.has_pulse_error = pulse_it->second.has_error;
+          info.pulse_reject = pulse_it->second.reject;
+          info.pulse_error = pulse_it->second.error;
+        }
+        info.lhs_real = SignalIsReal(module, stmt.assign.lhs);
           info.base_width = SignalWidth(module, stmt.assign.lhs);
           int element_width = 0;
           int array_size = 0;
@@ -20927,6 +21878,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 [](const Net* a, const Net* b) { return a->name < b->name; });
 
       const bool has_delayed_assigns = !delay_assigns.empty();
+      const bool has_services =
+          system_task_info.has_system_tasks || has_showcancelled;
+      const size_t showcancelled_args = has_showcancelled ? 4u : 0u;
       const bool has_delayed_nba = delayed_nba_count > 0;
       size_t delayed_nba_capacity =
           has_delayed_nba ? std::max<size_t>(1, delayed_nba_count * 4) : 0;
@@ -21142,14 +22096,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SCHED_STROBE_COUNT = "
             << system_task_info.strobe_stmts.size() << "u;\n";
       }
-      if (system_task_info.has_system_tasks) {
-        size_t max_args = std::max<size_t>(1, system_task_info.max_args);
+      if (has_services) {
+        size_t max_args = std::max<size_t>(
+            std::max<size_t>(1, system_task_info.max_args), showcancelled_args);
         out << "constant constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
             << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_SERVICE_WIDE_WORDS = "
-            << service_wide_words << "u;\n";
+            << (system_task_info.has_system_tasks ? service_wide_words : 0u)
+            << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_STRING_COUNT = "
-            << system_task_info.string_table.size() << "u;\n";
+            << (system_task_info.has_system_tasks
+                    ? system_task_info.string_table.size()
+                    : 0u)
+            << "u;\n";
         out << "constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
         out << "constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
         out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
@@ -21198,6 +22157,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "constant constexpr uint GPGA_SERVICE_KIND_SYNC_OR_PLANE = 39u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_ASYNC_NOR_PLANE = 40u;\n";
         out << "constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;\n";
+        out << "constant constexpr uint GPGA_SERVICE_KIND_SHOWCANCELLED = 42u;\n";
         out << "struct GpgaServiceRecord {\n";
         out << "  uint kind;\n";
         out << "  uint pid;\n";
@@ -21401,7 +22361,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         emit_param("  device uint* sched_strobe_pending [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
       }
-      if (system_task_info.has_system_tasks) {
+      if (has_services) {
         emit_param("  device uint* sched_service_count [[buffer(" +
                    std::to_string(buffer_index++) + ")]]");
         emit_param("  device GpgaServiceRecord* sched_service [[buffer(" +
@@ -21425,7 +22385,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  " << type << " " << MslName(name) << " = " << zero << ";\n";
       }
     }
-    if (system_task_info.has_system_tasks) {
+    if (has_services) {
       out << "  sched_service_count[gid] = 0u;\n";
     }
     out << "  ulong __gpga_time = sched_time[gid];\n";
@@ -21655,6 +22615,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::string delay =
             EmitExprSized(expr, 64, module, sched_locals, sched_regs);
         return "ulong(" + delay + ")";
+      };
+      auto emit_delay_limit2 = [&](const TimingCheckLimit& limit) -> std::string {
+        const Expr* expr = SelectTimingLimitExpr(limit, GetTimingSelectMode());
+        if (!expr) {
+          return "0ul";
+        }
+        return emit_delay_value2(*expr);
       };
 
       auto force_slot_expr = [&](const std::string& target) -> std::string {
@@ -22277,7 +23244,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   out << pad << "      __gpga_width_limit = __gpga_limit;\n";
                 }
                 out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
-                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "        if (__gpga_threshold <= 0l || __gpga_delta >= __gpga_threshold) {\n";
+                out << pad << "          __gpga_violation = true;\n";
+                out << pad << "        }\n";
                 out << pad << "      }\n";
                 out << pad << "    }\n";
                 out << pad << "    __gpga_ref_time = __gpga_time;\n";
@@ -22298,14 +23267,15 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   out << pad << "      __gpga_width_limit = __gpga_width_alt;\n";
                 }
                 out << pad << "      if (__gpga_delta < __gpga_width_limit) {\n";
-                out << pad << "        __gpga_violation = true;\n";
+                out << pad << "        if (__gpga_threshold <= 0l || __gpga_delta >= __gpga_threshold) {\n";
+                out << pad << "          __gpga_violation = true;\n";
+                out << pad << "        }\n";
                 out << pad << "      }\n";
                 out << pad << "    }\n";
                 out << pad << "    __gpga_data_time = __gpga_time;\n";
                 out << pad << "    sched_timing_data_time[__gpga_tc_slot] = __gpga_data_time;\n";
                 out << pad << "  }\n";
               }
-              out << pad << "  (void)__gpga_threshold;\n";
               break;
             }
             case TimingCheckKind::kSkew:
@@ -24296,11 +25266,97 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                         "__gpga_dval", "__gpga_didx_val", true,
                                         20);
                 out << "                  } else {\n";
+                out << "                    uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
                 out << "                    uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+                if (info.inertial && info.has_pulse) {
+                  std::string pulse_reject_expr =
+                      info.pulse_reject ? emit_delay_limit2(*info.pulse_reject)
+                                        : "0ul";
+                  std::string pulse_error_expr = pulse_reject_expr;
+                  if (info.has_pulse_error && info.pulse_error) {
+                    pulse_error_expr = emit_delay_limit2(*info.pulse_error);
+                  }
+                  out << "                    bool __gpga_pulse_suppress = false;\n";
+                  out << "                    bool __gpga_pulse_x = false;\n";
+                  out << "                    ulong __gpga_pulse_reject = "
+                      << pulse_reject_expr << ";\n";
+                  out << "                    ulong __gpga_pulse_error = "
+                      << pulse_error_expr << ";\n";
+                  out << "                    ulong __gpga_new_time = __gpga_time + __gpga_delay;\n";
+                }
+                if (info.inertial) {
+                  std::vector<ServiceArg> cancel_args;
+                  if (info.showcancelled) {
+                    cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                     32,
+                                                     std::to_string(delay_id) +
+                                                         "u",
+                                                     false});
+                    cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                     32,
+                                                     "sched_dnba_index_val[__gpga_dnba_idx]",
+                                                     false});
+                    cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                     32,
+                                                     "0u",
+                                                     false});
+                    cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE",
+                                                     64,
+                                                     "sched_dnba_time[__gpga_dnba_idx]",
+                                                     false});
+                  }
+                  out << "                    if (__gpga_dnba_count != 0u) {\n";
+                  out << "                      uint __gpga_dnba_write = 0u;\n";
+                  out << "                      for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+                  out << "                        uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
+                  out << "                        if (sched_dnba_id[__gpga_dnba_idx] == "
+                      << delay_id << "u &&\n";
+                  out << "                            sched_dnba_index_val[__gpga_dnba_idx] == __gpga_didx_val) {\n";
+                  if (info.has_pulse) {
+                    out << "                          ulong __gpga_pulse_width = (__gpga_new_time >= sched_dnba_time[__gpga_dnba_idx])\n";
+                    out << "                              ? (__gpga_new_time - sched_dnba_time[__gpga_dnba_idx])\n";
+                    out << "                              : (sched_dnba_time[__gpga_dnba_idx] - __gpga_new_time);\n";
+                    out << "                          if (__gpga_pulse_width < __gpga_pulse_reject) {\n";
+                    out << "                            __gpga_pulse_suppress = true;\n";
+                    out << "                          } else if (__gpga_pulse_width < __gpga_pulse_error) {\n";
+                    out << "                            __gpga_pulse_x = true;\n";
+                    out << "                          }\n";
+                  }
+                  if (info.showcancelled) {
+                    emit_service_record("GPGA_SERVICE_KIND_SHOWCANCELLED",
+                                        "GPGA_SERVICE_INVALID_ID",
+                                        cancel_args,
+                                        26);
+                  }
+                  out << "                          continue;\n";
+                  out << "                        }\n";
+                  out << "                        uint __gpga_dnba_out = __gpga_dnba_base + __gpga_dnba_write;\n";
+                  out << "                        if (__gpga_dnba_out != __gpga_dnba_idx) {\n";
+                  out << "                          sched_dnba_time[__gpga_dnba_out] = sched_dnba_time[__gpga_dnba_idx];\n";
+                  out << "                          sched_dnba_id[__gpga_dnba_out] = sched_dnba_id[__gpga_dnba_idx];\n";
+                  out << "                          sched_dnba_val[__gpga_dnba_out] = sched_dnba_val[__gpga_dnba_idx];\n";
+                  out << "                          sched_dnba_index_val[__gpga_dnba_out] = sched_dnba_index_val[__gpga_dnba_idx];\n";
+                  out << "                        }\n";
+                  out << "                        __gpga_dnba_write += 1u;\n";
+                  out << "                      }\n";
+                  out << "                      __gpga_dnba_count = __gpga_dnba_write;\n";
+                  out << "                      sched_dnba_count[gid] = __gpga_dnba_write;\n";
+                  out << "                    }\n";
+                }
+                if (info.has_pulse) {
+                  out << "                    if (__gpga_pulse_suppress) {\n";
+                  out << "                      sched_pc[idx] = " << next_pc << "u;\n";
+                  out << "                      sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+                  out << "                      break;\n";
+                  out << "                    }\n";
+                  out << "                    if (__gpga_pulse_x) {\n";
+                  out << "                      __gpga_dval = 0ul;\n";
+                  out << "                    }\n";
+                }
                 out << "                    if (__gpga_dnba_count >= GPGA_SCHED_MAX_DNBA) {\n";
                 out << "                      sched_error[gid] = 1u;\n";
                 out << "                    } else {\n";
-                out << "                      uint __gpga_dnba_slot = (gid * GPGA_SCHED_MAX_DNBA) + __gpga_dnba_count;\n";
+                out << "                      uint __gpga_dnba_slot = __gpga_dnba_base + __gpga_dnba_count;\n";
                 out << "                      sched_dnba_count[gid] = __gpga_dnba_count + 1u;\n";
                 out << "                      sched_dnba_time[__gpga_dnba_slot] = __gpga_time + __gpga_delay;\n";
                 out << "                      sched_dnba_id[__gpga_dnba_slot] = "

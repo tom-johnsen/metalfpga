@@ -274,6 +274,17 @@ enum class TimingCheckKind {
   kNoChange,
 };
 
+enum class SpecifyPathKind {
+  kParallel,
+  kFull,
+};
+
+enum class SpecifyPathPolarity {
+  kNone,
+  kPositive,
+  kNegative,
+};
+
 enum class TimingEdgeState {
   k0,
   k1,
@@ -412,6 +423,9 @@ struct ParamOverride {
 struct Instance {
   std::string module_name;
   std::string name;
+  bool has_array = false;
+  std::unique_ptr<Expr> array_msb;
+  std::unique_ptr<Expr> array_lsb;
   std::vector<ParamOverride> param_overrides;
   std::vector<Connection> connections;
 };
@@ -445,6 +459,35 @@ struct TimingCheck {
   int column = 0;
 };
 
+struct PathPulseSpec {
+  std::string name;
+  std::string input;
+  std::string output;
+  TimingCheckLimit reject;
+  TimingCheckLimit error;
+  bool has_error = false;
+};
+
+struct SpecifyPath {
+  SpecifyPathKind kind = SpecifyPathKind::kParallel;
+  SpecifyPathPolarity polarity = SpecifyPathPolarity::kNone;
+  TimingCheckEvent input_event;
+  std::unique_ptr<Expr> data_expr;
+  SequentialAssign target;
+  std::vector<TimingCheckLimit> delays;
+  std::unique_ptr<Expr> condition;
+  bool is_conditional = false;
+  bool is_ifnone = false;
+  bool showcancelled = false;
+  std::string pulse_input;
+  TimingCheckLimit pulse_reject;
+  TimingCheckLimit pulse_error;
+  bool has_pulse = false;
+  bool has_pulse_error = false;
+  int line = 0;
+  int column = 0;
+};
+
 struct Module {
   std::string name;
   std::string timescale;
@@ -460,6 +503,8 @@ struct Module {
   std::vector<EventDecl> events;
   std::vector<DefParam> defparams;
   std::vector<TimingCheck> timing_checks;
+  std::vector<SpecifyPath> specify_paths;
+  std::unordered_map<std::string, PathPulseSpec> path_pulses;
   std::unordered_set<std::string> generate_labels;
   UnconnectedDrive unconnected_drive = UnconnectedDrive::kNone;
 };

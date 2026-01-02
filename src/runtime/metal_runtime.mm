@@ -1708,6 +1708,23 @@ ServiceDrainResult DrainSchedulerServices(
         out << "\n";
         break;
       }
+      case ServiceKind::kShowcancelled: {
+        out << "$showcancelled (pid=" << pid << ")";
+        if (arg_count > 0u) {
+          out << " delay_id=" << FormatNumeric(args[0], 'h', has_xz);
+        }
+        if (arg_count > 1u) {
+          out << " index=" << FormatNumeric(args[1], 'h', has_xz);
+        }
+        if (arg_count > 2u) {
+          out << " index_xz=" << FormatNumeric(args[2], 'h', has_xz);
+        }
+        if (arg_count > 3u) {
+          out << " time=" << FormatNumeric(args[3], 'd', has_xz);
+        }
+        out << "\n";
+        break;
+      }
       case ServiceKind::kDumpoff:
         out << "$dumpoff (pid=" << pid << ")\n";
         break;

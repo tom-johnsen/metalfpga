@@ -40,14 +40,15 @@ Parsing:
 - Full timing-check argument parsing is implemented:
   - Events (data/ref), edge lists, `&&&` conditions, limits, notifier,
     threshold, delayed_ref/data, and flags are captured into `TimingCheck`.
-- Specify block handling also tracks showcancelled/noshowcancelled ordering
-  and conditional path output selection (no path delay AST yet).
-- SDF timing checks are parsed and matched in `src/main.mm` (values not applied).
+- Specify paths are parsed with input events, output descriptors, conditions,
+  and delay lists (including showcancelled/noshowcancelled ordering).
+- SDF timing checks are parsed, matched, and applied in `src/main.mm`.
 
 MSL emission:
 - Timing checks are emitted as live scheduler logic with edge detection,
   timing windows, and notifier assignment.
-- Threshold is parsed but currently unused in width/pulsewidth checks.
+- Threshold is applied to width/pulsewidth checks to suppress sub-threshold
+  pulses.
 
 Runtime:
 - Timing check state buffers are allocated (prev val/xz, data/ref times,
@@ -73,8 +74,8 @@ notifier, threshold, delayed_ref/data, and flags.
 
 ### Specify path parsing (required)
 
-[partial] Parsing tracks showcancelled ordering and conditional output
-selection, but no AST or delay modeling exists yet.
+[done] Specify paths parse into AST (input event, output/data, condition,
+delay list, polarity, showcancelled).
 
 ## Elaboration / semantic resolution
 
@@ -86,7 +87,7 @@ delayed_ref/data).
 
 ### Specify path resolution (required)
 
-[pending] No specify path resolution/delay modeling yet.
+[done] Specify paths are cloned/renamed during elaboration.
 
 ## Runtime data structures (GPU)
 
@@ -130,7 +131,7 @@ follows current `cond_bool` semantics (not explicitly documented yet).
 
 ### Apply SDF values (required)
 
-[pending] SDF matching exists, but values are not applied to checks.
+[done] SDF values are parsed and applied to timing checks.
 
 ### COND semantics (required)
 
@@ -148,7 +149,33 @@ Ensure conditional checks only apply when condition matches.
 
 ## Specify path delays (required)
 
-[pending] Not implemented (only parser bookkeeping).
+[partial] Specify paths emit as scheduler processes:
+- event-triggered delayed nonblocking assignment
+- conditional/ifnone gating
+- uses min/typ/max selection per chosen delay entry
+- negative polarity maps to bitwise inversion of the data expression
+- for multi-entry delays, posedge selects entry 0, negedge entry 1, and
+  non-edge lists fall back to entry 2 when present
+- ifnone is scoped to conditional paths that share the same output and input
+  event signature (expr/cond/edge)
+- when the input edge is "any" and the RHS is a constant all-0/all-1, delay
+  selection biases toward fall/rise entries
+- edge lists that exclusively rise or fall collapse to posedge/negedge event
+  control; mixed edge lists stay as "any"
+- scalar outputs use output-transition matching for 3/6-entry delays
+  (0->1, 1->0, 0->Z, Z->1, 1->Z, Z->0), with other transitions falling back
+- scalar outputs with 12-entry delays also match X transitions
+  (0->X, X->1, 1->X, X->0, X->Z, Z->X); unmatched transitions use 0 delay
+- vector outputs with 3/6/12-entry delays split into per-bit delayed assigns
+  (indexed ranges and width-mismatched RHS included via sign/zero extension),
+  using the same transition table per bit
+- negative polarity swaps edge-based delay selection (posedge/negedge)
+- specify-path delayed NBAs cancel prior pending updates for the same target
+  index (inertial replacement); when `showcancelled` is set, cancellations
+  emit service records
+
+Still missing:
+- (none tracked here yet)
 
 ## Tests and validation
 
@@ -187,8 +214,8 @@ Implemented:
 2) [done] Elaborate and bind checks to signals.
 3) [done] Runtime state + scheduler edge integration.
 4) [done] Notifier + violation policy.
-5) [pending] SDF annotation values applied to checks.
-6) [pending] Specify path delays modeled.
+5) [done] SDF annotation values applied to checks.
+6) [partial] Specify path delays modeled (basic scheduler emission only).
 
 ## Open questions
 

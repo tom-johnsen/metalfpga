@@ -61,6 +61,7 @@ enum class ServiceKind : uint32_t {
   kSyncOrPlane = 39u,
   kAsyncNorPlane = 40u,
   kSyncNandPlane = 41u,
+  kShowcancelled = 42u,
 };
 
 struct ServiceStringTable {

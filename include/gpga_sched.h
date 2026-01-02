@@ -90,6 +90,7 @@ constant constexpr uint GPGA_SERVICE_KIND_ASYNC_AND_ARRAY = 38u;
 constant constexpr uint GPGA_SERVICE_KIND_SYNC_OR_PLANE = 39u;
 constant constexpr uint GPGA_SERVICE_KIND_ASYNC_NOR_PLANE = 40u;
 constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;
+constant constexpr uint GPGA_SERVICE_KIND_SHOWCANCELLED = 42u;
 
 #define GPGA_SCHED_DEFINE_CONSTANTS(proc_count, root_count, event_count, edge_count, edge_star_count, max_ready, max_time, max_nba, repeat_count, delay_count, max_dnba, monitor_count, monitor_max_args, strobe_count, service_max_args, service_wide_words, string_count, force_count, pcont_count) \
 constant constexpr uint GPGA_SCHED_PROC_COUNT = proc_count; \
