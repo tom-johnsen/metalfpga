@@ -5731,19 +5731,13 @@ LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
     size_t dim_count = dims.size();
     size_t index_count = assign.lhs_indices.size();
     bool has_bit_select = false;
+    bool has_range = false;
     const Expr* bit_expr = nullptr;
     if (assign.lhs_has_range) {
-      if (assign.lhs_lsb_expr) {
-        return out;
-      }
       if (index_count != dim_count) {
         return out;
       }
-      has_bit_select = true;
-      bit_expr = assign.lhs_msb_expr.get();
-      if (!bit_expr) {
-        return out;
-      }
+      has_range = true;
     } else if (index_count == dim_count + 1) {
       has_bit_select = true;
       bit_expr = assign.lhs_indices.back().get();
@@ -5789,6 +5783,40 @@ LvalueInfo BuildLvalue(const SequentialAssign& assign, const Module& module,
       out.is_bit_select = true;
       out.width = 1;
       out.bit_index = bit_index;
+      return out;
+    }
+    if (has_range) {
+      if (SignalIsReal(module, assign.lhs)) {
+        return LvalueInfo{};
+      }
+      out.is_range = true;
+      if (assign.lhs_indexed_range) {
+        if (!assign.lhs_lsb_expr || assign.lhs_indexed_width <= 0) {
+          return LvalueInfo{};
+        }
+        std::string index =
+            EmitExpr(*assign.lhs_lsb_expr, module, locals, regs);
+        int width = assign.lhs_indexed_width;
+        out.range_index = index;
+        out.width = width;
+        out.is_indexed_range = true;
+        if (out.base_width >= width) {
+          int limit = out.base_width - width;
+          std::string range_guard =
+              "(uint(" + index + ") <= " + std::to_string(limit) + "u)";
+          guard = guard.empty() ? range_guard
+                                : "(" + guard + " && " + range_guard + ")";
+        } else {
+          guard = "false";
+        }
+        out.guard = guard;
+        return out;
+      }
+      int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+      int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+      out.range_lsb = lo;
+      out.width = hi - lo + 1;
+      out.guard = guard;
       return out;
     }
     out.guard = guard;
@@ -6944,9 +6972,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       std::string func =
           std::string("fs_") + op + (width > 32 ? "64" : "32");
-      std::string base =
-          func + "(" + fs_make_expr(lhs, width) + ", " +
-          fs_make_expr(rhs, rhs_width) + ", " + std::to_string(width) + "u)";
+      std::string lhs_base = (width > 32) ? fs_make_expr64(lhs, width)
+                                          : fs_make_expr(lhs, width);
+      std::string rhs_base = (width > 32) ? fs_make_expr64(rhs, rhs_width)
+                                          : fs_make_expr(rhs, rhs_width);
+      std::string base = func + "(" + lhs_base + ", " + rhs_base + ", " +
+                         std::to_string(width) + "u)";
       return fs_expr_from_base(base, drive_full(width), width);
     };
 
@@ -7613,6 +7644,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
+            std::string val;
+            std::string xz;
             if (width > 64) {
               std::string ax = MaskForWidthExpr(operand.xz, width);
               std::string aval = MaskForWidthExpr(operand.val, width);
@@ -7621,17 +7654,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               std::string a_false =
                   "(!" + wide_any(ax, width) + " && !" +
                   wide_any(aval, width) + ")";
-              std::string val =
+              val =
                   "((" + a_true + ") ? 0u : ((" + a_false + ") ? 1u : 0u))";
-              std::string xz =
+              xz =
                   "((" + a_true + " || " + a_false + ") ? 0u : 1u)";
-              return FsExpr{val, xz, drive_full(1), 1};
+            } else {
+              std::string zero = literal_for_width(0, width);
+              std::string a_true =
+                  "(" + operand.xz + " == " + zero + " && " + operand.val +
+                  " != " + zero + ")";
+              std::string a_false =
+                  "(" + operand.xz + " == " + zero + " && " + operand.val +
+                  " == " + zero + ")";
+              val =
+                  "((" + a_true + ") ? 0u : ((" + a_false + ") ? 1u : 0u))";
+              xz = "((" + a_true + " || " + a_false + ") ? 0u : 1u)";
             }
-            std::string func = (width > 32) ? "fs_log_not64" : "fs_log_not32";
-            std::string base =
-                func + "(" + fs_make_expr(operand, width) + ", " +
-                std::to_string(width) + "u)";
-            return fs_expr_from_base(base, drive_full(1), 1);
+            return FsExpr{val, xz, drive_full(1), 1};
           }
           if (expr.unary_op == 'B') {
             if (expr.operand && ExprIsRealValue(*expr.operand, module)) {
@@ -7799,15 +7838,39 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               return FsExpr{val, xz, drive_full(1), 1};
             }
-            std::string func = (width > 32)
-                                   ? (expr.op == 'A' ? "fs_log_and64"
-                                                    : "fs_log_or64")
-                                   : (expr.op == 'A' ? "fs_log_and32"
-                                                    : "fs_log_or32");
-            std::string base =
-                func + "(" + fs_make_expr(lhs, width) + ", " +
-                fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
-            return fs_expr_from_base(base, drive_full(1), 1);
+            std::string zero = literal_for_width(0, width);
+            std::string a_true =
+                "(" + lhs.xz + " == " + zero + " && " + lhs.val + " != " +
+                zero + ")";
+            std::string b_true =
+                "(" + rhs.xz + " == " + zero + " && " + rhs.val + " != " +
+                zero + ")";
+            std::string a_false =
+                "(" + lhs.xz + " == " + zero + " && " + lhs.val + " == " +
+                zero + ")";
+            std::string b_false =
+                "(" + rhs.xz + " == " + zero + " && " + rhs.val + " == " +
+                zero + ")";
+            std::string val;
+            std::string xz;
+            if (expr.op == 'A') {
+              val =
+                  "((" + a_false + " || " + b_false +
+                  ") ? 0u : ((" + a_true + " && " + b_true +
+                  ") ? 1u : 0u))";
+              xz =
+                  "((" + a_false + " || " + b_false + " || (" + a_true +
+                  " && " + b_true + ")) ? 0u : 1u)";
+            } else {
+              val =
+                  "((" + a_true + " || " + b_true +
+                  ") ? 1u : ((" + a_false + " && " + b_false +
+                  ") ? 0u : 0u))";
+              xz =
+                  "((" + a_true + " || " + b_true + " || (" + a_false +
+                  " && " + b_false + ")) ? 0u : 1u)";
+            }
+            return FsExpr{val, xz, drive_full(1), 1};
           }
           if (expr.op == 'C' || expr.op == 'c' || expr.op == 'W' ||
               expr.op == 'w') {
@@ -8682,7 +8745,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
       FsExpr out_expr = emit_expr4_sized_with_cse(expr, width, indent);
       out_expr = maybe_hoist_full(out_expr, indent, false, force_small);
-      if (cache) {
+      auto is_temp_expr = [&](const FsExpr& value) -> bool {
+        const std::string marker = "__gpga_fs_tmp";
+        if (!value.full.empty() &&
+            value.full.rfind(marker, 0) == 0) {
+          return true;
+        }
+        return value.val.find(marker) != std::string::npos ||
+               value.xz.find(marker) != std::string::npos ||
+               value.drive.find(marker) != std::string::npos;
+      };
+      if (cache && !is_temp_expr(out_expr)) {
         ExprCacheEntry entry;
         entry.expr = out_expr;
         CollectReadSignalsExpr(expr, &entry.deps);
@@ -8714,7 +8787,17 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       if (force_small) {
         out_expr = maybe_hoist_full(out_expr, indent, true, true);
       }
-      if (cache) {
+      auto is_temp_expr = [&](const FsExpr& value) -> bool {
+        const std::string marker = "__gpga_fs_tmp";
+        if (!value.full.empty() &&
+            value.full.rfind(marker, 0) == 0) {
+          return true;
+        }
+        return value.val.find(marker) != std::string::npos ||
+               value.xz.find(marker) != std::string::npos ||
+               value.drive.find(marker) != std::string::npos;
+      };
+      if (cache && !is_temp_expr(out_expr)) {
         ExprCacheEntry entry;
         entry.expr = out_expr;
         CollectReadSignalsExpr(expr, &entry.deps);
@@ -8788,19 +8871,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         size_t dim_count = dims.size();
         size_t index_count = assign.lhs_indices.size();
         bool has_bit_select = false;
+        bool has_range = false;
         const Expr* bit_expr = nullptr;
         if (assign.lhs_has_range) {
-          if (assign.lhs_lsb_expr) {
-            return out;
-          }
           if (index_count != dim_count) {
             return out;
           }
-          has_bit_select = true;
-          bit_expr = assign.lhs_msb_expr.get();
-          if (!bit_expr) {
-            return out;
-          }
+          has_range = true;
         } else if (index_count == dim_count + 1) {
           has_bit_select = true;
           bit_expr = assign.lhs_indices.back().get();
@@ -8891,6 +8968,57 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out.bit_index_xz = bit_idx.xz;
           out.width = 1;
           out.is_bit_select = true;
+          return out;
+        }
+        if (has_range) {
+          if (SignalIsReal(module, assign.lhs)) {
+            return Lvalue4{};
+          }
+          out.is_range = true;
+          out.base_width = element_width;
+          if (assign.lhs_indexed_range) {
+            if (!assign.lhs_lsb_expr || assign.lhs_indexed_width <= 0) {
+              return Lvalue4{};
+            }
+            FsExpr idx = emit_expr4(*assign.lhs_lsb_expr);
+            if (active_cse) {
+              idx = maybe_hoist_full(idx, indent, false, false);
+            }
+            int width = assign.lhs_indexed_width;
+            out.range_index_val = to_u64(idx.val, idx.width);
+            out.range_index_xz = idx.xz;
+            out.width = width;
+            out.is_indexed_range = true;
+            if (idx.is_const) {
+              if (idx.const_xz != 0) {
+                return Lvalue4{};
+              }
+              if (idx.const_val + static_cast<uint64_t>(width) >
+                  static_cast<uint64_t>(out.base_width)) {
+                return Lvalue4{};
+              }
+            } else {
+              if (out.base_width >= width) {
+                int limit = out.base_width - width;
+                std::string idx_u = to_uint(idx.val, idx.width);
+                std::string range_guard =
+                    "(" + xz_is_zero(idx.xz, idx.width) + " && " + idx_u +
+                    " <= " + std::to_string(limit) + "u)";
+                guard = guard.empty() ? range_guard
+                                      : "(" + guard + " && " + range_guard +
+                                            ")";
+              } else {
+                guard = "false";
+              }
+            }
+            out.guard = guard;
+            return out;
+          }
+          int lo = std::min(assign.lhs_msb, assign.lhs_lsb);
+          int hi = std::max(assign.lhs_msb, assign.lhs_lsb);
+          out.range_lsb = lo;
+          out.width = hi - lo + 1;
+          out.guard = guard;
           return out;
         }
         out.guard = guard;
@@ -11661,6 +11789,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         int width = 0;
       };
       std::unordered_map<std::string, NbTemp> nb_map;
+      std::unordered_set<std::string> nb_array_targets;
 
       auto collect_nb_targets = [&](const Statement& stmt,
                                     std::unordered_set<std::string>* out_set,
@@ -11668,6 +11797,42 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (stmt.kind == StatementKind::kAssign && stmt.assign.nonblocking &&
             !stmt.assign.lhs_index) {
           out_set->insert(stmt.assign.lhs);
+          return;
+        }
+        if (stmt.kind == StatementKind::kIf) {
+          for (const auto& inner : stmt.then_branch) {
+            self(inner, out_set, self);
+          }
+          for (const auto& inner : stmt.else_branch) {
+            self(inner, out_set, self);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kCase) {
+          for (const auto& item : stmt.case_items) {
+            for (const auto& inner : item.body) {
+              self(inner, out_set, self);
+            }
+          }
+          for (const auto& inner : stmt.default_branch) {
+            self(inner, out_set, self);
+          }
+          return;
+        }
+        if (stmt.kind == StatementKind::kBlock) {
+          for (const auto& inner : stmt.block) {
+            self(inner, out_set, self);
+          }
+        }
+      };
+      auto collect_nb_array_targets = [&](const Statement& stmt,
+                                          std::unordered_set<std::string>* out_set,
+                                          const auto& self) -> void {
+        if (stmt.kind == StatementKind::kAssign && stmt.assign.nonblocking) {
+          if ((stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty()) &&
+              IsArrayNet(module, stmt.assign.lhs, nullptr, nullptr)) {
+            out_set->insert(stmt.assign.lhs);
+          }
           return;
         }
         if (stmt.kind == StatementKind::kIf) {
@@ -12036,6 +12201,28 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             block.edge == EdgeKind::kInitial) {
           continue;
         }
+        for (const auto& stmt : block.statements) {
+          collect_nb_array_targets(stmt, &nb_array_targets,
+                                   collect_nb_array_targets);
+        }
+      }
+      std::vector<const Net*> nb_array_nets;
+      for (const auto& net : module.nets) {
+        if (net.array_size <= 0) {
+          continue;
+        }
+        if (nb_array_targets.count(net.name) > 0) {
+          nb_array_nets.push_back(&net);
+        }
+      }
+      std::sort(nb_array_nets.begin(), nb_array_nets.end(),
+                [](const Net* a, const Net* b) { return a->name < b->name; });
+
+      for (const auto& block : module.always_blocks) {
+        if (block.edge == EdgeKind::kCombinational ||
+            block.edge == EdgeKind::kInitial) {
+          continue;
+        }
         out << "  // always @(";
         if (!block.sensitivity.empty()) {
           out << block.sensitivity;
@@ -12074,6 +12261,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               << entry.second.val << ";\n";
           out << "  " << xz_name(entry.first) << "[gid] = "
               << entry.second.xz << ";\n";
+        }
+      }
+      if (!nb_array_nets.empty()) {
+        out << "  // Commit array NBAs.\n";
+        for (const auto* net : nb_array_nets) {
+          out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
+          out << "    " << val_name(net->name) << "[(gid * "
+              << net->array_size << "u) + i] = " << MslValNextName(net->name)
+              << "[(gid * " << net->array_size << "u) + i];\n";
+          out << "    " << xz_name(net->name) << "[(gid * " << net->array_size
+              << "u) + i] = " << MslXzNextName(net->name) << "[(gid * "
+              << net->array_size << "u) + i];\n";
+          out << "  }\n";
         }
       }
       out << "}\n";
@@ -13200,7 +13400,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         std::function<void(const Statement&)> collect_nb_targets;
         collect_nb_targets = [&](const Statement& stmt) -> void {
           if (stmt.kind == StatementKind::kAssign && stmt.assign.nonblocking) {
-            if (stmt.assign.lhs_index) {
+            if (stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty()) {
               nb_array_targets.insert(stmt.assign.lhs);
             } else {
               nb_targets.insert(stmt.assign.lhs);
@@ -15473,7 +15673,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           int service_false_pc = 0;
         };
         int pc_counter = 0;
+        int pc_done_value = 0;
         std::vector<BodyCase> body_cases;
+        std::unordered_set<int> pc_used;
+        auto alloc_body_pc = [&]() -> int {
+          int pc = pc_counter;
+          if (pc <= pc_done_value) {
+            pc = pc_done_value + 1;
+          }
+          while (pc_used.count(pc) != 0u) {
+            ++pc;
+          }
+          pc_used.insert(pc);
+          pc_counter = pc + 1;
+          return pc;
+        };
 
         auto emit_syscall_assign =
             [&](const Statement& stmt, const Expr& call, int resume_pc,
@@ -15527,7 +15741,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (width <= 0) {
             width = ExprWidth(call, module);
           }
-          int body_pc = pc_counter++;
+          int body_pc = alloc_body_pc();
           BodyCase body_case;
           body_case.pc = body_pc;
           body_case.owner = &stmt;
@@ -16724,12 +16938,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           } else if (proc.single) {
             append_stmt(*proc.single);
           }
-        std::unordered_map<const Statement*, int> pc_for_stmt;
-        pc_counter = 0;
-        for (const auto* stmt : stmts) {
-          pc_for_stmt[stmt] = pc_counter++;
-        }
-        const int pc_done = pc_counter++;
+          std::vector<int> pc_for_index(stmts.size(), 0);
+          for (size_t i = 0; i < stmts.size(); ++i) {
+            pc_for_index[i] = static_cast<int>(i);
+          }
+          pc_counter = static_cast<int>(stmts.size());
+          const int pc_done = pc_counter++;
+          pc_done_value = pc_done;
+          pc_used.clear();
+          pc_used.reserve(stmts.size() + 8);
+          for (size_t i = 0; i < pc_for_index.size(); ++i) {
+            pc_used.insert(pc_for_index[i]);
+          }
+          pc_used.insert(pc_done);
+          pc_counter = pc_done_value + 1;
           std::unordered_map<const Statement*, size_t> stmt_index;
           for (size_t i = 0; i < stmts.size(); ++i) {
             stmt_index[stmts[i]] = i;
@@ -16760,15 +16982,20 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 continue;
               }
               after_index = last_it->second + 1;
-              next_pc_override[last] = pc_for_stmt[stmt_ptr];
+              next_pc_override[last] = static_cast<int>(stmt_it->second);
             } else {
               after_index = stmt_it->second + 1;
             }
             int after_pc =
-                (after_index < stmts.size()) ? pc_for_stmt[stmts[after_index]]
+                (after_index < stmts.size()) ? pc_for_index[after_index]
                                              : pc_done;
-            int body_pc =
-                first ? pc_for_stmt[first] : after_pc;
+            int body_pc = after_pc;
+            if (first) {
+              auto first_it = stmt_index.find(first);
+              if (first_it != stmt_index.end()) {
+                body_pc = pc_for_index[first_it->second];
+              }
+            }
             repeat_runtime[stmt_ptr] =
                 RepeatRuntime{id_it->second, body_pc, after_pc};
           }
@@ -16778,7 +17005,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (!last) {
               continue;
             }
-            next_pc_override[last] = pc_for_stmt[stmt_ptr];
+            auto loop_it = stmt_index.find(stmt_ptr);
+            if (loop_it != stmt_index.end()) {
+              next_pc_override[last] = static_cast<int>(loop_it->second);
+            }
           }
         body_cases.clear();
 
@@ -16796,7 +17026,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   if (last_it != stmt_index.end()) {
                     size_t after_index = last_it->second + 1;
                     end_pc = (after_index < stmts.size())
-                                 ? pc_for_stmt[stmts[after_index]]
+                                 ? pc_for_index[after_index]
                                  : pc_done;
                   }
                 }
@@ -16804,7 +17034,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               if (end_pc < 0) {
                 size_t after_index = i + 1;
                 end_pc = (after_index < stmts.size())
-                             ? pc_for_stmt[stmts[after_index]]
+                             ? pc_for_index[after_index]
                              : pc_done;
               }
               block_end_pc[stmt->block_label] = end_pc;
@@ -16822,9 +17052,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "              switch (pc) {\n";
           for (size_t i = 0; i < stmts.size(); ++i) {
             const Statement& stmt = *stmts[i];
-            int pc = pc_for_stmt[&stmt];
+            int pc = pc_for_index[i];
             int next_pc =
-                (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]] : pc_done;
+                (i + 1 < stmts.size()) ? pc_for_index[i + 1] : pc_done;
             auto next_override_it = next_pc_override.find(&stmt);
             if (next_override_it != next_pc_override.end()) {
               next_pc = next_override_it->second;
@@ -17018,7 +17248,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   out << "                }\n";
                   continue;
                 }
-                int body_pc = pc_counter++;
+                int body_pc = alloc_body_pc();
                 BodyCase body_case;
                 body_case.pc = body_pc;
                 body_case.owner = &stmt;
@@ -17293,7 +17523,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               const Statement& body_stmt = stmt.forever_body.front();
               if (body_stmt.kind == StatementKind::kDelay &&
                   stmt.forever_body.size() == 1) {
-                int body_pc = pc_counter++;
+                int body_pc = alloc_body_pc();
                 BodyCase body_case;
                 body_case.pc = body_pc;
                 body_case.owner = &stmt;
@@ -17321,7 +17551,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               if (body_stmt.kind != StatementKind::kEventControl ||
                   stmt.forever_body.size() != 1) {
-                int body_pc = pc_counter++;
+                int body_pc = alloc_body_pc();
                 BodyCase body_case;
                 body_case.pc = body_pc;
                 body_case.owner = &stmt;
@@ -17343,7 +17573,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               int body_pc = -1;
               if (!body_stmt.event_body.empty()) {
-                body_pc = pc_counter++;
+                body_pc = alloc_body_pc();
                 BodyCase body_case;
                 body_case.pc = body_pc;
                 body_case.owner = &stmt;
@@ -17643,7 +17873,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
                 int body_pc = -1;
                 if (!stmt.while_body.empty()) {
-                  body_pc = pc_counter++;
+                  body_pc = alloc_body_pc();
                   BodyCase body_case;
                   body_case.pc = body_pc;
                   body_case.owner = &stmt;
@@ -17653,7 +17883,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   body_case.next_pc = pc;
                   body_cases.push_back(std::move(body_case));
                 }
-                int cond_pc = pc_counter++;
+                int cond_pc = alloc_body_pc();
                 BodyCase cond_case;
                 cond_case.pc = cond_pc;
                 cond_case.is_service_cond = true;
@@ -17701,7 +17931,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 int then_pc = -1;
                 int else_pc = -1;
                 if (!stmt.then_branch.empty()) {
-                  then_pc = pc_counter++;
+                  then_pc = alloc_body_pc();
                   BodyCase then_case;
                   then_case.pc = then_pc;
                   then_case.owner = &stmt;
@@ -17712,7 +17942,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   body_cases.push_back(std::move(then_case));
                 }
                 if (!stmt.else_branch.empty()) {
-                  else_pc = pc_counter++;
+                  else_pc = alloc_body_pc();
                   BodyCase else_case;
                   else_case.pc = else_pc;
                   else_case.owner = &stmt;
@@ -17722,7 +17952,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   }
                   body_cases.push_back(std::move(else_case));
                 }
-                int cond_pc = pc_counter++;
+                int cond_pc = alloc_body_pc();
                 BodyCase cond_case;
                 cond_case.pc = cond_pc;
                 cond_case.is_service_cond = true;
@@ -17762,7 +17992,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 int then_pc = -1;
                 int else_pc = -1;
                 if (!stmt.then_branch.empty()) {
-                  then_pc = pc_counter++;
+                  then_pc = alloc_body_pc();
                   BodyCase then_case;
                   then_case.pc = then_pc;
                   then_case.owner = &stmt;
@@ -17773,7 +18003,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   body_cases.push_back(std::move(then_case));
                 }
                 if (!stmt.else_branch.empty()) {
-                  else_pc = pc_counter++;
+                  else_pc = alloc_body_pc();
                   BodyCase else_case;
                   else_case.pc = else_pc;
                   else_case.owner = &stmt;
@@ -17783,7 +18013,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                   }
                   body_cases.push_back(std::move(else_case));
                 }
-                int cond_pc = pc_counter++;
+                int cond_pc = alloc_body_pc();
                 BodyCase cond_case;
                 cond_case.pc = cond_pc;
                 cond_case.is_service_cond = true;
@@ -17850,7 +18080,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "                  break;\n";
             out << "                }\n";
           }
-          for (const auto& body_case : body_cases) {
+          for (size_t body_index = 0; body_index < body_cases.size();
+               ++body_index) {
+            const BodyCase body_case = body_cases[body_index];
             out << "                case " << body_case.pc << ": {\n";
             if (body_case.is_assign_delay) {
               out << "                  uint __gpga_delay_slot = (gid * "
@@ -21772,7 +22004,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::function<void(const Statement&)> collect_nb_targets;
       collect_nb_targets = [&](const Statement& stmt) -> void {
         if (stmt.kind == StatementKind::kAssign && stmt.assign.nonblocking) {
-          if (stmt.assign.lhs_index) {
+          if (stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty()) {
             nb_array_targets.insert(stmt.assign.lhs);
           } else {
             nb_targets.insert(stmt.assign.lhs);
@@ -22025,157 +22257,76 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       }
 
       out << "\n";
+      const uint32_t repeat_count =
+          static_cast<uint32_t>(repeat_state_count);
+      const uint32_t delay_count = has_delayed_assigns
+                                       ? static_cast<uint32_t>(delay_assigns.size())
+                                       : 0u;
+      const uint32_t max_dnba =
+          has_delayed_nba ? static_cast<uint32_t>(delayed_nba_capacity) : 0u;
+      const uint32_t monitor_count =
+          static_cast<uint32_t>(system_task_info.monitor_stmts.size());
+      const uint32_t monitor_max_args =
+          monitor_count > 0u
+              ? static_cast<uint32_t>(
+                    std::max<size_t>(1, system_task_info.monitor_max_args))
+              : 0u;
+      const uint32_t strobe_count =
+          static_cast<uint32_t>(system_task_info.strobe_stmts.size());
+      const uint32_t showcancelled_args_local = has_showcancelled ? 4u : 0u;
+      const uint32_t service_max_args =
+          has_services
+              ? static_cast<uint32_t>(std::max<size_t>(
+                    std::max<size_t>(1, system_task_info.max_args),
+                    showcancelled_args_local))
+              : 0u;
+      const uint32_t service_wide_words_local =
+          system_task_info.has_system_tasks ? service_wide_words : 0u;
+      const uint32_t string_count =
+          system_task_info.has_system_tasks
+              ? static_cast<uint32_t>(system_task_info.string_table.size())
+              : 0u;
       const uint32_t timing_check_count =
           static_cast<uint32_t>(module.timing_checks.size());
-      out << "struct GpgaSchedParams { uint count; uint max_steps; uint max_proc_steps; uint service_capacity; };\n";
-      out << "constant constexpr uint GPGA_SCHED_PROC_COUNT = " << procs.size() << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_ROOT_COUNT = " << root_proc_count
-          << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EVENT_COUNT = "
-          << module.events.size() << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EDGE_COUNT = " << edge_item_count
-          << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EDGE_STAR_COUNT = " << edge_star_count
-          << "u;\n";
+      out << "GPGA_SCHED_DEFINE_CONSTANTS(" << procs.size() << "u, "
+          << root_proc_count << "u, " << module.events.size() << "u, "
+          << edge_item_count << "u, " << edge_star_count << "u, "
+          << procs.size() << "u, " << procs.size() << "u, "
+          << nb_targets_sorted.size() << "u, " << repeat_count << "u, "
+          << delay_count << "u, " << max_dnba << "u, " << monitor_count
+          << "u, " << monitor_max_args << "u, " << strobe_count << "u, "
+          << service_max_args << "u, " << service_wide_words_local << "u, "
+          << string_count << "u, " << force_target_list.size() << "u, "
+          << passign_target_list.size() << "u)\n";
       out << "constant constexpr uint GPGA_SCHED_TIMING_CHECK_COUNT = "
           << timing_check_count << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_MAX_READY = " << procs.size() << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_MAX_TIME = " << procs.size() << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_MAX_NBA = " << nb_targets_sorted.size()
-          << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_FORCE_COUNT = "
-          << force_target_list.size() << "u;\n";
-      out << "constant constexpr uint GPGA_SCHED_PCONT_COUNT = "
-          << passign_target_list.size() << "u;\n";
-      if (repeat_state_count > 0) {
-        out << "constant constexpr uint GPGA_SCHED_REPEAT_COUNT = "
-            << repeat_state_count << "u;\n";
-      }
-      if (has_delayed_assigns) {
-        out << "constant constexpr uint GPGA_SCHED_DELAY_COUNT = "
-            << delay_assigns.size() << "u;\n";
-      }
-      if (has_delayed_nba) {
-        out << "constant constexpr uint GPGA_SCHED_MAX_DNBA = " << delayed_nba_capacity
-            << "u;\n";
-      }
-      out << "constant constexpr uint GPGA_SCHED_NO_PARENT = 0xFFFFFFFFu;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_NONE = 0u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_TIME = 1u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_EVENT = 2u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_COND = 3u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_JOIN = 4u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_DELTA = 5u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_EDGE = 6u;\n";
-      out << "constant constexpr uint GPGA_SCHED_WAIT_SERVICE = 7u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EDGE_ANY = 0u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EDGE_POSEDGE = 1u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EDGE_NEGEDGE = 2u;\n";
-      out << "constant constexpr uint GPGA_SCHED_EDGE_LIST = 3u;\n";
-      out << "constant constexpr uint GPGA_SCHED_PROC_READY = 0u;\n";
-      out << "constant constexpr uint GPGA_SCHED_PROC_BLOCKED = 1u;\n";
-      out << "constant constexpr uint GPGA_SCHED_PROC_DONE = 2u;\n";
-      out << "constant constexpr uint GPGA_SCHED_PHASE_ACTIVE = 0u;\n";
-      out << "constant constexpr uint GPGA_SCHED_PHASE_NBA = 1u;\n";
-      out << "constant constexpr uint GPGA_SCHED_STATUS_RUNNING = 0u;\n";
-      out << "constant constexpr uint GPGA_SCHED_STATUS_IDLE = 1u;\n";
-      out << "constant constexpr uint GPGA_SCHED_STATUS_FINISHED = 2u;\n";
-      out << "constant constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;\n";
-      out << "constant constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;\n";
-      out << "constant constexpr uint GPGA_SCHED_FLAG_INITIALIZED = 1u;\n";
-      out << "constant constexpr uint GPGA_SCHED_FLAG_ACTIVE_INIT = 2u;\n";
-      if (!system_task_info.monitor_stmts.empty()) {
-        size_t max_args =
-            std::max<size_t>(1, system_task_info.monitor_max_args);
-        out << "constant constexpr uint GPGA_SCHED_MONITOR_COUNT = "
-            << system_task_info.monitor_stmts.size() << "u;\n";
-        out << "constant constexpr uint GPGA_SCHED_MONITOR_MAX_ARGS = " << max_args
-            << "u;\n";
-      }
-      if (!system_task_info.strobe_stmts.empty()) {
-        out << "constant constexpr uint GPGA_SCHED_STROBE_COUNT = "
-            << system_task_info.strobe_stmts.size() << "u;\n";
-      }
       if (has_services) {
-        size_t max_args = std::max<size_t>(
-            std::max<size_t>(1, system_task_info.max_args), showcancelled_args);
-        out << "constant constexpr uint GPGA_SCHED_SERVICE_MAX_ARGS = " << max_args
-            << "u;\n";
-        out << "constant constexpr uint GPGA_SCHED_SERVICE_WIDE_WORDS = "
-            << (system_task_info.has_system_tasks ? service_wide_words : 0u)
-            << "u;\n";
-        out << "constant constexpr uint GPGA_SCHED_STRING_COUNT = "
-            << (system_task_info.has_system_tasks
-                    ? system_task_info.string_table.size()
-                    : 0u)
-            << "u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;\n";
-        out << "constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_ARG_IDENT = 1u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_ARG_STRING = 2u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_ARG_REAL = 3u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_ARG_WIDE = 4u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DISPLAY = 0u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_MONITOR = 1u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FINISH = 2u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFILE = 3u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPVARS = 4u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMH = 5u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_READMEMB = 6u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_STOP = 7u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_STROBE = 8u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPOFF = 9u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPON = 10u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPFLUSH = 11u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPALL = 12u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_DUMPLIMIT = 13u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FWRITE = 14u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FDISPLAY = 15u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FOPEN = 16u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FCLOSE = 17u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FGETC = 18u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FGETS = 19u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FEOF = 20u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FSCANF = 21u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_SSCANF = 22u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FTELL = 23u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_REWIND = 24u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMH = 25u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_WRITEMEMB = 26u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FSEEK = 27u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FFLUSH = 28u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FERROR = 29u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FUNGETC = 30u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_FREAD = 31u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_WRITE = 32u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_SFORMAT = 33u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_TIMEFORMAT = 34u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_PRINTTIMESCALE = 35u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_TESTPLUSARGS = 36u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_VALUEPLUSARGS = 37u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_ASYNC_AND_ARRAY = 38u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_SYNC_OR_PLANE = 39u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_ASYNC_NOR_PLANE = 40u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_SYNC_NAND_PLANE = 41u;\n";
-        out << "constant constexpr uint GPGA_SERVICE_KIND_SHOWCANCELLED = 42u;\n";
-        out << "struct GpgaServiceRecord {\n";
-        out << "  uint kind;\n";
-        out << "  uint pid;\n";
-        out << "  uint format_id;\n";
-        out << "  uint arg_count;\n";
-        out << "  uint arg_kind[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
-        out << "  uint arg_width[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
-        out << "  ulong arg_val[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
-        if (service_wide_words > 0u) {
+        if (service_wide_words_local > 0u) {
+          out << "struct GpgaServiceRecord {\n";
+          out << "  uint kind;\n";
+          out << "  uint pid;\n";
+          out << "  uint format_id;\n";
+          out << "  uint arg_count;\n";
+          out << "  uint arg_kind[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+          out << "  uint arg_width[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+          out << "  ulong arg_val[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
           out << "  ulong arg_wide_val[GPGA_SCHED_SERVICE_MAX_ARGS * "
                  "GPGA_SCHED_SERVICE_WIDE_WORDS];\n";
+          out << "};\n";
+        } else {
+          out << "struct GpgaServiceRecord {\n";
+          out << "  uint kind;\n";
+          out << "  uint pid;\n";
+          out << "  uint format_id;\n";
+          out << "  uint arg_count;\n";
+          out << "  uint arg_kind[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+          out << "  uint arg_width[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+          out << "  ulong arg_val[GPGA_SCHED_SERVICE_MAX_ARGS];\n";
+          out << "};\n";
         }
-        out << "};\n";
       }
-      out << "inline uint gpga_sched_index(uint gid, uint pid) {\n";
-      out << "  return (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
-      out << "}\n";
-      out << "constant uint gpga_proc_parent[GPGA_SCHED_PROC_COUNT] = {";
+      out << "GPGA_SCHED_DEFINE_INDEX()\n";
+      out << "GPGA_SCHED_DEFINE_PROC_PARENT(";
       for (size_t i = 0; i < procs.size(); ++i) {
         uint32_t parent =
             proc_parent[i] < 0 ? 0xFFFFFFFFu
@@ -22185,8 +22336,8 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         out << parent << "u";
       }
-      out << "};\n";
-      out << "constant uint gpga_proc_join_tag[GPGA_SCHED_PROC_COUNT] = {";
+      out << ")\n";
+      out << "GPGA_SCHED_DEFINE_PROC_JOIN_TAG(";
       for (size_t i = 0; i < procs.size(); ++i) {
         uint32_t tag = proc_join_tag[i] < 0
                            ? 0xFFFFFFFFu
@@ -22196,8 +22347,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         }
         out << tag << "u";
       }
-      out << "};\n";
-
+      out << ")\n";
       drive_declared.clear();
 
       out << "\n";
@@ -24006,7 +24156,21 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         int service_false_pc = 0;
       };
       int pc_counter = 0;
+      int pc_done_value = 0;
       std::vector<BodyCase> body_cases;
+      std::unordered_set<int> pc_used;
+      auto alloc_body_pc = [&]() -> int {
+        int pc = pc_counter;
+        if (pc <= pc_done_value) {
+          pc = pc_done_value + 1;
+        }
+        while (pc_used.count(pc) != 0u) {
+          ++pc;
+        }
+        pc_used.insert(pc);
+        pc_counter = pc + 1;
+        return pc;
+      };
 
       auto emit_syscall_assign =
           [&](const Statement& stmt, const Expr& call, int resume_pc,
@@ -24063,7 +24227,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (width <= 0) {
           width = 1;
         }
-        int body_pc = pc_counter++;
+        int body_pc = alloc_body_pc();
         BodyCase body_case;
         body_case.pc = body_pc;
         body_case.owner = &stmt;
@@ -25102,12 +25266,19 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         } else if (proc.single) {
           append_stmt(*proc.single);
         }
-        std::unordered_map<const Statement*, int> pc_for_stmt;
-        pc_counter = 0;
-        for (const auto* stmt : stmts) {
-          pc_for_stmt[stmt] = pc_counter++;
+        std::vector<int> pc_for_index(stmts.size(), 0);
+        for (size_t i = 0; i < stmts.size(); ++i) {
+          pc_for_index[i] = static_cast<int>(i);
         }
-        const int pc_done = pc_counter++;
+        const int pc_done = static_cast<int>(stmts.size());
+        pc_done_value = pc_done;
+        pc_used.clear();
+        pc_used.reserve(stmts.size() + 8);
+        for (size_t i = 0; i < pc_for_index.size(); ++i) {
+          pc_used.insert(pc_for_index[i]);
+        }
+        pc_used.insert(pc_done);
+        pc_counter = pc_done_value + 1;
         std::unordered_map<const Statement*, size_t> stmt_index;
         for (size_t i = 0; i < stmts.size(); ++i) {
           stmt_index[stmts[i]] = i;
@@ -25138,14 +25309,23 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               continue;
             }
             after_index = last_it->second + 1;
-            next_pc_override[last] = pc_for_stmt[stmt_ptr];
+            auto repeat_it = stmt_index.find(stmt_ptr);
+            if (repeat_it != stmt_index.end()) {
+              next_pc_override[last] = pc_for_index[repeat_it->second];
+            }
           } else {
             after_index = stmt_it->second + 1;
           }
-          int after_pc =
-              (after_index < stmts.size()) ? pc_for_stmt[stmts[after_index]]
-                                           : pc_done;
-          int body_pc = first ? pc_for_stmt[first] : after_pc;
+          int after_pc = (after_index < stmts.size())
+                             ? pc_for_index[after_index]
+                             : pc_done;
+          int body_pc = after_pc;
+          if (first) {
+            auto first_it = stmt_index.find(first);
+            if (first_it != stmt_index.end()) {
+              body_pc = pc_for_index[first_it->second];
+            }
+          }
           repeat_runtime[stmt_ptr] =
               RepeatRuntime{id_it->second, body_pc, after_pc};
         }
@@ -25155,7 +25335,10 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (!last) {
             continue;
           }
-          next_pc_override[last] = pc_for_stmt[stmt_ptr];
+          auto loop_it = stmt_index.find(stmt_ptr);
+          if (loop_it != stmt_index.end()) {
+            next_pc_override[last] = pc_for_index[loop_it->second];
+          }
         }
         body_cases.clear();
 
@@ -25173,7 +25356,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 if (last_it != stmt_index.end()) {
                   size_t after_index = last_it->second + 1;
                   end_pc = (after_index < stmts.size())
-                               ? pc_for_stmt[stmts[after_index]]
+                               ? pc_for_index[after_index]
                                : pc_done;
                 }
               }
@@ -25181,7 +25364,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             if (end_pc < 0) {
               size_t after_index = i + 1;
               end_pc = (after_index < stmts.size())
-                           ? pc_for_stmt[stmts[after_index]]
+                           ? pc_for_index[after_index]
                            : pc_done;
             }
             block_end_pc[stmt->block_label] = end_pc;
@@ -25199,9 +25382,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "              switch (pc) {\n";
         for (size_t i = 0; i < stmts.size(); ++i) {
           const Statement& stmt = *stmts[i];
-          int pc = pc_for_stmt[&stmt];
+          int pc = pc_for_index[i];
           int next_pc =
-              (i + 1 < stmts.size()) ? pc_for_stmt[stmts[i + 1]] : pc_done;
+              (i + 1 < stmts.size()) ? pc_for_index[i + 1] : pc_done;
           auto next_override_it = next_pc_override.find(&stmt);
           if (next_override_it != next_pc_override.end()) {
             next_pc = next_override_it->second;
@@ -25371,7 +25554,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 out << "                }\n";
                 continue;
               }
-              int body_pc = pc_counter++;
+              int body_pc = alloc_body_pc();
               BodyCase body_case;
               body_case.pc = body_pc;
               body_case.owner = &stmt;
@@ -25631,7 +25814,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             const Statement& body_stmt = stmt.forever_body.front();
             if (body_stmt.kind == StatementKind::kDelay &&
                 stmt.forever_body.size() == 1) {
-              int body_pc = pc_counter++;
+              int body_pc = alloc_body_pc();
               BodyCase body_case;
               body_case.pc = body_pc;
               body_case.owner = &stmt;
@@ -25658,7 +25841,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             if (body_stmt.kind != StatementKind::kEventControl ||
                 stmt.forever_body.size() != 1) {
-              int body_pc = pc_counter++;
+              int body_pc = alloc_body_pc();
               BodyCase body_case;
               body_case.pc = body_pc;
               body_case.owner = &stmt;
@@ -25680,7 +25863,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
             int body_pc = -1;
             if (!body_stmt.event_body.empty()) {
-              body_pc = pc_counter++;
+              body_pc = alloc_body_pc();
               BodyCase body_case;
               body_case.pc = body_pc;
               body_case.owner = &stmt;
@@ -25974,7 +26157,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               }
               int body_pc = -1;
               if (!stmt.while_body.empty()) {
-                body_pc = pc_counter++;
+                body_pc = alloc_body_pc();
                 BodyCase body_case;
                 body_case.pc = body_pc;
                 body_case.owner = &stmt;
@@ -25984,7 +26167,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 body_case.next_pc = pc;
                 body_cases.push_back(std::move(body_case));
               }
-              int cond_pc = pc_counter++;
+              int cond_pc = alloc_body_pc();
               BodyCase cond_case;
               cond_case.pc = cond_pc;
               cond_case.is_service_cond = true;
@@ -26032,7 +26215,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               int then_pc = -1;
               int else_pc = -1;
               if (!stmt.then_branch.empty()) {
-                then_pc = pc_counter++;
+                then_pc = alloc_body_pc();
                 BodyCase then_case;
                 then_case.pc = then_pc;
                 then_case.owner = &stmt;
@@ -26043,7 +26226,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 body_cases.push_back(std::move(then_case));
               }
               if (!stmt.else_branch.empty()) {
-                else_pc = pc_counter++;
+                else_pc = alloc_body_pc();
                 BodyCase else_case;
                 else_case.pc = else_pc;
                 else_case.owner = &stmt;
@@ -26053,7 +26236,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
                 body_cases.push_back(std::move(else_case));
               }
-              int cond_pc = pc_counter++;
+              int cond_pc = alloc_body_pc();
               BodyCase cond_case;
               cond_case.pc = cond_pc;
               cond_case.is_service_cond = true;
@@ -26090,7 +26273,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               int then_pc = -1;
               int else_pc = -1;
               if (!stmt.then_branch.empty()) {
-                then_pc = pc_counter++;
+                then_pc = alloc_body_pc();
                 BodyCase then_case;
                 then_case.pc = then_pc;
                 then_case.owner = &stmt;
@@ -26101,7 +26284,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 body_cases.push_back(std::move(then_case));
               }
               if (!stmt.else_branch.empty()) {
-                else_pc = pc_counter++;
+                else_pc = alloc_body_pc();
                 BodyCase else_case;
                 else_case.pc = else_pc;
                 else_case.owner = &stmt;
@@ -26111,7 +26294,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 }
                 body_cases.push_back(std::move(else_case));
               }
-              int cond_pc = pc_counter++;
+              int cond_pc = alloc_body_pc();
               BodyCase cond_case;
               cond_case.pc = cond_pc;
               cond_case.is_service_cond = true;
@@ -26175,7 +26358,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "                  break;\n";
           out << "                }\n";
         }
-        for (const auto& body_case : body_cases) {
+        for (size_t body_index = 0; body_index < body_cases.size();
+             ++body_index) {
+          const BodyCase body_case = body_cases[body_index];
           out << "                case " << body_case.pc << ": {\n";
           if (body_case.is_assign_delay) {
             out << "                  uint __gpga_delay_slot = (gid * "

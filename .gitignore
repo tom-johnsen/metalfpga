@@ -13,6 +13,7 @@ artifacts/
 goldentests/
 thirdparty/
 deprecated/docs
+tmp/
 
 docs/PLAN.md
 docs/IDEA.md

@@ -215,6 +215,7 @@ class MetalRuntime {
   bool CompileSource(const std::string& source,
                      const std::vector<std::string>& include_paths,
                      std::string* error);
+  bool GetLastSource(std::string* out) const;
   bool CreateKernel(const std::string& name, MetalKernel* kernel,
                     std::string* error);
   MetalBuffer CreateBuffer(size_t length, const void* initial_data);

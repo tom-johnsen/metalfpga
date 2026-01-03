@@ -299,6 +299,7 @@ std::string EmitHostStub(const Module& module) {
 
   out << "#include \"runtime/metal_runtime.hh\"\n";
   out << "#include <algorithm>\n";
+  out << "#include <chrono>\n";
   out << "#include <cstdlib>\n";
   out << "#include <cstring>\n";
   out << "#include <fstream>\n";
@@ -308,6 +309,29 @@ std::string EmitHostStub(const Module& module) {
   out << "#include <unordered_map>\n";
   out << "#include <vector>\n\n";
   out << "namespace {\n";
+  out << "struct Profiler {\n";
+  out << "  using Clock = std::chrono::steady_clock;\n";
+  out << "  bool enabled = false;\n";
+  out << "  Clock::time_point start;\n";
+  out << "  Clock::time_point last;\n";
+  out << "  explicit Profiler(bool on)\n";
+  out << "      : enabled(on), start(Clock::now()), last(start) {}\n";
+  out << "  static double Ms(Clock::time_point a, Clock::time_point b) {\n";
+  out << "    return std::chrono::duration<double, std::milli>(b - a).count();\n";
+  out << "  }\n";
+  out << "  Clock::time_point Now() const { return Clock::now(); }\n";
+  out << "  void Mark(const char* label) {\n";
+  out << "    if (!enabled) {\n";
+  out << "      return;\n";
+  out << "    }\n";
+  out << "    Clock::time_point now = Clock::now();\n";
+  out << "    double step = Ms(last, now);\n";
+  out << "    double total = Ms(start, now);\n";
+  out << "    std::cerr << \"[profile] \" << label << \" step=\" << step\n";
+  out << "              << \"ms total=\" << total << \"ms\\n\";\n";
+  out << "    last = now;\n";
+  out << "  }\n";
+  out << "};\n\n";
   out << "bool ReadFile(const std::string& path, std::string* out) {\n";
   out << "  std::ifstream file(path);\n";
   out << "  if (!file) {\n";
@@ -412,7 +436,8 @@ std::string EmitHostStub(const Module& module) {
   out << "  if (argc < 2) {\n";
   out << "    std::cerr << \"Usage: \" << argv[0]\n";
   out << "              << \" <msl_file> [count] [--service-capacity N]\"\n";
-  out << "              << \" [--max-steps N] [--max-proc-steps N]\\n\";\n";
+  out << "              << \" [--max-steps N] [--max-proc-steps N]\"\n";
+  out << "              << \" [--profile]\\n\";\n";
   out << "    return 2;\n";
   out << "  }\n";
   out << "  std::string msl_path = argv[1];\n";
@@ -420,6 +445,10 @@ std::string EmitHostStub(const Module& module) {
   out << "  uint32_t service_capacity = 32u;\n";
   out << "  uint32_t max_steps = 1024u;\n";
   out << "  uint32_t max_proc_steps = 64u;\n";
+  out << "  bool profile = false;\n";
+  out << "  if (const char* env = std::getenv(\"GPGA_PROFILE\")) {\n";
+  out << "    profile = *env != '\\0' && std::string(env) != \"0\";\n";
+  out << "  }\n";
   out << "  for (int i = 2; i < argc; ++i) {\n";
   out << "    std::string arg = argv[i];\n";
   out << "    if (arg == \"--service-capacity\" && i + 1 < argc) {\n";
@@ -428,23 +457,41 @@ std::string EmitHostStub(const Module& module) {
   out << "      max_steps = ParseU32(argv[++i], max_steps);\n";
   out << "    } else if (arg == \"--max-proc-steps\" && i + 1 < argc) {\n";
   out << "      max_proc_steps = ParseU32(argv[++i], max_proc_steps);\n";
+  out << "    } else if (arg == \"--profile\") {\n";
+  out << "      profile = true;\n";
   out << "    }\n";
   out << "  }\n\n";
+  out << "  Profiler profiler(profile);\n";
+  out << "  profiler.Mark(\"args\");\n";
   out << "  std::string msl_source;\n";
   out << "  if (!ReadFile(msl_path, &msl_source)) {\n";
   out << "    std::cerr << \"Failed to read MSL: \" << msl_path << \"\\n\";\n";
   out << "    return 1;\n";
   out << "  }\n\n";
+  out << "  profiler.Mark(\"read_msl\");\n";
   out << "  gpga::MetalRuntime runtime;\n";
   out << "  std::string error;\n";
+  out << "  if (!runtime.Initialize(&error)) {\n";
+  out << "    std::cerr << \"Metal init failed: \" << error << \"\\n\";\n";
+  out << "    return 1;\n";
+  out << "  }\n";
+  out << "  profiler.Mark(\"runtime_init\");\n";
   out << "  if (!runtime.CompileSource(msl_source, {\"include\"}, &error)) {\n";
   out << "    std::cerr << \"Metal compile failed: \" << error << \"\\n\";\n";
   out << "    return 1;\n";
   out << "  }\n\n";
+  out << "  profiler.Mark(\"compile_source\");\n";
+  out << "  std::string sched_source = msl_source;\n";
+  out << "  std::string expanded_source;\n";
+  out << "  if (runtime.GetLastSource(&expanded_source) && !expanded_source.empty()) {\n";
+  out << "    sched_source = expanded_source;\n";
+  out << "  }\n";
   out << "  gpga::SchedulerConstants sched;\n";
-  out << "  gpga::ParseSchedulerConstants(msl_source, &sched, &error);\n";
+  out << "  gpga::ParseSchedulerConstants(sched_source, &sched, &error);\n";
+  out << "  profiler.Mark(\"parse_sched\");\n";
   out << "  gpga::ModuleInfo module = BuildModuleInfo();\n";
-  out << "  module.four_state = msl_source.find(\"gpga_4state.h\") != std::string::npos;\n\n";
+  out << "  module.four_state = sched_source.find(\"gpga_4state.h\") != std::string::npos;\n\n";
+  out << "  profiler.Mark(\"build_module_info\");\n";
 
   out << "  const bool needs_scheduler = " << (needs_scheduler ? "true" : "false") << ";\n";
   out << "  const bool has_init = " << (has_initial ? "true" : "false") << ";\n";
@@ -454,12 +501,11 @@ std::string EmitHostStub(const Module& module) {
   out << "  gpga::MetalKernel init_kernel;\n";
   out << "  gpga::MetalKernel tick_kernel;\n";
   out << "  gpga::MetalKernel sched_kernel;\n";
-  out << "  if (needs_scheduler) {\n";
+  out << "  gpga::ServiceStringTable strings;\n";
   if (sys_info.has_tasks) {
-    out << "    gpga::ServiceStringTable strings = BuildStringTable();\n";
-  } else {
-    out << "    gpga::ServiceStringTable strings;\n";
+    out << "  strings = BuildStringTable();\n";
   }
+  out << "  if (needs_scheduler) {\n";
   out << "    if (!runtime.CreateKernel(\"gpga_" << msl_module_name << "_sched_step\", &sched_kernel, &error)) {\n";
   out << "      std::cerr << \"Failed to create scheduler kernel: \" << error << \"\\n\";\n";
   out << "      return 1;\n";
@@ -482,6 +528,7 @@ std::string EmitHostStub(const Module& module) {
   out << "      }\n";
   out << "    }\n";
   out << "  }\n\n";
+  out << "  profiler.Mark(\"create_kernels\");\n";
 
   out << "  std::unordered_map<std::string, size_t> buffer_lengths;\n";
   out << "  std::vector<gpga::BufferSpec> specs;\n";
@@ -512,6 +559,7 @@ std::string EmitHostStub(const Module& module) {
   out << "      MergeSpecs(&buffer_lengths, specs);\n";
   out << "    }\n";
   out << "  }\n\n";
+  out << "  profiler.Mark(\"buffer_specs\");\n";
 
   out << "  std::unordered_map<std::string, gpga::MetalBuffer> buffers;\n";
   out << "  for (const auto& entry : buffer_lengths) {\n";
@@ -521,6 +569,7 @@ std::string EmitHostStub(const Module& module) {
   out << "    }\n";
   out << "    buffers.emplace(entry.first, std::move(buffer));\n";
   out << "  }\n\n";
+  out << "  profiler.Mark(\"buffer_alloc\");\n";
 
   out << "  auto params_it = buffers.find(\"params\");\n";
   out << "  if (params_it != buffers.end() && params_it->second.contents()) {\n";
@@ -537,6 +586,7 @@ std::string EmitHostStub(const Module& module) {
   out << "  }\n\n";
 
   out << "  if (needs_scheduler) {\n";
+  out << "    auto sim_start = profiler.Now();\n";
   out << "    std::vector<gpga::MetalBufferBinding> bindings;\n";
   out << "    if (!BuildBindings(sched_kernel, buffers, &bindings, &error)) {\n";
   out << "      std::cerr << error << \"\\n\";\n";
@@ -586,7 +636,12 @@ std::string EmitHostStub(const Module& module) {
   out << "        running = false;\n";
   out << "      }\n";
   out << "    }\n";
+  out << "    if (profile) {\n";
+  out << "      double sim_ms = Profiler::Ms(sim_start, profiler.Now());\n";
+  out << "      std::cerr << \"[profile] sim_loop ms=\" << sim_ms << \"\\n\";\n";
+  out << "    }\n";
   out << "  } else {\n";
+  out << "    auto sim_start = profiler.Now();\n";
   out << "    std::vector<gpga::MetalBufferBinding> bindings;\n";
   out << "    if (!BuildBindings(comb_kernel, buffers, &bindings, &error)) {\n";
   out << "      std::cerr << error << \"\\n\";\n";
@@ -619,7 +674,12 @@ std::string EmitHostStub(const Module& module) {
   out << "      }\n";
   out << "      SwapNextBuffers(&buffers);\n";
   out << "    }\n";
+  out << "    if (profile) {\n";
+  out << "      double sim_ms = Profiler::Ms(sim_start, profiler.Now());\n";
+  out << "      std::cerr << \"[profile] sim_loop ms=\" << sim_ms << \"\\n\";\n";
+  out << "    }\n";
   out << "  }\n";
+  out << "  profiler.Mark(\"done\");\n";
   out << "  return 0;\n";
   out << "}\n";
   return out.str();

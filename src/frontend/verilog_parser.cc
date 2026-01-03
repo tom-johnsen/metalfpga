@@ -10415,8 +10415,10 @@ class Parser {
       }
       if (MatchSymbol("+:") || MatchSymbol("-:")) {
         bool indexed_desc = (Previous().text == "-:");
-        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
-          ErrorHere("indexed part select requires identifier");
+        bool is_array = IsArrayName(lhs);
+        if (lhs_has_range || (lhs_indices.empty() && is_array) ||
+            (!lhs_indices.empty() && !is_array)) {
+          ErrorHere("indexed part select requires identifier or array element");
           return false;
         }
         std::unique_ptr<Expr> width_expr = ParseExpr();
@@ -10455,8 +10457,10 @@ class Parser {
         break;
       }
       if (MatchSymbol(":")) {
-        if (lhs_has_range || !lhs_indices.empty() || IsArrayName(lhs)) {
-          ErrorHere("part select requires identifier");
+        bool is_array = IsArrayName(lhs);
+        if (lhs_has_range || (lhs_indices.empty() && is_array) ||
+            (!lhs_indices.empty() && !is_array)) {
+          ErrorHere("part select requires identifier or array element");
           return false;
         }
         std::unique_ptr<Expr> lsb_expr = ParseExpr();
@@ -11205,9 +11209,16 @@ class Parser {
     struct ConcatLvalue {
       std::string name;
       bool has_range = false;
+      bool indexed_range = false;
+      bool indexed_desc = false;
+      int indexed_width = 0;
       int msb = 0;
       int lsb = 0;
       int width = 0;
+      std::unique_ptr<Expr> msb_expr;
+      std::unique_ptr<Expr> lsb_expr;
+      std::unique_ptr<Expr> index;
+      std::vector<std::unique_ptr<Expr>> indices;
     };
     SequentialAssign assign;
     std::unique_ptr<Expr> lhs_concat;
@@ -11288,6 +11299,26 @@ class Parser {
       }
       std::vector<ConcatLvalue> lvalues;
       int total_width = 0;
+      auto extract_indices =
+          [&](const Expr& expr, std::string* name_out,
+              std::vector<std::unique_ptr<Expr>>* indices_out) -> bool {
+        const Expr* current = &expr;
+        std::vector<std::unique_ptr<Expr>> reversed;
+        while (current && current->kind == ExprKind::kIndex) {
+          if (!current->index || !current->base) {
+            return false;
+          }
+          reversed.push_back(CloneExprSimple(*current->index));
+          current = current->base.get();
+        }
+        if (!current || current->kind != ExprKind::kIdentifier) {
+          return false;
+        }
+        std::reverse(reversed.begin(), reversed.end());
+        *name_out = current->ident;
+        *indices_out = std::move(reversed);
+        return true;
+      };
       for (const auto& element : lhs_concat->elements) {
         if (!element) {
           ErrorHere("invalid concatenation element");
@@ -11307,10 +11338,6 @@ class Parser {
             ErrorHere("concatenation lvalue must be identifier or select");
             return false;
           }
-          if (element->indexed_range) {
-            ErrorHere("indexed part select not supported in concatenation target");
-            return false;
-          }
           lv.name = element->base->ident;
           int base_width = LookupSignalWidth(lv.name);
           if (base_width <= 0) {
@@ -11318,23 +11345,75 @@ class Parser {
             return false;
           }
           if (element->has_range) {
-            int64_t msb = 0;
-            int64_t lsb = 0;
-            if (!element->msb_expr || !element->lsb_expr ||
-                !TryEvalConstExpr(*element->msb_expr, &msb) ||
-                !TryEvalConstExpr(*element->lsb_expr, &lsb)) {
-              ErrorHere("concatenation part select must be constant");
+            if (element->indexed_range) {
+              if (!element->msb_expr || !element->lsb_expr ||
+                  element->indexed_width <= 0) {
+                ErrorHere("indexed part select requires constant width");
+                return false;
+              }
+              lv.has_range = true;
+              lv.indexed_range = true;
+              lv.indexed_desc = element->indexed_desc;
+              lv.indexed_width = element->indexed_width;
+              lv.msb_expr = CloneExprSimple(*element->msb_expr);
+              lv.lsb_expr = CloneExprSimple(*element->lsb_expr);
+              lv.width = lv.indexed_width;
+            } else {
+              int64_t msb = 0;
+              int64_t lsb = 0;
+              if (!element->msb_expr || !element->lsb_expr ||
+                  !TryEvalConstExpr(*element->msb_expr, &msb) ||
+                  !TryEvalConstExpr(*element->lsb_expr, &lsb)) {
+                ErrorHere("concatenation part select must be constant");
+                return false;
+              }
+              lv.has_range = true;
+              lv.msb = static_cast<int>(msb);
+              lv.lsb = static_cast<int>(lsb);
+              lv.width = (lv.msb >= lv.lsb) ? (lv.msb - lv.lsb + 1)
+                                            : (lv.lsb - lv.msb + 1);
+              if (element->msb_expr) {
+                lv.msb_expr = CloneExprSimple(*element->msb_expr);
+              } else {
+                lv.msb_expr = MakeNumberExpr(static_cast<uint64_t>(lv.msb));
+              }
+              if (element->lsb_expr) {
+                lv.lsb_expr = CloneExprSimple(*element->lsb_expr);
+              } else {
+                lv.lsb_expr = MakeNumberExpr(static_cast<uint64_t>(lv.lsb));
+              }
+            }
+          } else {
+            if (element->msb_expr) {
+              lv.index = CloneExprSimple(*element->msb_expr);
+            } else {
+              lv.index = MakeNumberExpr(static_cast<uint64_t>(element->msb));
+            }
+            lv.width = 1;
+          }
+        } else if (element->kind == ExprKind::kIndex) {
+          if (IsArrayIndexExpr(*element)) {
+            if (!extract_indices(*element, &lv.name, &lv.indices)) {
+              ErrorHere("concatenation lvalue must be identifier or select");
               return false;
             }
-            lv.has_range = true;
-            lv.msb = static_cast<int>(msb);
-            lv.lsb = static_cast<int>(lsb);
-            lv.width = (lv.msb >= lv.lsb) ? (lv.msb - lv.lsb + 1)
-                                          : (lv.lsb - lv.msb + 1);
+            lv.width = LookupSignalWidth(lv.name);
+            if (lv.width <= 0) {
+              ErrorHere("concatenation lvalue must be declared");
+              return false;
+            }
           } else {
-            lv.has_range = true;
-            lv.msb = element->msb;
-            lv.lsb = element->lsb;
+            if (!element->base ||
+                element->base->kind != ExprKind::kIdentifier) {
+              ErrorHere("concatenation lvalue must be identifier or select");
+              return false;
+            }
+            if (!element->index) {
+              ErrorHere("invalid concatenation element");
+              return false;
+            }
+            lv.name = element->base->ident;
+            lv.index = CloneExprSimple(*element->index);
             lv.width = 1;
           }
         } else {
@@ -11351,7 +11430,7 @@ class Parser {
       int cursor = total_width;
       std::vector<Statement> assigns;
       assigns.reserve(lvalues.size());
-      for (const auto& lv : lvalues) {
+      for (auto& lv : lvalues) {
         int msb = cursor - 1;
         int lsb = cursor - lv.width;
         cursor = lsb;
@@ -11362,9 +11441,27 @@ class Parser {
         }
         SequentialAssign part;
         part.lhs = lv.name;
+        if (!lv.indices.empty()) {
+          if (lv.indices.size() == 1) {
+            part.lhs_index = std::move(lv.indices.front());
+          } else {
+            part.lhs_indices = std::move(lv.indices);
+          }
+        } else if (lv.index) {
+          part.lhs_index = std::move(lv.index);
+        }
         part.lhs_has_range = lv.has_range;
+        part.lhs_indexed_range = lv.indexed_range;
+        part.lhs_indexed_desc = lv.indexed_desc;
+        part.lhs_indexed_width = lv.indexed_width;
         part.lhs_msb = lv.msb;
         part.lhs_lsb = lv.lsb;
+        if (lv.msb_expr) {
+          part.lhs_msb_expr = std::move(lv.msb_expr);
+        }
+        if (lv.lsb_expr) {
+          part.lhs_lsb_expr = std::move(lv.lsb_expr);
+        }
         part.rhs = std::move(rhs_slice);
         part.nonblocking = nonblocking;
         if (delay) {

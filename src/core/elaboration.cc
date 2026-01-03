@@ -3072,7 +3072,8 @@ bool CloneStatement(
       int64_t lsb = 0;
       if (!out->assign.lhs_msb_expr) {
         diagnostics->Add(Severity::kError,
-                         "part-select assignment indices must be constant in v0");
+                         "part-select assignment indices must be constant in v0 for '" +
+                             statement.assign.lhs + "'");
         return false;
       }
       if (!out->assign.lhs_lsb_expr) {
@@ -3087,7 +3088,8 @@ bool CloneStatement(
             !TryEvalConstExprWithParams(*out->assign.lhs_lsb_expr, params,
                                         &lsb)) {
           diagnostics->Add(Severity::kError,
-                           "part-select assignment indices must be constant in v0");
+                           "part-select assignment indices must be constant in v0 for '" +
+                               statement.assign.lhs + "'");
           return false;
         }
         out->assign.lhs_msb = static_cast<int>(msb);
@@ -3388,6 +3390,26 @@ bool CloneStatement(
       diagnostics->Add(Severity::kError, "malformed repeat in v0");
       return false;
     }
+    auto clone_repeat = [&]() -> bool {
+      out->kind = StatementKind::kRepeat;
+      out->repeat_count =
+          CloneExprWithParams(*statement.repeat_count, rename, params,
+                              &source_module, diagnostics, nullptr);
+      if (!out->repeat_count) {
+        return false;
+      }
+      out->repeat_count = SimplifyExpr(std::move(out->repeat_count),
+                                       flat_module);
+      for (const auto& body_stmt : statement.repeat_body) {
+        Statement cloned;
+        if (!CloneStatement(body_stmt, rename, params, source_module,
+                            flat_module, &cloned, diagnostics)) {
+          return false;
+        }
+        out->repeat_body.push_back(std::move(cloned));
+      }
+      return true;
+    };
     int64_t count = 0;
     if (TryEvalConstExprWithParams(*statement.repeat_count, params, &count)) {
       out->kind = StatementKind::kBlock;
@@ -3396,8 +3418,7 @@ bool CloneStatement(
       }
       const int64_t kMaxIterations = 100000;
       if (count > kMaxIterations) {
-        diagnostics->Add(Severity::kError, "repeat exceeds iteration limit");
-        return false;
+        return clone_repeat();
       }
       for (int64_t i = 0; i < count; ++i) {
         for (const auto& body_stmt : statement.repeat_body) {
@@ -3411,23 +3432,7 @@ bool CloneStatement(
       }
       return true;
     }
-    out->kind = StatementKind::kRepeat;
-    out->repeat_count =
-        CloneExprWithParams(*statement.repeat_count, rename, params,
-                            &source_module, diagnostics, nullptr);
-    if (!out->repeat_count) {
-      return false;
-    }
-    out->repeat_count = SimplifyExpr(std::move(out->repeat_count), flat_module);
-    for (const auto& body_stmt : statement.repeat_body) {
-      Statement cloned;
-      if (!CloneStatement(body_stmt, rename, params, source_module,
-                          flat_module, &cloned, diagnostics)) {
-        return false;
-      }
-      out->repeat_body.push_back(std::move(cloned));
-    }
-    return true;
+    return clone_repeat();
   }
   if (statement.kind == StatementKind::kDelay) {
     out->kind = StatementKind::kDelay;
@@ -4425,6 +4430,71 @@ bool ExprIsAllowedIoWhileCondition(const Expr& expr) {
   return ExprIsNegatedIoCall(expr, "$feof");
 }
 
+bool ExprHasOnlyAllowedIoCalls(
+    const Expr& expr,
+    const std::unordered_set<std::string>& allowed) {
+  if (expr.kind == ExprKind::kCall) {
+    if (IsIoSystemFunctionName(expr.ident) &&
+        allowed.count(expr.ident) == 0) {
+      return false;
+    }
+    for (const auto& arg : expr.call_args) {
+      if (arg && !ExprHasOnlyAllowedIoCalls(*arg, allowed)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  switch (expr.kind) {
+    case ExprKind::kUnary:
+      return expr.operand ? ExprHasOnlyAllowedIoCalls(*expr.operand, allowed)
+                          : true;
+    case ExprKind::kBinary:
+      return (expr.lhs ? ExprHasOnlyAllowedIoCalls(*expr.lhs, allowed) : true) &&
+             (expr.rhs ? ExprHasOnlyAllowedIoCalls(*expr.rhs, allowed) : true);
+    case ExprKind::kTernary:
+      return (expr.condition
+                  ? ExprHasOnlyAllowedIoCalls(*expr.condition, allowed)
+                  : true) &&
+             (expr.then_expr
+                  ? ExprHasOnlyAllowedIoCalls(*expr.then_expr, allowed)
+                  : true) &&
+             (expr.else_expr
+                  ? ExprHasOnlyAllowedIoCalls(*expr.else_expr, allowed)
+                  : true);
+    case ExprKind::kSelect:
+      return (expr.base ? ExprHasOnlyAllowedIoCalls(*expr.base, allowed)
+                        : true) &&
+             (expr.msb_expr ? ExprHasOnlyAllowedIoCalls(*expr.msb_expr, allowed)
+                            : true) &&
+             (expr.lsb_expr ? ExprHasOnlyAllowedIoCalls(*expr.lsb_expr, allowed)
+                            : true);
+    case ExprKind::kIndex:
+      return (expr.base ? ExprHasOnlyAllowedIoCalls(*expr.base, allowed)
+                        : true) &&
+             (expr.index ? ExprHasOnlyAllowedIoCalls(*expr.index, allowed)
+                         : true);
+    case ExprKind::kConcat:
+      if (expr.repeat_expr &&
+          !ExprHasOnlyAllowedIoCalls(*expr.repeat_expr, allowed)) {
+        return false;
+      }
+      for (const auto& element : expr.elements) {
+        if (element && !ExprHasOnlyAllowedIoCalls(*element, allowed)) {
+          return false;
+        }
+      }
+      return true;
+    case ExprKind::kIdentifier:
+    case ExprKind::kNumber:
+    case ExprKind::kString:
+      return true;
+    case ExprKind::kCall:
+      return true;
+  }
+  return true;
+}
+
 bool ValidateNoIoCallsInExpr(const Expr* expr, const std::string& context,
                              Diagnostics* diagnostics) {
   if (!expr) {
@@ -4467,11 +4537,16 @@ bool ValidateIoSystemFunctionUse(const Statement& statement,
         std::string name;
         if (ExprFindIoCall(*assign.rhs, &name)) {
           if (!ExprIsSingleIoCall(*assign.rhs)) {
-            diagnostics->Add(
-                Severity::kError,
-                "file I/O system function '" + name +
-                    "' must be a standalone assignment expression");
-            return false;
+            static const std::unordered_set<std::string> kAllowedIoAssignments =
+                {"$test$plusargs", "$value$plusargs"};
+            if (!ExprHasOnlyAllowedIoCalls(*assign.rhs,
+                                           kAllowedIoAssignments)) {
+              diagnostics->Add(
+                  Severity::kError,
+                  "file I/O system function '" + name +
+                      "' must be a standalone assignment expression");
+              return false;
+            }
           }
         }
       }
@@ -5605,7 +5680,9 @@ void WarnNonblockingArrayWrites(const Module& flat,
   std::function<void(const Statement&)> walk;
   walk = [&](const Statement& stmt) {
     if (stmt.kind == StatementKind::kAssign) {
-      if (stmt.assign.lhs_index && stmt.assign.nonblocking) {
+      if (stmt.assign.nonblocking &&
+          (stmt.assign.lhs_index || !stmt.assign.lhs_indices.empty()) &&
+          IsArrayNet(flat, stmt.assign.lhs, nullptr)) {
         if (warned.insert(stmt.assign.lhs).second) {
           diagnostics->Add(
               Severity::kWarning,
@@ -7333,7 +7410,6 @@ bool Elaborate(const Program& program, const std::string& top_name,
   }
   WarnUndeclaredClocks(flat, diagnostics);
   WarnNonblockingInCombAlways(flat, diagnostics);
-  WarnNonblockingArrayWrites(flat, diagnostics);
   if (verbose_warnings) {
     WarnUndrivenWires(flat, diagnostics, enable_4state);
   }

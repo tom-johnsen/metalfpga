@@ -26,14 +26,14 @@ REV39 is the **third consecutive major transformation**, completing the IEEE 136
 - **State-dependent delays**: Output transition-based delay selection (0→1, 1→0, 0→Z, Z→1, 1→Z, Z→0, plus X transitions)
 - **Showcancelled**: Inertial delay cancellation with service record emission
 - **SDF back-annotation**: Complete IOPATH and INTERCONNECT matching and application
-- **MSL codegen growth**: +1,102 net lines (src/codegen/msl_codegen.cc now ~7,336 lines)
+- **MSL codegen growth**: +1,102 net lines (src/codegen/msl_codegen.cc now 26,783 lines)
 - **Future docs**: SYSTEMVERILOG.md (844 lines), UVM.md (1,153 lines), VPI_DPI_UNIFIED_MEMORY.md (1,058 lines)
 
 **Statistics**:
 - **Total changes**: 13 files, +5,526 insertions, -207 deletions (net +5,319 lines)
-- **MSL codegen**: src/codegen/msl_codegen.cc +1,102 net lines (18% growth from ~6,234 → ~7,336)
-- **Elaboration**: src/core/elaboration.cc +369 net lines (28% growth from ~1,299 → ~1,668)
-- **Parser**: src/frontend/verilog_parser.cc +741 net lines (38% growth from ~1,946 → ~2,687)
+- **MSL codegen**: src/codegen/msl_codegen.cc +1,102 net lines (4.3% growth from 25,681 → 26,783)
+- **Elaboration**: src/core/elaboration.cc +369 net lines (5.3% growth from 6,977 → 7,346)
+- **Parser**: src/frontend/verilog_parser.cc +741 net lines (5.3% growth from 14,086 → 14,827)
 - **Main driver**: src/main.mm +332 net lines (SDF parsing and application)
 - **New documentation**: 3,055 lines (SYSTEMVERILOG.md, UVM.md, VPI_DPI_UNIFIED_MEMORY.md)
 - **AST**: src/frontend/ast.hh +45 lines (specify path structures)
@@ -593,30 +593,26 @@ bool ConditionsMatch(const std::string& sdf_cond, const std::string& path_cond) 
 
 **File**: src/codegen/msl_codegen.cc
 
-**Changes**: +1,102 net lines (18% growth from ~6,234 → ~7,336 lines)
+**Changes**: +1,102 net lines (4.3% growth from 25,681 → 26,783 lines)
 
-**Cumulative growth since REV36**:
-- REV37: ~2,926 → ~3,800 lines (+874, +30%)
-- REV38: ~3,800 → ~6,234 lines (+2,434, +64%)
-- **REV39**: ~6,234 → ~7,336 lines (+1,102, +18%)
-- **Total**: ~2,926 → ~7,336 lines (**+4,410 net lines, +151% growth**)
+**Note**: This is a significant but measured expansion of an already large codebase. The file now contains comprehensive timing model implementation across all IEEE 1364-2005 features.
 
 **Breakdown by feature**:
 
 | Feature | Lines | % of Total |
 |---------|-------|------------|
-| Specify path delay emission | ~600 | 8.2% |
-| Output transition matching | ~200 | 2.7% |
-| Conditional path logic | ~150 | 2.0% |
-| Ifnone fallback handling | ~80 | 1.1% |
-| Polarity application | ~60 | 0.8% |
-| Showcancelled service records | ~50 | 0.7% |
-| Per-bit vector delays | ~120 | 1.6% |
-| Edge-sensitive path delays | ~90 | 1.2% |
-| Path delay state management | ~70 | 1.0% |
-| Other (refactoring, helpers) | ~82 | 1.1% |
-| **Total new code (REV39)** | **~1,102** | **15.0%** |
-| **Existing code** | **~6,234** | **85.0%** |
+| Specify path delay emission | ~600 | 2.2% |
+| Output transition matching | ~200 | 0.7% |
+| Conditional path logic | ~150 | 0.6% |
+| Ifnone fallback handling | ~80 | 0.3% |
+| Polarity application | ~60 | 0.2% |
+| Showcancelled service records | ~50 | 0.2% |
+| Per-bit vector delays | ~120 | 0.4% |
+| Edge-sensitive path delays | ~90 | 0.3% |
+| Path delay state management | ~70 | 0.3% |
+| Other (refactoring, helpers) | ~82 | 0.3% |
+| **Total new code (REV39)** | **~1,102** | **4.1%** |
+| **Existing code** | **~25,681** | **95.9%** |
 
 ---
 
@@ -804,13 +800,7 @@ void EmitVectorOutputDelays(const SpecifyPath* path) {
 
 **File**: src/core/elaboration.cc
 
-**Changes**: +369 net lines (28% growth from ~1,299 → ~1,668 lines)
-
-**Cumulative growth since REV36**:
-- REV37: ~1,130 → ~1,130 lines (no change)
-- REV38: ~1,130 → ~1,299 lines (+169, +15%)
-- **REV39**: ~1,299 → ~1,668 lines (+369, +28%)
-- **Total**: ~1,130 → ~1,668 lines (**+538 net lines, +48% growth**)
+**Changes**: +369 net lines (5.3% growth from 6,977 → 7,346 lines)
 
 **New elaboration passes**:
 
@@ -975,13 +965,7 @@ void ApplySDFToSpecifyPaths(FlatModule* flat_mod, const SDFFile& sdf) {
 
 **File**: src/frontend/verilog_parser.cc
 
-**Changes**: +741 net lines (38% growth from ~1,946 → ~2,687 lines)
-
-**Cumulative growth since REV36**:
-- REV37: ~1,450 → ~1,450 lines (no change)
-- REV38: ~1,450 → ~1,946 lines (+496, +34%)
-- **REV39**: ~1,946 → ~2,687 lines (+741, +38%)
-- **Total**: ~1,450 → ~2,687 lines (**+1,237 net lines, +85% growth**)
+**Changes**: +741 net lines (5.3% growth from 14,086 → 14,827 lines)
 
 **New parsing capabilities**:
 
@@ -1522,29 +1506,28 @@ struct SpecifyPath {
 
 ### 9.3 Repository State After REV39
 
-**Repository size**: ~47,800 lines (excluding deprecated test files)
+**Repository size**: ~76,000 lines (excluding deprecated test files)
 
 **Major components**:
 
-- **Source code**: ~18,000 lines (frontend + elaboration + codegen + runtime)
-  - `src/codegen/msl_codegen.cc`: ~7,336 lines (**largest file**, 18% growth from REV38)
-  - `src/frontend/verilog_parser.cc`: ~2,687 lines (38% growth)
-  - `src/core/elaboration.cc`: ~1,668 lines (28% growth)
-  - `src/frontend/ast.hh`: ~995 lines (+45 lines)
-  - `src/main.mm`: ~800 lines (+332 lines)
-- **API headers**: ~21,500 lines (no change)
-  - `include/gpga_real.h`: 17,113 lines
-  - `include/gpga_sched.h`: 149 lines (+1)
+- **Source code**: ~56,700 lines (frontend + elaboration + codegen + runtime)
+  - `src/codegen/msl_codegen.cc`: 26,783 lines (**largest file**)
+  - `src/frontend/verilog_parser.cc`: 14,827 lines
+  - `src/core/elaboration.cc`: 7,346 lines
+  - `src/main.mm`: 7,230 lines
+  - `src/frontend/ast.hh`: 533 lines
+- **API headers**: ~18,100 lines
+  - `include/gpga_real.h`: 17,587 lines
   - `include/gpga_wide.h`: 360 lines
-  - `include/gpga_4state.h`: ~3,500 lines
-- **Documentation**: ~8,300 lines (+3,104 net)
+  - `include/gpga_sched.h`: 155 lines
+- **Documentation**: ~8,500 lines
   - `docs/future/UVM.md`: 1,153 lines (new)
   - `docs/future/VPI_DPI_UNIFIED_MEMORY.md`: 1,058 lines (new)
   - `docs/future/SYSTEMVERILOG.md`: 844 lines (new)
-  - `docs/GPGA_SCHED_API.md`: 1,452 lines (+15)
-  - `docs/GPGA_WIDE_API.md`: 1,273 lines
   - `docs/GPGA_REAL_API.md`: 2,463 lines
-  - `docs/TIMING_CHECKS_IMPLEMENTATION.md`: 247 lines (+49)
+  - `docs/GPGA_SCHED_API.md`: 1,452 lines
+  - `docs/GPGA_WIDE_API.md`: 1,273 lines
+  - `docs/TIMING_CHECKS_IMPLEMENTATION.md`: 225 lines
 
 ---
 
@@ -1692,5 +1675,3 @@ REV39 achieves **complete IEEE 1364-2005 timing model** and provides **comprehen
 - Production release
 
 This is the **third consecutive major transformation** (REV37→REV38→REV39), completing the Verilog-2005 implementation and establishing the roadmap for SystemVerilog adoption.
-
-**Total cumulative growth** (REV37-REV39): +13,356 net lines in 3 commits.

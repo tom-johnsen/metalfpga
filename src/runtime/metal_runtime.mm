@@ -1,6 +1,7 @@
 #include "runtime/metal_runtime.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <dispatch/dispatch.h>
 #include <filesystem>
@@ -761,6 +762,131 @@ bool ParseUintConst(const std::string& source, const std::string& name,
   return true;
 }
 
+bool ParseSchedDefineConstants(const std::string& source,
+                               SchedulerConstants* out) {
+  if (!out) {
+    return false;
+  }
+  const std::string token = "GPGA_SCHED_DEFINE_CONSTANTS";
+  auto parse_args = [&](const std::string& args,
+                        SchedulerConstants* info) -> bool {
+    std::vector<uint32_t> values;
+    for (size_t i = 0; i < args.size();) {
+      while (i < args.size() &&
+             !std::isdigit(static_cast<unsigned char>(args[i]))) {
+        ++i;
+      }
+      if (i >= args.size()) {
+        break;
+      }
+      size_t start = i;
+      while (i < args.size() &&
+             std::isdigit(static_cast<unsigned char>(args[i]))) {
+        ++i;
+      }
+      uint32_t value = 0u;
+      try {
+        value = static_cast<uint32_t>(
+            std::stoul(args.substr(start, i - start)));
+      } catch (...) {
+        return false;
+      }
+      values.push_back(value);
+      while (i < args.size() &&
+             (args[i] == 'u' || args[i] == 'U' || args[i] == 'l' ||
+              args[i] == 'L')) {
+        ++i;
+      }
+    }
+    if (values.size() < 17u) {
+      return false;
+    }
+    info->proc_count = values[0];
+    info->event_count = values[2];
+    info->edge_count = values[3];
+    info->edge_star_count = values[4];
+    info->repeat_count = values[8];
+    info->delay_count = values[9];
+    info->max_dnba = values[10];
+    info->monitor_count = values[11];
+    info->monitor_max_args = values[12];
+    info->strobe_count = values[13];
+    info->service_max_args = values[14];
+    info->service_wide_words = values[15];
+    info->string_count = values[16];
+    if (values.size() > 17u) {
+      info->force_count = values[17];
+    }
+    if (values.size() > 18u) {
+      info->pcont_count = values[18];
+    }
+    info->has_scheduler = info->proc_count > 0u;
+    info->has_services = info->service_max_args > 0u;
+    return true;
+  };
+
+  std::istringstream in(source);
+  std::string line;
+  while (std::getline(in, line)) {
+    std::string trimmed = line;
+    trimmed.erase(trimmed.begin(),
+                  std::find_if(trimmed.begin(), trimmed.end(),
+                               [](unsigned char c) { return c != ' '; }));
+    if (StartsWith(trimmed, "#define")) {
+      continue;
+    }
+    size_t pos = trimmed.find(token);
+    if (pos == std::string::npos) {
+      continue;
+    }
+    size_t open = trimmed.find('(', pos + token.size());
+    size_t close = trimmed.rfind(')');
+    if (open == std::string::npos || close == std::string::npos ||
+        close <= open + 1) {
+      break;
+    }
+    SchedulerConstants info;
+    if (parse_args(trimmed.substr(open + 1, close - open - 1), &info)) {
+      *out = info;
+      return true;
+    }
+  }
+
+  size_t pos = 0;
+  while (true) {
+    pos = source.find(token, pos);
+    if (pos == std::string::npos) {
+      return false;
+    }
+    size_t open = source.find('(', pos + token.size());
+    if (open == std::string::npos) {
+      return false;
+    }
+    size_t close = std::string::npos;
+    int depth = 0;
+    for (size_t i = open; i < source.size(); ++i) {
+      if (source[i] == '(') {
+        depth++;
+      } else if (source[i] == ')') {
+        depth--;
+        if (depth == 0) {
+          close = i;
+          break;
+        }
+      }
+    }
+    if (close == std::string::npos || close <= open + 1) {
+      return false;
+    }
+    SchedulerConstants info;
+    if (parse_args(source.substr(open + 1, close - open - 1), &info)) {
+      *out = info;
+      return true;
+    }
+    pos = close + 1;
+  }
+}
+
 }  // namespace
 
 MetalBuffer::~MetalBuffer() {
@@ -987,6 +1113,14 @@ bool MetalRuntime::CompileSource(const std::string& source,
   }
   impl_->library = library;
   return true;
+}
+
+bool MetalRuntime::GetLastSource(std::string* out) const {
+  if (!out || !impl_) {
+    return false;
+  }
+  *out = impl_->last_source;
+  return !impl_->last_source.empty();
 }
 
 bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
@@ -1286,30 +1420,31 @@ bool ParseSchedulerConstants(const std::string& source,
     return false;
   }
   SchedulerConstants info;
-  ParseUintConst(source, "GPGA_SCHED_PROC_COUNT", &info.proc_count);
-  ParseUintConst(source, "GPGA_SCHED_EVENT_COUNT", &info.event_count);
-  ParseUintConst(source, "GPGA_SCHED_EDGE_COUNT", &info.edge_count);
-  ParseUintConst(source, "GPGA_SCHED_EDGE_STAR_COUNT", &info.edge_star_count);
-  ParseUintConst(source, "GPGA_SCHED_REPEAT_COUNT", &info.repeat_count);
-  if (ParseUintConst(source, "GPGA_SCHED_DELAY_COUNT", &info.delay_count)) {
-    info.has_scheduler = true;
+  const bool parsed_define = ParseSchedDefineConstants(source, &info);
+  if (!parsed_define) {
+    ParseUintConst(source, "GPGA_SCHED_PROC_COUNT", &info.proc_count);
+    ParseUintConst(source, "GPGA_SCHED_EVENT_COUNT", &info.event_count);
+    ParseUintConst(source, "GPGA_SCHED_EDGE_COUNT", &info.edge_count);
+    ParseUintConst(source, "GPGA_SCHED_EDGE_STAR_COUNT", &info.edge_star_count);
+    ParseUintConst(source, "GPGA_SCHED_REPEAT_COUNT", &info.repeat_count);
+    ParseUintConst(source, "GPGA_SCHED_DELAY_COUNT", &info.delay_count);
+    ParseUintConst(source, "GPGA_SCHED_MAX_DNBA", &info.max_dnba);
+    ParseUintConst(source, "GPGA_SCHED_MONITOR_COUNT", &info.monitor_count);
+    ParseUintConst(source, "GPGA_SCHED_MONITOR_MAX_ARGS",
+                   &info.monitor_max_args);
+    ParseUintConst(source, "GPGA_SCHED_STROBE_COUNT", &info.strobe_count);
+    ParseUintConst(source, "GPGA_SCHED_SERVICE_MAX_ARGS",
+                   &info.service_max_args);
+    ParseUintConst(source, "GPGA_SCHED_SERVICE_WIDE_WORDS",
+                   &info.service_wide_words);
+    ParseUintConst(source, "GPGA_SCHED_STRING_COUNT", &info.string_count);
+    ParseUintConst(source, "GPGA_SCHED_FORCE_COUNT", &info.force_count);
+    ParseUintConst(source, "GPGA_SCHED_PCONT_COUNT", &info.pcont_count);
   }
-  if (ParseUintConst(source, "GPGA_SCHED_MAX_DNBA", &info.max_dnba)) {
-    info.has_scheduler = true;
-  }
-  ParseUintConst(source, "GPGA_SCHED_MONITOR_COUNT", &info.monitor_count);
-  ParseUintConst(source, "GPGA_SCHED_MONITOR_MAX_ARGS", &info.monitor_max_args);
-  ParseUintConst(source, "GPGA_SCHED_STROBE_COUNT", &info.strobe_count);
-  ParseUintConst(source, "GPGA_SCHED_SERVICE_MAX_ARGS", &info.service_max_args);
-  ParseUintConst(source, "GPGA_SCHED_SERVICE_WIDE_WORDS",
-                 &info.service_wide_words);
-  ParseUintConst(source, "GPGA_SCHED_STRING_COUNT", &info.string_count);
-  ParseUintConst(source, "GPGA_SCHED_FORCE_COUNT", &info.force_count);
-  ParseUintConst(source, "GPGA_SCHED_PCONT_COUNT", &info.pcont_count);
   ParseUintConst(source, "GPGA_SCHED_TIMING_CHECK_COUNT",
                  &info.timing_check_count);
-  info.has_scheduler = info.proc_count > 0;
-  info.has_services = info.service_max_args > 0;
+  info.has_scheduler = info.proc_count > 0u;
+  info.has_services = info.service_max_args > 0u;
   *out = info;
   return true;
 }
