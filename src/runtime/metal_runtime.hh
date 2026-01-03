@@ -173,6 +173,13 @@ struct MetalBufferBinding {
   size_t offset = 0;
 };
 
+class MetalKernel;
+
+struct MetalDispatch {
+  const MetalKernel* kernel = nullptr;
+  const std::vector<MetalBufferBinding>* bindings = nullptr;
+};
+
 class MetalKernel {
  public:
   MetalKernel() = default;
@@ -201,6 +208,7 @@ class MetalKernel {
   uint32_t max_buffer_bindings_ = 0;
   uint32_t thread_execution_width_ = 0;
   uint32_t max_threads_per_threadgroup_ = 0;
+  mutable std::vector<uint64_t> last_binding_addresses_;
 };
 
 class MetalRuntime {
@@ -218,11 +226,16 @@ class MetalRuntime {
   bool GetLastSource(std::string* out) const;
   bool CreateKernel(const std::string& name, MetalKernel* kernel,
                     std::string* error);
+  bool PrecompileKernels(const std::vector<std::string>& names,
+                         std::string* error);
   MetalBuffer CreateBuffer(size_t length, const void* initial_data);
   bool Dispatch(const MetalKernel& kernel,
                 const std::vector<MetalBufferBinding>& bindings,
                 uint32_t grid_size, std::string* error,
                 uint32_t timeout_ms = 0u);
+  bool DispatchBatch(const std::vector<MetalDispatch>& dispatches,
+                     uint32_t grid_size, std::string* error,
+                     uint32_t timeout_ms = 0u);
 
  private:
   struct Impl;

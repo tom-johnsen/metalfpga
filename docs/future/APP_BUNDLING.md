@@ -52,7 +52,8 @@ YourCore.app/
 │   ├── MacOS/
 │   │   └── YourCore                # Host executable (C++/Obj-C/Swift)
 │   ├── Resources/
-│   │   ├── core.metallib           # Compiled GPU kernel
+│   │   ├── core.msl                # Generated MSL source (optional, for debugging)
+│   │   ├── metal4_pipelines.mtl4archive  # PRE-COMPILED Metal pipelines (critical!)
 │   │   ├── icon.icns               # App icon
 │   │   ├── MainMenu.nib            # GUI resources (optional)
 │   │   └── Data/                   # ROMs, save states, config
@@ -63,7 +64,11 @@ YourCore.app/
 
 #### 1. **Generated Runtime** (metalfpga output)
 The exact code Codex already generates:
-- **Metal kernel** - GPU-compiled Verilog simulation
+- **MSL source** - Generated Metal Shading Language code (core.msl)
+- **Pipeline archive** - Pre-compiled Metal pipelines (metal4_pipelines.mtl4archive)
+  - **Critical for distribution** - Eliminates 5-10 minute compilation on first launch
+  - Like Icarus Verilog's .vvp files, but native GPU code
+  - Load instantly (~5 seconds) instead of recompiling every launch
 - **Host runtime** - Buffer management, scheduler, service system
 - **VCD export** - Optional debugging/waveform capture
 
@@ -90,19 +95,27 @@ Bridges HDL signals to macOS APIs:
 
 **Inputs:**
 ```bash
-metalfpga core.v --bundle MyCore.app
+# Build pipeline archive first (one-time, slow)
+metalfpga core.v --emit-msl core.msl --emit-host core_host.cc
+clang++ core_host.cc -o core_sim
+METALFPGA_PIPELINE_HARVEST=1 ./core_sim core.msl  # Creates metal4_pipelines.mtl4archive
+
+# Then bundle into app (fast, includes pre-compiled archive)
+metalfpga core.v --bundle MyCore.app --pipeline-archive metal4_pipelines.mtl4archive
 ```
 
 **Outputs:**
 - Standalone macOS app with:
-  - Compiled Metal kernel
+  - **Pre-compiled Metal pipeline archive** (instant load on launch)
+  - MSL source (optional, for debugging)
   - Host executable with GUI stub
   - Basic window displaying simulation state
 
 **Generated Components:**
 1. **Info.plist** - App metadata (bundle ID, version, icon)
-2. **Host executable** - Minimal Cocoa app loading Metal kernel
-3. **Resource packaging** - Bundle Metal library and assets
+2. **Host executable** - Minimal Cocoa app loading pre-compiled pipelines
+3. **Resource packaging** - Bundle MSL source + pipeline archive + assets
+4. **Pipeline archive** - metal4_pipelines.mtl4archive (enables instant startup)
 
 ### Phase 2: Signal Binding DSL
 **Goal:** Declarative mapping of HDL signals to app I/O
@@ -205,9 +218,17 @@ outputs:
 
 ### Build Command
 ```bash
+# Step 1: Generate and harvest pipelines (one-time, ~5-10 min for NES)
+metalfpga nes_top.v --emit-msl nes.msl --emit-host nes_host.cc
+clang++ nes_host.cc -o nes_sim -framework Metal -framework Foundation
+METALFPGA_PIPELINE_HARVEST=1 ./nes_sim nes.msl
+# ^ Creates metal4_pipelines.mtl4archive
+
+# Step 2: Bundle into distributable app (fast, <1 min)
 metalfpga nes_top.v \
   --bindings nes_bindings.yaml \
   --bundle NES.app \
+  --pipeline-archive metal4_pipelines.mtl4archive \
   --template emulator \
   --icon assets/nes_icon.icns \
   --name "NES Emulator" \

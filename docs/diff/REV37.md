@@ -1,6 +1,6 @@
 # REV37 - Metal 4 Runtime Migration + Repository Restructure + Scheduler Rewrite
 
-**Commit**: (staged)
+**Commit**: f5fe3dc
 **Version**: v0.8
 **Milestone**: Metal 4 migration complete, modern scheduler architecture, major repository cleanup
 

@@ -481,6 +481,27 @@ std::string EmitHostStub(const Module& module) {
   out << "    return 1;\n";
   out << "  }\n\n";
   out << "  profiler.Mark(\"compile_source\");\n";
+  out << "  {\n";
+  out << "    std::vector<std::string> precompile;\n";
+  if (needs_scheduler) {
+    out << "    precompile.push_back(\"gpga_" << msl_module_name
+        << "_sched_step\");\n";
+  } else {
+    out << "    precompile.push_back(\"gpga_" << msl_module_name << "\");\n";
+    if (has_initial) {
+      out << "    precompile.push_back(\"gpga_" << msl_module_name
+          << "_init\");\n";
+    }
+    if (has_tick) {
+      out << "    precompile.push_back(\"gpga_" << msl_module_name
+          << "_tick\");\n";
+    }
+  }
+  out << "    if (!runtime.PrecompileKernels(precompile, &error)) {\n";
+  out << "      std::cerr << \"Metal precompile failed: \" << error << \"\\n\";\n";
+  out << "      return 1;\n";
+  out << "    }\n";
+  out << "  }\n";
   out << "  std::string sched_source = msl_source;\n";
   out << "  std::string expanded_source;\n";
   out << "  if (runtime.GetLastSource(&expanded_source) && !expanded_source.empty()) {\n";
@@ -647,31 +668,29 @@ std::string EmitHostStub(const Module& module) {
   out << "      std::cerr << error << \"\\n\";\n";
   out << "      return 1;\n";
   out << "    }\n";
+  out << "    std::vector<gpga::MetalBufferBinding> init_bindings;\n";
+  out << "    std::vector<gpga::MetalBufferBinding> tick_bindings;\n";
+  out << "    std::vector<gpga::MetalDispatch> dispatches;\n";
   out << "    if (has_init) {\n";
-  out << "      std::vector<gpga::MetalBufferBinding> init_bindings;\n";
   out << "      if (!BuildBindings(init_kernel, buffers, &init_bindings, &error)) {\n";
   out << "        std::cerr << error << \"\\n\";\n";
   out << "        return 1;\n";
   out << "      }\n";
-  out << "      if (!runtime.Dispatch(init_kernel, init_bindings, count, &error)) {\n";
-  out << "        std::cerr << \"Init dispatch failed: \" << error << \"\\n\";\n";
-  out << "        return 1;\n";
-  out << "      }\n";
+    out << "      dispatches.push_back(gpga::MetalDispatch{&init_kernel, &init_bindings});\n";
   out << "    }\n";
-  out << "    if (!runtime.Dispatch(comb_kernel, bindings, count, &error)) {\n";
-  out << "      std::cerr << \"Comb dispatch failed: \" << error << \"\\n\";\n";
-  out << "      return 1;\n";
-  out << "    }\n";
+  out << "    dispatches.push_back(gpga::MetalDispatch{&comb_kernel, &bindings});\n";
   out << "    if (has_tick) {\n";
-  out << "      std::vector<gpga::MetalBufferBinding> tick_bindings;\n";
   out << "      if (!BuildBindings(tick_kernel, buffers, &tick_bindings, &error)) {\n";
   out << "        std::cerr << error << \"\\n\";\n";
   out << "        return 1;\n";
   out << "      }\n";
-  out << "      if (!runtime.Dispatch(tick_kernel, tick_bindings, count, &error)) {\n";
-  out << "        std::cerr << \"Tick dispatch failed: \" << error << \"\\n\";\n";
-  out << "        return 1;\n";
-  out << "      }\n";
+    out << "      dispatches.push_back(gpga::MetalDispatch{&tick_kernel, &tick_bindings});\n";
+  out << "    }\n";
+  out << "    if (!runtime.DispatchBatch(dispatches, count, &error)) {\n";
+  out << "      std::cerr << \"Dispatch batch failed: \" << error << \"\\n\";\n";
+  out << "      return 1;\n";
+  out << "    }\n";
+  out << "    if (has_tick) {\n";
   out << "      SwapNextBuffers(&buffers);\n";
   out << "    }\n";
   out << "    if (profile) {\n";

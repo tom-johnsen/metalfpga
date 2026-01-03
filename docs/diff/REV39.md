@@ -1,6 +1,6 @@
 # REV39 - Complete Specify Path Delays + SDF Integration + Future Vision Docs
 
-**Commit**: (staged)
+**Commit**: eaacfcf
 **Version**: v0.80085
 **Milestone**: Full IEEE 1364-2005 specify path delays, complete SDF back-annotation, SystemVerilog roadmap
 

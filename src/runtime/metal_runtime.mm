@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <dispatch/dispatch.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
+#include <mutex>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <unordered_map>
@@ -23,21 +27,236 @@
 #import <Metal/MTL4Compiler.h>
 #import <Metal/MTL4ComputeCommandEncoder.h>
 #import <Metal/MTL4ComputePipeline.h>
+#import <Metal/MTL4Counters.h>
 #import <Metal/MTL4LibraryDescriptor.h>
 #import <Metal/MTL4LibraryFunctionDescriptor.h>
+#import <Metal/MTL4PipelineDataSetSerializer.h>
+#import <Metal/MTL4Archive.h>
+#import <Metal/MTLResidencySet.h>
 
 namespace gpga {
 
+std::string FormatNSError(NSError* error);
+void LogPipeline(bool enabled, const std::string& message);
+
 struct MetalRuntime::Impl {
+  struct PipelineTask {
+    id<MTL4CompilerTask> task = nil;
+    id<MTLComputePipelineState> pipeline = nil;
+    NSError* error = nil;
+    dispatch_semaphore_t done = nullptr;
+  };
   id<MTLDevice> device = nil;
   id<MTL4CommandQueue> queue = nil;
   id<MTL4CommandAllocator> allocator = nil;
   id<MTL4Compiler> compiler = nil;
+  id<MTL4PipelineDataSetSerializer> pipeline_serializer = nil;
+  id<MTL4Archive> pipeline_archive = nil;
+  id<MTLResidencySet> residency_set = nil;
+  id<MTL4CounterHeap> timestamp_heap = nil;
   id<MTLLibrary> library = nil;
   id<MTLDynamicLibrary> real_lib = nil;
+  std::unordered_map<std::string, id<MTLComputePipelineState>> pipeline_cache;
+  std::unordered_map<std::string, PipelineTask> pipeline_tasks;
+  std::mutex pipeline_mutex;
+  std::filesystem::path pipeline_archive_path;
+  bool pipeline_archive_load = false;
+  bool pipeline_archive_save = false;
+  bool pipeline_async = false;
+  bool pipeline_log = false;
+  uint32_t threadgroup_override = 0;
+  bool use_residency_set = false;
+  bool gpu_timestamps = false;
+  bool gpu_timestamps_precise = false;
+  uint32_t gpu_timestamp_every = 1;
+  uint64_t gpu_timestamp_seq = 0;
+  uint64_t timestamp_frequency = 0;
+  NSUInteger timestamp_heap_count = 0;
   std::string last_source;
   bool prefer_source_bindings = false;
+  bool ShouldSampleGpuTimestamps() {
+    if (!gpu_timestamps) {
+      return false;
+    }
+    if (gpu_timestamp_every == 0u) {
+      return false;
+    }
+    uint64_t seq = gpu_timestamp_seq++;
+    return (seq % gpu_timestamp_every) == 0u;
+  }
+  bool EnsureTimestampHeap(NSUInteger count, std::string* error) {
+    if (!device) {
+      if (error) {
+        *error = "Metal device unavailable for timestamp heap";
+      }
+      return false;
+    }
+    if (timestamp_heap && timestamp_heap_count >= count) {
+      return true;
+    }
+    if (timestamp_heap) {
+      [timestamp_heap release];
+      timestamp_heap = nil;
+      timestamp_heap_count = 0;
+    }
+    MTL4CounterHeapDescriptor* desc = [[MTL4CounterHeapDescriptor alloc] init];
+    desc.type = MTL4CounterHeapTypeTimestamp;
+    desc.count = count;
+    NSError* err = nil;
+    id<MTL4CounterHeap> heap =
+        [device newCounterHeapWithDescriptor:desc error:&err];
+    [desc release];
+    if (!heap) {
+      if (error) {
+        *error = err ? FormatNSError(err)
+                     : "Failed to create Metal timestamp heap";
+      }
+      return false;
+    }
+    timestamp_heap = heap;
+    timestamp_heap_count = count;
+    if (timestamp_frequency == 0) {
+      timestamp_frequency = [device queryTimestampFrequency];
+    }
+    return true;
+  }
+  MTL4TimestampGranularity TimestampGranularity() const {
+    return gpu_timestamps_precise ? MTL4TimestampGranularityPrecise
+                                  : MTL4TimestampGranularityRelaxed;
+  }
+  void LogGpuTimestampResult(const char* label, uint32_t grid_size,
+                             size_t dispatch_count) {
+    if (!timestamp_heap) {
+      return;
+    }
+    @autoreleasepool {
+      NSData* data =
+          [timestamp_heap resolveCounterRange:NSMakeRange(0, 2)];
+      if (!data) {
+        std::cerr << "[gpu_profile] " << label
+                  << " resolveCounterRange failed\n";
+        return;
+      }
+      const size_t length = [data length];
+      size_t entry_size =
+          static_cast<size_t>([device sizeOfCounterHeapEntry:
+                                       MTL4CounterHeapTypeTimestamp]);
+      if (entry_size == 0) {
+        entry_size = sizeof(uint64_t);
+      }
+      if (length < entry_size * 2) {
+        std::cerr << "[gpu_profile] " << label
+                  << " timestamp data too small\n";
+        return;
+      }
+      const uint8_t* bytes =
+          static_cast<const uint8_t*>([data bytes]);
+      uint64_t start = 0;
+      uint64_t end = 0;
+      std::memcpy(&start, bytes, sizeof(uint64_t));
+      std::memcpy(&end, bytes + entry_size, sizeof(uint64_t));
+      if (timestamp_frequency > 0 && end >= start) {
+        double ms =
+            (static_cast<double>(end - start) * 1000.0) /
+            static_cast<double>(timestamp_frequency);
+        std::cerr << "[gpu_profile] " << label << " ms=" << ms
+                  << " grid=" << grid_size
+                  << " dispatches=" << dispatch_count << "\n";
+      } else {
+        std::cerr << "[gpu_profile] " << label << " ticks=" << (end - start)
+                  << " grid=" << grid_size
+                  << " dispatches=" << dispatch_count << "\n";
+      }
+    }
+  }
   ~Impl() {
+    std::vector<dispatch_semaphore_t> pending;
+    {
+      std::lock_guard<std::mutex> lock(pipeline_mutex);
+      pending.reserve(pipeline_tasks.size());
+      for (auto& entry : pipeline_tasks) {
+        if (entry.second.done) {
+          pending.push_back(entry.second.done);
+        }
+      }
+    }
+    for (dispatch_semaphore_t sema : pending) {
+      dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+    }
+    {
+      std::lock_guard<std::mutex> lock(pipeline_mutex);
+    for (auto& entry : pipeline_tasks) {
+      PipelineTask& task = entry.second;
+        if (task.task) {
+          [task.task release];
+          task.task = nil;
+        }
+        if (task.pipeline) {
+          [task.pipeline release];
+          task.pipeline = nil;
+        }
+        if (task.error) {
+          [task.error release];
+          task.error = nil;
+        }
+        if (task.done) {
+#if !OS_OBJECT_USE_OBJC
+          dispatch_release(task.done);
+#endif
+          task.done = nullptr;
+        }
+      }
+      pipeline_tasks.clear();
+    }
+    if (pipeline_serializer && pipeline_archive_save &&
+        !pipeline_archive_path.empty()) {
+      std::error_code ec;
+      std::filesystem::path parent = pipeline_archive_path.parent_path();
+      if (!parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+      }
+      std::string archive_path = pipeline_archive_path.string();
+      NSString* ns_path = [NSString stringWithUTF8String:archive_path.c_str()];
+      NSURL* url = [NSURL fileURLWithPath:ns_path];
+      NSError* archive_err = nil;
+      BOOL ok =
+          [pipeline_serializer serializeAsArchiveAndFlushToURL:url
+                                                         error:&archive_err];
+      if (ok) {
+        LogPipeline(pipeline_log,
+                    "saved pipeline archive: " + archive_path);
+      } else {
+        std::string message =
+            "failed to save pipeline archive: " + archive_path;
+        if (archive_err) {
+          message += " (" + FormatNSError(archive_err) + ")";
+        }
+        LogPipeline(pipeline_log, message);
+      }
+    }
+    if (timestamp_heap) {
+      [timestamp_heap release];
+      timestamp_heap = nil;
+      timestamp_heap_count = 0;
+    }
+    if (residency_set) {
+      [residency_set release];
+      residency_set = nil;
+    }
+    for (auto& entry : pipeline_cache) {
+      if (entry.second) {
+        [entry.second release];
+      }
+    }
+    pipeline_cache.clear();
+    if (pipeline_archive) {
+      [pipeline_archive release];
+      pipeline_archive = nil;
+    }
+    if (pipeline_serializer) {
+      [pipeline_serializer release];
+      pipeline_serializer = nil;
+    }
     if (real_lib) {
       [real_lib release];
       real_lib = nil;
@@ -66,6 +285,100 @@ struct MetalRuntime::Impl {
 };
 
 namespace {
+
+std::string ExpandIncludes(const std::string& source,
+                           const std::vector<std::string>& include_paths,
+                           std::string* error);
+
+bool EnvEnabled(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return false;
+  }
+  std::string lowered;
+  lowered.reserve(std::strlen(value));
+  for (const char* c = value; *c != '\0'; ++c) {
+    lowered.push_back(static_cast<char>(
+        std::tolower(static_cast<unsigned char>(*c))));
+  }
+  if (lowered == "0" || lowered == "false" || lowered == "no" ||
+      lowered == "off") {
+    return false;
+  }
+  return true;
+}
+
+std::optional<bool> EnvTriState(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return std::nullopt;
+  }
+  std::string lowered;
+  lowered.reserve(std::strlen(value));
+  for (const char* c = value; *c != '\0'; ++c) {
+    lowered.push_back(static_cast<char>(
+        std::tolower(static_cast<unsigned char>(*c))));
+  }
+  if (lowered == "0" || lowered == "false" || lowered == "no" ||
+      lowered == "off") {
+    return false;
+  }
+  return true;
+}
+
+std::optional<std::filesystem::path> EnvPath(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return std::nullopt;
+  }
+  return std::filesystem::path(value);
+}
+
+std::optional<uint32_t> EnvU32(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return std::nullopt;
+  }
+  char* end = nullptr;
+  unsigned long parsed = std::strtoul(value, &end, 10);
+  if (!end || end == value) {
+    return std::nullopt;
+  }
+  return static_cast<uint32_t>(parsed);
+}
+
+uint32_t ChooseThreadgroupSize(uint32_t override_size,
+                               uint32_t execution_width,
+                               uint32_t max_threads) {
+  uint32_t threadgroup = execution_width;
+  if (override_size > 0u) {
+    threadgroup = override_size;
+  }
+  if (threadgroup == 0u ||
+      (max_threads != 0u && threadgroup > max_threads)) {
+    threadgroup = max_threads;
+  }
+  if (threadgroup == 0u) {
+    threadgroup = 1u;
+  }
+  return threadgroup;
+}
+
+std::filesystem::path DefaultPipelineArchivePath() {
+#ifdef NDEBUG
+  const char* home = std::getenv("HOME");
+  std::filesystem::path base =
+      home ? std::filesystem::path(home)
+           : std::filesystem::temp_directory_path();
+  base /= "Library";
+  base /= "Caches";
+  base /= "metalfpga";
+#else
+  std::filesystem::path base =
+      std::filesystem::current_path() / "artifacts" / "pipeline_cache";
+#endif
+  return base / "metal4_pipelines.mtl4archive";
+}
 
 uint32_t ReadU32(const uint8_t* base, size_t offset) {
   uint32_t value = 0;
@@ -494,11 +807,6 @@ bool NeedsRebuild(const std::filesystem::path& output_path,
   return false;
 }
 
-std::string FormatNSError(NSError* error);
-std::string ExpandIncludes(const std::string& source,
-                           const std::vector<std::string>& include_paths,
-                           std::string* error);
-
 bool EnsureDynamicLibrary(id<MTL4Compiler> compiler, const std::string& name,
                           const std::string& source_path,
                           const std::vector<std::string>& include_paths,
@@ -618,17 +926,6 @@ bool EndsWith(const std::string& value, const std::string& suffix) {
   return value.size() >= suffix.size() &&
          value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
              0;
-}
-
-std::string FormatNSError(NSError* error) {
-  if (!error) {
-    return "unknown Metal error";
-  }
-  NSString* desc = [error localizedDescription];
-  if (!desc) {
-    return "unknown Metal error";
-  }
-  return std::string([desc UTF8String]);
 }
 
 std::string ExpandIncludes(const std::string& source,
@@ -889,6 +1186,24 @@ bool ParseSchedDefineConstants(const std::string& source,
 
 }  // namespace
 
+void LogPipeline(bool enabled, const std::string& message) {
+  if (!enabled) {
+    return;
+  }
+  std::cerr << "[metal_runtime] " << message << "\n";
+}
+
+std::string FormatNSError(NSError* error) {
+  if (!error) {
+    return "unknown Metal error";
+  }
+  NSString* desc = [error localizedDescription];
+  if (!desc) {
+    return "unknown Metal error";
+  }
+  return std::string([desc UTF8String]);
+}
+
 MetalBuffer::~MetalBuffer() {
   if (handle_) {
     id<MTLBuffer> buffer = (id<MTLBuffer>)handle_;
@@ -949,7 +1264,8 @@ MetalKernel::MetalKernel(MetalKernel&& other) noexcept
       buffer_indices_(std::move(other.buffer_indices_)),
       max_buffer_bindings_(other.max_buffer_bindings_),
       thread_execution_width_(other.thread_execution_width_),
-      max_threads_per_threadgroup_(other.max_threads_per_threadgroup_) {
+      max_threads_per_threadgroup_(other.max_threads_per_threadgroup_),
+      last_binding_addresses_(std::move(other.last_binding_addresses_)) {
   other.pipeline_ = nullptr;
   other.argument_table_ = nullptr;
   other.max_buffer_bindings_ = 0;
@@ -976,6 +1292,7 @@ MetalKernel& MetalKernel::operator=(MetalKernel&& other) noexcept {
   max_buffer_bindings_ = other.max_buffer_bindings_;
   thread_execution_width_ = other.thread_execution_width_;
   max_threads_per_threadgroup_ = other.max_threads_per_threadgroup_;
+  last_binding_addresses_ = std::move(other.last_binding_addresses_);
   other.pipeline_ = nullptr;
   other.argument_table_ = nullptr;
   other.max_buffer_bindings_ = 0;
@@ -1020,6 +1337,65 @@ bool MetalRuntime::Initialize(std::string* error) {
     }
     return false;
   }
+  if (impl_->pipeline_archive_path.empty()) {
+    auto override_path = EnvPath("METALFPGA_PIPELINE_ARCHIVE");
+    impl_->pipeline_archive_path =
+        override_path.value_or(DefaultPipelineArchivePath());
+    impl_->pipeline_archive_load =
+        EnvEnabled("METALFPGA_PIPELINE_ARCHIVE_LOAD");
+    impl_->pipeline_archive_save =
+        EnvEnabled("METALFPGA_PIPELINE_ARCHIVE_SAVE") ||
+        EnvEnabled("METALFPGA_PIPELINE_HARVEST");
+    impl_->pipeline_async = true;
+    auto async_pref = EnvTriState("METALFPGA_PIPELINE_ASYNC");
+    auto precompile_pref = EnvTriState("METALFPGA_PIPELINE_PRECOMPILE");
+    if (async_pref && *async_pref) {
+      impl_->pipeline_async = true;
+    } else if (precompile_pref && *precompile_pref) {
+      impl_->pipeline_async = true;
+    } else if (async_pref || precompile_pref) {
+      impl_->pipeline_async = false;
+    }
+    impl_->pipeline_log = EnvEnabled("METALFPGA_PIPELINE_LOG");
+    if (auto override_size = EnvU32("METALFPGA_THREADGROUP_SIZE")) {
+      impl_->threadgroup_override = *override_size;
+    }
+    impl_->use_residency_set = EnvEnabled("METALFPGA_RESIDENCY_SET");
+    impl_->gpu_timestamps = EnvEnabled("METALFPGA_GPU_TIMESTAMPS") ||
+                            EnvEnabled("METALFPGA_GPU_PROFILE");
+    impl_->gpu_timestamps_precise =
+        EnvEnabled("METALFPGA_GPU_TIMESTAMPS_PRECISE");
+    if (auto every = EnvU32("METALFPGA_GPU_TIMESTAMPS_EVERY")) {
+      impl_->gpu_timestamp_every = std::max(1u, *every);
+    }
+  }
+  if (impl_->pipeline_archive_load && !impl_->pipeline_archive) {
+    std::string archive_path = impl_->pipeline_archive_path.string();
+    NSString* ns_path = [NSString stringWithUTF8String:archive_path.c_str()];
+    NSURL* url = [NSURL fileURLWithPath:ns_path];
+    id<MTL4Archive> archive =
+        [impl_->device newArchiveWithURL:url error:nil];
+    if (archive) {
+      impl_->pipeline_archive = archive;
+      LogPipeline(impl_->pipeline_log,
+                  "loaded pipeline archive: " + archive_path);
+    } else {
+      LogPipeline(impl_->pipeline_log,
+                  "pipeline archive not found: " + archive_path);
+    }
+  }
+  if (impl_->pipeline_archive_save && !impl_->pipeline_serializer) {
+    MTL4PipelineDataSetSerializerDescriptor* desc =
+        [[MTL4PipelineDataSetSerializerDescriptor alloc] init];
+    desc.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureDescriptors |
+                         MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
+    id<MTL4PipelineDataSetSerializer> serializer =
+        [impl_->device newPipelineDataSetSerializerWithDescriptor:desc];
+    [desc release];
+    if (serializer) {
+      impl_->pipeline_serializer = serializer;
+    }
+  }
   if (!impl_->queue) {
     impl_->queue = [impl_->device newMTL4CommandQueue];
   }
@@ -1028,6 +1404,15 @@ bool MetalRuntime::Initialize(std::string* error) {
       *error = "Metal command queue unavailable";
     }
     return false;
+  }
+  if (impl_->use_residency_set && !impl_->residency_set) {
+    MTLResidencySetDescriptor* desc = [[MTLResidencySetDescriptor alloc] init];
+    desc.initialCapacity = 64;
+    desc.label = @"metalfpga";
+    NSError* res_err = nil;
+    impl_->residency_set =
+        [impl_->device newResidencySetWithDescriptor:desc error:&res_err];
+    [desc release];
   }
   if (!impl_->allocator) {
     impl_->allocator = [impl_->device newCommandAllocator];
@@ -1040,6 +1425,9 @@ bool MetalRuntime::Initialize(std::string* error) {
   }
   if (!impl_->compiler) {
     MTL4CompilerDescriptor* desc = [[MTL4CompilerDescriptor alloc] init];
+    if (impl_->pipeline_serializer) {
+      desc.pipelineDataSetSerializer = impl_->pipeline_serializer;
+    }
     NSError* err = nil;
     impl_->compiler = [impl_->device newCompilerWithDescriptor:desc
                                                          error:&err];
@@ -1112,6 +1500,52 @@ bool MetalRuntime::CompileSource(const std::string& source,
     [impl_->library release];
   }
   impl_->library = library;
+  for (auto& entry : impl_->pipeline_cache) {
+    if (entry.second) {
+      [entry.second release];
+    }
+  }
+  impl_->pipeline_cache.clear();
+  {
+    std::vector<dispatch_semaphore_t> pending;
+    {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      pending.reserve(impl_->pipeline_tasks.size());
+      for (auto& entry : impl_->pipeline_tasks) {
+        if (entry.second.done) {
+          pending.push_back(entry.second.done);
+        }
+      }
+    }
+    for (dispatch_semaphore_t sema : pending) {
+      dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+    }
+    {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      for (auto& entry : impl_->pipeline_tasks) {
+        Impl::PipelineTask& task = entry.second;
+        if (task.task) {
+          [task.task release];
+          task.task = nil;
+        }
+        if (task.pipeline) {
+          [task.pipeline release];
+          task.pipeline = nil;
+        }
+        if (task.error) {
+          [task.error release];
+          task.error = nil;
+        }
+        if (task.done) {
+#if !OS_OBJECT_USE_OBJC
+          dispatch_release(task.done);
+#endif
+          task.done = nullptr;
+        }
+      }
+      impl_->pipeline_tasks.clear();
+    }
+  }
   return true;
 }
 
@@ -1143,36 +1577,100 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     }
     return false;
   }
-  NSString* fn_name = [NSString stringWithUTF8String:name.c_str()];
-  MTL4LibraryFunctionDescriptor* fn_desc =
-      [[MTL4LibraryFunctionDescriptor alloc] init];
-  fn_desc.name = fn_name;
-  fn_desc.library = impl_->library;
-
-  MTL4ComputePipelineDescriptor* desc =
-      [[MTL4ComputePipelineDescriptor alloc] init];
-  desc.computeFunctionDescriptor = fn_desc;
-  MTL4PipelineOptions* pipe_opts = [[MTL4PipelineOptions alloc] init];
-  if (impl_->prefer_source_bindings) {
-    pipe_opts.shaderReflection = static_cast<MTL4ShaderReflection>(0);
+  id<MTLComputePipelineState> pipeline = nil;
+  auto cached = impl_->pipeline_cache.find(name);
+  if (cached != impl_->pipeline_cache.end() && cached->second) {
+    pipeline = cached->second;
+    [pipeline retain];
   } else {
-    pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
-  }
-  desc.options = pipe_opts;
-
-  NSError* err = nil;
-  id<MTLComputePipelineState> pipeline =
-      [impl_->compiler newComputePipelineStateWithDescriptor:desc
-                                           compilerTaskOptions:nil
-                                                        error:&err];
-  [pipe_opts release];
-  [desc release];
-  [fn_desc release];
-  if (!pipeline) {
-    if (error) {
-      *error = FormatNSError(err);
+    dispatch_semaphore_t pending_done = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      auto it = impl_->pipeline_tasks.find(name);
+      if (it != impl_->pipeline_tasks.end()) {
+        pending_done = it->second.done;
+      }
     }
-    return false;
+    if (pending_done) {
+      dispatch_semaphore_wait(pending_done, DISPATCH_TIME_FOREVER);
+      NSError* task_error = nil;
+      {
+        std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+        auto it = impl_->pipeline_tasks.find(name);
+        if (it != impl_->pipeline_tasks.end()) {
+          pipeline = it->second.pipeline;
+          it->second.pipeline = nil;
+          task_error = it->second.error;
+          it->second.error = nil;
+          if (it->second.task) {
+            [it->second.task release];
+            it->second.task = nil;
+          }
+          if (it->second.done) {
+#if !OS_OBJECT_USE_OBJC
+            dispatch_release(it->second.done);
+#endif
+            it->second.done = nullptr;
+          }
+          impl_->pipeline_tasks.erase(it);
+        }
+      }
+      if (!pipeline) {
+        if (error) {
+          *error = task_error ? FormatNSError(task_error)
+                              : "Metal pipeline compilation failed";
+        }
+        if (task_error) {
+          [task_error release];
+        }
+        return false;
+      }
+      if (task_error) {
+        [task_error release];
+      }
+      impl_->pipeline_cache[name] = [pipeline retain];
+    }
+  }
+  if (!pipeline) {
+    NSString* fn_name = [NSString stringWithUTF8String:name.c_str()];
+    MTL4LibraryFunctionDescriptor* fn_desc =
+        [[MTL4LibraryFunctionDescriptor alloc] init];
+    fn_desc.name = fn_name;
+    fn_desc.library = impl_->library;
+
+    MTL4ComputePipelineDescriptor* desc =
+        [[MTL4ComputePipelineDescriptor alloc] init];
+    desc.computeFunctionDescriptor = fn_desc;
+    MTL4PipelineOptions* pipe_opts = [[MTL4PipelineOptions alloc] init];
+    if (impl_->prefer_source_bindings) {
+      pipe_opts.shaderReflection = static_cast<MTL4ShaderReflection>(0);
+    } else {
+      pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
+    }
+    desc.options = pipe_opts;
+
+    NSError* err = nil;
+    if (impl_->pipeline_archive) {
+      pipeline =
+          [impl_->pipeline_archive newComputePipelineStateWithDescriptor:desc
+                                                                   error:&err];
+    }
+    if (!pipeline) {
+      err = nil;
+      pipeline = [impl_->compiler newComputePipelineStateWithDescriptor:desc
+                                                   compilerTaskOptions:nil
+                                                                error:&err];
+    }
+    [pipe_opts release];
+    [desc release];
+    [fn_desc release];
+    if (!pipeline) {
+      if (error) {
+        *error = FormatNSError(err);
+      }
+      return false;
+    }
+    impl_->pipeline_cache[name] = [pipeline retain];
   }
   MetalKernel temp;
   temp.pipeline_ = pipeline;
@@ -1249,8 +1747,141 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     }
     temp.argument_table_ = table;
     temp.max_buffer_bindings_ = max_index + 1u;
+    temp.last_binding_addresses_.assign(temp.max_buffer_bindings_,
+                                        std::numeric_limits<uint64_t>::max());
   }
   *kernel = std::move(temp);
+  return true;
+}
+
+bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
+                                     std::string* error) {
+  if (!Initialize(error)) {
+    return false;
+  }
+  if (!impl_ || !impl_->pipeline_async) {
+    return true;
+  }
+  if (!impl_->library) {
+    if (error) {
+      *error = "Metal library not initialized";
+    }
+    return false;
+  }
+  if (!impl_->compiler) {
+    if (error) {
+      *error = "Metal 4 compiler unavailable";
+    }
+    return false;
+  }
+  for (const auto& name : names) {
+    if (name.empty()) {
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      if (impl_->pipeline_cache.find(name) != impl_->pipeline_cache.end() ||
+          impl_->pipeline_tasks.find(name) != impl_->pipeline_tasks.end()) {
+        continue;
+      }
+    }
+    NSString* fn_name = [NSString stringWithUTF8String:name.c_str()];
+    MTL4LibraryFunctionDescriptor* fn_desc =
+        [[MTL4LibraryFunctionDescriptor alloc] init];
+    fn_desc.name = fn_name;
+    fn_desc.library = impl_->library;
+
+    MTL4ComputePipelineDescriptor* desc =
+        [[MTL4ComputePipelineDescriptor alloc] init];
+    desc.computeFunctionDescriptor = fn_desc;
+    MTL4PipelineOptions* pipe_opts = [[MTL4PipelineOptions alloc] init];
+    if (impl_->prefer_source_bindings) {
+      pipe_opts.shaderReflection = static_cast<MTL4ShaderReflection>(0);
+    } else {
+      pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
+    }
+    desc.options = pipe_opts;
+
+    NSError* archive_err = nil;
+    id<MTLComputePipelineState> archive_pipeline = nil;
+    if (impl_->pipeline_archive) {
+      archive_pipeline =
+          [impl_->pipeline_archive newComputePipelineStateWithDescriptor:desc
+                                                                   error:&archive_err];
+    }
+    if (archive_pipeline) {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      impl_->pipeline_cache[name] = [archive_pipeline retain];
+      [archive_pipeline release];
+      [pipe_opts release];
+      [desc release];
+      [fn_desc release];
+      continue;
+    }
+
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      Impl::PipelineTask pending;
+      pending.done = done;
+      impl_->pipeline_tasks.emplace(name, std::move(pending));
+    }
+
+    Impl* impl_ptr = impl_.get();
+    std::string key = name;
+    id<MTL4CompilerTask> task =
+        [impl_->compiler
+            newComputePipelineStateWithDescriptor:desc
+                                compilerTaskOptions:nil
+                                  completionHandler:^(id<MTLComputePipelineState> pipeline,
+                                                      NSError* compile_error) {
+                                    std::lock_guard<std::mutex> lock(
+                                        impl_ptr->pipeline_mutex);
+                                    auto it =
+                                        impl_ptr->pipeline_tasks.find(key);
+                                    if (it == impl_ptr->pipeline_tasks.end()) {
+                                      return;
+                                    }
+                                    if (pipeline) {
+                                      it->second.pipeline =
+                                          [pipeline retain];
+                                    }
+                                    if (compile_error) {
+                                      it->second.error =
+                                          [compile_error retain];
+                                    }
+                                    dispatch_semaphore_signal(it->second.done);
+                                  }];
+
+    [pipe_opts release];
+    [desc release];
+    [fn_desc release];
+
+    if (!task) {
+      {
+        std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+        auto it = impl_->pipeline_tasks.find(name);
+        if (it != impl_->pipeline_tasks.end()) {
+#if !OS_OBJECT_USE_OBJC
+          dispatch_release(it->second.done);
+#endif
+          impl_->pipeline_tasks.erase(it);
+        }
+      }
+      if (error) {
+        *error = "Failed to create Metal pipeline compilation task";
+      }
+      return false;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+      auto it = impl_->pipeline_tasks.find(name);
+      if (it != impl_->pipeline_tasks.end()) {
+        it->second.task = task;
+      }
+    }
+  }
   return true;
 }
 
@@ -1265,6 +1896,13 @@ MetalBuffer MetalRuntime::CreateBuffer(size_t length,
                                   options:MTLResourceStorageModeShared];
   if (!mtl_buffer) {
     return buffer;
+  }
+  if (impl_->residency_set) {
+    id<MTLAllocation> allocation = (id<MTLAllocation>)mtl_buffer;
+    if (![impl_->residency_set containsAllocation:allocation]) {
+      [impl_->residency_set addAllocation:allocation];
+      [impl_->residency_set commit];
+    }
   }
   buffer.handle_ = (void*)mtl_buffer;
   buffer.contents_ = [mtl_buffer contents];
@@ -1292,6 +1930,9 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     }
     return false;
   }
+  if (impl_->residency_set) {
+    [cmd useResidencySet:impl_->residency_set];
+  }
   [cmd beginCommandBufferWithAllocator:impl_->allocator];
   id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
   if (!encoder) {
@@ -1301,6 +1942,16 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     [cmd endCommandBuffer];
     [cmd release];
     return false;
+  }
+  bool sample_gpu = impl_->ShouldSampleGpuTimestamps();
+  if (sample_gpu) {
+    std::string ts_error;
+    if (!impl_->EnsureTimestampHeap(2, &ts_error)) {
+      if (!ts_error.empty()) {
+        std::cerr << "[gpu_profile] " << ts_error << "\n";
+      }
+      sample_gpu = false;
+    }
   }
   id<MTLComputePipelineState> pipeline =
       (id<MTLComputePipelineState>)kernel.pipeline_;
@@ -1317,6 +1968,11 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   }
   if (table) {
     const uint32_t max_bindings = kernel.MaxBufferBindings();
+    if (max_bindings > 0u &&
+        kernel.last_binding_addresses_.size() != max_bindings) {
+      kernel.last_binding_addresses_.assign(
+          max_bindings, std::numeric_limits<uint64_t>::max());
+    }
     for (const auto& binding : bindings) {
       if (!binding.buffer || !binding.buffer->handle_) {
         continue;
@@ -1346,20 +2002,33 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
       id<MTLBuffer> buffer = (id<MTLBuffer>)binding.buffer->handle_;
       MTLGPUAddress address =
           buffer.gpuAddress + static_cast<MTLGPUAddress>(binding.offset);
-      [table setAddress:address atIndex:binding.index];
+      const uint64_t addr_key = static_cast<uint64_t>(address);
+      if (max_bindings == 0u ||
+          addr_key != kernel.last_binding_addresses_[binding.index]) {
+        [table setAddress:address atIndex:binding.index];
+        if (max_bindings != 0u) {
+          kernel.last_binding_addresses_[binding.index] = addr_key;
+        }
+      }
     }
     [encoder setArgumentTable:table];
   }
-  uint32_t threadgroup = kernel.ThreadExecutionWidth();
-  if (threadgroup == 0 || threadgroup > kernel.MaxThreadsPerThreadgroup()) {
-    threadgroup = kernel.MaxThreadsPerThreadgroup();
-  }
-  if (threadgroup == 0) {
-    threadgroup = 1;
-  }
+  uint32_t threadgroup = ChooseThreadgroupSize(
+      impl_->threadgroup_override, kernel.ThreadExecutionWidth(),
+      kernel.MaxThreadsPerThreadgroup());
   MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
   MTLSize grid = MTLSizeMake(grid_size, 1, 1);
+  if (sample_gpu) {
+    [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
+                                  intoHeap:impl_->timestamp_heap
+                                   atIndex:0];
+  }
   [encoder dispatchThreads:grid threadsPerThreadgroup:threads_per_group];
+  if (sample_gpu) {
+    [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
+                                  intoHeap:impl_->timestamp_heap
+                                   atIndex:1];
+  }
   [encoder endEncoding];
   [cmd endCommandBuffer];
   __block NSError* commit_error = nil;
@@ -1404,6 +2073,198 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     [cmd release];
     [impl_->allocator reset];
     return false;
+  }
+  if (sample_gpu) {
+    impl_->LogGpuTimestampResult("dispatch", grid_size, 1);
+  }
+  [cmd release];
+  [impl_->allocator reset];
+  return true;
+}
+
+bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
+                                 uint32_t grid_size, std::string* error,
+                                 uint32_t timeout_ms) {
+  if (dispatches.empty()) {
+    return true;
+  }
+  if (!impl_ || !impl_->queue || !impl_->allocator) {
+    if (error) {
+      *error = "Metal runtime not initialized";
+    }
+    return false;
+  }
+  id<MTL4CommandBuffer> cmd = [impl_->device newCommandBuffer];
+  if (!cmd) {
+    if (error) {
+      *error = "Failed to create Metal 4 command buffer";
+    }
+    return false;
+  }
+  if (impl_->residency_set) {
+    [cmd useResidencySet:impl_->residency_set];
+  }
+  [cmd beginCommandBufferWithAllocator:impl_->allocator];
+  id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
+  if (!encoder) {
+    if (error) {
+      *error = "Failed to create Metal 4 compute encoder";
+    }
+    [cmd endCommandBuffer];
+    [cmd release];
+    return false;
+  }
+  bool sample_gpu = impl_->ShouldSampleGpuTimestamps();
+  if (sample_gpu) {
+    std::string ts_error;
+    if (!impl_->EnsureTimestampHeap(2, &ts_error)) {
+      if (!ts_error.empty()) {
+        std::cerr << "[gpu_profile] " << ts_error << "\n";
+      }
+      sample_gpu = false;
+    }
+  }
+  if (sample_gpu) {
+    [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
+                                  intoHeap:impl_->timestamp_heap
+                                   atIndex:0];
+  }
+  for (const auto& dispatch : dispatches) {
+    const MetalKernel* kernel = dispatch.kernel;
+    if (!kernel || !kernel->pipeline_) {
+      if (error) {
+        *error = "Metal kernel unavailable for dispatch";
+      }
+      [encoder endEncoding];
+      [cmd endCommandBuffer];
+      [cmd release];
+      return false;
+    }
+    id<MTLComputePipelineState> pipeline =
+        (id<MTLComputePipelineState>)kernel->pipeline_;
+    [encoder setComputePipelineState:pipeline];
+    id<MTL4ArgumentTable> table =
+        (id<MTL4ArgumentTable>)kernel->argument_table_;
+    const std::vector<MetalBufferBinding>* bindings =
+        dispatch.bindings ? dispatch.bindings : nullptr;
+    if (bindings && !bindings->empty() && !table) {
+      if (error) {
+        *error = "Metal 4 argument table unavailable for bindings";
+      }
+      [encoder endEncoding];
+      [cmd endCommandBuffer];
+      [cmd release];
+      return false;
+    }
+    if (table) {
+      const uint32_t max_bindings = kernel->MaxBufferBindings();
+      if (max_bindings > 0u &&
+          kernel->last_binding_addresses_.size() != max_bindings) {
+        kernel->last_binding_addresses_.assign(
+            max_bindings, std::numeric_limits<uint64_t>::max());
+      }
+      if (bindings) {
+        for (const auto& binding : *bindings) {
+          if (!binding.buffer || !binding.buffer->handle_) {
+            continue;
+          }
+          if (max_bindings != 0u && binding.index >= max_bindings) {
+            if (error) {
+              *error = "Metal buffer binding index out of range (index=" +
+                       std::to_string(binding.index) + ", max=" +
+                       std::to_string(max_bindings - 1u) + ")";
+            }
+            [encoder endEncoding];
+            [cmd endCommandBuffer];
+            [cmd release];
+            return false;
+          }
+          if (binding.offset >= binding.buffer->length()) {
+            if (error) {
+              *error = "Metal buffer binding offset out of range (offset=" +
+                       std::to_string(binding.offset) + ", length=" +
+                       std::to_string(binding.buffer->length()) + ")";
+            }
+            [encoder endEncoding];
+            [cmd endCommandBuffer];
+            [cmd release];
+            return false;
+          }
+          id<MTLBuffer> buffer = (id<MTLBuffer>)binding.buffer->handle_;
+          MTLGPUAddress address =
+              buffer.gpuAddress + static_cast<MTLGPUAddress>(binding.offset);
+          const uint64_t addr_key = static_cast<uint64_t>(address);
+          if (max_bindings == 0u ||
+              addr_key != kernel->last_binding_addresses_[binding.index]) {
+            [table setAddress:address atIndex:binding.index];
+            if (max_bindings != 0u) {
+              kernel->last_binding_addresses_[binding.index] = addr_key;
+            }
+          }
+        }
+      }
+      [encoder setArgumentTable:table];
+    }
+    uint32_t threadgroup = ChooseThreadgroupSize(
+        impl_->threadgroup_override, kernel->ThreadExecutionWidth(),
+        kernel->MaxThreadsPerThreadgroup());
+    MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
+    MTLSize grid = MTLSizeMake(grid_size, 1, 1);
+    [encoder dispatchThreads:grid threadsPerThreadgroup:threads_per_group];
+  }
+  if (sample_gpu) {
+    [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
+                                  intoHeap:impl_->timestamp_heap
+                                   atIndex:1];
+  }
+  [encoder endEncoding];
+  [cmd endCommandBuffer];
+  __block NSError* commit_error = nil;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  MTL4CommitOptions* options = [[MTL4CommitOptions alloc] init];
+  [options addFeedbackHandler:^(id<MTL4CommitFeedback> feedback) {
+    if (feedback.error) {
+      commit_error = [feedback.error retain];
+    }
+    dispatch_semaphore_signal(done);
+  }];
+  const id<MTL4CommandBuffer> buffers[] = {cmd};
+  [impl_->queue commit:buffers count:1 options:options];
+  if (timeout_ms == 0u) {
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  } else {
+    dispatch_time_t timeout =
+        dispatch_time(DISPATCH_TIME_NOW,
+                      static_cast<int64_t>(timeout_ms) * NSEC_PER_MSEC);
+    if (dispatch_semaphore_wait(done, timeout) != 0) {
+      if (error) {
+        *error = "Metal dispatch timed out";
+      }
+#if !OS_OBJECT_USE_OBJC
+      dispatch_release(done);
+#endif
+      [options release];
+      [cmd release];
+      [impl_->allocator reset];
+      return false;
+    }
+  }
+  [options release];
+#if !OS_OBJECT_USE_OBJC
+  dispatch_release(done);
+#endif
+  if (commit_error) {
+    if (error) {
+      *error = FormatNSError(commit_error);
+    }
+    [commit_error release];
+    [cmd release];
+    [impl_->allocator reset];
+    return false;
+  }
+  if (sample_gpu) {
+    impl_->LogGpuTimestampResult("dispatch_batch", grid_size,
+                                 dispatches.size());
   }
   [cmd release];
   [impl_->allocator reset];

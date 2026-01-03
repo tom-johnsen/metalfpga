@@ -5398,14 +5398,32 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     std::cerr << "Compile finished in " << compile_ms.count() << " ms\n";
   }
 
-  gpga::SchedulerConstants sched;
-  gpga::ParseSchedulerConstants(msl, &sched, error);
-
-  gpga::ModuleInfo info = BuildModuleInfo(module, enable_4state);
   const std::string base = "gpga_" + gpga::MslMangleIdentifier(module.name);
   const bool has_sched = HasKernel(msl, base + "_sched_step");
   const bool has_init = HasKernel(msl, base + "_init");
   const bool has_tick = HasKernel(msl, base + "_tick");
+  {
+    std::vector<std::string> precompile;
+    if (has_sched) {
+      precompile.push_back(base + "_sched_step");
+    } else {
+      precompile.push_back(base);
+      if (has_init) {
+        precompile.push_back(base + "_init");
+      }
+      if (has_tick) {
+        precompile.push_back(base + "_tick");
+      }
+    }
+    if (!runtime.PrecompileKernels(precompile, error)) {
+      return false;
+    }
+  }
+
+  gpga::SchedulerConstants sched;
+  gpga::ParseSchedulerConstants(msl, &sched, error);
+
+  gpga::ModuleInfo info = BuildModuleInfo(module, enable_4state);
 
   gpga::MetalKernel comb_kernel;
   gpga::MetalKernel init_kernel;
@@ -5630,29 +5648,27 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     if (!BuildBindings(comb_kernel, buffers, &bindings, error)) {
       return false;
     }
+    std::vector<gpga::MetalBufferBinding> init_bindings;
+    std::vector<gpga::MetalBufferBinding> tick_bindings;
+    std::vector<gpga::MetalDispatch> dispatches;
     if (has_init) {
-      std::vector<gpga::MetalBufferBinding> init_bindings;
       if (!BuildBindings(init_kernel, buffers, &init_bindings, error)) {
         return false;
       }
-      if (!runtime.Dispatch(init_kernel, init_bindings, count, error,
-                            dispatch_timeout_ms)) {
-        return false;
-      }
+      dispatches.push_back(gpga::MetalDispatch{&init_kernel, &init_bindings});
     }
-    if (!runtime.Dispatch(comb_kernel, bindings, count, error,
-                          dispatch_timeout_ms)) {
-      return false;
-    }
+    dispatches.push_back(gpga::MetalDispatch{&comb_kernel, &bindings});
     if (has_tick) {
-      std::vector<gpga::MetalBufferBinding> tick_bindings;
       if (!BuildBindings(tick_kernel, buffers, &tick_bindings, error)) {
         return false;
       }
-      if (!runtime.Dispatch(tick_kernel, tick_bindings, count, error,
-                            dispatch_timeout_ms)) {
-        return false;
-      }
+      dispatches.push_back(gpga::MetalDispatch{&tick_kernel, &tick_bindings});
+    }
+    if (!runtime.DispatchBatch(dispatches, count, error,
+                               dispatch_timeout_ms)) {
+      return false;
+    }
+    if (has_tick) {
       SwapNextBuffers(&buffers);
     }
   }

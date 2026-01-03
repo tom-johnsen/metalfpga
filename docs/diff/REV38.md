@@ -1,6 +1,6 @@
 # REV38 - Complete Timing Checks Implementation + MSL Codegen Overhaul
 
-**Commit**: (staged)
+**Commit**: a3fa4c0
 **Version**: v0.8+
 **Milestone**: IEEE 1364-2005 timing checks complete, MSL codegen production-ready
 
