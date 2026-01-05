@@ -2,6 +2,7 @@ build/
 docs/apple/
 docs/markdown/
 docs/pdfs/
+docs/images/
 
 .DS_STORE
 .claude/

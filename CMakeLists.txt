@@ -41,6 +41,7 @@ set_source_files_properties(${METALFPGA_MSL} PROPERTIES HEADER_FILE_ONLY ON)
 
 target_include_directories(metalfpga PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_features(metalfpga PUBLIC cxx_std_17)

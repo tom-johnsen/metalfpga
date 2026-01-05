@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/scheduler_vm.hh"
 #include "utils/msl_naming.hh"
 
 namespace gpga {
@@ -1361,6 +1362,7 @@ std::vector<SpecifyPathBlock> BuildSpecifyPathBlocks(const Module& module) {
       auto eq_curr = [&](char state) {
         return MakeEqExpr(CloneExpr(*curr), MakeStateConst(state), true);
       };
+
       auto eq_next = [&](char state) {
         return MakeEqExpr(CloneExpr(*next), MakeStateConst(state), true);
       };
@@ -6019,12 +6021,2351 @@ std::string EmitRangeSelectUpdate(const std::string& base_expr,
 
 }  // namespace
 
-std::string EmitMSLStub(const Module& module, bool four_state) {
+namespace {
+
+struct SchedulerVmProcDef {
+  uint32_t pid = 0u;
+  const std::vector<Statement>* body = nullptr;
+  const Statement* single = nullptr;
+};
+
+enum class SchedulerVmServiceCallKind {
+  kSystemTask,
+  kSyscall,
+};
+
+struct SchedulerVmServiceCall {
+  SchedulerVmServiceCallKind kind = SchedulerVmServiceCallKind::kSystemTask;
+  const Statement* stmt = nullptr;
+  const Expr* call = nullptr;
+};
+
+struct SchedulerVmTables {
+  std::vector<const Expr*> cond_exprs;
+  std::unordered_map<const Expr*, uint32_t> cond_ids;
+  std::vector<const Statement*> assign_stmts;
+  std::unordered_map<const Statement*, uint32_t> assign_ids;
+  std::vector<const Expr*> delay_exprs;
+  std::unordered_map<const Expr*, uint32_t> delay_ids;
+  std::vector<const Statement*> repeat_stmts;
+  std::unordered_map<const Statement*, uint32_t> repeat_ids;
+  std::vector<const Statement*> case_stmts;
+  std::unordered_map<const Statement*, uint32_t> case_ids;
+  std::vector<const Statement*> force_stmts;
+  std::unordered_map<const Statement*, uint32_t> force_ids;
+  std::vector<const Statement*> release_stmts;
+  std::unordered_map<const Statement*, uint32_t> release_ids;
+  std::vector<SchedulerVmServiceCall> service_calls;
+  std::unordered_map<const Statement*, uint32_t> service_task_ids;
+  std::unordered_map<const Expr*, uint32_t> service_call_ids;
+  std::vector<const Statement*> service_assign_stmts;
+  std::unordered_map<const Statement*, uint32_t> service_assign_ids;
+  std::vector<std::unique_ptr<Statement>> synthetic_assigns;
+  std::unordered_map<const Statement*, uint32_t> for_init_ids;
+  std::unordered_map<const Statement*, uint32_t> for_step_ids;
+};
+
+struct SchedulerVmCrossProcPatch {
+  uint32_t proc_id = 0u;
+  uint32_t word_index = 0u;
+  uint32_t target_proc = 0u;
+  uint32_t target_label = 0u;
+};
+
+struct SchedulerVmContext {
+  const SchedulerVmTables* tables = nullptr;
+  std::unordered_map<std::string, uint32_t> event_ids;
+  std::unordered_map<const Statement*, uint32_t> wait_ids;
+  std::unordered_map<const Statement*, uint32_t> edge_wait_ids;
+  const std::unordered_map<const Statement*, uint32_t>* delay_assign_ids =
+      nullptr;
+  const std::unordered_map<const Statement*, std::vector<uint32_t>>*
+      fork_children = nullptr;
+  const std::unordered_map<std::string, uint32_t>* block_labels = nullptr;
+  const std::unordered_map<uint32_t, std::unordered_map<std::string, uint32_t>>*
+      fork_child_labels = nullptr;
+  const std::unordered_map<std::string, std::pair<uint32_t, uint32_t>>*
+      global_block_targets = nullptr;
+  const std::vector<int>* proc_parent = nullptr;
+  std::vector<SchedulerVmCrossProcPatch>* cross_patches = nullptr;
+  uint32_t pid = 0u;
+};
+
+void RegisterSchedulerVmCond(const Expr* expr, SchedulerVmTables* tables) {
+  if (!tables || !expr) {
+    return;
+  }
+  if (tables->cond_ids
+          .emplace(expr, static_cast<uint32_t>(tables->cond_exprs.size()))
+          .second) {
+    tables->cond_exprs.push_back(expr);
+  }
+}
+
+void RegisterSchedulerVmAssign(const Statement& stmt,
+                               SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  if (stmt.kind != StatementKind::kAssign || stmt.is_procedural ||
+      stmt.assign.delay) {
+    return;
+  }
+  if (tables->assign_ids
+          .emplace(&stmt, static_cast<uint32_t>(tables->assign_stmts.size()))
+          .second) {
+    tables->assign_stmts.push_back(&stmt);
+  }
+}
+
+void RegisterSchedulerVmForce(const Statement& stmt,
+                              SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  if (tables->force_ids
+          .emplace(&stmt,
+                   static_cast<uint32_t>(tables->force_stmts.size()))
+          .second) {
+    tables->force_stmts.push_back(&stmt);
+  }
+}
+
+void RegisterSchedulerVmRelease(const Statement& stmt,
+                                SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  if (tables->release_ids
+          .emplace(&stmt,
+                   static_cast<uint32_t>(tables->release_stmts.size()))
+          .second) {
+    tables->release_stmts.push_back(&stmt);
+  }
+}
+
+void RegisterSchedulerVmServiceTask(const Statement& stmt,
+                                    SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  if (tables->service_task_ids
+          .emplace(&stmt,
+                   static_cast<uint32_t>(tables->service_calls.size()))
+          .second) {
+    SchedulerVmServiceCall call;
+    call.kind = SchedulerVmServiceCallKind::kSystemTask;
+    call.stmt = &stmt;
+    tables->service_calls.push_back(call);
+  }
+}
+
+void RegisterSchedulerVmServiceCall(const Expr* call,
+                                    SchedulerVmTables* tables) {
+  if (!tables || !call) {
+    return;
+  }
+  if (call->kind != ExprKind::kCall ||
+      !IsFileSystemFunctionName(call->ident)) {
+    return;
+  }
+  if (tables->service_call_ids
+          .emplace(call,
+                   static_cast<uint32_t>(tables->service_calls.size()))
+          .second) {
+    SchedulerVmServiceCall site;
+    site.kind = SchedulerVmServiceCallKind::kSyscall;
+    site.call = call;
+    tables->service_calls.push_back(site);
+  }
+}
+
+void RegisterSchedulerVmServiceAssign(const Statement& stmt,
+                                      SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  if (stmt.kind != StatementKind::kAssign || stmt.is_procedural ||
+      stmt.assign.delay || !stmt.assign.rhs ||
+      stmt.assign.rhs->kind != ExprKind::kCall ||
+      !IsFileSystemFunctionName(stmt.assign.rhs->ident)) {
+    return;
+  }
+  RegisterSchedulerVmServiceCall(stmt.assign.rhs.get(), tables);
+  if (tables->service_assign_ids
+          .emplace(&stmt,
+                   static_cast<uint32_t>(tables->service_assign_stmts.size()))
+          .second) {
+    tables->service_assign_stmts.push_back(&stmt);
+  }
+}
+
+constexpr uint64_t kSchedulerVmRepeatUnrollLimit = 4096u;
+const std::unordered_map<std::string, int64_t> kSchedulerVmRepeatEmptyParams;
+
+bool SchedulerVmRepeatConstCount(const Statement& stmt, uint64_t* out_count) {
+  if (!stmt.repeat_count || !out_count) {
+    return false;
+  }
+  FourStateValue count_value;
+  if (!EvalConstExpr4State(*stmt.repeat_count, kSchedulerVmRepeatEmptyParams,
+                           &count_value, nullptr) ||
+      count_value.HasXorZ()) {
+    return false;
+  }
+  *out_count = count_value.value_bits;
+  return true;
+}
+
+void RegisterSchedulerVmRepeat(const Statement& stmt,
+                               SchedulerVmTables* tables) {
+  if (!tables || !stmt.repeat_count) {
+    return;
+  }
+  uint64_t count = 0;
+  if (SchedulerVmRepeatConstCount(stmt, &count) &&
+      count <= kSchedulerVmRepeatUnrollLimit) {
+    return;
+  }
+  if (tables->repeat_ids
+          .emplace(&stmt,
+                   static_cast<uint32_t>(tables->repeat_stmts.size()))
+          .second) {
+    tables->repeat_stmts.push_back(&stmt);
+  }
+}
+
+void RegisterSchedulerVmCase(const Statement& stmt, SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  if (tables->case_ids
+          .emplace(&stmt, static_cast<uint32_t>(tables->case_stmts.size()))
+          .second) {
+    tables->case_stmts.push_back(&stmt);
+  }
+}
+
+std::unique_ptr<Expr> MakeSchedulerVmZeroExpr() {
+  auto expr = std::make_unique<Expr>();
+  expr->kind = ExprKind::kNumber;
+  expr->number = 0;
+  expr->value_bits = 0;
+  expr->x_bits = 0;
+  expr->z_bits = 0;
+  expr->has_width = false;
+  expr->has_base = false;
+  return expr;
+}
+
+uint32_t RegisterSchedulerVmSyntheticAssign(SequentialAssign assign,
+                                            SchedulerVmTables* tables) {
+  if (!tables) {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  auto stmt = std::make_unique<Statement>();
+  stmt->kind = StatementKind::kAssign;
+  stmt->assign = std::move(assign);
+  stmt->is_procedural = false;
+  const uint32_t id =
+      static_cast<uint32_t>(tables->assign_stmts.size());
+  tables->assign_stmts.push_back(stmt.get());
+  tables->synthetic_assigns.push_back(std::move(stmt));
+  return id;
+}
+
+void RegisterSchedulerVmForAssign(const Statement& stmt, bool is_init,
+                                  SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  auto& id_map = is_init ? tables->for_init_ids : tables->for_step_ids;
+  if (id_map.find(&stmt) != id_map.end()) {
+    return;
+  }
+  const std::string& lhs =
+      is_init ? stmt.for_init_lhs : stmt.for_step_lhs;
+  const Expr* rhs =
+      is_init ? stmt.for_init_rhs.get() : stmt.for_step_rhs.get();
+  if (lhs.empty()) {
+    return;
+  }
+  SequentialAssign assign;
+  assign.lhs = lhs;
+  assign.nonblocking = false;
+  assign.rhs = rhs ? CloneExpr(*rhs) : MakeSchedulerVmZeroExpr();
+  const uint32_t id = RegisterSchedulerVmSyntheticAssign(std::move(assign),
+                                                         tables);
+  id_map.emplace(&stmt, id);
+}
+
+void RegisterSchedulerVmDelay(const Expr* expr, SchedulerVmTables* tables) {
+  if (!tables || !expr) {
+    return;
+  }
+  if (tables->delay_ids
+          .emplace(expr, static_cast<uint32_t>(tables->delay_exprs.size()))
+          .second) {
+    tables->delay_exprs.push_back(expr);
+  }
+}
+
+void CollectSchedulerVmTables(const Statement& stmt,
+                              SchedulerVmTables* tables) {
+  switch (stmt.kind) {
+    case StatementKind::kAssign:
+      RegisterSchedulerVmAssign(stmt, tables);
+      RegisterSchedulerVmServiceAssign(stmt, tables);
+      return;
+    case StatementKind::kIf:
+      if (stmt.condition) {
+        const Expr* call_expr = nullptr;
+        bool invert = false;
+        if (ExtractFeofCondition(*stmt.condition, nullptr, &invert)) {
+          call_expr = (invert && stmt.condition->operand)
+                          ? stmt.condition->operand.get()
+                          : stmt.condition.get();
+        } else if (ExtractPlusargsCondition(*stmt.condition, &call_expr,
+                                            &invert)) {
+          // call_expr already set.
+        }
+        if (call_expr) {
+          RegisterSchedulerVmServiceCall(call_expr, tables);
+        } else {
+          RegisterSchedulerVmCond(stmt.condition.get(), tables);
+        }
+      }
+      for (const auto& inner : stmt.then_branch) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kBlock:
+      for (const auto& inner : stmt.block) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kCase:
+      RegisterSchedulerVmCase(stmt, tables);
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          CollectSchedulerVmTables(inner, tables);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kFor:
+      RegisterSchedulerVmForAssign(stmt, true, tables);
+      RegisterSchedulerVmForAssign(stmt, false, tables);
+      RegisterSchedulerVmCond(stmt.for_condition.get(), tables);
+      for (const auto& inner : stmt.for_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kWhile:
+      if (stmt.while_condition) {
+        const Expr* call_expr = nullptr;
+        bool invert = false;
+        if (ExtractFeofCondition(*stmt.while_condition, nullptr, &invert)) {
+          call_expr = (invert && stmt.while_condition->operand)
+                          ? stmt.while_condition->operand.get()
+                          : stmt.while_condition.get();
+        } else if (ExtractPlusargsCondition(*stmt.while_condition, &call_expr,
+                                            &invert)) {
+          // call_expr already set.
+        }
+        if (call_expr) {
+          RegisterSchedulerVmServiceCall(call_expr, tables);
+        } else {
+          RegisterSchedulerVmCond(stmt.while_condition.get(), tables);
+        }
+      }
+      for (const auto& inner : stmt.while_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kRepeat:
+      RegisterSchedulerVmRepeat(stmt, tables);
+      for (const auto& inner : stmt.repeat_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kDelay:
+      RegisterSchedulerVmDelay(stmt.delay.get(), tables);
+      for (const auto& inner : stmt.delay_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kEventControl:
+      for (const auto& inner : stmt.event_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kWait:
+      RegisterSchedulerVmCond(stmt.wait_condition.get(), tables);
+      for (const auto& inner : stmt.wait_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kForever:
+      for (const auto& inner : stmt.forever_body) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kFork:
+      for (const auto& inner : stmt.fork_branches) {
+        CollectSchedulerVmTables(inner, tables);
+      }
+      return;
+    case StatementKind::kEventTrigger:
+      return;
+    case StatementKind::kForce:
+      RegisterSchedulerVmForce(stmt, tables);
+      return;
+    case StatementKind::kRelease:
+      RegisterSchedulerVmRelease(stmt, tables);
+      return;
+    case StatementKind::kTaskCall:
+      if (IsSystemTaskName(stmt.task_name)) {
+        RegisterSchedulerVmServiceTask(stmt, tables);
+      }
+      return;
+    case StatementKind::kDisable:
+      return;
+  }
+}
+
+void CollectSchedulerVmTables(const std::vector<SchedulerVmProcDef>& procs,
+                              SchedulerVmTables* tables) {
+  if (!tables) {
+    return;
+  }
+  for (const auto& proc : procs) {
+    if (proc.body) {
+      for (const auto& stmt : *proc.body) {
+        CollectSchedulerVmTables(stmt, tables);
+      }
+    } else if (proc.single) {
+      CollectSchedulerVmTables(*proc.single, tables);
+    }
+  }
+}
+
+void CollectSchedulerVmDelayAssignIds(
+    const Statement& stmt,
+    std::unordered_map<const Statement*, uint32_t>* delay_assign_ids,
+    uint32_t* next_id) {
+  if (!delay_assign_ids || !next_id) {
+    return;
+  }
+  if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
+    if (delay_assign_ids->find(&stmt) == delay_assign_ids->end()) {
+      (*delay_assign_ids)[&stmt] = *next_id;
+      *next_id += 1u;
+    }
+  }
+  switch (stmt.kind) {
+    case StatementKind::kIf:
+      for (const auto& inner : stmt.then_branch) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kBlock:
+      for (const auto& inner : stmt.block) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kFor:
+      for (const auto& inner : stmt.for_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kWhile:
+      for (const auto& inner : stmt.while_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kRepeat:
+      for (const auto& inner : stmt.repeat_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kDelay:
+      for (const auto& inner : stmt.delay_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kEventControl:
+      for (const auto& inner : stmt.event_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kWait:
+      for (const auto& inner : stmt.wait_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kForever:
+      for (const auto& inner : stmt.forever_body) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kCase:
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kFork:
+      for (const auto& inner : stmt.fork_branches) {
+        CollectSchedulerVmDelayAssignIds(inner, delay_assign_ids, next_id);
+      }
+      return;
+    case StatementKind::kAssign:
+    case StatementKind::kEventTrigger:
+    case StatementKind::kDisable:
+    case StatementKind::kTaskCall:
+    case StatementKind::kForce:
+    case StatementKind::kRelease:
+      return;
+  }
+}
+
+void CollectSchedulerVmDelayAssignIds(
+    const std::vector<SchedulerVmProcDef>& procs,
+    std::unordered_map<const Statement*, uint32_t>* delay_assign_ids) {
+  if (!delay_assign_ids) {
+    return;
+  }
+  uint32_t next_id = 0u;
+  for (const auto& proc : procs) {
+    if (proc.body) {
+      for (const auto& stmt : *proc.body) {
+        CollectSchedulerVmDelayAssignIds(stmt, delay_assign_ids, &next_id);
+      }
+    } else if (proc.single) {
+      CollectSchedulerVmDelayAssignIds(*proc.single, delay_assign_ids, &next_id);
+    }
+  }
+}
+
+struct SchedulerVmPatch {
+  size_t word_index = 0u;
+  uint32_t label = 0u;
+  bool patch_arg = false;
+  SchedulerVmOp op = SchedulerVmOp::kNoop;
+};
+
+struct SchedulerVmCaseTableData {
+  std::vector<SchedulerVmCaseHeader> headers;
+  std::vector<SchedulerVmCaseEntry> entries;
+  std::vector<uint64_t> words;
+};
+
+struct SchedulerVmPackedSignalSlot {
+  std::string name;
+  uint32_t word_size = 0u;
+  uint32_t array_size = 1u;
+};
+
+void BuildSchedulerVmSignalLayout(
+    const Module& module,
+    std::vector<SchedulerVmPackedSlot>* packed_slots,
+    std::vector<SchedulerVmSignalEntry>* signal_entries,
+    std::unordered_map<std::string, uint32_t>* signal_ids,
+    bool four_state) {
+  if (!packed_slots || !signal_entries || !signal_ids) {
+    return;
+  }
+  packed_slots->clear();
+  signal_entries->clear();
+  signal_ids->clear();
+  std::unordered_set<std::string> scheduled_reads;
+  for (const auto& block : module.always_blocks) {
+    if (block.edge == EdgeKind::kCombinational &&
+        !AlwaysBlockNeedsScheduler(block)) {
+      continue;
+    }
+    if (block.edge == EdgeKind::kPosedge || block.edge == EdgeKind::kNegedge) {
+      if (!block.clock.empty()) {
+        scheduled_reads.insert(block.clock);
+      }
+    }
+    for (const auto& stmt : block.statements) {
+      CollectReadSignals(stmt, &scheduled_reads);
+    }
+  }
+  std::unordered_set<std::string> port_names;
+  port_names.reserve(module.ports.size());
+  for (const auto& port : module.ports) {
+    port_names.insert(port.name);
+  }
+  std::vector<std::string> reg_names;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      continue;
+    }
+    if (port_names.count(net.name) > 0 || IsTriregNet(net.type)) {
+      continue;
+    }
+    if (net.type == NetType::kReg || scheduled_reads.count(net.name) > 0) {
+      reg_names.push_back(net.name);
+    }
+  }
+  std::vector<const Net*> trireg_nets;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      continue;
+    }
+    if (net.type == NetType::kTrireg && !IsOutputPort(module, net.name)) {
+      trireg_nets.push_back(&net);
+    }
+  }
+  std::vector<const Net*> array_nets;
+  for (const auto& net : module.nets) {
+    if (net.array_size > 0) {
+      array_nets.push_back(&net);
+    }
+  }
+  std::unordered_map<std::string, uint32_t> packed_ids;
+  auto add_slot = [&](const std::string& name, uint32_t width,
+                      uint32_t array_size, bool is_real) {
+    SchedulerVmPackedSlot slot;
+    slot.word_size = (is_real || width > 32u) ? 8u : 4u;
+    slot.array_size = std::max<uint32_t>(1u, array_size);
+    packed_ids.emplace(name, static_cast<uint32_t>(packed_slots->size()));
+    packed_slots->push_back(slot);
+  };
+  auto add_signal_slots = [&](const std::string& name, uint32_t width,
+                              uint32_t array_size, bool is_real) {
+    add_slot(MslValName(name), width, array_size, is_real);
+    if (four_state) {
+      add_slot(MslXzName(name), width, array_size, is_real);
+    }
+  };
+  for (const auto& port : module.ports) {
+    const uint32_t width = static_cast<uint32_t>(port.width);
+    add_signal_slots(port.name, width, 1u, port.is_real);
+  }
+  for (const auto& name : reg_names) {
+    const uint32_t width = static_cast<uint32_t>(SignalWidth(module, name));
+    add_signal_slots(name, width, 1u, SignalIsReal(module, name));
+  }
+  for (const auto* reg : trireg_nets) {
+    const uint32_t width = static_cast<uint32_t>(SignalWidth(module, reg->name));
+    add_signal_slots(reg->name, width, 1u, SignalIsReal(module, reg->name));
+    add_slot(MslDecayName(reg->name), 64u, 1u, false);
+  }
+  for (const auto* net : array_nets) {
+    const uint32_t width = static_cast<uint32_t>(net->width);
+    const uint32_t array_size = static_cast<uint32_t>(
+        std::max(1, net->array_size));
+    add_signal_slots(net->name, width, array_size, net->is_real);
+  }
+  auto add_signal = [&](const std::string& name, uint32_t width,
+                        uint32_t array_size, bool is_real) {
+    if (signal_ids->find(name) != signal_ids->end()) {
+      return;
+    }
+    const auto val_it = packed_ids.find(MslValName(name));
+    if (val_it == packed_ids.end()) {
+      return;
+    }
+    SchedulerVmSignalEntry entry;
+    entry.val_slot = val_it->second;
+    entry.xz_slot = val_it->second;
+    if (four_state) {
+      const auto xz_it = packed_ids.find(MslXzName(name));
+      if (xz_it == packed_ids.end()) {
+        return;
+      }
+      entry.xz_slot = xz_it->second;
+    }
+    entry.width = width;
+    entry.array_size = std::max<uint32_t>(1u, array_size);
+    entry.flags = is_real ? kSchedulerVmSignalFlagReal : 0u;
+    (*signal_ids)[name] = static_cast<uint32_t>(signal_entries->size());
+    signal_entries->push_back(entry);
+  };
+  for (const auto& port : module.ports) {
+    add_signal(port.name, static_cast<uint32_t>(port.width), 1u, port.is_real);
+  }
+  for (const auto& net : module.nets) {
+    add_signal(net.name, static_cast<uint32_t>(net.width),
+               static_cast<uint32_t>(std::max(1, net.array_size)),
+               net.is_real);
+  }
+}
+
+struct SchedulerVmExprEmitContext {
+  const Module* module = nullptr;
+  const std::unordered_map<std::string, uint32_t>* signal_ids = nullptr;
+  const std::vector<SchedulerVmSignalEntry>* signal_entries = nullptr;
+  SchedulerVmExprBuilder* builder = nullptr;
+  uint32_t depth = 0u;
+  uint32_t max_depth = 0u;
+};
+
+bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
+                             uint32_t* out_width) {
+  if (!ctx || !ctx->module || !ctx->signal_ids || !ctx->signal_entries ||
+      !ctx->builder || !out_width) {
+    return false;
+  }
+  if (ExprIsRealValue(expr, *ctx->module)) {
+    return false;
+  }
+  const int width = ExprWidth(expr, *ctx->module);
+  if (width <= 0 || width > 64) {
+    return false;
+  }
+  auto bump_depth = [&]() -> bool {
+    ctx->depth += 1u;
+    ctx->max_depth = std::max(ctx->max_depth, ctx->depth);
+    return ctx->max_depth <= kSchedulerVmExprStackMax;
+  };
+  auto pop_binary = [&]() -> bool {
+    if (ctx->depth < 2u) {
+      return false;
+    }
+    ctx->depth -= 1u;
+    return true;
+  };
+  auto pop_ternary = [&]() -> bool {
+    if (ctx->depth < 3u) {
+      return false;
+    }
+    ctx->depth -= 2u;
+    return true;
+  };
+  switch (expr.kind) {
+    case ExprKind::kIdentifier: {
+      const auto it = ctx->signal_ids->find(expr.ident);
+      if (it == ctx->signal_ids->end()) {
+        return false;
+      }
+      const SchedulerVmSignalEntry& entry =
+          (*ctx->signal_entries)[it->second];
+      if (entry.flags & kSchedulerVmSignalFlagReal) {
+        return false;
+      }
+      if (entry.array_size > 1u) {
+        return false;
+      }
+      ctx->builder->EmitOp(SchedulerVmExprOp::kPushSignal, it->second,
+                           static_cast<uint32_t>(width));
+      if (!bump_depth()) {
+        return false;
+      }
+      *out_width = static_cast<uint32_t>(width);
+      return true;
+    }
+    case ExprKind::kNumber: {
+      if (expr.x_bits != 0 || expr.z_bits != 0 || IsRealLiteralExpr(expr)) {
+        return false;
+      }
+      const uint64_t value = expr.value_bits;
+      const uint32_t base = ctx->builder->EmitImmTable(
+          {static_cast<uint32_t>(value & 0xFFFFFFFFu),
+           static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFu)});
+      ctx->builder->EmitOp(SchedulerVmExprOp::kPushConst, base,
+                           static_cast<uint32_t>(width));
+      if (!bump_depth()) {
+        return false;
+      }
+      *out_width = static_cast<uint32_t>(width);
+      return true;
+    }
+    case ExprKind::kUnary: {
+      if (!expr.operand) {
+        return false;
+      }
+      uint32_t op_width = 0u;
+      if (!EmitSchedulerVmCondExpr(*expr.operand, ctx, &op_width)) {
+        return false;
+      }
+      if (expr.unary_op == 'S' || expr.unary_op == 'U' ||
+          expr.unary_op == '+') {
+        *out_width = op_width;
+        return true;
+      }
+      if (expr.unary_op == 'B') {
+        ctx->builder->EmitOp(
+            SchedulerVmExprOp::kUnary,
+            static_cast<uint32_t>(SchedulerVmExprUnaryOp::kLogNot), 1u);
+        ctx->builder->EmitOp(
+            SchedulerVmExprOp::kUnary,
+            static_cast<uint32_t>(SchedulerVmExprUnaryOp::kLogNot), 1u);
+        *out_width = 1u;
+        return true;
+      }
+      SchedulerVmExprUnaryOp op = SchedulerVmExprUnaryOp::kPlus;
+      uint32_t result_width = op_width;
+      if (expr.unary_op == '-') {
+        op = SchedulerVmExprUnaryOp::kMinus;
+      } else if (expr.unary_op == '~') {
+        op = SchedulerVmExprUnaryOp::kBitNot;
+      } else if (expr.unary_op == '!') {
+        op = SchedulerVmExprUnaryOp::kLogNot;
+        result_width = 1u;
+      } else {
+        return false;
+      }
+      ctx->builder->EmitOp(SchedulerVmExprOp::kUnary,
+                           static_cast<uint32_t>(op), result_width);
+      *out_width = result_width;
+      return true;
+    }
+    case ExprKind::kBinary: {
+      if (!expr.lhs || !expr.rhs) {
+        return false;
+      }
+      uint32_t lhs_width = 0u;
+      uint32_t rhs_width = 0u;
+      if (!EmitSchedulerVmCondExpr(*expr.lhs, ctx, &lhs_width)) {
+        return false;
+      }
+      if (!EmitSchedulerVmCondExpr(*expr.rhs, ctx, &rhs_width)) {
+        return false;
+      }
+      if (expr.op == 'p') {
+        return false;
+      }
+      SchedulerVmExprBinaryOp op = SchedulerVmExprBinaryOp::kAdd;
+      uint32_t result_width =
+          static_cast<uint32_t>(std::max(lhs_width, rhs_width));
+      bool signed_op = ExprSigned(*expr.lhs, *ctx->module) &&
+                       ExprSigned(*expr.rhs, *ctx->module);
+      if (expr.op == 'A' || expr.op == 'O') {
+        op = (expr.op == 'A') ? SchedulerVmExprBinaryOp::kLogAnd
+                              : SchedulerVmExprBinaryOp::kLogOr;
+        result_width = 1u;
+        signed_op = false;
+      } else if (expr.op == 'l') {
+        op = SchedulerVmExprBinaryOp::kShl;
+        result_width = lhs_width;
+        signed_op = false;
+      } else if (expr.op == 'r') {
+        op = SchedulerVmExprBinaryOp::kShr;
+        result_width = lhs_width;
+        signed_op = false;
+      } else if (expr.op == 'R') {
+        op = SchedulerVmExprBinaryOp::kAshr;
+        result_width = lhs_width;
+        signed_op = ExprSigned(*expr.lhs, *ctx->module);
+      } else if (expr.op == 'E' || expr.op == 'C' || expr.op == 'W') {
+        op = SchedulerVmExprBinaryOp::kEq;
+        result_width = 1u;
+        signed_op = false;
+      } else if (expr.op == 'N' || expr.op == 'c' || expr.op == 'w') {
+        op = SchedulerVmExprBinaryOp::kNeq;
+        result_width = 1u;
+        signed_op = false;
+      } else if (expr.op == '<') {
+        op = SchedulerVmExprBinaryOp::kLt;
+        result_width = 1u;
+      } else if (expr.op == '>') {
+        op = SchedulerVmExprBinaryOp::kGt;
+        result_width = 1u;
+      } else if (expr.op == 'L') {
+        op = SchedulerVmExprBinaryOp::kLe;
+        result_width = 1u;
+      } else if (expr.op == 'G') {
+        op = SchedulerVmExprBinaryOp::kGe;
+        result_width = 1u;
+      } else if (expr.op == '+') {
+        op = SchedulerVmExprBinaryOp::kAdd;
+      } else if (expr.op == '-') {
+        op = SchedulerVmExprBinaryOp::kSub;
+      } else if (expr.op == '*') {
+        op = SchedulerVmExprBinaryOp::kMul;
+      } else if (expr.op == '/') {
+        op = SchedulerVmExprBinaryOp::kDiv;
+      } else if (expr.op == '%') {
+        op = SchedulerVmExprBinaryOp::kMod;
+      } else if (expr.op == '&') {
+        op = SchedulerVmExprBinaryOp::kAnd;
+        signed_op = false;
+      } else if (expr.op == '|') {
+        op = SchedulerVmExprBinaryOp::kOr;
+        signed_op = false;
+      } else if (expr.op == '^') {
+        op = SchedulerVmExprBinaryOp::kXor;
+        signed_op = false;
+      } else {
+        return false;
+      }
+      if (!pop_binary()) {
+        return false;
+      }
+      uint32_t arg = static_cast<uint32_t>(op);
+      if (signed_op) {
+        arg |= kSchedulerVmExprSignedFlag;
+      }
+      ctx->builder->EmitOp(SchedulerVmExprOp::kBinary, arg, result_width);
+      *out_width = result_width;
+      return true;
+    }
+    case ExprKind::kTernary: {
+      if (!expr.condition || !expr.then_expr || !expr.else_expr) {
+        return false;
+      }
+      uint32_t cond_width = 0u;
+      uint32_t then_width = 0u;
+      uint32_t else_width = 0u;
+      if (!EmitSchedulerVmCondExpr(*expr.condition, ctx, &cond_width)) {
+        return false;
+      }
+      if (!EmitSchedulerVmCondExpr(*expr.then_expr, ctx, &then_width)) {
+        return false;
+      }
+      if (!EmitSchedulerVmCondExpr(*expr.else_expr, ctx, &else_width)) {
+        return false;
+      }
+      if (!pop_ternary()) {
+        return false;
+      }
+      uint32_t result_width =
+          static_cast<uint32_t>(std::max(then_width, else_width));
+      ctx->builder->EmitOp(SchedulerVmExprOp::kTernary, 0u, result_width);
+      *out_width = result_width;
+      return true;
+    }
+    case ExprKind::kSelect:
+    case ExprKind::kIndex:
+    case ExprKind::kCall:
+    case ExprKind::kConcat:
+    case ExprKind::kString:
+      return false;
+  }
+  return false;
+}
+
+bool TryEmitSchedulerVmCondExpr(
+    const Expr& expr, const Module& module,
+    const std::unordered_map<std::string, uint32_t>& signal_ids,
+    const std::vector<SchedulerVmSignalEntry>& signal_entries,
+    SchedulerVmExprBuilder* builder, uint32_t* out_offset) {
+  if (!builder || !out_offset) {
+    return false;
+  }
+  const size_t word_base = builder->words().size();
+  const size_t imm_base = builder->imm_words().size();
+  SchedulerVmExprEmitContext ctx;
+  ctx.module = &module;
+  ctx.signal_ids = &signal_ids;
+  ctx.signal_entries = &signal_entries;
+  ctx.builder = builder;
+  uint32_t width = 0u;
+  bool ok = EmitSchedulerVmCondExpr(expr, &ctx, &width);
+  if (ok && ctx.max_depth <= kSchedulerVmExprStackMax) {
+    builder->EmitOp(SchedulerVmExprOp::kDone);
+    *out_offset = static_cast<uint32_t>(word_base);
+    return true;
+  }
+  builder->Truncate(word_base, imm_base);
+  return false;
+}
+
+bool BuildSchedulerVmCaseTables(const Module& module,
+                                const SchedulerVmTables& tables,
+                                SchedulerVmCaseTableData* out,
+                                std::string* error) {
+  if (!out) {
+    if (error) {
+      *error = "scheduler VM case table output is null";
+    }
+    return false;
+  }
+  out->headers.clear();
+  out->entries.clear();
+  out->words.clear();
+  out->headers.resize(tables.case_stmts.size());
+  const std::unordered_map<std::string, int64_t> empty_params;
+  for (size_t case_id = 0; case_id < tables.case_stmts.size(); ++case_id) {
+    const Statement* stmt = tables.case_stmts[case_id];
+    SchedulerVmCaseHeader header;
+    header.kind = static_cast<uint32_t>(SchedulerVmCaseKind::kCase);
+    header.strategy = static_cast<uint32_t>(SchedulerVmCaseStrategy::kLinear);
+    header.width = 0u;
+    header.entry_count = 0u;
+    header.entry_offset = 0u;
+    header.default_target = 0xFFFFFFFFu;
+    if (!stmt || !stmt->case_expr) {
+      out->headers[case_id] = header;
+      continue;
+    }
+    int case_width = ExprWidth(*stmt->case_expr, module);
+    if (case_width <= 0 || case_width > 64) {
+      header.width = static_cast<uint32_t>(std::max(0, case_width));
+      out->headers[case_id] = header;
+      continue;
+    }
+    header.width = static_cast<uint32_t>(case_width);
+    SchedulerVmCaseKind kind = SchedulerVmCaseKind::kCase;
+    if (stmt->case_kind == CaseKind::kCaseX) {
+      kind = SchedulerVmCaseKind::kCaseX;
+    } else if (stmt->case_kind == CaseKind::kCaseZ) {
+      kind = SchedulerVmCaseKind::kCaseZ;
+    }
+    header.kind = static_cast<uint32_t>(kind);
+    const size_t entry_base = out->entries.size();
+    const size_t word_base = out->words.size();
+    bool eligible = true;
+    uint64_t case_z_bits = 0u;
+    if (stmt->case_expr->kind == ExprKind::kNumber) {
+      FourStateValue case_const;
+      if (EvalConstExpr4State(*stmt->case_expr, empty_params, &case_const,
+                              nullptr)) {
+        case_z_bits = case_const.z_bits;
+      }
+    }
+    for (size_t item_idx = 0; item_idx < stmt->case_items.size() && eligible;
+         ++item_idx) {
+      const auto& item = stmt->case_items[item_idx];
+      for (const auto& label_expr : item.labels) {
+        if (!label_expr) {
+          continue;
+        }
+        int label_width = ExprWidth(*label_expr, module);
+        if (label_width != case_width) {
+          eligible = false;
+          break;
+        }
+        FourStateValue label_value;
+        if (!EvalConstExpr4State(*label_expr, empty_params, &label_value,
+                                 nullptr)) {
+          eligible = false;
+          break;
+        }
+        if (kind == SchedulerVmCaseKind::kCaseZ &&
+            label_value.x_bits != 0u) {
+          eligible = false;
+          break;
+        }
+        uint64_t mask = MaskForWidth64(case_width);
+        uint64_t label_val = label_value.value_bits & mask;
+        uint64_t label_xz = (label_value.x_bits | label_value.z_bits) & mask;
+        uint64_t label_aux = label_xz;
+        if (kind == SchedulerVmCaseKind::kCaseZ) {
+          label_aux = (label_value.z_bits | case_z_bits) & mask;
+        }
+        uint32_t want_offset =
+            static_cast<uint32_t>(out->words.size());
+        out->words.push_back(label_val);
+        uint32_t care_offset =
+            static_cast<uint32_t>(out->words.size());
+        out->words.push_back(label_aux);
+        SchedulerVmCaseEntry entry;
+        entry.want_offset = want_offset;
+        entry.care_offset = care_offset;
+        entry.target = static_cast<uint32_t>(item_idx);
+        out->entries.push_back(entry);
+      }
+    }
+    if (!eligible) {
+      out->entries.resize(entry_base);
+      out->words.resize(word_base);
+      out->headers[case_id] = header;
+      continue;
+    }
+    header.entry_offset = static_cast<uint32_t>(entry_base);
+    header.entry_count =
+        static_cast<uint32_t>(out->entries.size() - entry_base);
+    out->headers[case_id] = header;
+  }
+  return true;
+}
+
+struct SchedulerVmEmitter {
+  std::vector<uint32_t> words;
+  std::vector<uint32_t> label_offsets;
+  std::vector<SchedulerVmPatch> patches;
+
+  uint32_t CreateLabel() {
+    label_offsets.push_back(std::numeric_limits<uint32_t>::max());
+    return static_cast<uint32_t>(label_offsets.size() - 1u);
+  }
+
+  void BindLabel(uint32_t label) {
+    if (label < label_offsets.size()) {
+      label_offsets[label] = static_cast<uint32_t>(words.size());
+    }
+  }
+
+  void Emit(SchedulerVmOp op, uint32_t arg = 0u) {
+    words.push_back(MakeSchedulerVmInstr(op, arg));
+  }
+
+  void EmitWord(uint32_t word) {
+    words.push_back(word);
+  }
+
+  void EmitLabelWord(uint32_t label) {
+    const size_t word_index = words.size();
+    words.push_back(0u);
+    patches.push_back({word_index, label, false, SchedulerVmOp::kNoop});
+  }
+
+  const std::vector<uint32_t>& LabelOffsets() const { return label_offsets; }
+
+  void EmitJumpLabel(uint32_t label) {
+    const size_t word_index = words.size();
+    words.push_back(MakeSchedulerVmInstr(SchedulerVmOp::kJump, 0u));
+    patches.push_back({word_index, label, true, SchedulerVmOp::kJump});
+  }
+
+  void EmitJumpIfLabel(uint32_t cond_id, uint32_t label) {
+    words.push_back(MakeSchedulerVmInstr(SchedulerVmOp::kJumpIf, cond_id));
+    const size_t word_index = words.size();
+    words.push_back(0u);
+    patches.push_back({word_index, label, false, SchedulerVmOp::kJumpIf});
+  }
+
+  bool PatchLabels(std::string* error) {
+    for (const auto& patch : patches) {
+      if (patch.label >= label_offsets.size()) {
+        if (error) {
+          *error = "scheduler VM label patch out of range";
+        }
+        return false;
+      }
+      const uint32_t target = label_offsets[patch.label];
+      if (target == std::numeric_limits<uint32_t>::max()) {
+        if (error) {
+          *error = "scheduler VM label used before bound";
+        }
+        return false;
+      }
+      if (patch.word_index >= words.size()) {
+        if (error) {
+          *error = "scheduler VM label patch out of bounds";
+        }
+        return false;
+      }
+      if (patch.patch_arg) {
+        words[patch.word_index] = MakeSchedulerVmInstr(patch.op, target);
+      } else {
+        words[patch.word_index] = target;
+      }
+    }
+    return true;
+  }
+};
+
+bool EmitSchedulerVmStatements(const Statement& stmt,
+                               const SchedulerVmContext& context,
+                               SchedulerVmEmitter* emitter);
+
+bool EmitSchedulerVmStatements(const std::vector<Statement>& body,
+                               const SchedulerVmContext& context,
+                               SchedulerVmEmitter* emitter) {
+  for (const auto& stmt : body) {
+    if (!EmitSchedulerVmStatements(stmt, context, emitter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool EmitSchedulerVmStatements(const Statement& stmt,
+                               const SchedulerVmContext& context,
+                               SchedulerVmEmitter* emitter) {
+  if (!emitter) {
+    return false;
+  }
+  if (!context.tables) {
+    return false;
+  }
+  const SchedulerVmTables& tables = *context.tables;
+  switch (stmt.kind) {
+    case StatementKind::kAssign: {
+      if (stmt.is_procedural) {
+        return false;
+      }
+      if (stmt.assign.delay) {
+        if (!context.delay_assign_ids) {
+          return false;
+        }
+        auto it = context.delay_assign_ids->find(&stmt);
+        if (it == context.delay_assign_ids->end()) {
+          return false;
+        }
+        emitter->Emit(SchedulerVmOp::kAssignDelay, it->second);
+        return true;
+      }
+      if (stmt.assign.rhs && stmt.assign.rhs->kind == ExprKind::kCall &&
+          IsFileSystemFunctionName(stmt.assign.rhs->ident)) {
+        auto call_it = tables.service_call_ids.find(stmt.assign.rhs.get());
+        if (call_it == tables.service_call_ids.end()) {
+          return false;
+        }
+        auto assign_it = tables.service_assign_ids.find(&stmt);
+        if (assign_it == tables.service_assign_ids.end()) {
+          return false;
+        }
+        emitter->Emit(SchedulerVmOp::kServiceCall, call_it->second);
+        emitter->Emit(SchedulerVmOp::kWaitService);
+        emitter->Emit(SchedulerVmOp::kServiceRetAssign, assign_it->second);
+        return true;
+      }
+      auto it = tables.assign_ids.find(&stmt);
+      if (it == tables.assign_ids.end()) {
+        return false;
+      }
+      const SchedulerVmOp op = stmt.assign.nonblocking
+                                   ? SchedulerVmOp::kAssignNb
+                                   : SchedulerVmOp::kAssign;
+      emitter->Emit(op, it->second);
+      return true;
+    }
+    case StatementKind::kIf: {
+      if (stmt.condition) {
+        const Expr* call_expr = nullptr;
+        bool invert = false;
+        if (ExtractFeofCondition(*stmt.condition, nullptr, &invert)) {
+          call_expr = (invert && stmt.condition->operand)
+                          ? stmt.condition->operand.get()
+                          : stmt.condition.get();
+        } else if (ExtractPlusargsCondition(*stmt.condition, &call_expr,
+                                            &invert)) {
+          // call_expr already set.
+        }
+        if (call_expr) {
+          auto call_it = tables.service_call_ids.find(call_expr);
+          if (call_it == tables.service_call_ids.end()) {
+            return false;
+          }
+          const uint32_t label_then = emitter->CreateLabel();
+          const uint32_t label_end = emitter->CreateLabel();
+          uint32_t label_else = label_end;
+          const bool has_else = !StatementListIsEmpty(stmt.else_branch);
+          if (has_else) {
+            label_else = emitter->CreateLabel();
+          }
+          emitter->Emit(SchedulerVmOp::kServiceCall, call_it->second);
+          emitter->Emit(SchedulerVmOp::kWaitService);
+          emitter->Emit(SchedulerVmOp::kServiceRetBranch,
+                        invert ? 1u : 0u);
+          emitter->EmitLabelWord(label_then);
+          emitter->EmitLabelWord(label_else);
+          if (has_else) {
+            emitter->BindLabel(label_else);
+            if (!EmitSchedulerVmStatements(stmt.else_branch, context, emitter)) {
+              return false;
+            }
+            emitter->EmitJumpLabel(label_end);
+          }
+          emitter->BindLabel(label_then);
+          if (!EmitSchedulerVmStatements(stmt.then_branch, context, emitter)) {
+            return false;
+          }
+          emitter->BindLabel(label_end);
+          return true;
+        }
+      }
+      auto it = tables.cond_ids.find(stmt.condition.get());
+      if (it == tables.cond_ids.end()) {
+        return false;
+      }
+      const uint32_t label_then = emitter->CreateLabel();
+      const uint32_t label_end = emitter->CreateLabel();
+      emitter->EmitJumpIfLabel(it->second, label_then);
+      if (!EmitSchedulerVmStatements(stmt.else_branch, context, emitter)) {
+        return false;
+      }
+      emitter->EmitJumpLabel(label_end);
+      emitter->BindLabel(label_then);
+      if (!EmitSchedulerVmStatements(stmt.then_branch, context, emitter)) {
+        return false;
+      }
+      emitter->BindLabel(label_end);
+      return true;
+    }
+    case StatementKind::kFor: {
+      if (!stmt.for_condition) {
+        return false;
+      }
+      auto cond_it = tables.cond_ids.find(stmt.for_condition.get());
+      if (cond_it == tables.cond_ids.end()) {
+        return false;
+      }
+      auto init_it = tables.for_init_ids.find(&stmt);
+      auto step_it = tables.for_step_ids.find(&stmt);
+      if (init_it == tables.for_init_ids.end() ||
+          step_it == tables.for_step_ids.end()) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kAssign, init_it->second);
+      const uint32_t label_start = emitter->CreateLabel();
+      const uint32_t label_body = emitter->CreateLabel();
+      const uint32_t label_end = emitter->CreateLabel();
+      emitter->BindLabel(label_start);
+      emitter->EmitJumpIfLabel(cond_it->second, label_body);
+      emitter->EmitJumpLabel(label_end);
+      emitter->BindLabel(label_body);
+      if (!EmitSchedulerVmStatements(stmt.for_body, context, emitter)) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kAssign, step_it->second);
+      emitter->EmitJumpLabel(label_start);
+      emitter->BindLabel(label_end);
+      return true;
+    }
+    case StatementKind::kWhile: {
+      if (!stmt.while_condition) {
+        return false;
+      }
+      const uint32_t label_start = emitter->CreateLabel();
+      const uint32_t label_body = emitter->CreateLabel();
+      const uint32_t label_end = emitter->CreateLabel();
+      emitter->BindLabel(label_start);
+      const Expr* call_expr = nullptr;
+      bool invert = false;
+      if (ExtractFeofCondition(*stmt.while_condition, nullptr, &invert)) {
+        call_expr = (invert && stmt.while_condition->operand)
+                        ? stmt.while_condition->operand.get()
+                        : stmt.while_condition.get();
+      } else if (ExtractPlusargsCondition(*stmt.while_condition, &call_expr,
+                                          &invert)) {
+        // call_expr already set.
+      }
+      if (call_expr) {
+        auto call_it = tables.service_call_ids.find(call_expr);
+        if (call_it == tables.service_call_ids.end()) {
+          return false;
+        }
+        emitter->Emit(SchedulerVmOp::kServiceCall, call_it->second);
+        emitter->Emit(SchedulerVmOp::kWaitService);
+        emitter->Emit(SchedulerVmOp::kServiceRetBranch,
+                      invert ? 1u : 0u);
+        emitter->EmitLabelWord(label_body);
+        emitter->EmitLabelWord(label_end);
+      } else {
+        auto cond_it = tables.cond_ids.find(stmt.while_condition.get());
+        if (cond_it == tables.cond_ids.end()) {
+          return false;
+        }
+        emitter->EmitJumpIfLabel(cond_it->second, label_body);
+        emitter->EmitJumpLabel(label_end);
+      }
+      emitter->BindLabel(label_body);
+      if (!EmitSchedulerVmStatements(stmt.while_body, context, emitter)) {
+        return false;
+      }
+      emitter->EmitJumpLabel(label_start);
+      emitter->BindLabel(label_end);
+      return true;
+    }
+    case StatementKind::kCase: {
+      auto it = tables.case_ids.find(&stmt);
+      if (it == tables.case_ids.end()) {
+        return false;
+      }
+      const uint32_t label_end = emitter->CreateLabel();
+      std::vector<uint32_t> item_labels;
+      item_labels.reserve(stmt.case_items.size());
+      for (size_t i = 0; i < stmt.case_items.size(); ++i) {
+        item_labels.push_back(emitter->CreateLabel());
+      }
+      uint32_t label_default = label_end;
+      if (!StatementListIsEmpty(stmt.default_branch)) {
+        label_default = emitter->CreateLabel();
+      }
+      emitter->Emit(SchedulerVmOp::kCase, it->second);
+      emitter->EmitWord(static_cast<uint32_t>(item_labels.size()));
+      for (uint32_t label : item_labels) {
+        emitter->EmitLabelWord(label);
+      }
+      emitter->EmitLabelWord(label_default);
+      for (size_t i = 0; i < stmt.case_items.size(); ++i) {
+        emitter->BindLabel(item_labels[i]);
+        if (!EmitSchedulerVmStatements(stmt.case_items[i].body, context,
+                                       emitter)) {
+          return false;
+        }
+        emitter->EmitJumpLabel(label_end);
+      }
+      if (!StatementListIsEmpty(stmt.default_branch)) {
+        emitter->BindLabel(label_default);
+        if (!EmitSchedulerVmStatements(stmt.default_branch, context, emitter)) {
+          return false;
+        }
+        emitter->EmitJumpLabel(label_end);
+      }
+      emitter->BindLabel(label_end);
+      return true;
+    }
+    case StatementKind::kRepeat: {
+      if (!stmt.repeat_count) {
+        return false;
+      }
+      uint64_t count = 0;
+      if (SchedulerVmRepeatConstCount(stmt, &count) &&
+          count <= kSchedulerVmRepeatUnrollLimit) {
+        if (count == 0u) {
+          return true;
+        }
+        for (uint64_t rep = 0u; rep < count; ++rep) {
+          if (!EmitSchedulerVmStatements(stmt.repeat_body, context, emitter)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      auto rep_it = tables.repeat_ids.find(&stmt);
+      if (rep_it == tables.repeat_ids.end()) {
+        return false;
+      }
+      const uint32_t label_repeat = emitter->CreateLabel();
+      const uint32_t label_body = emitter->CreateLabel();
+      const uint32_t label_after = emitter->CreateLabel();
+      emitter->BindLabel(label_repeat);
+      emitter->Emit(SchedulerVmOp::kRepeat, rep_it->second);
+      emitter->EmitLabelWord(label_body);
+      emitter->EmitLabelWord(label_after);
+      emitter->BindLabel(label_body);
+      if (!EmitSchedulerVmStatements(stmt.repeat_body, context, emitter)) {
+        return false;
+      }
+      emitter->EmitJumpLabel(label_repeat);
+      emitter->BindLabel(label_after);
+      return true;
+    }
+    case StatementKind::kBlock: {
+      if (stmt.block_label.empty()) {
+        return EmitSchedulerVmStatements(stmt.block, context, emitter);
+      }
+      if (!context.block_labels) {
+        return false;
+      }
+      auto it = context.block_labels->find(stmt.block_label);
+      if (it == context.block_labels->end()) {
+        return false;
+      }
+      if (!EmitSchedulerVmStatements(stmt.block, context, emitter)) {
+        return false;
+      }
+      emitter->BindLabel(it->second);
+      return true;
+    }
+    case StatementKind::kDelay: {
+      if (!stmt.delay) {
+        emitter->Emit(SchedulerVmOp::kWaitDelta);
+      } else {
+        auto it = tables.delay_ids.find(stmt.delay.get());
+        if (it == tables.delay_ids.end()) {
+          return false;
+        }
+        emitter->Emit(SchedulerVmOp::kWaitTime, it->second);
+      }
+      return EmitSchedulerVmStatements(stmt.delay_body, context, emitter);
+    }
+    case StatementKind::kEventControl: {
+      bool named_event = false;
+      uint32_t event_id = 0u;
+      const Expr* named_expr = nullptr;
+      if (!stmt.event_items.empty()) {
+        if (stmt.event_items.size() == 1 &&
+            stmt.event_items[0].edge == EventEdgeKind::kAny &&
+            stmt.event_items[0].expr) {
+          named_expr = stmt.event_items[0].expr.get();
+        }
+      } else if (stmt.event_expr && stmt.event_edge == EventEdgeKind::kAny) {
+        named_expr = stmt.event_expr.get();
+      }
+      if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+        auto it = context.event_ids.find(named_expr->ident);
+        if (it != context.event_ids.end()) {
+          named_event = true;
+          event_id = it->second;
+        }
+      }
+      if (named_event) {
+        emitter->Emit(SchedulerVmOp::kWaitEvent, event_id);
+      } else {
+        auto it = context.edge_wait_ids.find(&stmt);
+        if (it == context.edge_wait_ids.end()) {
+          return false;
+        }
+        emitter->Emit(SchedulerVmOp::kWaitEdge, it->second);
+      }
+      return EmitSchedulerVmStatements(stmt.event_body, context, emitter);
+    }
+    case StatementKind::kWait: {
+      if (!stmt.wait_condition) {
+        return EmitSchedulerVmStatements(stmt.wait_body, context, emitter);
+      }
+      auto cond_it = tables.cond_ids.find(stmt.wait_condition.get());
+      if (cond_it == tables.cond_ids.end()) {
+        return false;
+      }
+      auto wait_it = context.wait_ids.find(&stmt);
+      if (wait_it == context.wait_ids.end()) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kWaitCond, cond_it->second);
+      emitter->EmitWord(wait_it->second);
+      return EmitSchedulerVmStatements(stmt.wait_body, context, emitter);
+    }
+    case StatementKind::kForever: {
+      const uint32_t label_start = emitter->CreateLabel();
+      emitter->BindLabel(label_start);
+      if (!EmitSchedulerVmStatements(stmt.forever_body, context, emitter)) {
+        return false;
+      }
+      emitter->EmitJumpLabel(label_start);
+      return true;
+    }
+    case StatementKind::kDisable: {
+      if (!context.block_labels || !context.fork_child_labels ||
+          !context.global_block_targets || !context.proc_parent) {
+        return false;
+      }
+      const std::string& target = stmt.disable_target;
+      auto block_it = context.block_labels->find(target);
+      if (block_it != context.block_labels->end()) {
+        emitter->Emit(SchedulerVmOp::kDisable,
+                      static_cast<uint32_t>(SchedulerVmDisableKind::kBlock));
+        emitter->EmitLabelWord(block_it->second);
+        return true;
+      }
+      uint32_t pid = context.pid;
+      auto fork_it = context.fork_child_labels->find(pid);
+      if (fork_it != context.fork_child_labels->end()) {
+        auto label_it = fork_it->second.find(target);
+        if (label_it != fork_it->second.end()) {
+          emitter->Emit(SchedulerVmOp::kDisable,
+                        static_cast<uint32_t>(
+                            SchedulerVmDisableKind::kChildProc));
+          emitter->EmitWord(label_it->second);
+          return true;
+        }
+      }
+      if (pid < context.proc_parent->size()) {
+        int parent_pid = (*context.proc_parent)[pid];
+        if (parent_pid >= 0) {
+          auto parent_it =
+              context.fork_child_labels->find(static_cast<uint32_t>(parent_pid));
+          if (parent_it != context.fork_child_labels->end()) {
+            auto label_it = parent_it->second.find(target);
+            if (label_it != parent_it->second.end()) {
+              emitter->Emit(SchedulerVmOp::kDisable,
+                            static_cast<uint32_t>(
+                                SchedulerVmDisableKind::kChildProc));
+              emitter->EmitWord(label_it->second);
+              return true;
+            }
+          }
+        }
+      }
+      auto global_it = context.global_block_targets->find(target);
+      if (global_it != context.global_block_targets->end()) {
+        if (!context.cross_patches) {
+          return false;
+        }
+        emitter->Emit(SchedulerVmOp::kDisable,
+                      static_cast<uint32_t>(
+                          SchedulerVmDisableKind::kCrossProc));
+        emitter->EmitWord(global_it->second.first);
+        const uint32_t patch_index =
+            static_cast<uint32_t>(emitter->words.size());
+        emitter->EmitWord(0u);
+        context.cross_patches->push_back(
+            SchedulerVmCrossProcPatch{context.pid, patch_index,
+                                      global_it->second.first,
+                                      global_it->second.second});
+        return true;
+      }
+      return false;
+    }
+    case StatementKind::kFork: {
+      if (!context.fork_children) {
+        return false;
+      }
+      auto it = context.fork_children->find(&stmt);
+      if (it == context.fork_children->end()) {
+        return false;
+      }
+      const auto& children = it->second;
+      emitter->Emit(SchedulerVmOp::kFork,
+                    PackSchedulerVmForkArg(
+                        static_cast<uint32_t>(children.size()),
+                        SchedulerVmJoinKind::kAll));
+      for (uint32_t child_pid : children) {
+        emitter->EmitWord(child_pid);
+      }
+      return true;
+    }
+    case StatementKind::kForce: {
+      auto it = tables.force_ids.find(&stmt);
+      if (it == tables.force_ids.end()) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kForce, it->second);
+      return true;
+    }
+    case StatementKind::kRelease: {
+      auto it = tables.release_ids.find(&stmt);
+      if (it == tables.release_ids.end()) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kRelease, it->second);
+      return true;
+    }
+    case StatementKind::kEventTrigger: {
+      auto it = context.event_ids.find(stmt.trigger_target);
+      if (it == context.event_ids.end()) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kEventTrigger, it->second);
+      return true;
+    }
+    case StatementKind::kTaskCall: {
+      if (!IsSystemTaskName(stmt.task_name)) {
+        return false;
+      }
+      auto it = tables.service_task_ids.find(&stmt);
+      if (it == tables.service_task_ids.end()) {
+        return false;
+      }
+      emitter->Emit(SchedulerVmOp::kServiceCall, it->second);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
+bool BuildSchedulerVmLayoutFromModule(const Module& module,
+                                      SchedulerVmLayout* out,
+                                      std::string* error,
+                                      bool four_state) {
+  std::vector<const AlwaysBlock*> initial_blocks;
+  std::vector<const AlwaysBlock*> edge_blocks;
+  std::vector<const AlwaysBlock*> comb_blocks;
+  std::vector<SpecifyPathBlock> specify_blocks =
+      BuildSpecifyPathBlocks(module);
+  for (const auto& block : module.always_blocks) {
+    if (block.edge == EdgeKind::kInitial) {
+      initial_blocks.push_back(&block);
+    } else if (block.edge == EdgeKind::kPosedge ||
+               block.edge == EdgeKind::kNegedge) {
+      edge_blocks.push_back(&block);
+    } else if (block.edge == EdgeKind::kCombinational &&
+               AlwaysBlockNeedsScheduler(block)) {
+      comb_blocks.push_back(&block);
+    }
+  }
+  for (const auto& block : specify_blocks) {
+    initial_blocks.push_back(&block.block);
+  }
+  if (initial_blocks.empty() && edge_blocks.empty() && comb_blocks.empty() &&
+      module.timing_checks.empty()) {
+    if (error) {
+      *error = "scheduler VM layout requires at least one proc";
+    }
+    return false;
+  }
+
+  std::vector<SchedulerVmProcDef> procs;
+  std::vector<int> proc_parent;
+  std::unordered_map<uint32_t, std::unordered_map<std::string, uint32_t>>
+      fork_child_labels;
+  std::vector<std::unique_ptr<Statement>> always_wrappers;
+  int next_pid = 0;
+  for (const auto* block : initial_blocks) {
+    procs.push_back(SchedulerVmProcDef{static_cast<uint32_t>(next_pid),
+                                       &block->statements, nullptr});
+    proc_parent.push_back(-1);
+    ++next_pid;
+  }
+  always_wrappers.reserve(edge_blocks.size() + comb_blocks.size());
+  auto make_edge_wrapper = [&](const AlwaysBlock& block) {
+    auto forever_stmt = std::make_unique<Statement>();
+    forever_stmt->kind = StatementKind::kForever;
+    Statement event_stmt;
+    event_stmt.kind = StatementKind::kEventControl;
+    event_stmt.event_edge = (block.edge == EdgeKind::kPosedge)
+                                ? EventEdgeKind::kPosedge
+                                : EventEdgeKind::kNegedge;
+    auto clock_expr = std::make_unique<Expr>();
+    clock_expr->kind = ExprKind::kIdentifier;
+    clock_expr->ident = block.clock;
+    event_stmt.event_expr = std::move(clock_expr);
+    event_stmt.event_body.reserve(block.statements.size());
+    for (const auto& stmt : block.statements) {
+      event_stmt.event_body.push_back(CloneStatement(stmt));
+    }
+    forever_stmt->forever_body.push_back(std::move(event_stmt));
+    return forever_stmt;
+  };
+  auto make_comb_wrapper = [&](const AlwaysBlock& block) {
+    auto event_stmt = std::make_unique<Statement>();
+    event_stmt->kind = StatementKind::kEventControl;
+    event_stmt->event_edge = EventEdgeKind::kAny;
+    event_stmt->event_body.reserve(block.statements.size());
+    for (const auto& stmt : block.statements) {
+      event_stmt->event_body.push_back(CloneStatement(stmt));
+    }
+    return event_stmt;
+  };
+  for (const auto* block : edge_blocks) {
+    auto wrapper = make_edge_wrapper(*block);
+    procs.push_back(SchedulerVmProcDef{static_cast<uint32_t>(next_pid), nullptr,
+                                       wrapper.get()});
+    proc_parent.push_back(-1);
+    always_wrappers.push_back(std::move(wrapper));
+    ++next_pid;
+  }
+  for (const auto* block : comb_blocks) {
+    auto wrapper = make_comb_wrapper(*block);
+    procs.push_back(SchedulerVmProcDef{static_cast<uint32_t>(next_pid), nullptr,
+                                       wrapper.get()});
+    proc_parent.push_back(-1);
+    always_wrappers.push_back(std::move(wrapper));
+    ++next_pid;
+  }
+  const int root_proc_count = next_pid;
+
+  std::vector<std::unique_ptr<std::vector<Statement>>> expanded_proc_bodies;
+  std::unordered_set<std::string> task_stack;
+  TaskSubst empty_subst;
+  for (auto& proc : procs) {
+    if (proc.body && !HasUserTaskCall(module, *proc.body)) {
+      continue;
+    }
+    if (proc.single && !HasUserTaskCall(module, *proc.single)) {
+      continue;
+    }
+    std::vector<Statement> single_input;
+    const std::vector<Statement>* input = proc.body;
+    if (!input && proc.single) {
+      single_input.push_back(CloneStatement(*proc.single));
+      input = &single_input;
+    }
+    if (!input) {
+      continue;
+    }
+    task_stack.clear();
+    auto expanded = std::make_unique<std::vector<Statement>>();
+    ExpandTasksInStatements(module, *input, empty_subst, expanded.get(),
+                            &task_stack);
+    expanded_proc_bodies.push_back(std::move(expanded));
+    proc.body = expanded_proc_bodies.back().get();
+    proc.single = nullptr;
+  }
+
+  std::function<void(const Statement&, int)> collect_forks;
+  std::function<void(const std::vector<Statement>&, int)>
+      collect_forks_in_list;
+  std::unordered_map<const Statement*, std::vector<uint32_t>> fork_children;
+  std::unordered_map<std::string, std::pair<uint32_t, uint32_t>>
+      global_block_targets;
+  collect_forks = [&](const Statement& stmt, int parent_pid) {
+    if (stmt.kind == StatementKind::kFork) {
+      std::vector<uint32_t> children;
+      children.reserve(stmt.fork_branches.size());
+      for (const auto& branch : stmt.fork_branches) {
+        int child_pid = next_pid++;
+        children.push_back(static_cast<uint32_t>(child_pid));
+        procs.push_back(SchedulerVmProcDef{static_cast<uint32_t>(child_pid),
+                                           nullptr, &branch});
+        proc_parent.push_back(parent_pid);
+        if (branch.kind == StatementKind::kBlock &&
+            !branch.block_label.empty()) {
+          fork_child_labels[static_cast<uint32_t>(parent_pid)]
+                           [branch.block_label] =
+                               static_cast<uint32_t>(child_pid);
+        }
+        collect_forks(branch, child_pid);
+      }
+      fork_children.emplace(&stmt, std::move(children));
+      return;
+    }
+    if (stmt.kind == StatementKind::kIf) {
+      for (const auto& inner : stmt.then_branch) {
+        collect_forks(inner, parent_pid);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kBlock) {
+      for (const auto& inner : stmt.block) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kFor) {
+      for (const auto& inner : stmt.for_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWhile) {
+      for (const auto& inner : stmt.while_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kRepeat) {
+      for (const auto& inner : stmt.repeat_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kDelay) {
+      for (const auto& inner : stmt.delay_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kEventControl) {
+      for (const auto& inner : stmt.event_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWait) {
+      for (const auto& inner : stmt.wait_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kForever) {
+      for (const auto& inner : stmt.forever_body) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kCase) {
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          collect_forks(inner, parent_pid);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        collect_forks(inner, parent_pid);
+      }
+      return;
+    }
+  };
+  collect_forks_in_list = [&](const std::vector<Statement>& stmts,
+                              int parent_pid) {
+    for (const auto& stmt : stmts) {
+      collect_forks(stmt, parent_pid);
+    }
+  };
+  for (int i = 0; i < root_proc_count; ++i) {
+    if (procs[i].body) {
+      collect_forks_in_list(*procs[i].body, procs[i].pid);
+    } else if (procs[i].single) {
+      collect_forks(*procs[i].single, procs[i].pid);
+    }
+  }
+
+  std::vector<SchedulerVmEmitter> proc_emitters(procs.size());
+  std::vector<std::unordered_map<std::string, uint32_t>> proc_block_labels(
+      procs.size());
+  std::function<void(const Statement&, SchedulerVmEmitter*,
+                     std::unordered_map<std::string, uint32_t>*)>
+      collect_block_labels;
+  collect_block_labels =
+      [&](const Statement& stmt, SchedulerVmEmitter* emitter,
+          std::unordered_map<std::string, uint32_t>* labels) -> void {
+    if (!emitter || !labels) {
+      return;
+    }
+    if (stmt.kind == StatementKind::kBlock) {
+      if (!stmt.block_label.empty() &&
+          labels->find(stmt.block_label) == labels->end()) {
+        (*labels)[stmt.block_label] = emitter->CreateLabel();
+      }
+      for (const auto& inner : stmt.block) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kIf) {
+      for (const auto& inner : stmt.then_branch) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kFor) {
+      for (const auto& inner : stmt.for_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWhile) {
+      for (const auto& inner : stmt.while_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kRepeat) {
+      for (const auto& inner : stmt.repeat_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kDelay) {
+      for (const auto& inner : stmt.delay_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kEventControl) {
+      for (const auto& inner : stmt.event_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWait) {
+      for (const auto& inner : stmt.wait_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kForever) {
+      for (const auto& inner : stmt.forever_body) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kFork) {
+      for (const auto& inner : stmt.fork_branches) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kCase) {
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          collect_block_labels(inner, emitter, labels);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        collect_block_labels(inner, emitter, labels);
+      }
+      return;
+    }
+  };
+
+  for (size_t i = 0; i < procs.size(); ++i) {
+    const auto& proc = procs[i];
+    auto& labels = proc_block_labels[i];
+    SchedulerVmEmitter* emitter = &proc_emitters[i];
+    if (proc.body) {
+      for (const auto& stmt : *proc.body) {
+        collect_block_labels(stmt, emitter, &labels);
+      }
+    } else if (proc.single) {
+      collect_block_labels(*proc.single, emitter, &labels);
+    }
+    for (const auto& entry : labels) {
+      if (global_block_targets.count(entry.first) == 0u) {
+        global_block_targets[entry.first] =
+            std::make_pair(proc.pid, entry.second);
+      }
+    }
+  }
+
+  auto for_each_proc_stmt = [&](const auto& emit_fn) {
+    for (const auto& proc : procs) {
+      if (proc.body) {
+        for (const auto& stmt : *proc.body) {
+          emit_fn(stmt);
+        }
+      } else if (proc.single) {
+        emit_fn(*proc.single);
+      }
+    }
+  };
+
+  std::unordered_map<std::string, uint32_t> event_ids;
+  for (size_t i = 0; i < module.events.size(); ++i) {
+    event_ids[module.events[i].name] = static_cast<uint32_t>(i);
+  }
+
+  std::unordered_map<const Statement*, uint32_t> wait_ids;
+  std::vector<const Expr*> wait_exprs;
+  std::function<void(const Statement&)> collect_waits;
+  collect_waits = [&](const Statement& stmt) -> void {
+    if (stmt.kind == StatementKind::kWait && stmt.wait_condition) {
+      if (wait_ids.find(&stmt) == wait_ids.end()) {
+        wait_ids[&stmt] = static_cast<uint32_t>(wait_exprs.size());
+        wait_exprs.push_back(stmt.wait_condition.get());
+      }
+    }
+    if (stmt.kind == StatementKind::kIf) {
+      for (const auto& inner : stmt.then_branch) {
+        collect_waits(inner);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kBlock) {
+      for (const auto& inner : stmt.block) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kFor) {
+      for (const auto& inner : stmt.for_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWhile) {
+      for (const auto& inner : stmt.while_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kRepeat) {
+      for (const auto& inner : stmt.repeat_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kDelay) {
+      for (const auto& inner : stmt.delay_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kEventControl) {
+      for (const auto& inner : stmt.event_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWait) {
+      for (const auto& inner : stmt.wait_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kForever) {
+      for (const auto& inner : stmt.forever_body) {
+        collect_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kCase) {
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          collect_waits(inner);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        collect_waits(inner);
+      }
+      return;
+    }
+  };
+  for_each_proc_stmt([&](const Statement& stmt) { collect_waits(stmt); });
+
+  struct EdgeWaitItem {
+    const Expr* expr = nullptr;
+    EventEdgeKind edge = EventEdgeKind::kAny;
+  };
+  struct EdgeWaitInfo {
+    const Statement* stmt = nullptr;
+    const Expr* expr = nullptr;
+    std::vector<EdgeWaitItem> items;
+    std::vector<std::string> star_signals;
+    size_t star_offset = 0;
+    size_t item_offset = 0;
+  };
+  std::unordered_map<const Statement*, uint32_t> edge_wait_ids;
+  std::vector<EdgeWaitInfo> edge_waits;
+  size_t edge_star_count = 0;
+  size_t edge_item_count = 0;
+  std::function<void(const Statement&)> collect_edge_waits;
+  collect_edge_waits = [&](const Statement& stmt) -> void {
+    if (stmt.kind == StatementKind::kEventControl) {
+      bool named_event = false;
+      const Expr* named_expr = nullptr;
+      if (!stmt.event_items.empty()) {
+        if (stmt.event_items.size() == 1 &&
+            stmt.event_items[0].edge == EventEdgeKind::kAny &&
+            stmt.event_items[0].expr) {
+          named_expr = stmt.event_items[0].expr.get();
+        }
+      } else if (stmt.event_expr && stmt.event_edge == EventEdgeKind::kAny) {
+        named_expr = stmt.event_expr.get();
+      }
+      if (named_expr && named_expr->kind == ExprKind::kIdentifier) {
+        auto it = event_ids.find(named_expr->ident);
+        if (it != event_ids.end()) {
+          named_event = true;
+        }
+      }
+      if (!named_event &&
+          edge_wait_ids.find(&stmt) == edge_wait_ids.end()) {
+        EdgeWaitInfo info;
+        info.stmt = &stmt;
+        if (!stmt.event_items.empty()) {
+          for (const auto& item : stmt.event_items) {
+            if (!item.expr) {
+              continue;
+            }
+            info.items.push_back(EdgeWaitItem{item.expr.get(), item.edge});
+          }
+        } else {
+          info.expr = stmt.event_expr.get();
+        }
+        if (!info.items.empty()) {
+          info.item_offset = edge_item_count;
+          edge_item_count += info.items.size();
+        } else if (info.expr) {
+          info.item_offset = edge_item_count;
+          edge_item_count += 1;
+        } else {
+          std::unordered_set<std::string> signals;
+          for (const auto& inner : stmt.event_body) {
+            CollectReadSignals(inner, &signals);
+          }
+          info.star_signals.assign(signals.begin(), signals.end());
+          std::sort(info.star_signals.begin(), info.star_signals.end());
+          info.star_offset = edge_star_count;
+          edge_star_count += info.star_signals.size();
+        }
+        edge_wait_ids[&stmt] =
+            static_cast<uint32_t>(edge_waits.size());
+        edge_waits.push_back(std::move(info));
+      }
+      for (const auto& inner : stmt.event_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kIf) {
+      for (const auto& inner : stmt.then_branch) {
+        collect_edge_waits(inner);
+      }
+      for (const auto& inner : stmt.else_branch) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kBlock) {
+      for (const auto& inner : stmt.block) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kFor) {
+      for (const auto& inner : stmt.for_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWhile) {
+      for (const auto& inner : stmt.while_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kRepeat) {
+      for (const auto& inner : stmt.repeat_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kDelay) {
+      for (const auto& inner : stmt.delay_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kWait) {
+      for (const auto& inner : stmt.wait_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kForever) {
+      for (const auto& inner : stmt.forever_body) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+    if (stmt.kind == StatementKind::kCase) {
+      for (const auto& item : stmt.case_items) {
+        for (const auto& inner : item.body) {
+          collect_edge_waits(inner);
+        }
+      }
+      for (const auto& inner : stmt.default_branch) {
+        collect_edge_waits(inner);
+      }
+      return;
+    }
+  };
+  for_each_proc_stmt(
+      [&](const Statement& stmt) { collect_edge_waits(stmt); });
+
+  SchedulerVmTables tables;
+  CollectSchedulerVmTables(procs, &tables);
+  std::unordered_map<const Statement*, uint32_t> delay_assign_ids;
+  CollectSchedulerVmDelayAssignIds(procs, &delay_assign_ids);
+  std::vector<SchedulerVmCrossProcPatch> cross_patches;
+  SchedulerVmContext context;
+  context.tables = &tables;
+  context.event_ids = std::move(event_ids);
+  context.wait_ids = std::move(wait_ids);
+  context.edge_wait_ids = std::move(edge_wait_ids);
+  context.delay_assign_ids = &delay_assign_ids;
+  context.fork_children = &fork_children;
+  context.fork_child_labels = &fork_child_labels;
+  context.global_block_targets = &global_block_targets;
+  context.proc_parent = &proc_parent;
+  context.cross_patches = &cross_patches;
+  std::vector<std::vector<uint32_t>> proc_words;
+  proc_words.resize(procs.size());
+  std::vector<std::vector<uint32_t>> proc_label_offsets(procs.size());
+  for (size_t i = 0; i < procs.size(); ++i) {
+    const auto& proc = procs[i];
+    SchedulerVmEmitter& emitter = proc_emitters[i];
+    context.block_labels = &proc_block_labels[i];
+    context.pid = proc.pid;
+    bool ok = false;
+    if (proc.body) {
+      ok = EmitSchedulerVmStatements(*proc.body, context, &emitter);
+    } else if (proc.single) {
+      ok = EmitSchedulerVmStatements(*proc.single, context, &emitter);
+    }
+    if (ok) {
+      emitter.Emit(SchedulerVmOp::kDone);
+      if (!emitter.PatchLabels(error)) {
+        return false;
+      }
+    } else {
+      emitter.Emit(SchedulerVmOp::kCallGroup);
+      emitter.Emit(SchedulerVmOp::kDone);
+    }
+    if (proc.pid < proc_label_offsets.size()) {
+      proc_label_offsets[proc.pid] = emitter.LabelOffsets();
+    }
+    if (proc.pid < proc_words.size()) {
+      proc_words[proc.pid] = std::move(emitter.words);
+    }
+  }
+  for (const auto& patch : cross_patches) {
+    if (patch.proc_id >= proc_words.size()) {
+      if (error) {
+        *error = "scheduler VM disable patch proc out of range";
+      }
+      return false;
+    }
+    if (patch.word_index >= proc_words[patch.proc_id].size()) {
+      if (error) {
+        *error = "scheduler VM disable patch word out of range";
+      }
+      return false;
+    }
+    if (patch.target_proc >= proc_label_offsets.size()) {
+      if (error) {
+        *error = "scheduler VM disable patch target proc out of range";
+      }
+      return false;
+    }
+    const auto& offsets = proc_label_offsets[patch.target_proc];
+    if (patch.target_label >= offsets.size()) {
+      if (error) {
+        *error = "scheduler VM disable patch target label out of range";
+      }
+      return false;
+    }
+    const uint32_t target = offsets[patch.target_label];
+    if (target == std::numeric_limits<uint32_t>::max()) {
+      if (error) {
+        *error = "scheduler VM disable patch target unbound";
+      }
+      return false;
+    }
+    proc_words[patch.proc_id][patch.word_index] = target;
+  }
+  if (!BuildSchedulerVmLayout(proc_words, out, error)) {
+    return false;
+  }
+  std::unordered_map<std::string, uint32_t> signal_ids;
+  BuildSchedulerVmSignalLayout(module, &out->packed_slots,
+                               &out->signal_entries, &signal_ids, four_state);
+  SchedulerVmExprBuilder expr_builder;
+  out->cond_entries.clear();
+  out->cond_entries.reserve(tables.cond_exprs.size());
+  const std::unordered_map<std::string, int64_t> empty_params;
+  for (const Expr* expr : tables.cond_exprs) {
+    SchedulerVmCondEntry entry;
+    entry.kind = static_cast<uint32_t>(SchedulerVmCondKind::kDynamic);
+    entry.val = 0u;
+    entry.xz = 1u;
+    entry.expr_offset = 0u;
+    if (expr) {
+      FourStateValue value;
+      if (EvalConstExpr4State(*expr, empty_params, &value, nullptr) &&
+          value.width > 0 && value.width <= 64) {
+        const uint64_t xz = value.x_bits | value.z_bits;
+        entry.kind = static_cast<uint32_t>(SchedulerVmCondKind::kConst);
+        entry.val = (xz == 0u && value.value_bits != 0u) ? 1u : 0u;
+        entry.xz = (xz == 0u) ? 0u : 1u;
+      } else {
+        uint32_t expr_offset = 0u;
+        if (TryEmitSchedulerVmCondExpr(*expr, module, signal_ids,
+                                       out->signal_entries, &expr_builder,
+                                       &expr_offset)) {
+          entry.kind = static_cast<uint32_t>(SchedulerVmCondKind::kExpr);
+          entry.expr_offset = expr_offset;
+          entry.xz = 0u;
+        }
+      }
+    }
+    out->cond_entries.push_back(entry);
+  }
+  out->expr_table.words = expr_builder.words();
+  out->expr_table.imm_words = expr_builder.imm_words();
+  SchedulerVmCaseTableData case_tables;
+  if (!BuildSchedulerVmCaseTables(module, tables, &case_tables, error)) {
+    return false;
+  }
+  out->case_headers = std::move(case_tables.headers);
+  out->case_entries = std::move(case_tables.entries);
+  out->case_words = std::move(case_tables.words);
+  return true;
+}
+
+std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
   const bool needs_scheduler = ModuleNeedsScheduler(module);
+  const bool four_state = options.four_state;
   std::ostringstream out;
   out << "#include <metal_stdlib>\n";
   out << "using namespace metal;\n\n";
-  if (four_state) {
+  if (options.four_state) {
     out << "#include \"gpga_4state.h\"\n";
   }
   std::vector<int> wide_widths = CollectWideWidths(module);
@@ -6033,6 +8374,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
   }
   if (needs_scheduler) {
     out << "#include \"gpga_sched.h\"\n";
+    if (options.sched_vm) {
+      out << "// Scheduler mode: vm\n";
+    }
   }
   out << "\n";
   if (!module.timing_checks.empty()) {
@@ -6746,6 +9090,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           *value = expr.const_val & mask;
           return true;
         };
+
         uint64_t lhs_val = 0;
         uint64_t rhs_val = 0;
         bool lhs_known = known_const(lhs, &lhs_val);
@@ -13023,6 +15368,64 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         for_each_proc_stmt(
             [&](const Statement& stmt) { collect_edge_waits(stmt); });
 
+        std::vector<const Expr*> edge_item_exprs;
+        std::vector<EventEdgeKind> edge_item_kinds;
+        std::vector<std::string> edge_star_signals;
+        std::vector<uint32_t> edge_wait_item_offset;
+        std::vector<uint32_t> edge_wait_item_count;
+        std::vector<uint32_t> edge_wait_star_offset;
+        std::vector<uint32_t> edge_wait_star_count;
+        std::vector<const char*> edge_wait_kinds;
+        edge_item_exprs.reserve(edge_item_count);
+        edge_item_kinds.reserve(edge_item_count);
+        edge_star_signals.reserve(edge_star_count);
+        edge_wait_item_offset.reserve(edge_waits.size());
+        edge_wait_item_count.reserve(edge_waits.size());
+        edge_wait_star_offset.reserve(edge_waits.size());
+        edge_wait_star_count.reserve(edge_waits.size());
+        edge_wait_kinds.reserve(edge_waits.size());
+        for (const auto& info : edge_waits) {
+          const char* wait_kind = "GPGA_SCHED_EDGE_ANY";
+          uint32_t item_count = 0u;
+          if (!info.items.empty()) {
+            item_count = static_cast<uint32_t>(info.items.size());
+            wait_kind = "GPGA_SCHED_EDGE_LIST";
+            for (const auto& item : info.items) {
+              edge_item_exprs.push_back(item.expr);
+              edge_item_kinds.push_back(item.edge);
+            }
+          } else if (info.expr) {
+            item_count = 1u;
+            switch (info.stmt ? info.stmt->event_edge : EventEdgeKind::kAny) {
+              case EventEdgeKind::kPosedge:
+                wait_kind = "GPGA_SCHED_EDGE_POSEDGE";
+                break;
+              case EventEdgeKind::kNegedge:
+                wait_kind = "GPGA_SCHED_EDGE_NEGEDGE";
+                break;
+              case EventEdgeKind::kAny:
+              default:
+                wait_kind = "GPGA_SCHED_EDGE_ANY";
+                break;
+            }
+            edge_item_exprs.push_back(info.expr);
+            edge_item_kinds.push_back(EventEdgeKind::kAny);
+          } else {
+            wait_kind = "GPGA_SCHED_EDGE_ANY";
+            for (const auto& name : info.star_signals) {
+              edge_star_signals.push_back(name);
+            }
+          }
+          edge_wait_kinds.push_back(wait_kind);
+          edge_wait_item_offset.push_back(
+              static_cast<uint32_t>(info.item_offset));
+          edge_wait_item_count.push_back(item_count);
+          edge_wait_star_offset.push_back(
+              static_cast<uint32_t>(info.star_offset));
+          edge_wait_star_count.push_back(
+              static_cast<uint32_t>(info.star_signals.size()));
+        }
+
         std::unordered_map<const Statement*, uint32_t> monitor_pid;
         std::unordered_map<const Statement*, uint32_t> strobe_pid;
         std::function<void(const Statement&, uint32_t)> collect_monitor_pids;
@@ -13123,6 +15526,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
 
         struct DelayAssignInfo {
           const Statement* stmt = nullptr;
+          const Expr* delay_expr = nullptr;
           std::string lhs;
           bool nonblocking = false;
           bool inertial = false;
@@ -13151,6 +15555,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
             DelayAssignInfo info;
             info.stmt = &stmt;
+            info.delay_expr = stmt.assign.delay.get();
             info.lhs = stmt.assign.lhs;
             info.nonblocking = stmt.assign.nonblocking;
             auto show_it = specify_delay_showcancelled.find(&stmt);
@@ -13478,6 +15883,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         };
         for_each_proc_stmt(
             [&](const Statement& stmt) { collect_nb_targets(stmt); });
+        for (const auto& task : module.tasks) {
+          for (const auto& inner : task.body) {
+            collect_nb_targets(inner);
+          }
+        }
 
         std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
                                                    nb_targets.end());
@@ -13552,6 +15962,121 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                                                  sched_reg_set.end());
         std::sort(sched_reg_names.begin(), sched_reg_names.end());
 
+        SchedulerVmTables vm_tables;
+        uint32_t vm_cond_count = 0u;
+        uint32_t vm_assign_count = 0u;
+        uint32_t vm_delay_count = 0u;
+        uint32_t vm_case_count = 0u;
+        uint32_t vm_case_header_count = 0u;
+        uint32_t vm_case_entry_count = 0u;
+        uint32_t vm_case_word_count = 0u;
+        uint32_t vm_force_count = 0u;
+        uint32_t vm_release_count = 0u;
+        uint32_t vm_service_call_count = 0u;
+        uint32_t vm_service_assign_count = 0u;
+        uint32_t vm_words_per_proc = kSchedulerVmWordsPerProc;
+        uint32_t vm_expr_word_count = 0u;
+        uint32_t vm_expr_imm_word_count = 0u;
+        uint32_t vm_signal_count = 0u;
+        if (options.sched_vm) {
+          for_each_proc_stmt(
+              [&](const Statement& stmt) { CollectSchedulerVmTables(stmt, &vm_tables); });
+          vm_cond_count = static_cast<uint32_t>(vm_tables.cond_exprs.size());
+          if (vm_cond_count == 0u) {
+            vm_cond_count = 1u;
+          }
+          vm_assign_count =
+              static_cast<uint32_t>(vm_tables.assign_stmts.size());
+          vm_delay_count =
+              static_cast<uint32_t>(vm_tables.delay_exprs.size());
+          vm_case_count =
+              static_cast<uint32_t>(vm_tables.case_stmts.size());
+          vm_force_count =
+              static_cast<uint32_t>(vm_tables.force_stmts.size());
+          vm_release_count =
+              static_cast<uint32_t>(vm_tables.release_stmts.size());
+          vm_service_call_count =
+              static_cast<uint32_t>(vm_tables.service_calls.size());
+          vm_service_assign_count =
+              static_cast<uint32_t>(vm_tables.service_assign_stmts.size());
+          SchedulerVmLayout vm_layout;
+          if (BuildSchedulerVmLayoutFromModule(
+                  module, &vm_layout, nullptr, options.four_state)) {
+            vm_words_per_proc = vm_layout.words_per_proc;
+            vm_case_header_count =
+                static_cast<uint32_t>(vm_layout.case_headers.size());
+            vm_case_entry_count =
+                static_cast<uint32_t>(vm_layout.case_entries.size());
+            vm_case_word_count =
+                static_cast<uint32_t>(vm_layout.case_words.size());
+            vm_expr_word_count =
+                static_cast<uint32_t>(vm_layout.expr_table.words.size());
+            vm_expr_imm_word_count =
+                static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
+            vm_signal_count =
+                static_cast<uint32_t>(vm_layout.signal_entries.size());
+          }
+        } else {
+          vm_cond_count = 0u;
+          vm_assign_count = 0u;
+          vm_delay_count = 0u;
+          vm_case_count = 0u;
+          vm_case_header_count = 0u;
+          vm_case_entry_count = 0u;
+          vm_case_word_count = 0u;
+          vm_force_count = 0u;
+          vm_release_count = 0u;
+          vm_service_call_count = 0u;
+          vm_service_assign_count = 0u;
+          vm_expr_word_count = 0u;
+          vm_expr_imm_word_count = 0u;
+          vm_signal_count = 0u;
+        }
+        if (options.sched_vm) {
+          for (const auto* stmt : vm_tables.assign_stmts) {
+            if (!stmt || !stmt->assign.nonblocking) {
+              continue;
+            }
+            if (stmt->assign.lhs_index || !stmt->assign.lhs_indices.empty()) {
+              nb_array_targets.insert(stmt->assign.lhs);
+            } else {
+              nb_targets.insert(stmt->assign.lhs);
+            }
+          }
+          nb_targets_sorted.assign(nb_targets.begin(), nb_targets.end());
+          std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+          packed_nb_signals.clear();
+          if (pack_nb && !nb_targets_sorted.empty()) {
+            packed_nb_signals.reserve(nb_targets_sorted.size() * 2);
+            for (const auto& target : nb_targets_sorted) {
+              std::string type = TypeForWidth(SignalWidth(module, target));
+              PackedSignal val;
+              val.name = "nb_" + val_name(target);
+              val.type = type;
+              val.array_size = 1;
+              packed_nb_signals.push_back(std::move(val));
+              PackedSignal xz;
+              xz.name = "nb_" + xz_name(target);
+              xz.type = type;
+              xz.array_size = 1;
+              packed_nb_signals.push_back(std::move(xz));
+            }
+          }
+          nb_array_nets.clear();
+          for (const auto& net : module.nets) {
+            if (net.array_size <= 0) {
+              continue;
+            }
+            if (nb_array_targets.count(net.name) > 0) {
+              nb_array_nets.push_back(&net);
+            }
+          }
+          std::sort(nb_array_nets.begin(), nb_array_nets.end(),
+                    [](const Net* a, const Net* b) {
+                      return a->name < b->name;
+                    });
+        }
+
         out << "\n";
         const uint32_t repeat_count =
             static_cast<uint32_t>(repeat_state_count);
@@ -13586,6 +16111,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
                 : 0u;
         const uint32_t timing_check_count =
             static_cast<uint32_t>(module.timing_checks.size());
+        const uint32_t sched_proc_group_size = 8u;
+        const uint32_t sched_proc_group_count =
+            (static_cast<uint32_t>(procs.size()) + sched_proc_group_size - 1u) /
+            sched_proc_group_size;
+        if (!options.sched_vm) {
+          vm_cond_count = 0u;
+          vm_assign_count = 0u;
+          vm_delay_count = 0u;
+          vm_case_count = 0u;
+          vm_case_header_count = 0u;
+          vm_case_entry_count = 0u;
+          vm_case_word_count = 0u;
+          vm_force_count = 0u;
+          vm_release_count = 0u;
+          vm_service_call_count = 0u;
+          vm_service_assign_count = 0u;
+          vm_expr_word_count = 0u;
+          vm_expr_imm_word_count = 0u;
+          vm_signal_count = 0u;
+        }
         out << "GPGA_SCHED_DEFINE_CONSTANTS(" << procs.size() << "u, "
             << root_proc_count << "u, " << module.events.size() << "u, "
             << edge_item_count << "u, " << edge_star_count << "u, "
@@ -13598,6 +16143,191 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             << passign_target_list.size() << "u)\n";
         out << "constant constexpr uint GPGA_SCHED_TIMING_CHECK_COUNT = "
             << timing_check_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PROC_GROUP_SIZE = "
+            << sched_proc_group_size << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_PROC_GROUP_COUNT = "
+            << sched_proc_group_count << "u;\n";
+        if (options.sched_vm) {
+          out << "constant constexpr uint GPGA_SCHED_VM_ENABLED = 1u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_WORDS_PER_PROC = "
+              << vm_words_per_proc << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_BYTECODE_WORDS = "
+                 "GPGA_SCHED_PROC_COUNT * GPGA_SCHED_VM_WORDS_PER_PROC;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_COND_COUNT = "
+              << vm_cond_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_ASSIGN_COUNT = "
+              << vm_assign_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_DELAY_COUNT = "
+              << vm_delay_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_COUNT = "
+              << vm_case_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_HEADER_COUNT = "
+              << vm_case_header_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_ENTRY_COUNT = "
+              << vm_case_entry_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_WORD_COUNT = "
+              << vm_case_word_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_FORCE_COUNT = "
+              << vm_force_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_RELEASE_COUNT = "
+              << vm_release_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_CALL_COUNT = "
+              << vm_service_call_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT = "
+              << vm_service_assign_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WORD_COUNT = "
+              << vm_expr_word_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT = "
+              << vm_expr_imm_word_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_SIGNAL_COUNT = "
+              << vm_signal_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CALL_FRAME_WORDS = "
+              << kSchedulerVmCallFrameWords << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CALL_FRAME_DEPTH = "
+              << kSchedulerVmCallFrameDepth << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_COND_KIND_DYNAMIC = "
+              << static_cast<uint32_t>(SchedulerVmCondKind::kDynamic) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_COND_KIND_CONST = "
+              << static_cast<uint32_t>(SchedulerVmCondKind::kConst) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_COND_KIND_EXPR = "
+              << static_cast<uint32_t>(SchedulerVmCondKind::kExpr) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_STACK_MAX = "
+              << kSchedulerVmExprStackMax << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_ARG_SIGNED = "
+              << kSchedulerVmExprSignedFlag << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_DONE = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kDone) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_PUSH_CONST = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kPushConst) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_PUSH_SIGNAL = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kPushSignal) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_UNARY = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kUnary) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_BINARY = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kBinary) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_TERNARY = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kTernary) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_PLUS = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kPlus) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_MINUS = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kMinus) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kBitNot) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kLogNot) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_ADD = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAdd) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SUB = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kSub) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_MUL = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kMul) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_DIV = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kDiv) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_MOD = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kMod) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SHL = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kShl) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SHR = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kShr) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_ASHR = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAshr) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_AND = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAnd) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_OR = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kOr) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_XOR = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kXor) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_XNOR = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kXnor) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LOG_AND = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLogAnd) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LOG_OR = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLogOr) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_EQ = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kEq) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_NEQ = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kNeq) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kCaseEq) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kCaseNeq) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LT = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLt) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LE = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLe) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_GT = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kGt) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_GE = "
+              << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kGe) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_SIGNAL_FLAG_REAL = "
+              << kSchedulerVmSignalFlagReal << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_KIND_CASE = "
+              << static_cast<uint32_t>(SchedulerVmCaseKind::kCase) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_KIND_CASEX = "
+              << static_cast<uint32_t>(SchedulerVmCaseKind::kCaseX) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_CASE_KIND_CASEZ = "
+              << static_cast<uint32_t>(SchedulerVmCaseKind::kCaseZ) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_DONE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kDone) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_CALL_GROUP = "
+              << static_cast<uint32_t>(SchedulerVmOp::kCallGroup) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_NOOP = "
+              << static_cast<uint32_t>(SchedulerVmOp::kNoop) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_JUMP = "
+              << static_cast<uint32_t>(SchedulerVmOp::kJump) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_JUMP_IF = "
+              << static_cast<uint32_t>(SchedulerVmOp::kJumpIf) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_CASE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kCase) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_REPEAT = "
+              << static_cast<uint32_t>(SchedulerVmOp::kRepeat) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_ASSIGN = "
+              << static_cast<uint32_t>(SchedulerVmOp::kAssign) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_ASSIGN_NB = "
+              << static_cast<uint32_t>(SchedulerVmOp::kAssignNb) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_ASSIGN_DELAY = "
+              << static_cast<uint32_t>(SchedulerVmOp::kAssignDelay) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_FORCE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kForce) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_RELEASE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kRelease) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_TIME = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitTime) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_DELTA = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitDelta) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_EVENT = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitEvent) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_EDGE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitEdge) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_COND = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitCond) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_JOIN = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitJoin) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_SERVICE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kWaitService) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_EVENT_TRIGGER = "
+              << static_cast<uint32_t>(SchedulerVmOp::kEventTrigger) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_FORK = "
+              << static_cast<uint32_t>(SchedulerVmOp::kFork) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_DISABLE = "
+              << static_cast<uint32_t>(SchedulerVmOp::kDisable) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_SERVICE_CALL = "
+              << static_cast<uint32_t>(SchedulerVmOp::kServiceCall) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_SERVICE_RET_ASSIGN = "
+              << static_cast<uint32_t>(SchedulerVmOp::kServiceRetAssign) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_SERVICE_RET_BRANCH = "
+              << static_cast<uint32_t>(SchedulerVmOp::kServiceRetBranch) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_TASK_CALL = "
+              << static_cast<uint32_t>(SchedulerVmOp::kTaskCall) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_RET = "
+              << static_cast<uint32_t>(SchedulerVmOp::kRet) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_HALT_SIM = "
+              << static_cast<uint32_t>(SchedulerVmOp::kHaltSim) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_MASK = "
+              << kSchedulerVmOpMask << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_OP_SHIFT = "
+              << kSchedulerVmOpShift << "u;\n";
+        }
         if (has_services) {
           if (service_wide_words_local > 0u) {
             out << "GPGA_SCHED_DEFINE_SERVICE_RECORD_WIDE()\n";
@@ -13628,210 +16358,493 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << tag << "u";
         }
         out << ")\n";
+        if (options.sched_vm) {
+          out << "struct GpgaSchedVmArgs {\n";
+          out << "  device const uint* sched_vm_bytecode [[id(0)]];\n";
+          out << "  device const uint* sched_vm_proc_bytecode_offset [[id(1)]];\n";
+          out << "  device const uint* sched_vm_proc_bytecode_length [[id(2)]];\n";
+          out << "  device uint* sched_vm_cond_val [[id(3)]];\n";
+          out << "  device uint* sched_vm_cond_xz [[id(4)]];\n";
+          out << "  device const GpgaSchedVmCondEntry* sched_vm_cond_entry [[id(5)]];\n";
+          out << "  device const GpgaSchedVmSignalEntry* sched_vm_signal_entry [[id(6)]];\n";
+          out << "  device uint* sched_vm_ip [[id(7)]];\n";
+          out << "  device uint* sched_vm_call_sp [[id(8)]];\n";
+          out << "  device uint* sched_vm_call_frame [[id(9)]];\n";
+          out << "  device const GpgaSchedVmCaseHeader* sched_vm_case_header [[id(10)]];\n";
+          out << "  device const GpgaSchedVmCaseEntry* sched_vm_case_entry [[id(11)]];\n";
+          out << "  device const ulong* sched_vm_case_words [[id(12)]];\n";
+          out << "  device const uint* sched_vm_expr [[id(13)]];\n";
+          out << "  device const uint* sched_vm_expr_imm [[id(14)]];\n";
+          out << "};\n";
+          out << "#define sched_vm_bytecode (sched_vm_args.sched_vm_bytecode)\n";
+          out << "#define sched_vm_proc_bytecode_offset (sched_vm_args.sched_vm_proc_bytecode_offset)\n";
+          out << "#define sched_vm_proc_bytecode_length (sched_vm_args.sched_vm_proc_bytecode_length)\n";
+          out << "#define sched_vm_cond_val (sched_vm_args.sched_vm_cond_val)\n";
+          out << "#define sched_vm_cond_xz (sched_vm_args.sched_vm_cond_xz)\n";
+          out << "#define sched_vm_cond_entry (sched_vm_args.sched_vm_cond_entry)\n";
+          out << "#define sched_vm_signal_entry (sched_vm_args.sched_vm_signal_entry)\n";
+          out << "#define sched_vm_ip (sched_vm_args.sched_vm_ip)\n";
+          out << "#define sched_vm_call_sp (sched_vm_args.sched_vm_call_sp)\n";
+          out << "#define sched_vm_call_frame (sched_vm_args.sched_vm_call_frame)\n";
+          out << "#define sched_vm_case_header (sched_vm_args.sched_vm_case_header)\n";
+          out << "#define sched_vm_case_entry (sched_vm_args.sched_vm_case_entry)\n";
+          out << "#define sched_vm_case_words (sched_vm_args.sched_vm_case_words)\n";
+          out << "#define sched_vm_expr (sched_vm_args.sched_vm_expr)\n";
+          out << "#define sched_vm_expr_imm (sched_vm_args.sched_vm_expr_imm)\n";
+        }
+
+        const uint32_t edge_wait_table_size =
+            edge_waits.empty() ? 1u : static_cast<uint32_t>(edge_waits.size());
+        const uint32_t edge_item_kind_size =
+            edge_item_kinds.empty()
+                ? 1u
+                : static_cast<uint32_t>(edge_item_kinds.size());
+        auto edge_kind_literal = [](EventEdgeKind edge) -> const char* {
+          switch (edge) {
+            case EventEdgeKind::kPosedge:
+              return "GPGA_SCHED_EDGE_POSEDGE";
+            case EventEdgeKind::kNegedge:
+              return "GPGA_SCHED_EDGE_NEGEDGE";
+            case EventEdgeKind::kAny:
+            default:
+              return "GPGA_SCHED_EDGE_ANY";
+          }
+        };
+        out << "constant constexpr uint GPGA_SCHED_EDGE_WAIT_COUNT = "
+            << edge_waits.size() << "u;\n";
+        out << "constant uint gpga_sched_edge_wait_item_offset["
+            << edge_wait_table_size << "] = {";
+        if (edge_wait_item_offset.empty()) {
+          out << "0u";
+        } else {
+          for (size_t i = 0; i < edge_wait_item_offset.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << edge_wait_item_offset[i] << "u";
+          }
+        }
+        out << "};\n";
+        out << "constant uint gpga_sched_edge_wait_item_count["
+            << edge_wait_table_size << "] = {";
+        if (edge_wait_item_count.empty()) {
+          out << "0u";
+        } else {
+          for (size_t i = 0; i < edge_wait_item_count.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << edge_wait_item_count[i] << "u";
+          }
+        }
+        out << "};\n";
+        out << "constant uint gpga_sched_edge_wait_star_offset["
+            << edge_wait_table_size << "] = {";
+        if (edge_wait_star_offset.empty()) {
+          out << "0u";
+        } else {
+          for (size_t i = 0; i < edge_wait_star_offset.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << edge_wait_star_offset[i] << "u";
+          }
+        }
+        out << "};\n";
+        out << "constant uint gpga_sched_edge_wait_star_count["
+            << edge_wait_table_size << "] = {";
+        if (edge_wait_star_count.empty()) {
+          out << "0u";
+        } else {
+          for (size_t i = 0; i < edge_wait_star_count.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << edge_wait_star_count[i] << "u";
+          }
+        }
+        out << "};\n";
+        out << "constant uint gpga_sched_edge_wait_kind["
+            << edge_wait_table_size << "] = {";
+        if (edge_wait_kinds.empty()) {
+          out << "GPGA_SCHED_EDGE_ANY";
+        } else {
+          for (size_t i = 0; i < edge_wait_kinds.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << edge_wait_kinds[i];
+          }
+        }
+        out << "};\n";
+        out << "constant uint gpga_sched_edge_item_kind[" << edge_item_kind_size
+            << "] = {";
+        if (edge_item_kinds.empty()) {
+          out << "GPGA_SCHED_EDGE_ANY";
+        } else {
+          for (size_t i = 0; i < edge_item_kinds.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << edge_kind_literal(edge_item_kinds[i]);
+          }
+        }
+        out << "};\n";
 
         drive_declared.clear();
 
+        auto emit_edge_item_switch4 = [&](int indent,
+                                          const std::string& index_name) {
+          std::string pad(indent, ' ');
+          int case_indent = indent + 4;
+          std::string case_pad(case_indent, ' ');
+          out << pad << "switch (" << index_name << ") {\n";
+          for (size_t i = 0; i < edge_item_exprs.size(); ++i) {
+            out << pad << "  case " << i << "u: {\n";
+            FsExpr curr = emit_expr4(*edge_item_exprs[i]);
+            curr = hoist_full_for_use(curr, case_indent);
+            std::string mask =
+                literal_for_width(MaskForWidth64(curr.width), 64);
+            out << case_pad << "__gpga_curr_val = ((ulong)(" << curr.val
+                << ")) & " << mask << ";\n";
+            out << case_pad << "__gpga_curr_xz = ((ulong)(" << curr.xz
+                << ")) & " << mask << ";\n";
+            out << case_pad << "__gpga_curr_mask = " << mask << ";\n";
+            out << pad << "  } break;\n";
+          }
+          out << pad << "  default:\n";
+          out << pad << "    break;\n";
+          out << pad << "}\n";
+        };
+        auto emit_edge_star_switch4 = [&](int indent,
+                                          const std::string& index_name) {
+          std::string pad(indent, ' ');
+          int case_indent = indent + 4;
+          std::string case_pad(case_indent, ' ');
+          out << pad << "switch (" << index_name << ") {\n";
+          for (size_t i = 0; i < edge_star_signals.size(); ++i) {
+            out << pad << "  case " << i << "u: {\n";
+            Expr ident_expr;
+            ident_expr.kind = ExprKind::kIdentifier;
+            ident_expr.ident = edge_star_signals[i];
+            FsExpr sig = emit_expr4(ident_expr);
+            sig = hoist_full_for_use(sig, case_indent);
+            std::string mask = literal_for_width(MaskForWidth64(sig.width), 64);
+            out << case_pad << "__gpga_curr_val = ((ulong)(" << sig.val << ")) & "
+                << mask << ";\n";
+            out << case_pad << "__gpga_curr_xz = ((ulong)(" << sig.xz << ")) & "
+                << mask << ";\n";
+            out << case_pad << "__gpga_curr_mask = " << mask << ";\n";
+            out << pad << "  } break;\n";
+          }
+          out << pad << "  default:\n";
+          out << pad << "    break;\n";
+          out << pad << "}\n";
+        };
+
         out << "\n";
+        struct SchedParam {
+          std::string decl;
+          std::string name;
+        };
+        std::vector<SchedParam> sched_params;
+        auto sched_param_decl = [](const std::string& text) {
+          std::string decl = text;
+          size_t first = decl.find_first_not_of(' ');
+          if (first != std::string::npos) {
+            decl.erase(0, first);
+          }
+          size_t attr = decl.find("[[");
+          if (attr != std::string::npos) {
+            decl.erase(attr);
+          }
+          while (!decl.empty() &&
+                 std::isspace(static_cast<unsigned char>(decl.back()))) {
+            decl.pop_back();
+          }
+          return decl;
+        };
+        auto sched_param_name = [](const std::string& decl) {
+          size_t space = decl.find_last_of(' ');
+          if (space == std::string::npos) {
+            return decl;
+          }
+          return decl.substr(space + 1);
+        };
+        auto for_each_sched_param = [&](const auto& emit_param_fn) {
+          int buffer_index = 0;
+          if (pack_signals) {
+            emit_param_fn("  device uchar* gpga_state [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (!pack_signals) {
+            for (const auto& port : module.ports) {
+              std::string qualifier =
+                  (port.dir == PortDir::kInput) ? "constant" : "device";
+              std::string type = TypeForWidth(port.width);
+              emit_param_fn("  " + qualifier + " " + type + "* " +
+                            val_name(port.name) + " [[buffer(" +
+                            std::to_string(buffer_index++) + ")]]");
+              emit_param_fn("  " + qualifier + " " + type + "* " +
+                            xz_name(port.name) + " [[buffer(" +
+                            std::to_string(buffer_index++) + ")]]");
+            }
+            for (const auto& reg : sched_reg_names) {
+              std::string type = TypeForWidth(SignalWidth(module, reg));
+              emit_param_fn("  device " + type + "* " + val_name(reg) +
+                            " [[buffer(" + std::to_string(buffer_index++) +
+                            ")]]");
+              emit_param_fn("  device " + type + "* " + xz_name(reg) +
+                            " [[buffer(" + std::to_string(buffer_index++) +
+                            ")]]");
+              if (IsTriregNet(SignalNetType(module, reg))) {
+                emit_param_fn("  device ulong* " + decay_name(reg) +
+                              " [[buffer(" +
+                              std::to_string(buffer_index++) + ")]]");
+              }
+            }
+            for (const auto* net : array_nets) {
+              std::string type = TypeForWidth(net->width);
+              emit_param_fn("  device " + type + "* " + val_name(net->name) +
+                            " [[buffer(" + std::to_string(buffer_index++) +
+                            ")]]");
+              emit_param_fn("  device " + type + "* " + xz_name(net->name) +
+                            " [[buffer(" + std::to_string(buffer_index++) +
+                            ")]]");
+            }
+          }
+          if (pack_nb && !packed_nb_signals.empty()) {
+            emit_param_fn("  device uchar* nb_state [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (!pack_nb) {
+            for (const auto& target : nb_targets_sorted) {
+              std::string type = TypeForWidth(SignalWidth(module, target));
+              emit_param_fn("  device " + type + "* nb_" + val_name(target) +
+                            " [[buffer(" +
+                            std::to_string(buffer_index++) + ")]]");
+              emit_param_fn("  device " + type + "* nb_" + xz_name(target) +
+                            " [[buffer(" +
+                            std::to_string(buffer_index++) + ")]]");
+            }
+          }
+          for (const auto* net : nb_array_nets) {
+            std::string type = TypeForWidth(net->width);
+            emit_param_fn("  device " + type + "* " +
+                          MslValNextName(net->name) + " [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device " + type + "* " +
+                          MslXzNextName(net->name) + " [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (needs_force_shadow) {
+            emit_param_fn("  device uchar* sched_force_state [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (!force_target_list.empty()) {
+            emit_param_fn("  device uint* sched_force_id [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (!passign_target_list.empty()) {
+            emit_param_fn("  device uint* sched_passign_id [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          emit_param_fn("  device uint* sched_pc [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_state [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_wait_kind [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_wait_edge_kind [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_wait_id [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_wait_event [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          if (has_edges) {
+            emit_param_fn("  device ulong* sched_edge_prev_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_edge_prev_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (has_edge_star) {
+            emit_param_fn(
+                "  device ulong* sched_edge_star_prev_val [[buffer(" +
+                std::to_string(buffer_index++) + ")]]");
+            emit_param_fn(
+                "  device ulong* sched_edge_star_prev_xz [[buffer(" +
+                std::to_string(buffer_index++) + ")]]");
+          }
+          if (timing_check_count > 0u) {
+            emit_param_fn("  device ulong* sched_timing_prev_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_timing_prev_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_timing_data_time [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_timing_ref_time [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn(
+                "  device ulong* sched_timing_window_start [[buffer(" +
+                std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_timing_window_end [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          emit_param_fn("  device ulong* sched_wait_time [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_join_count [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_parent [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_join_tag [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          if (repeat_state_count > 0) {
+            emit_param_fn("  device uint* sched_repeat_left [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_repeat_active [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          emit_param_fn("  device ulong* sched_time [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_phase [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_flags [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_halt_mode [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          if (has_events) {
+            emit_param_fn("  device uint* sched_event_pending [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          emit_param_fn("  device uint* sched_error [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_status [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          if (options.sched_vm) {
+            emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (has_delayed_assigns) {
+            emit_param_fn("  device ulong* sched_delay_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_delay_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_delay_index_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_delay_index_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (has_delayed_nba) {
+            emit_param_fn("  device uint* sched_dnba_count [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_dnba_time [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_dnba_id [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_dnba_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_dnba_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_dnba_index_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_dnba_index_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (!system_task_info.monitor_stmts.empty()) {
+            emit_param_fn("  device uint* sched_monitor_active [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_monitor_enable [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_monitor_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device ulong* sched_monitor_xz [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            if (service_wide_words > 0u) {
+              emit_param_fn("  device ulong* sched_monitor_wide_val [[buffer(" +
+                            std::to_string(buffer_index++) + ")]]");
+              emit_param_fn("  device ulong* sched_monitor_wide_xz [[buffer(" +
+                            std::to_string(buffer_index++) + ")]]");
+            }
+          }
+          if (!system_task_info.strobe_stmts.empty()) {
+            emit_param_fn("  device uint* sched_strobe_pending [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          if (has_services) {
+            emit_param_fn("  device uint* sched_service_count [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device GpgaServiceRecord* sched_service [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          emit_param_fn("  constant GpgaSchedParams& sched [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  uint gid [[thread_position_in_grid]]) {\n");
+        };
+        for_each_sched_param([&](const std::string& text) {
+          std::string decl = sched_param_decl(text);
+          std::string name = sched_param_name(decl);
+          sched_params.push_back({decl, name});
+        });
+
+        auto emit_sched_param_decls = [&](int indent) {
+          std::string pad(indent, ' ');
+          for (size_t i = 0; i < sched_params.size(); ++i) {
+            if (i > 0) {
+              out << ",\n";
+            }
+            out << pad << sched_params[i].decl;
+          }
+        };
+        auto emit_sched_param_names = [&]() {
+          for (size_t i = 0; i < sched_params.size(); ++i) {
+            if (i > 0) {
+              out << ", ";
+            }
+            out << sched_params[i].name;
+          }
+        };
+
+        for (const auto& proc : procs) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr);\n";
+        }
+
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_group_" << group << "(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr);\n";
+        }
+        if (options.sched_vm) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr);\n";
+        }
+
         out << "kernel void gpga_" << MslName(module.name) << "_sched_step(";
-        int buffer_index = 0;
         bool first = true;
-        auto emit_param = [&](const std::string& text) {
+        for_each_sched_param([&](const std::string& text) {
           if (!first) {
             out << ",\n";
           }
           first = false;
           out << text;
-        };
-        if (pack_signals) {
-          emit_param("  device uchar* gpga_state [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (!pack_signals) {
-          for (const auto& port : module.ports) {
-            std::string qualifier =
-                (port.dir == PortDir::kInput) ? "constant" : "device";
-            std::string type = TypeForWidth(port.width);
-            emit_param("  " + qualifier + " " + type + "* " +
-                       val_name(port.name) + " [[buffer(" +
-                       std::to_string(buffer_index++) + ")]]");
-            emit_param("  " + qualifier + " " + type + "* " +
-                       xz_name(port.name) + " [[buffer(" +
-                       std::to_string(buffer_index++) + ")]]");
-          }
-          for (const auto& reg : sched_reg_names) {
-            std::string type = TypeForWidth(SignalWidth(module, reg));
-            emit_param("  device " + type + "* " + val_name(reg) +
-                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-            emit_param("  device " + type + "* " + xz_name(reg) +
-                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-            if (IsTriregNet(SignalNetType(module, reg))) {
-              emit_param("  device ulong* " + decay_name(reg) + " [[buffer(" +
-                         std::to_string(buffer_index++) + ")]]");
-            }
-          }
-          for (const auto* net : array_nets) {
-            std::string type = TypeForWidth(net->width);
-            emit_param("  device " + type + "* " + val_name(net->name) +
-                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-            emit_param("  device " + type + "* " + xz_name(net->name) +
-                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-          }
-        }
-        if (pack_nb && !packed_nb_signals.empty()) {
-          emit_param("  device uchar* nb_state [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (!pack_nb) {
-          for (const auto& target : nb_targets_sorted) {
-            std::string type = TypeForWidth(SignalWidth(module, target));
-            emit_param("  device " + type + "* nb_" + val_name(target) +
-                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-            emit_param("  device " + type + "* nb_" + xz_name(target) +
-                       " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-          }
-        }
-        for (const auto* net : nb_array_nets) {
-          std::string type = TypeForWidth(net->width);
-          emit_param("  device " + type + "* " +
-                     MslValNextName(net->name) + " [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device " + type + "* " +
-                     MslXzNextName(net->name) + " [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (needs_force_shadow) {
-          emit_param("  device uchar* sched_force_state [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (!force_target_list.empty()) {
-          emit_param("  device uint* sched_force_id [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (!passign_target_list.empty()) {
-          emit_param("  device uint* sched_passign_id [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        emit_param("  device uint* sched_pc [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_state [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_wait_kind [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_wait_edge_kind [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_wait_id [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_wait_event [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        if (has_edges) {
-          emit_param("  device ulong* sched_edge_prev_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_edge_prev_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (has_edge_star) {
-          emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_edge_star_prev_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (timing_check_count > 0u) {
-          emit_param("  device ulong* sched_timing_prev_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_timing_prev_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_timing_data_time [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_timing_ref_time [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_timing_window_start [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_timing_window_end [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        emit_param("  device ulong* sched_wait_time [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_join_count [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_parent [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_join_tag [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        if (repeat_state_count > 0) {
-          emit_param("  device uint* sched_repeat_left [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_repeat_active [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        emit_param("  device ulong* sched_time [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_phase [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_flags [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        if (has_events) {
-          emit_param("  device uint* sched_event_pending [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        emit_param("  device uint* sched_error [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_status [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        if (has_delayed_assigns) {
-          emit_param("  device ulong* sched_delay_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_delay_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_delay_index_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_delay_index_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (has_delayed_nba) {
-          emit_param("  device uint* sched_dnba_count [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_dnba_time [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_dnba_id [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_dnba_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_dnba_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_dnba_index_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device uint* sched_dnba_index_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-      if (!system_task_info.monitor_stmts.empty()) {
-        emit_param("  device uint* sched_monitor_active [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_monitor_enable [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_monitor_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_monitor_xz [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        if (service_wide_words > 0u) {
-          emit_param("  device ulong* sched_monitor_wide_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device ulong* sched_monitor_wide_xz [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-      }
-        if (!system_task_info.strobe_stmts.empty()) {
-          emit_param("  device uint* sched_strobe_pending [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        if (has_services) {
-          emit_param("  device uint* sched_service_count [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-          emit_param("  device GpgaServiceRecord* sched_service [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        emit_param("  constant GpgaSchedParams& sched [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  uint gid [[thread_position_in_grid]]) {\n");
+        });
         out << "  if (gid >= sched.count) {\n";
         out << "    return;\n";
         out << "  }\n";
@@ -14003,7 +17016,26 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "      sched_join_count[idx] = 0u;\n";
         out << "      sched_parent[idx] = gpga_proc_parent[pid];\n";
         out << "      sched_join_tag[idx] = gpga_proc_join_tag[pid];\n";
+        if (options.sched_vm) {
+          out << "      sched_vm_ip[idx] = 0u;\n";
+          out << "      sched_vm_call_sp[idx] = 0u;\n";
+          out << "      uint __gpga_cond_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                 "          GPGA_SCHED_VM_COND_COUNT;\n";
+          out << "      for (uint c = 0u; c < GPGA_SCHED_VM_COND_COUNT; ++c) {\n";
+          out << "        sched_vm_cond_val[__gpga_cond_base + c] = 0u;\n";
+          out << "        sched_vm_cond_xz[__gpga_cond_base + c] = 0u;\n";
+          out << "      }\n";
+        }
         out << "    }\n";
+        if (options.sched_vm) {
+          out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+          out << "      uint __gpga_vm_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                 "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
+          out << "      for (uint w = 0u; w < (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH); ++w) {\n";
+          out << "        sched_vm_call_frame[__gpga_vm_base + w] = 0u;\n";
+          out << "      }\n";
+          out << "    }\n";
+        }
         if (repeat_state_count > 0) {
           out << "    for (uint r = 0u; r < GPGA_SCHED_REPEAT_COUNT; ++r) {\n";
           out << "      uint ridx = (gid * GPGA_SCHED_REPEAT_COUNT) + r;\n";
@@ -14877,6 +17909,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "  bool finished = false;\n";
         out << "  bool stopped = false;\n";
         out << "  uint steps = sched.max_steps;\n";
+        out << "  uint __gpga_halt = sched_halt_mode[gid];\n";
+        out << "  if (__gpga_halt != GPGA_SCHED_HALT_NONE) {\n";
+        out << "    sched_halt_mode[gid] = GPGA_SCHED_HALT_NONE;\n";
+        out << "    if (__gpga_halt == GPGA_SCHED_HALT_FINISH) {\n";
+        out << "      finished = true;\n";
+        out << "    } else if (__gpga_halt == GPGA_SCHED_HALT_STOP) {\n";
+        out << "      stopped = true;\n";
+        out << "    } else {\n";
+        out << "      sched_error[gid] = 1u;\n";
+        out << "    }\n";
+        out << "    steps = 0u;\n";
+        out << "  }\n";
         out << "  while (steps > 0u) {\n";
         out << "    bool did_work = false;\n";
         out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
@@ -14945,7 +17989,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
         out << "          did_work = true;\n";
         out << "          steps--;\n";
-        out << "          switch (pid) {\n";
+        if (options.sched_vm) {
+          out << "          gpga_" << MslName(module.name)
+              << "_sched_vm_exec(";
+          emit_sched_param_names();
+          out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+          out << "          sched_pc[idx] = sched_vm_ip[idx];\n";
+        } else {
+          out << "          uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+          out << "          switch (__gpga_group) {\n";
+          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+            out << "            case " << group << "u:\n";
+            out << "              gpga_" << MslName(module.name)
+                << "_sched_group_" << group << "(";
+            emit_sched_param_names();
+            out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+            out << "              break;\n";
+          }
+          out << "            default: {\n";
+          out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "          }\n";
+        }
 
         auto emit_inline_assign =
             [&](const SequentialAssign& assign, int indent,
@@ -16809,8 +19875,13 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           g_task_arg_real = prev_real;
         };
 
-        for (const auto& proc : procs) {
-          std::vector<const Statement*> stmts;
+        auto emit_proc_group_helpers = [&](uint32_t group) {
+          for (const auto& proc : procs) {
+            if ((static_cast<uint32_t>(proc.pid) / sched_proc_group_size) !=
+                group) {
+              continue;
+            }
+            std::vector<const Statement*> stmts;
           std::unordered_map<const Statement*,
                              std::pair<const Statement*, const Statement*>>
               repeat_spans;
@@ -17047,12 +20118,49 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             }
           }
 
-          out << "            case " << proc.pid << ": {\n";
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr) {\n";
+          out << "  thread uint& steps = *steps_ptr;\n";
+          out << "  thread bool& did_work = *did_work_ptr;\n";
+          out << "  thread bool& finished = *finished_ptr;\n";
+          out << "  thread bool& stopped = *stopped_ptr;\n";
+          out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          const int kPcChunkSize = 32;
+          int max_pc = pc_done;
+          for (int pc_value : pc_for_index) {
+            if (pc_value > max_pc) {
+              max_pc = pc_value;
+            }
+          }
+          for (const auto& body_case : body_cases) {
+            if (body_case.pc > max_pc) {
+              max_pc = body_case.pc;
+            }
+          }
+          const int pc_bucket_count = (max_pc / kPcChunkSize) + 1;
           out << "              uint pc = sched_pc[idx];\n";
-          out << "              switch (pc) {\n";
+          out << "              uint pc_bucket = pc / " << kPcChunkSize << "u;\n";
+          out << "              switch (pc_bucket) {\n";
+          for (int bucket = 0; bucket < pc_bucket_count; ++bucket) {
+            const int start_pc = bucket * kPcChunkSize;
+            const int end_pc = start_pc + kPcChunkSize;
+            out << "                case " << bucket << "u: {\n";
+            out << "                  switch (pc) {\n";
           for (size_t i = 0; i < stmts.size(); ++i) {
             const Statement& stmt = *stmts[i];
             int pc = pc_for_index[i];
+            if (pc < start_pc || pc >= end_pc) {
+              continue;
+            }
             int next_pc =
                 (i + 1 < stmts.size()) ? pc_for_index[i + 1] : pc_done;
             auto next_override_it = next_pc_override.find(&stmt);
@@ -18083,6 +21191,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           for (size_t body_index = 0; body_index < body_cases.size();
                ++body_index) {
             const BodyCase body_case = body_cases[body_index];
+            if (body_case.pc < start_pc || body_case.pc >= end_pc) {
+              continue;
+            }
             out << "                case " << body_case.pc << ": {\n";
             if (body_case.is_assign_delay) {
               out << "                  uint __gpga_delay_slot = (gid * "
@@ -18174,23 +21285,44 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
             out << "                  break;\n";
             out << "                }\n";
           }
-          out << "                case " << pc_done << ": {\n";
+          if (pc_done >= start_pc && pc_done < end_pc) {
+            out << "                case " << pc_done << ": {\n";
+            out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "                default: {\n";
           out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           out << "                  break;\n";
           out << "                }\n";
+          out << "                  }\n";
+          out << "                  break;\n";
+          out << "                }\n";
+          }
           out << "                default: {\n";
           out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           out << "                  break;\n";
           out << "                }\n";
           out << "              }\n";
-          out << "              break;\n";
-          out << "            }\n";
+          out << "}\n";
         }
-        out << "            default: {\n";
-        out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-        out << "              break;\n";
-        out << "            }\n";
-        out << "          }\n";
+        };
+        auto emit_proc_group_cases = [&](uint32_t group) {
+          for (const auto& proc : procs) {
+            if ((static_cast<uint32_t>(proc.pid) / sched_proc_group_size) !=
+                group) {
+              continue;
+            }
+            out << "            case " << proc.pid << ": {\n";
+            out << "              gpga_" << MslName(module.name)
+                << "_sched_proc_" << proc.pid << "(";
+            emit_sched_param_names();
+            out << ", pid, idx, &steps, &did_work, &finished, &stopped, "
+                   "&__gpga_time);\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
+        };
         out << "          if (sched_state[idx] == GPGA_SCHED_PROC_DONE) {\n";
         out << "            uint parent = sched_parent[idx];\n";
         out << "            if (parent != GPGA_SCHED_NO_PARENT) {\n";
@@ -18236,149 +21368,90 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "            continue;\n";
           out << "          }\n";
         }
-        out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
-        out << "            bool ready = false;\n";
-        out << "            uint edge_kind = sched_wait_edge_kind[idx];\n";
-        out << "            switch (sched_wait_id[idx]) {\n";
-        for (size_t i = 0; i < edge_waits.size(); ++i) {
-          const EdgeWaitInfo& info = edge_waits[i];
-          out << "              case " << i << "u: {\n";
-          if (!info.items.empty()) {
-            out << "                uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                << info.item_offset << "u;\n";
-            out << "                bool __gpga_any = false;\n";
-            for (size_t j = 0; j < info.items.size(); ++j) {
-              FsExpr curr = emit_expr4(*info.items[j].expr);
-              curr = hoist_full_for_use(curr, 16);
-              std::string mask =
-                  literal_for_width(MaskForWidth64(curr.width), 64);
-              out << "                {\n";
-              out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
-                  << j << "u];\n";
-              out << "                ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + "
-                  << j << "u];\n";
-              out << "                ulong __gpga_curr_val = ((ulong)(" << curr.val
-                  << ")) & " << mask << ";\n";
-              out << "                ulong __gpga_curr_xz = ((ulong)(" << curr.xz
-                  << ")) & " << mask << ";\n";
-              if (info.items[j].edge == EventEdgeKind::kAny) {
-                out << "                if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
-                out << "                  __gpga_any = true;\n";
-                out << "                }\n";
-              } else {
-                out << "                {\n";
-                out << "                  ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & "
-                    << mask << ";\n";
-                out << "                  ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & "
-                    << mask << ";\n";
-                out << "                  ulong __gpga_prev_unk = __gpga_prev_xz & " << mask
-                    << ";\n";
-                out << "                  ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & "
-                    << mask << ";\n";
-                out << "                  ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & "
-                    << mask << ";\n";
-                out << "                  ulong __gpga_curr_unk = __gpga_curr_xz & " << mask
-                    << ";\n";
-                if (info.items[j].edge == EventEdgeKind::kPosedge) {
-                  out << "                  ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
-                  out << "                  if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
-                } else {
-                  out << "                  ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
-                  out << "                  if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
-                }
-                out << "                }\n";
-              }
-              out << "                sched_edge_prev_val[__gpga_edge_base + " << j
-                  << "u] = __gpga_curr_val;\n";
-              out << "                sched_edge_prev_xz[__gpga_edge_base + " << j
-                  << "u] = __gpga_curr_xz;\n";
-              out << "                }\n";
-            }
-            out << "                ready = __gpga_any;\n";
-          } else if (info.expr) {
-            FsExpr curr = emit_expr4(*info.expr);
-            curr = hoist_full_for_use(curr, 16);
-            std::string mask =
-                literal_for_width(MaskForWidth64(curr.width), 64);
-            out << "                uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                << info.item_offset << "u;\n";
-            out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_idx];\n";
-            out << "                ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_idx];\n";
-            out << "                ulong __gpga_curr_val = ((ulong)(" << curr.val
-                << ")) & " << mask << ";\n";
-            out << "                ulong __gpga_curr_xz = ((ulong)(" << curr.xz
-                << ")) & " << mask << ";\n";
-            out << "                if (edge_kind == GPGA_SCHED_EDGE_ANY) {\n";
-            out << "                  ready = (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz);\n";
-            out << "                } else {\n";
-            out << "                  ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & "
-                << mask << ";\n";
-            out << "                  ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & "
-                << mask << ";\n";
-            out << "                  ulong __gpga_prev_unk = __gpga_prev_xz & " << mask
-                << ";\n";
-            out << "                  ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & "
-                << mask << ";\n";
-            out << "                  ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & "
-                << mask << ";\n";
-            out << "                  ulong __gpga_curr_unk = __gpga_curr_xz & " << mask
-                << ";\n";
-            out << "                  if (edge_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
-            out << "                    ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
-            out << "                    ready = (__gpga_edge_mask != 0ul);\n";
-            out << "                  } else if (edge_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
-            out << "                    ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
-            out << "                    ready = (__gpga_edge_mask != 0ul);\n";
-            out << "                  }\n";
-            out << "                }\n";
-            out << "                sched_edge_prev_val[__gpga_edge_idx] = __gpga_curr_val;\n";
-            out << "                sched_edge_prev_xz[__gpga_edge_idx] = __gpga_curr_xz;\n";
-          } else {
-            out << "                uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + "
-                << info.star_offset << "u;\n";
-            out << "                bool __gpga_changed = false;\n";
-            for (size_t s = 0; s < info.star_signals.size(); ++s) {
-              Expr ident_expr;
-              ident_expr.kind = ExprKind::kIdentifier;
-              ident_expr.ident = info.star_signals[s];
-              FsExpr sig = emit_expr4(ident_expr);
-              sig = hoist_full_for_use(sig, 16);
-              std::string mask =
-                  literal_for_width(MaskForWidth64(sig.width), 64);
-              out << "                {\n";
-              out << "                  ulong __gpga_curr_val = ((ulong)(" << sig.val
-                  << ")) & " << mask << ";\n";
-              out << "                  ulong __gpga_curr_xz = ((ulong)(" << sig.xz
-                  << ")) & " << mask << ";\n";
-              out << "                  ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_base + "
-                  << s << "u];\n";
-              out << "                  ulong __gpga_prev_xz = sched_edge_star_prev_xz[__gpga_edge_base + "
-                  << s << "u];\n";
-              out << "                  if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
-              out << "                    __gpga_changed = true;\n";
-              out << "                  }\n";
-              out << "                  sched_edge_star_prev_val[__gpga_edge_base + "
-                  << s << "u] = __gpga_curr_val;\n";
-              out << "                  sched_edge_star_prev_xz[__gpga_edge_base + "
-                  << s << "u] = __gpga_curr_xz;\n";
-              out << "                }\n";
-            }
-            out << "                ready = __gpga_changed;\n";
-          }
-          out << "                break;\n";
+        if (!edge_waits.empty()) {
+          out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+          out << "            bool ready = false;\n";
+          out << "            uint edge_kind = sched_wait_edge_kind[idx];\n";
+          out << "            uint wait_id = sched_wait_id[idx];\n";
+          out << "            if (wait_id < GPGA_SCHED_EDGE_WAIT_COUNT) {\n";
+          out << "              uint item_offset = gpga_sched_edge_wait_item_offset[wait_id];\n";
+          out << "              uint item_count = gpga_sched_edge_wait_item_count[wait_id];\n";
+          out << "              uint star_offset = gpga_sched_edge_wait_star_offset[wait_id];\n";
+          out << "              uint star_count = gpga_sched_edge_wait_star_count[wait_id];\n";
+        if (has_edge_star) {
+          out << "              if (star_count > 0u) {\n";
+          out << "                uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + star_offset;\n";
+          out << "                bool __gpga_changed = false;\n";
+          out << "                #pragma clang loop unroll(disable)\n";
+          out << "                for (uint s = 0u; s < star_count; ++s) {\n";
+          out << "                  uint star_index = star_offset + s;\n";
+          out << "                  ulong __gpga_curr_val = 0ul;\n";
+          out << "                  ulong __gpga_curr_xz = 0ul;\n";
+          out << "                  ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_star_switch4(18, "star_index");
+          out << "                  ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_star_base + s];\n";
+          out << "                  ulong __gpga_prev_xz = sched_edge_star_prev_xz[__gpga_edge_star_base + s];\n";
+          out << "                  if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
+          out << "                    __gpga_changed = true;\n";
+          out << "                  }\n";
+          out << "                  sched_edge_star_prev_val[__gpga_edge_star_base + s] = __gpga_curr_val;\n";
+          out << "                  sched_edge_star_prev_xz[__gpga_edge_star_base + s] = __gpga_curr_xz;\n";
+          out << "                }\n";
+          out << "                ready = __gpga_changed;\n";
           out << "              }\n";
         }
-        out << "              default:\n";
-        out << "                ready = false;\n";
-        out << "                break;\n";
-        out << "            }\n";
-        out << "            if (ready) {\n";
-        out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-        out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-        out << "              any_ready = true;\n";
-        out << "            }\n";
-        out << "            continue;\n";
-        out << "          }\n";
+        out << "              if (item_count > 0u) {\n";
+          out << "                uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + item_offset;\n";
+          out << "                bool __gpga_any = false;\n";
+          out << "                #pragma clang loop unroll(disable)\n";
+          out << "                for (uint j = 0u; j < item_count; ++j) {\n";
+          out << "                  uint item_index = item_offset + j;\n";
+          out << "                  uint item_kind = (edge_kind == GPGA_SCHED_EDGE_LIST)\n";
+          out << "                      ? gpga_sched_edge_item_kind[item_index]\n";
+          out << "                      : edge_kind;\n";
+          out << "                  ulong __gpga_curr_val = 0ul;\n";
+          out << "                  ulong __gpga_curr_xz = 0ul;\n";
+          out << "                  ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_item_switch4(18, "item_index");
+          out << "                  ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + j];\n";
+          out << "                  ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + j];\n";
+          out << "                  if (item_kind == GPGA_SCHED_EDGE_ANY) {\n";
+          out << "                    if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
+          out << "                      __gpga_any = true;\n";
+          out << "                    }\n";
+          out << "                  } else {\n";
+          out << "                    ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & __gpga_curr_mask;\n";
+          out << "                    ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & __gpga_curr_mask;\n";
+          out << "                    ulong __gpga_prev_unk = __gpga_prev_xz & __gpga_curr_mask;\n";
+          out << "                    ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & __gpga_curr_mask;\n";
+          out << "                    ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & __gpga_curr_mask;\n";
+          out << "                    ulong __gpga_curr_unk = __gpga_curr_xz & __gpga_curr_mask;\n";
+          out << "                    if (item_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
+          out << "                      ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
+          out << "                      if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
+          out << "                    } else if (item_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
+          out << "                      ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
+          out << "                      if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
+          out << "                    }\n";
+          out << "                  }\n";
+          out << "                  sched_edge_prev_val[__gpga_edge_base + j] = __gpga_curr_val;\n";
+          out << "                  sched_edge_prev_xz[__gpga_edge_base + j] = __gpga_curr_xz;\n";
+          out << "                }\n";
+          out << "                ready = __gpga_any;\n";
+          out << "              }\n";
+          out << "            }\n";
+          out << "            if (ready) {\n";
+          out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+          out << "              any_ready = true;\n";
+          out << "            }\n";
+          out << "            continue;\n";
+          out << "          }\n";
+        } else {
+          out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+          out << "            continue;\n";
+          out << "          }\n";
+        }
         out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_COND) {\n";
         out << "            bool ready = false;\n";
         out << "            switch (sched_wait_id[idx]) {\n";
@@ -18532,149 +21605,90 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           out << "          continue;\n";
           out << "        }\n";
         }
-        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
-        out << "          bool ready = false;\n";
-        out << "          uint edge_kind = sched_wait_edge_kind[idx];\n";
-        out << "          switch (sched_wait_id[idx]) {\n";
-        for (size_t i = 0; i < edge_waits.size(); ++i) {
-          const EdgeWaitInfo& info = edge_waits[i];
-          out << "            case " << i << "u: {\n";
-          if (!info.items.empty()) {
-            out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                << info.item_offset << "u;\n";
-            out << "              bool __gpga_any = false;\n";
-            for (size_t j = 0; j < info.items.size(); ++j) {
-              FsExpr curr = emit_expr4(*info.items[j].expr);
-              curr = hoist_full_for_use(curr, 16);
-              std::string mask =
-                  literal_for_width(MaskForWidth64(curr.width), 64);
-              out << "              {\n";
-              out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
-                  << j << "u];\n";
-              out << "              ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + "
-                  << j << "u];\n";
-              out << "              ulong __gpga_curr_val = ((ulong)(" << curr.val
-                  << ")) & " << mask << ";\n";
-              out << "              ulong __gpga_curr_xz = ((ulong)(" << curr.xz
-                  << ")) & " << mask << ";\n";
-              if (info.items[j].edge == EventEdgeKind::kAny) {
-                out << "              if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
-                out << "                __gpga_any = true;\n";
-                out << "              }\n";
-              } else {
-                out << "              {\n";
-                out << "                ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & "
-                    << mask << ";\n";
-                out << "                ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & "
-                    << mask << ";\n";
-                out << "                ulong __gpga_prev_unk = __gpga_prev_xz & " << mask
-                    << ";\n";
-                out << "                ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & "
-                    << mask << ";\n";
-                out << "                ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & "
-                    << mask << ";\n";
-                out << "                ulong __gpga_curr_unk = __gpga_curr_xz & " << mask
-                    << ";\n";
-                if (info.items[j].edge == EventEdgeKind::kPosedge) {
-                  out << "                ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
-                  out << "                if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
-                } else {
-                  out << "                ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
-                  out << "                if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
-                }
-                out << "              }\n";
-              }
-              out << "              sched_edge_prev_val[__gpga_edge_base + " << j
-                  << "u] = __gpga_curr_val;\n";
-              out << "              sched_edge_prev_xz[__gpga_edge_base + " << j
-                  << "u] = __gpga_curr_xz;\n";
-              out << "              }\n";
-            }
-            out << "              ready = __gpga_any;\n";
-          } else if (info.expr) {
-            FsExpr curr = emit_expr4(*info.expr);
-            curr = hoist_full_for_use(curr, 16);
-            std::string mask =
-                literal_for_width(MaskForWidth64(curr.width), 64);
-            out << "              uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-                << info.item_offset << "u;\n";
-            out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_idx];\n";
-            out << "              ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_idx];\n";
-            out << "              ulong __gpga_curr_val = ((ulong)(" << curr.val
-                << ")) & " << mask << ";\n";
-            out << "              ulong __gpga_curr_xz = ((ulong)(" << curr.xz
-                << ")) & " << mask << ";\n";
-            out << "              if (edge_kind == GPGA_SCHED_EDGE_ANY) {\n";
-            out << "                ready = (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz);\n";
-            out << "              } else {\n";
-            out << "                ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & "
-                << mask << ";\n";
-            out << "                ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & "
-                << mask << ";\n";
-            out << "                ulong __gpga_prev_unk = __gpga_prev_xz & " << mask
-                << ";\n";
-            out << "                ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & "
-                << mask << ";\n";
-            out << "                ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & "
-                << mask << ";\n";
-            out << "                ulong __gpga_curr_unk = __gpga_curr_xz & " << mask
-                << ";\n";
-            out << "                if (edge_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
-            out << "                  ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
-            out << "                  ready = (__gpga_edge_mask != 0ul);\n";
-            out << "                } else if (edge_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
-            out << "                  ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
-            out << "                  ready = (__gpga_edge_mask != 0ul);\n";
-            out << "                }\n";
-            out << "              }\n";
-            out << "              sched_edge_prev_val[__gpga_edge_idx] = __gpga_curr_val;\n";
-            out << "              sched_edge_prev_xz[__gpga_edge_idx] = __gpga_curr_xz;\n";
-          } else {
-            out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + "
-                << info.star_offset << "u;\n";
+        if (!edge_waits.empty()) {
+          out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+          out << "          bool ready = false;\n";
+          out << "          uint edge_kind = sched_wait_edge_kind[idx];\n";
+          out << "          uint wait_id = sched_wait_id[idx];\n";
+          out << "          if (wait_id < GPGA_SCHED_EDGE_WAIT_COUNT) {\n";
+          out << "            uint item_offset = gpga_sched_edge_wait_item_offset[wait_id];\n";
+          out << "            uint item_count = gpga_sched_edge_wait_item_count[wait_id];\n";
+          out << "            uint star_offset = gpga_sched_edge_wait_star_offset[wait_id];\n";
+          out << "            uint star_count = gpga_sched_edge_wait_star_count[wait_id];\n";
+          if (has_edge_star) {
+            out << "            if (star_count > 0u) {\n";
+            out << "              uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + star_offset;\n";
             out << "              bool __gpga_changed = false;\n";
-            for (size_t s = 0; s < info.star_signals.size(); ++s) {
-              Expr ident_expr;
-              ident_expr.kind = ExprKind::kIdentifier;
-              ident_expr.ident = info.star_signals[s];
-              FsExpr sig = emit_expr4(ident_expr);
-              sig = hoist_full_for_use(sig, 16);
-              std::string mask =
-                  literal_for_width(MaskForWidth64(sig.width), 64);
-              out << "              {\n";
-              out << "                ulong __gpga_curr_val = ((ulong)(" << sig.val
-                  << ")) & " << mask << ";\n";
-              out << "                ulong __gpga_curr_xz = ((ulong)(" << sig.xz
-                  << ")) & " << mask << ";\n";
-              out << "                ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_base + "
-                  << s << "u];\n";
-              out << "                ulong __gpga_prev_xz = sched_edge_star_prev_xz[__gpga_edge_base + "
-                  << s << "u];\n";
-              out << "                if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
-              out << "                  __gpga_changed = true;\n";
-              out << "                }\n";
-              out << "                sched_edge_star_prev_val[__gpga_edge_base + "
-                  << s << "u] = __gpga_curr_val;\n";
-              out << "                sched_edge_star_prev_xz[__gpga_edge_base + "
-                  << s << "u] = __gpga_curr_xz;\n";
-              out << "              }\n";
-            }
+            out << "              #pragma clang loop unroll(disable)\n";
+            out << "              for (uint s = 0u; s < star_count; ++s) {\n";
+            out << "                uint star_index = star_offset + s;\n";
+            out << "                ulong __gpga_curr_val = 0ul;\n";
+            out << "                ulong __gpga_curr_xz = 0ul;\n";
+            out << "                ulong __gpga_curr_mask = 0ul;\n";
+            emit_edge_star_switch4(18, "star_index");
+            out << "                ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_star_base + s];\n";
+            out << "                ulong __gpga_prev_xz = sched_edge_star_prev_xz[__gpga_edge_star_base + s];\n";
+            out << "                if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
+            out << "                  __gpga_changed = true;\n";
+            out << "                }\n";
+            out << "                sched_edge_star_prev_val[__gpga_edge_star_base + s] = __gpga_curr_val;\n";
+            out << "                sched_edge_star_prev_xz[__gpga_edge_star_base + s] = __gpga_curr_xz;\n";
+            out << "              }\n";
             out << "              ready = __gpga_changed;\n";
+            out << "            }\n";
           }
-          out << "              break;\n";
+          out << "            if (item_count > 0u) {\n";
+          out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + item_offset;\n";
+          out << "              bool __gpga_any = false;\n";
+          out << "              #pragma clang loop unroll(disable)\n";
+          out << "              for (uint j = 0u; j < item_count; ++j) {\n";
+          out << "                uint item_index = item_offset + j;\n";
+          out << "                uint item_kind = (edge_kind == GPGA_SCHED_EDGE_LIST)\n";
+          out << "                    ? gpga_sched_edge_item_kind[item_index]\n";
+          out << "                    : edge_kind;\n";
+          out << "                ulong __gpga_curr_val = 0ul;\n";
+          out << "                ulong __gpga_curr_xz = 0ul;\n";
+          out << "                ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_item_switch4(18, "item_index");
+          out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + j];\n";
+          out << "                ulong __gpga_prev_xz = sched_edge_prev_xz[__gpga_edge_base + j];\n";
+          out << "                if (item_kind == GPGA_SCHED_EDGE_ANY) {\n";
+          out << "                  if (__gpga_curr_val != __gpga_prev_val || __gpga_curr_xz != __gpga_prev_xz) {\n";
+          out << "                    __gpga_any = true;\n";
+          out << "                  }\n";
+          out << "                } else {\n";
+          out << "                  ulong __gpga_prev_zero = (~__gpga_prev_val) & (~__gpga_prev_xz) & __gpga_curr_mask;\n";
+          out << "                  ulong __gpga_prev_one = __gpga_prev_val & (~__gpga_prev_xz) & __gpga_curr_mask;\n";
+          out << "                  ulong __gpga_prev_unk = __gpga_prev_xz & __gpga_curr_mask;\n";
+          out << "                  ulong __gpga_curr_zero = (~__gpga_curr_val) & (~__gpga_curr_xz) & __gpga_curr_mask;\n";
+          out << "                  ulong __gpga_curr_one = __gpga_curr_val & (~__gpga_curr_xz) & __gpga_curr_mask;\n";
+          out << "                  ulong __gpga_curr_unk = __gpga_curr_xz & __gpga_curr_mask;\n";
+          out << "                  if (item_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
+          out << "                    ulong __gpga_edge_mask = (__gpga_prev_zero & (__gpga_curr_one | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_one);\n";
+          out << "                    if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
+          out << "                  } else if (item_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
+          out << "                    ulong __gpga_edge_mask = (__gpga_prev_one & (__gpga_curr_zero | __gpga_curr_unk)) | (__gpga_prev_unk & __gpga_curr_zero);\n";
+          out << "                    if (__gpga_edge_mask != 0ul) { __gpga_any = true; }\n";
+          out << "                  }\n";
+          out << "                }\n";
+          out << "                sched_edge_prev_val[__gpga_edge_base + j] = __gpga_curr_val;\n";
+          out << "                sched_edge_prev_xz[__gpga_edge_base + j] = __gpga_curr_xz;\n";
+          out << "              }\n";
+          out << "              ready = __gpga_any;\n";
           out << "            }\n";
+          out << "          }\n";
+          out << "          if (ready) {\n";
+          out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+          out << "            any_ready = true;\n";
+          out << "          }\n";
+          out << "          continue;\n";
+          out << "        }\n";
+        } else {
+          out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+          out << "          continue;\n";
+          out << "        }\n";
         }
-        out << "            default:\n";
-        out << "              ready = false;\n";
-        out << "              break;\n";
-        out << "          }\n";
-        out << "          if (ready) {\n";
-        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-        out << "            any_ready = true;\n";
-        out << "          }\n";
-        out << "          continue;\n";
-        out << "        }\n";
         out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_COND) {\n";
         out << "          bool ready = false;\n";
         out << "          switch (sched_wait_id[idx]) {\n";
@@ -18774,6 +21788,1904 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "    sched_status[gid] = GPGA_SCHED_STATUS_IDLE;\n";
         out << "  }\n";
         out << "}\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          emit_proc_group_helpers(group);
+        }
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_group_" << group << "(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr) {\n";
+          out << "  thread uint& steps = *steps_ptr;\n";
+          out << "  thread bool& did_work = *did_work_ptr;\n";
+          out << "  thread bool& finished = *finished_ptr;\n";
+          out << "  thread bool& stopped = *stopped_ptr;\n";
+          out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+          out << "  switch (pid) {\n";
+          emit_proc_group_cases(group);
+          out << "    default: {\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_cond_exprs = vm_tables.cond_exprs;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_eval_cond(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint cond_id,\n"
+                 "  thread uint* out_val,\n"
+                 "  thread uint* out_xz) {\n";
+          out << "  uint __gpga_cond_val = 0u;\n";
+          out << "  uint __gpga_cond_xz = 1u;\n";
+          out << "  bool __gpga_cond_known = false;\n";
+          emit_packed_signal_setup("sched.count");
+          out << "  if (cond_id < GPGA_SCHED_VM_COND_COUNT) {\n";
+          out << "    const GpgaSchedVmCondEntry __gpga_entry = "
+                 "sched_vm_cond_entry[cond_id];\n";
+          out << "    if (__gpga_entry.kind == GPGA_SCHED_VM_COND_KIND_CONST) {\n";
+          out << "      __gpga_cond_val = __gpga_entry.val;\n";
+          out << "      __gpga_cond_xz = __gpga_entry.xz;\n";
+          out << "      __gpga_cond_known = true;\n";
+          out << "    }\n";
+          out << "    if (!__gpga_cond_known && __gpga_entry.kind == "
+                 "GPGA_SCHED_VM_COND_KIND_EXPR) {\n";
+          out << "      uint __gpga_ip = __gpga_entry.expr_offset;\n";
+          out << "      uint __gpga_sp = 0u;\n";
+          out << "      bool __gpga_expr_ok = true;\n";
+          out << "      thread ulong __gpga_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "      thread ulong __gpga_xzs[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "      thread uint __gpga_widths[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "      while (__gpga_expr_ok) {\n";
+          out << "        uint __gpga_instr = sched_vm_expr[__gpga_ip++];\n";
+          out << "        uint __gpga_op = (__gpga_instr & 0xFFu);\n";
+          out << "        uint __gpga_arg = (__gpga_instr >> 8u);\n";
+          out << "        if (__gpga_op == GPGA_SCHED_VM_EXPR_OP_DONE) {\n";
+          out << "          if (__gpga_sp == 0u) {\n";
+          out << "            __gpga_expr_ok = false;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          uint __gpga_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "          ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "              ? ~0ul\n";
+          out << "              : ((__gpga_width == 0u)\n";
+          out << "                     ? 0ul\n";
+          out << "                     : ((1ul << __gpga_width) - 1ul));\n";
+          out << "          ulong __gpga_val = __gpga_vals[__gpga_sp - 1u] & __gpga_mask;\n";
+          out << "          ulong __gpga_xz = __gpga_xzs[__gpga_sp - 1u] & __gpga_mask;\n";
+          out << "          __gpga_cond_val = ((__gpga_xz == 0ul && __gpga_val != 0ul) ? 1u : 0u);\n";
+          out << "          __gpga_cond_xz = (__gpga_xz != 0ul) ? 1u : 0u;\n";
+          out << "          __gpga_cond_known = true;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        switch (__gpga_op) {\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_PUSH_CONST: {\n";
+          out << "            if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            uint __gpga_imm = __gpga_arg;\n";
+          out << "            ulong __gpga_val =\n";
+          out << "                (ulong)(sched_vm_expr_imm[__gpga_imm]) |\n";
+          out << "                ((ulong)(sched_vm_expr_imm[__gpga_imm + 1u]) << 32u);\n";
+          out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "                ? ~0ul\n";
+          out << "                : ((__gpga_width == 0u)\n";
+          out << "                       ? 0ul\n";
+          out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+          out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+          out << "            __gpga_xzs[__gpga_sp] = 0ul;\n";
+          out << "            __gpga_widths[__gpga_sp] = __gpga_width;\n";
+          out << "            __gpga_sp += 1u;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_PUSH_SIGNAL: {\n";
+          out << "            if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "                sched_vm_signal_entry[__gpga_arg];\n";
+          out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "                __gpga_sig.array_size != 1u) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "            ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "            ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "                __gpga_base * __gpga_stride;\n";
+          out << "            ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "                __gpga_base * __gpga_stride;\n";
+          out << "            ulong __gpga_val = 0ul;\n";
+          out << "            ulong __gpga_xz = 0ul;\n";
+          out << "            if (__gpga_width > 32u) {\n";
+          out << "              __gpga_val = ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "              __gpga_xz = ((device const ulong*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "            } else {\n";
+          out << "              __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "              __gpga_xz = (ulong)((device const uint*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "            }\n";
+          out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "                ? ~0ul\n";
+          out << "                : ((__gpga_width == 0u)\n";
+          out << "                       ? 0ul\n";
+          out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+          out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+          out << "            __gpga_xzs[__gpga_sp] = __gpga_xz & __gpga_mask;\n";
+          out << "            __gpga_widths[__gpga_sp] = __gpga_width;\n";
+          out << "            __gpga_sp += 1u;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_UNARY: {\n";
+          out << "            if (__gpga_sp == 0u) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            uint __gpga_uop = __gpga_arg;\n";
+          out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "            uint __gpga_in_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "            FourState64 __gpga_in =\n";
+          out << "                fs_make64(__gpga_val, __gpga_xz, __gpga_in_width);\n";
+          out << "            FourState64 __gpga_out = __gpga_in;\n";
+          out << "            if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+          out << "              __gpga_out = fs_log_not64(__gpga_in, __gpga_in_width);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+          out << "              __gpga_out = fs_not64(__gpga_in, __gpga_in_width);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+          out << "              FourState64 __gpga_zero = fs_make64(0ul, 0ul, __gpga_in_width);\n";
+          out << "              __gpga_out = fs_sub64(__gpga_zero, __gpga_in, __gpga_in_width);\n";
+          out << "            }\n";
+          out << "            __gpga_out = fs_resize64(__gpga_out, __gpga_width);\n";
+          out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_out.val;\n";
+          out << "            __gpga_xzs[__gpga_sp - 1u] = __gpga_out.xz;\n";
+          out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_BINARY: {\n";
+          out << "            if (__gpga_sp < 2u) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            uint __gpga_bop = (__gpga_arg & 0xFFu);\n";
+          out << "            bool __gpga_signed =\n";
+          out << "                ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+          out << "            ulong __gpga_rhs = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_lhs = __gpga_vals[__gpga_sp - 2u];\n";
+          out << "            ulong __gpga_rhs_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_lhs_xz = __gpga_xzs[__gpga_sp - 2u];\n";
+          out << "            uint __gpga_rhs_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "            uint __gpga_lhs_width = __gpga_widths[__gpga_sp - 2u];\n";
+          out << "            uint __gpga_eval_width =\n";
+          out << "                (__gpga_lhs_width > __gpga_rhs_width)\n";
+          out << "                    ? __gpga_lhs_width\n";
+          out << "                    : __gpga_rhs_width;\n";
+          out << "            FourState64 __gpga_lhs_fs =\n";
+          out << "                fs_make64(__gpga_lhs, __gpga_lhs_xz, __gpga_lhs_width);\n";
+          out << "            FourState64 __gpga_rhs_fs =\n";
+          out << "                fs_make64(__gpga_rhs, __gpga_rhs_xz, __gpga_rhs_width);\n";
+          out << "            FourState64 __gpga_out = fs_make64(0ul, 0ul, __gpga_width);\n";
+          out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+          out << "                __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+          out << "              __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "              __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "              __gpga_out = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+          out << "                  ? fs_log_and64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width)\n";
+          out << "                  : fs_log_or64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ) {\n";
+          out << "              __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "              __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "              __gpga_out = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ)\n";
+          out << "                  ? fs_eq64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width)\n";
+          out << "                  : fs_ne64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+          out << "              __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "              __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "              bool __gpga_eq = fs_case_eq64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "              bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+          out << "                  ? __gpga_eq\n";
+          out << "                  : !__gpga_eq;\n";
+          out << "              __gpga_out = fs_make64(__gpga_true ? 1ul : 0ul, 0ul, 1u);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+          out << "              if (__gpga_signed) {\n";
+          out << "                __gpga_lhs_fs = fs_sext64(__gpga_lhs_fs, __gpga_lhs_width, __gpga_eval_width);\n";
+          out << "                __gpga_rhs_fs = fs_sext64(__gpga_rhs_fs, __gpga_rhs_width, __gpga_eval_width);\n";
+          out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+          out << "                  __gpga_out = fs_slt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+          out << "                  __gpga_out = fs_sle64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+          out << "                  __gpga_out = fs_sgt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out = fs_sge64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                }\n";
+          out << "              } else {\n";
+          out << "                __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "                __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+          out << "                  __gpga_out = fs_lt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+          out << "                  __gpga_out = fs_le64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+          out << "                  __gpga_out = fs_gt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out = fs_ge64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "                }\n";
+          out << "              }\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+          out << "              __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_width);\n";
+          out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+          out << "                __gpga_out = fs_shl64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR || !__gpga_signed) {\n";
+          out << "                __gpga_out = fs_shr64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else {\n";
+          out << "                __gpga_out = fs_sar64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              }\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+          out << "              __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_width);\n";
+          out << "              __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_width);\n";
+          out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+          out << "                __gpga_out = fs_and64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+          out << "                __gpga_out = fs_or64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR) {\n";
+          out << "                __gpga_out = fs_xor64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else {\n";
+          out << "                __gpga_out = fs_not64(fs_xor64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width), __gpga_width);\n";
+          out << "              }\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+          out << "              if (__gpga_signed) {\n";
+          out << "                __gpga_lhs_fs = fs_sext64(__gpga_lhs_fs, __gpga_lhs_width, __gpga_width);\n";
+          out << "                __gpga_rhs_fs = fs_sext64(__gpga_rhs_fs, __gpga_rhs_width, __gpga_width);\n";
+          out << "              } else {\n";
+          out << "                __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_width);\n";
+          out << "                __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_width);\n";
+          out << "              }\n";
+          out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+          out << "                __gpga_out = fs_add64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+          out << "                __gpga_out = fs_sub64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+          out << "                __gpga_out = fs_mul64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+          out << "                __gpga_out = __gpga_signed\n";
+          out << "                    ? fs_sdiv64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width)\n";
+          out << "                    : fs_div64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              } else {\n";
+          out << "                __gpga_out = __gpga_signed\n";
+          out << "                    ? fs_smod64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width)\n";
+          out << "                    : fs_mod64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "              }\n";
+          out << "            } else {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "            }\n";
+          out << "            __gpga_out = fs_resize64(__gpga_out, __gpga_width);\n";
+          out << "            __gpga_vals[__gpga_sp - 2u] = __gpga_out.val;\n";
+          out << "            __gpga_xzs[__gpga_sp - 2u] = __gpga_out.xz;\n";
+          out << "            __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+          out << "            __gpga_sp -= 1u;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_TERNARY: {\n";
+          out << "            if (__gpga_sp < 3u) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            ulong __gpga_else_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_then_val = __gpga_vals[__gpga_sp - 2u];\n";
+          out << "            ulong __gpga_cond_val = __gpga_vals[__gpga_sp - 3u];\n";
+          out << "            ulong __gpga_else_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_then_xz = __gpga_xzs[__gpga_sp - 2u];\n";
+          out << "            ulong __gpga_cond_xz = __gpga_xzs[__gpga_sp - 3u];\n";
+          out << "            uint __gpga_else_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "            uint __gpga_then_width = __gpga_widths[__gpga_sp - 2u];\n";
+          out << "            uint __gpga_cond_width = __gpga_widths[__gpga_sp - 3u];\n";
+          out << "            FourState64 __gpga_cond_fs =\n";
+          out << "                fs_make64(__gpga_cond_val, __gpga_cond_xz, __gpga_cond_width);\n";
+          out << "            FourState64 __gpga_then_fs =\n";
+          out << "                fs_make64(__gpga_then_val, __gpga_then_xz, __gpga_then_width);\n";
+          out << "            FourState64 __gpga_else_fs =\n";
+          out << "                fs_make64(__gpga_else_val, __gpga_else_xz, __gpga_else_width);\n";
+          out << "            __gpga_then_fs = fs_resize64(__gpga_then_fs, __gpga_width);\n";
+          out << "            __gpga_else_fs = fs_resize64(__gpga_else_fs, __gpga_width);\n";
+          out << "            FourState64 __gpga_out =\n";
+          out << "                fs_mux64(__gpga_cond_fs, __gpga_then_fs, __gpga_else_fs, __gpga_width);\n";
+          out << "            __gpga_out = fs_resize64(__gpga_out, __gpga_width);\n";
+          out << "            __gpga_vals[__gpga_sp - 3u] = __gpga_out.val;\n";
+          out << "            __gpga_xzs[__gpga_sp - 3u] = __gpga_out.xz;\n";
+          out << "            __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+          out << "            __gpga_sp -= 2u;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          default: {\n";
+          out << "            __gpga_expr_ok = false;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "      }\n";
+          out << "      if (!__gpga_expr_ok) {\n";
+          out << "        __gpga_cond_known = false;\n";
+          out << "      }\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "  if (!__gpga_cond_known) {\n";
+          out << "    switch (cond_id) {\n";
+          for (size_t i = 0; i < vm_cond_exprs.size(); ++i) {
+            const Expr* expr = vm_cond_exprs[i];
+            if (!expr) {
+              continue;
+            }
+            int width = ExprWidth(*expr, module);
+            out << "    case " << i << "u: {\n";
+            FsExpr cond =
+                emit_expr4_cached_ex(*expr, width, 6, nullptr, true);
+            std::string known_expr = "true";
+            if (!cond.is_real) {
+              if (cond.width > 64) {
+                known_expr = "!" + wide_any(cond.xz, cond.width);
+              } else {
+                known_expr = "(" + cond.xz + " == " +
+                             literal_for_width(0, cond.width) + ")";
+              }
+            }
+            out << "      __gpga_cond_val = (" << cond_bool(cond)
+                << ") ? 1u : 0u;\n";
+            out << "      __gpga_cond_xz = (" << known_expr
+                << ") ? 0u : 1u;\n";
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      __gpga_cond_val = 0u;\n";
+          out << "      __gpga_cond_xz = 1u;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "  }\n";
+          out << "  if (out_val) {\n";
+          out << "    *out_val = __gpga_cond_val;\n";
+          out << "  }\n";
+          out << "  if (out_xz) {\n";
+          out << "    *out_xz = __gpga_cond_xz;\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_delay_exprs = vm_tables.delay_exprs;
+          out << "static __attribute__((noinline)) ulong gpga_"
+              << MslName(module.name) << "_sched_vm_eval_delay(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint delay_id) {\n";
+          out << "  ulong __gpga_delay = 0ul;\n";
+          emit_packed_signal_setup("sched.count");
+          out << "  switch (delay_id) {\n";
+          for (size_t i = 0; i < vm_delay_exprs.size(); ++i) {
+            const Expr* expr = vm_delay_exprs[i];
+            if (!expr) {
+              continue;
+            }
+            out << "    case " << i << "u: {\n";
+            out << "      __gpga_delay = " << emit_delay_value4(*expr) << ";\n";
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      __gpga_delay = 0ul;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "  return __gpga_delay;\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_case_stmts = vm_tables.case_stmts;
+          out << "static __attribute__((noinline)) uint gpga_"
+              << MslName(module.name) << "_sched_vm_eval_case(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint case_id) {\n";
+          out << "  uint __gpga_match = 0xFFFFFFFFu;\n";
+          emit_packed_signal_setup("sched.count");
+          out << "  switch (case_id) {\n";
+          ExprCache cache;
+          for (size_t i = 0; i < vm_case_stmts.size(); ++i) {
+            const Statement* stmt = vm_case_stmts[i];
+            out << "    case " << i << "u: {\n";
+            if (!stmt || !stmt->case_expr) {
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            int case_width = ExprWidth(*stmt->case_expr, module);
+            FsExpr case_expr = emit_expr4_cached_relaxed(
+                *stmt->case_expr, case_width, 6, &cache);
+            case_expr = hoist_full_for_use(case_expr, 6);
+            if (case_width > 0 && case_width <= 64) {
+              out << "      if (" << i
+                  << "u < GPGA_SCHED_VM_CASE_HEADER_COUNT) {\n";
+              out << "        const GpgaSchedVmCaseHeader __gpga_header = "
+                     "sched_vm_case_header["
+                  << i << "u];\n";
+              out << "        if (__gpga_header.entry_count > 0u && "
+                     "__gpga_header.width == "
+                  << case_width << "u) {\n";
+              out << "          ulong __gpga_case_val = (ulong)("
+                  << case_expr.val << ");\n";
+              out << "          ulong __gpga_case_xz = (ulong)("
+                  << case_expr.xz << ");\n";
+              out << "          const ulong __gpga_mask = "
+                  << std::to_string(MaskForWidth64(case_width)) << "ul;\n";
+              out << "          __gpga_case_val &= __gpga_mask;\n";
+              out << "          __gpga_case_xz &= __gpga_mask;\n";
+              out << "          for (uint __gpga_entry = 0u; "
+                     "__gpga_entry < __gpga_header.entry_count; "
+                     "++__gpga_entry) {\n";
+              out << "            const GpgaSchedVmCaseEntry __gpga_entry_rec "
+                     "= sched_vm_case_entry[__gpga_header.entry_offset + "
+                     "__gpga_entry];\n";
+              out << "            ulong __gpga_want = "
+                     "sched_vm_case_words[__gpga_entry_rec.want_offset];\n";
+              out << "            ulong __gpga_aux = "
+                     "sched_vm_case_words[__gpga_entry_rec.care_offset];\n";
+              out << "            bool __gpga_hit = false;\n";
+              out << "            if (__gpga_header.kind == "
+                     "GPGA_SCHED_VM_CASE_KIND_CASE) {\n";
+              out << "              ulong __gpga_diff = __gpga_case_xz ^ "
+                     "__gpga_aux;\n";
+              out << "              ulong __gpga_known = "
+                     "~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
+              out << "              ulong __gpga_val_diff = "
+                     "(__gpga_case_val ^ __gpga_want) & __gpga_known;\n";
+              out << "              __gpga_hit = "
+                     "((__gpga_diff | __gpga_val_diff) == 0ul);\n";
+              out << "            } else if (__gpga_header.kind == "
+                     "GPGA_SCHED_VM_CASE_KIND_CASEX) {\n";
+              out << "              ulong __gpga_cared = "
+                     "~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
+              out << "              ulong __gpga_val_diff = "
+                     "(__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
+              out << "              __gpga_hit = (__gpga_val_diff == 0ul);\n";
+              out << "            } else if (__gpga_header.kind == "
+                     "GPGA_SCHED_VM_CASE_KIND_CASEZ) {\n";
+              out << "              ulong __gpga_cared = (~__gpga_aux) & "
+                     "__gpga_mask;\n";
+              out << "              ulong __gpga_bad = __gpga_case_xz & "
+                     "__gpga_cared;\n";
+              out << "              ulong __gpga_val_diff = "
+                     "(__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
+              out << "              __gpga_hit = "
+                     "((__gpga_bad | __gpga_val_diff) == 0ul);\n";
+              out << "            }\n";
+              out << "            if (__gpga_hit) {\n";
+              out << "              __gpga_match = __gpga_entry_rec.target;\n";
+              out << "              break;\n";
+              out << "            }\n";
+              out << "          }\n";
+              out << "          break;\n";
+              out << "        }\n";
+              out << "      }\n";
+            }
+            std::unordered_map<int, FsExpr> case_width_cache;
+            for (size_t item_idx = 0; item_idx < stmt->case_items.size();
+                 ++item_idx) {
+              const auto& item = stmt->case_items[item_idx];
+              std::string cond;
+              for (const auto& label : item.labels) {
+                int label_width = ExprWidth(*label, module);
+                int width = std::max(case_expr.width, label_width);
+                FsExpr case_w;
+                auto cache_it = case_width_cache.find(width);
+                if (cache_it == case_width_cache.end()) {
+                  case_w = fs_resize_expr(case_expr, width);
+                  case_w = hoist_full_for_use(case_w, 6);
+                  case_width_cache.emplace(width, case_w);
+                } else {
+                  case_w = cache_it->second;
+                }
+                std::string piece = emit_case_cond4_prepared(
+                    stmt->case_kind, case_w, width, *label,
+                    stmt->case_expr.get());
+                if (!cond.empty()) {
+                  cond += " || ";
+                }
+                cond += piece;
+              }
+              if (cond.empty()) {
+                continue;
+              }
+              out << "      if (" << cond << ") {\n";
+              out << "        __gpga_match = " << item_idx << "u;\n";
+              out << "        break;\n";
+              out << "      }\n";
+            }
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "  return __gpga_match;\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_assigns = vm_tables.assign_stmts;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec_assign(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  uint assign_id,\n"
+                 "  bool nonblocking) {\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          out << "  switch (assign_id) {\n";
+          ExprCache cache;
+          for (size_t i = 0; i < vm_assigns.size(); ++i) {
+            const Statement* stmt = vm_assigns[i];
+            if (!stmt || stmt->kind != StatementKind::kAssign) {
+              continue;
+            }
+            SequentialAssign blocking = CloneSequentialAssign(stmt->assign);
+            blocking.nonblocking = false;
+            out << "    case " << i << "u: {\n";
+            if (stmt->assign.nonblocking) {
+              SequentialAssign nonblocking_assign =
+                  CloneSequentialAssign(stmt->assign);
+              nonblocking_assign.nonblocking = true;
+              out << "      if (nonblocking) {\n";
+              emit_inline_assign(nonblocking_assign, 6, sched_locals, &cache);
+              out << "      } else {\n";
+              emit_inline_assign(blocking, 6, sched_locals, &cache);
+              out << "      }\n";
+            } else {
+              out << "      if (nonblocking) {\n";
+              out << "        sched_error[gid] = 1u;\n";
+              out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      } else {\n";
+              emit_inline_assign(blocking, 6, sched_locals, &cache);
+              out << "      }\n";
+            }
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_force_stmts = vm_tables.force_stmts;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec_force(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  uint force_id) {\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          out << "  switch (force_id) {\n";
+          for (size_t i = 0; i < vm_force_stmts.size(); ++i) {
+            const Statement* stmt = vm_force_stmts[i];
+            out << "    case " << i << "u: {\n";
+            if (!stmt) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            if (stmt->assign.delay) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            const bool is_proc = stmt->is_procedural;
+            const std::string& target = stmt->force_target;
+            auto target_it = is_proc ? passign_target_index.find(target)
+                                     : force_target_index.find(target);
+            if (target_it == (is_proc ? passign_target_index.end()
+                                      : force_target_index.end())) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            auto id_it = is_proc ? passign_stmt_ids.find(stmt)
+                                 : force_stmt_ids.find(stmt);
+            if (id_it == (is_proc ? passign_stmt_ids.end()
+                                  : force_stmt_ids.end())) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            Lvalue4 lhs = build_lvalue4(stmt->assign, sched_locals, sched_regs,
+                                        false, 6);
+            if (!lhs.ok) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            if (override_is_reg[target]) {
+              out << "      if (!(" << override_active_expr(target) << ")) {\n";
+              out << "        " << shadow_val_name(target) << "[gid] = "
+                  << lhs.val << ";\n";
+              out << "        " << shadow_xz_name(target) << "[gid] = "
+                  << lhs.xz << ";\n";
+              out << "      }\n";
+            }
+            std::string slot =
+                is_proc ? passign_slot_expr(target) : force_slot_expr(target);
+            if (is_proc) {
+              out << "      sched_passign_id[" << slot << "] = "
+                  << id_it->second << "u;\n";
+              std::string force_active = force_active_expr(target);
+              if (force_active != "false") {
+                out << "      if (!" << force_active << ") {\n";
+                emit_force_value_assign(*stmt, lhs.val, lhs.xz, 8);
+                out << "      }\n";
+              } else {
+                emit_force_value_assign(*stmt, lhs.val, lhs.xz, 6);
+              }
+            } else {
+              out << "      sched_force_id[" << slot << "] = " << id_it->second
+                  << "u;\n";
+              emit_force_value_assign(*stmt, lhs.val, lhs.xz, 6);
+            }
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_release_stmts = vm_tables.release_stmts;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec_release(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  uint release_id) {\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          out << "  switch (release_id) {\n";
+          for (size_t i = 0; i < vm_release_stmts.size(); ++i) {
+            const Statement* stmt = vm_release_stmts[i];
+            out << "    case " << i << "u: {\n";
+            if (!stmt) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            const bool is_proc = stmt->is_procedural;
+            const std::string& target = stmt->release_target;
+            auto target_it = is_proc ? passign_target_index.find(target)
+                                     : force_target_index.find(target);
+            if (target_it == (is_proc ? passign_target_index.end()
+                                      : force_target_index.end())) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            std::string slot =
+                is_proc ? passign_slot_expr(target) : force_slot_expr(target);
+            if (is_proc) {
+              out << "      sched_passign_id[" << slot
+                  << "] = 0xFFFFFFFFu;\n";
+              if (override_is_reg[target]) {
+                std::string force_active = force_active_expr(target);
+                if (force_active != "false") {
+                  out << "      if (!" << force_active << ") {\n";
+                  out << "        " << val_name(target) << "[gid] = "
+                      << shadow_val_name(target) << "[gid];\n";
+                  out << "        " << xz_name(target) << "[gid] = "
+                      << shadow_xz_name(target) << "[gid];\n";
+                  out << "      }\n";
+                } else {
+                  out << "      " << val_name(target) << "[gid] = "
+                      << shadow_val_name(target) << "[gid];\n";
+                  out << "      " << xz_name(target) << "[gid] = "
+                      << shadow_xz_name(target) << "[gid];\n";
+                }
+              }
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            out << "      sched_force_id[" << slot << "] = 0xFFFFFFFFu;\n";
+            Lvalue4 lhs = build_lvalue4(stmt->assign, sched_locals, sched_regs,
+                                        false, 6);
+            if (!lhs.ok) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            if (passign_target_index.count(target) > 0) {
+              std::string passign_active = passign_active_expr(target);
+              out << "      if (" << passign_active << ") {\n";
+              emit_passign_apply_target(target, lhs, 8);
+              out << "      } else {\n";
+              if (override_is_reg[target]) {
+                out << "        " << val_name(target) << "[gid] = "
+                    << shadow_val_name(target) << "[gid];\n";
+                out << "        " << xz_name(target) << "[gid] = "
+                    << shadow_xz_name(target) << "[gid];\n";
+              }
+              out << "      }\n";
+            } else if (override_is_reg[target]) {
+              out << "      " << val_name(target) << "[gid] = "
+                  << shadow_val_name(target) << "[gid];\n";
+              out << "      " << xz_name(target) << "[gid] = "
+                  << shadow_xz_name(target) << "[gid];\n";
+            }
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        auto emit_syscall_record = [&](const Expr& call, int indent) -> void {
+          std::string pad(indent, ' ');
+          if (call.kind != ExprKind::kCall ||
+              !IsFileSystemFunctionName(call.ident)) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          const char* kind_expr = nullptr;
+          if (call.ident == "$fopen") {
+            kind_expr = "GPGA_SERVICE_KIND_FOPEN";
+          } else if (call.ident == "$fclose") {
+            kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+          } else if (call.ident == "$fgetc") {
+            kind_expr = "GPGA_SERVICE_KIND_FGETC";
+          } else if (call.ident == "$fgets") {
+            kind_expr = "GPGA_SERVICE_KIND_FGETS";
+          } else if (call.ident == "$feof") {
+            kind_expr = "GPGA_SERVICE_KIND_FEOF";
+          } else if (call.ident == "$ftell") {
+            kind_expr = "GPGA_SERVICE_KIND_FTELL";
+          } else if (call.ident == "$fseek") {
+            kind_expr = "GPGA_SERVICE_KIND_FSEEK";
+          } else if (call.ident == "$ferror") {
+            kind_expr = "GPGA_SERVICE_KIND_FERROR";
+          } else if (call.ident == "$ungetc") {
+            kind_expr = "GPGA_SERVICE_KIND_FUNGETC";
+          } else if (call.ident == "$fread") {
+            kind_expr = "GPGA_SERVICE_KIND_FREAD";
+          } else if (call.ident == "$fscanf") {
+            kind_expr = "GPGA_SERVICE_KIND_FSCANF";
+          } else if (call.ident == "$sscanf") {
+            kind_expr = "GPGA_SERVICE_KIND_SSCANF";
+          } else if (call.ident == "$test$plusargs") {
+            kind_expr = "GPGA_SERVICE_KIND_TESTPLUSARGS";
+          } else if (call.ident == "$value$plusargs") {
+            kind_expr = "GPGA_SERVICE_KIND_VALUEPLUSARGS";
+          }
+          if (!kind_expr) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          std::string format_id_expr;
+          std::vector<ServiceArg> args;
+          if (!build_syscall_args(call, call.ident, &format_id_expr, &args)) {
+            out << pad << "sched_error[gid] = 1u;\n";
+            out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            return;
+          }
+          emit_service_record(kind_expr, format_id_expr, args, indent);
+        };
+        if (options.sched_vm) {
+          const auto& vm_service_calls = vm_tables.service_calls;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec_service_call(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  uint service_id,\n"
+                 "  thread uint* steps_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr) {\n";
+          out << "  thread uint& steps = *steps_ptr;\n";
+          out << "  thread bool& finished = *finished_ptr;\n";
+          out << "  thread bool& stopped = *stopped_ptr;\n";
+          out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          out << "  switch (service_id) {\n";
+          for (size_t i = 0; i < vm_service_calls.size(); ++i) {
+            const auto& call = vm_service_calls[i];
+            out << "    case " << i << "u: {\n";
+            if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
+              if (!call.stmt) {
+                out << "      sched_error[gid] = 1u;\n";
+                out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "      break;\n";
+                out << "    }\n";
+                continue;
+              }
+              emit_system_task(*call.stmt, 6);
+            } else {
+              if (!call.call) {
+                out << "      sched_error[gid] = 1u;\n";
+                out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "      break;\n";
+                out << "    }\n";
+                continue;
+              }
+              emit_syscall_record(*call.call, 6);
+            }
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          const auto& vm_service_assigns = vm_tables.service_assign_stmts;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec_service_ret_assign(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  uint assign_id) {\n";
+          out << "  ulong __gpga_ret = sched_wait_time[idx];\n";
+          out << "  sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          out << "  switch (assign_id) {\n";
+          for (size_t i = 0; i < vm_service_assigns.size(); ++i) {
+            const Statement* stmt = vm_service_assigns[i];
+            out << "    case " << i << "u: {\n";
+            if (!stmt || stmt->kind != StatementKind::kAssign ||
+                !stmt->assign.rhs) {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "      break;\n";
+              out << "    }\n";
+              continue;
+            }
+            int width = SignalWidth(module, stmt->assign.lhs);
+            if (width <= 0) {
+              width = ExprWidth(*stmt->assign.rhs, module);
+            }
+            if (width <= 0) {
+              width = 1;
+            }
+            std::string ret_val = "__gpga_ret";
+            std::string masked =
+                (width > 32)
+                    ? MaskForWidthExpr(ret_val, width)
+                    : MaskForWidthExpr("uint(" + ret_val + ")", width);
+            FsExpr result{masked, literal_for_width(0, width),
+                          drive_full(width), width};
+            emit_lvalue_assign(stmt->assign, result, 6, sched_locals);
+            out << "      break;\n";
+            out << "    }\n";
+          }
+          out << "    default: {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr) {\n";
+          out << "  thread uint& steps = *steps_ptr;\n";
+          out << "  thread bool& did_work = *did_work_ptr;\n";
+          out << "  thread bool& finished = *finished_ptr;\n";
+          out << "  thread bool& stopped = *stopped_ptr;\n";
+          out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+          emit_packed_signal_setup("sched.count");
+          emit_packed_nb_setup("sched.count");
+          emit_packed_force_setup("sched.count");
+          out << "  uint __gpga_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
+          out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
+          out << "  if (__gpga_bc_len == 0u) {\n";
+          out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+          out << "    switch (__gpga_group) {\n";
+          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+            out << "      case " << group << "u:\n";
+            out << "        gpga_" << MslName(module.name) << "_sched_group_"
+                << group << "(";
+            emit_sched_param_names();
+            out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+            out << "        break;\n";
+          }
+          out << "      default: {\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "    }\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  uint __gpga_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+          out << "  uint __gpga_ip = sched_vm_ip[__gpga_vm_idx];\n";
+          out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
+          out << "    __gpga_ip = 0u;\n";
+          out << "  }\n";
+          out << "  #pragma clang loop unroll(disable)\n";
+          out << "  for (; __gpga_ip < __gpga_bc_len;) {\n";
+          out << "    uint __gpga_instr = sched_vm_bytecode[__gpga_bc_base + __gpga_ip];\n";
+          out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
+          out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
+          out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
+          out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+          out << "      switch (__gpga_group) {\n";
+          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+            out << "        case " << group << "u:\n";
+            out << "          gpga_" << MslName(module.name) << "_sched_group_"
+                << group << "(";
+            emit_sched_param_names();
+            out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+            out << "          break;\n";
+          }
+          out << "        default: {\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "      }\n";
+          out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_NOOP) {\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_ASSIGN) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_ASSIGN_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+          emit_sched_param_names();
+          out << ", pid, idx, __gpga_arg, false);\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_ASSIGN_NB) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_ASSIGN_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+          emit_sched_param_names();
+          out << ", pid, idx, __gpga_arg, true);\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_ASSIGN_DELAY) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_DELAY_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          if (!has_delayed_assigns) {
+            out << "      sched_error[gid] = 1u;\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+            out << "      return;\n";
+          } else {
+          out << "      const uint __gpga_delay_pending = 0x80000000u;\n";
+          out << "      if ((sched_wait_id[idx] & __gpga_delay_pending) != 0u) {\n";
+          out << "        sched_wait_id[idx] = 0u;\n";
+          out << "        uint __gpga_delay_slot = (gid * GPGA_SCHED_DELAY_COUNT) + __gpga_arg;\n";
+          out << "        ulong __gpga_dval = sched_delay_val[__gpga_delay_slot];\n";
+          out << "        ulong __gpga_dxz = sched_delay_xz[__gpga_delay_slot];\n";
+          out << "        uint __gpga_didx_val = sched_delay_index_val[__gpga_delay_slot];\n";
+          out << "        uint __gpga_didx_xz = sched_delay_index_xz[__gpga_delay_slot];\n";
+          emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_dxz",
+                                  "__gpga_didx_val", "__gpga_didx_xz", false, 8);
+          out << "        __gpga_ip = __gpga_next_ip;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      ulong __gpga_dval = 0ul;\n";
+          out << "      ulong __gpga_dxz = 0ul;\n";
+          out << "      uint __gpga_didx_val = 0u;\n";
+          out << "      uint __gpga_didx_xz = 0u;\n";
+          out << "      ulong __gpga_delay = 0ul;\n";
+          out << "      ulong __gpga_mask = 0ul;\n";
+          out << "      bool __gpga_nb = false;\n";
+          out << "      bool __gpga_inertial = false;\n";
+          out << "      bool __gpga_showcancelled = false;\n";
+          out << "      bool __gpga_has_pulse = false;\n";
+          out << "      bool __gpga_has_pulse_error = false;\n";
+          out << "      ulong __gpga_pulse_reject = 0ul;\n";
+          out << "      ulong __gpga_pulse_error = 0ul;\n";
+          out << "      bool __gpga_valid = true;\n";
+          out << "      switch (__gpga_arg) {\n";
+          for (size_t i = 0; i < delay_assigns.size(); ++i) {
+            const DelayAssignInfo& info = delay_assigns[i];
+            const Statement* stmt = info.stmt;
+            out << "      case " << i << "u: {\n";
+            if (!stmt || !stmt->assign.rhs || !info.delay_expr) {
+              out << "        __gpga_valid = false;\n";
+              out << "        break;\n";
+              out << "      }\n";
+              continue;
+            }
+            FsExpr rhs = info.lhs_real
+                             ? emit_real_expr4(*stmt->assign.rhs)
+                             : emit_expr4_sized_with_cse(
+                                   *stmt->assign.rhs, info.width, 8);
+            rhs = maybe_hoist_full(rhs, 8, false, true);
+            std::string mask =
+                literal_for_width(MaskForWidth64(info.width), 64);
+            out << "        __gpga_dval = ((ulong)(" << rhs.val << ")) & "
+                << mask << ";\n";
+            out << "        __gpga_dxz = ((ulong)(" << rhs.xz << ")) & "
+                << mask << ";\n";
+            out << "        __gpga_mask = " << mask << ";\n";
+            std::string idx_val = "0u";
+            std::string idx_xz = "0u";
+            if (info.is_array || info.is_bit_select ||
+                info.is_indexed_range) {
+              const Expr* idx_expr = nullptr;
+              if (info.is_indexed_range) {
+                idx_expr = stmt->assign.lhs_lsb_expr.get();
+              } else {
+                idx_expr = stmt->assign.lhs_index.get();
+              }
+              if (!idx_expr) {
+                out << "        __gpga_valid = false;\n";
+                out << "        break;\n";
+                out << "      }\n";
+                continue;
+              }
+              FsExpr idx = emit_expr4(*idx_expr);
+              idx = maybe_hoist_full(idx, 8, false, false);
+              if (idx.width > 64) {
+                idx_val = to_u64(idx.val, idx.width);
+                idx_xz = "(" + wide_any(idx.xz, idx.width) + " ? 1u : 0u)";
+              } else {
+                idx_val = idx.val;
+                idx_xz = idx.xz;
+              }
+            }
+            out << "        __gpga_didx_val = uint(" << idx_val << ");\n";
+            out << "        __gpga_didx_xz = uint(" << idx_xz << ");\n";
+            out << "        __gpga_delay = " << emit_delay_value4(*info.delay_expr)
+                << ";\n";
+            out << "        __gpga_nb = "
+                << (info.nonblocking ? "true" : "false") << ";\n";
+            out << "        __gpga_inertial = "
+                << (info.inertial ? "true" : "false") << ";\n";
+            out << "        __gpga_showcancelled = "
+                << (info.showcancelled ? "true" : "false") << ";\n";
+            out << "        __gpga_has_pulse = "
+                << (info.has_pulse ? "true" : "false") << ";\n";
+            out << "        __gpga_has_pulse_error = "
+                << (info.has_pulse_error ? "true" : "false") << ";\n";
+            if (info.has_pulse) {
+              std::string pulse_reject_expr =
+                  info.pulse_reject ? emit_delay_limit4(*info.pulse_reject)
+                                    : "0ul";
+              std::string pulse_error_expr = pulse_reject_expr;
+              if (info.has_pulse_error && info.pulse_error) {
+                pulse_error_expr = emit_delay_limit4(*info.pulse_error);
+              }
+              out << "        __gpga_pulse_reject = " << pulse_reject_expr
+                  << ";\n";
+              out << "        __gpga_pulse_error = " << pulse_error_expr
+                  << ";\n";
+            }
+            out << "        break;\n";
+            out << "      }\n";
+          }
+          out << "      default: {\n";
+          out << "        __gpga_valid = false;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      }\n";
+          out << "      if (!__gpga_valid) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          if (has_delayed_nba) {
+          out << "      if (__gpga_nb) {\n";
+          out << "        if (__gpga_delay == 0ul) {\n";
+          emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_dxz",
+                                  "__gpga_didx_val", "__gpga_didx_xz", true, 10);
+          out << "          __gpga_ip = __gpga_next_ip;\n";
+          out << "          continue;\n";
+          out << "        }\n";
+          out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
+          out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+          out << "        bool __gpga_pulse_suppress = false;\n";
+          out << "        bool __gpga_pulse_x = false;\n";
+          out << "        if (__gpga_inertial) {\n";
+          out << "          if (__gpga_dnba_count != 0u) {\n";
+            out << "            uint __gpga_dnba_write = 0u;\n";
+            out << "            for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+            out << "              uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
+            out << "              if (sched_dnba_id[__gpga_dnba_idx] == __gpga_arg &&\n";
+            out << "                  sched_dnba_index_val[__gpga_dnba_idx] == __gpga_didx_val &&\n";
+            out << "                  sched_dnba_index_xz[__gpga_dnba_idx] == __gpga_didx_xz) {\n";
+          out << "                if (__gpga_has_pulse) {\n";
+          out << "                  ulong __gpga_new_time = __gpga_time + __gpga_delay;\n";
+          out << "                  ulong __gpga_pulse_width = (__gpga_new_time >= sched_dnba_time[__gpga_dnba_idx])\n";
+          out << "                      ? (__gpga_new_time - sched_dnba_time[__gpga_dnba_idx])\n";
+          out << "                      : (sched_dnba_time[__gpga_dnba_idx] - __gpga_new_time);\n";
+          out << "                  if (__gpga_pulse_width < __gpga_pulse_reject) {\n";
+          out << "                    __gpga_pulse_suppress = true;\n";
+          out << "                  } else if (__gpga_pulse_width < __gpga_pulse_error) {\n";
+          out << "                    __gpga_pulse_x = true;\n";
+          out << "                  }\n";
+          out << "                }\n";
+          if (has_showcancelled) {
+            std::vector<ServiceArg> cancel_args;
+            cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                             "__gpga_arg", "0ul", false});
+            cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                             "sched_dnba_index_val[__gpga_dnba_idx]",
+                                             "0ul", false});
+            cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                             "sched_dnba_index_xz[__gpga_dnba_idx]",
+                                             "0ul", false});
+            cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 64,
+                                             "sched_dnba_time[__gpga_dnba_idx]",
+                                             "0ul", false});
+            out << "                if (__gpga_showcancelled) {\n";
+            emit_service_record("GPGA_SERVICE_KIND_SHOWCANCELLED",
+                                "GPGA_SERVICE_INVALID_ID", cancel_args, 18);
+            out << "                }\n";
+          }
+          out << "                continue;\n";
+          out << "              }\n";
+          out << "              uint __gpga_dnba_out = __gpga_dnba_base + __gpga_dnba_write;\n";
+          out << "              if (__gpga_dnba_out != __gpga_dnba_idx) {\n";
+          out << "                sched_dnba_time[__gpga_dnba_out] = sched_dnba_time[__gpga_dnba_idx];\n";
+          out << "                sched_dnba_id[__gpga_dnba_out] = sched_dnba_id[__gpga_dnba_idx];\n";
+          out << "                sched_dnba_val[__gpga_dnba_out] = sched_dnba_val[__gpga_dnba_idx];\n";
+          out << "                sched_dnba_xz[__gpga_dnba_out] = sched_dnba_xz[__gpga_dnba_idx];\n";
+          out << "                sched_dnba_index_val[__gpga_dnba_out] = sched_dnba_index_val[__gpga_dnba_idx];\n";
+          out << "                sched_dnba_index_xz[__gpga_dnba_out] = sched_dnba_index_xz[__gpga_dnba_idx];\n";
+          out << "              }\n";
+          out << "              __gpga_dnba_write += 1u;\n";
+          out << "            }\n";
+          out << "            __gpga_dnba_count = __gpga_dnba_write;\n";
+          out << "            sched_dnba_count[gid] = __gpga_dnba_write;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        if (__gpga_has_pulse) {\n";
+          out << "          if (__gpga_pulse_suppress) {\n";
+          out << "            __gpga_ip = __gpga_next_ip;\n";
+          out << "            continue;\n";
+          out << "          }\n";
+          out << "          if (__gpga_pulse_x) {\n";
+          out << "            __gpga_dval = 0ul;\n";
+          out << "            __gpga_dxz = __gpga_mask;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        if (__gpga_dnba_count >= GPGA_SCHED_MAX_DNBA) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "        } else {\n";
+          out << "          uint __gpga_dnba_slot = __gpga_dnba_base + __gpga_dnba_count;\n";
+          out << "          sched_dnba_count[gid] = __gpga_dnba_count + 1u;\n";
+          out << "          sched_dnba_time[__gpga_dnba_slot] = __gpga_time + __gpga_delay;\n";
+          out << "          sched_dnba_id[__gpga_dnba_slot] = __gpga_arg;\n";
+          out << "          sched_dnba_val[__gpga_dnba_slot] = __gpga_dval;\n";
+          out << "          sched_dnba_xz[__gpga_dnba_slot] = __gpga_dxz;\n";
+          out << "          sched_dnba_index_val[__gpga_dnba_slot] = __gpga_didx_val;\n";
+          out << "          sched_dnba_index_xz[__gpga_dnba_slot] = __gpga_didx_xz;\n";
+          out << "        }\n";
+          out << "        __gpga_ip = __gpga_next_ip;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          } else {
+          out << "      if (__gpga_nb) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          }
+          out << "      if (__gpga_delay == 0ul) {\n";
+          emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_dxz",
+                                  "__gpga_didx_val", "__gpga_didx_xz", false, 8);
+          out << "        __gpga_ip = __gpga_next_ip;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      uint __gpga_delay_slot = (gid * GPGA_SCHED_DELAY_COUNT) + __gpga_arg;\n";
+          out << "      sched_delay_val[__gpga_delay_slot] = __gpga_dval;\n";
+          out << "      sched_delay_xz[__gpga_delay_slot] = __gpga_dxz;\n";
+          out << "      sched_delay_index_val[__gpga_delay_slot] = __gpga_didx_val;\n";
+          out << "      sched_delay_index_xz[__gpga_delay_slot] = __gpga_didx_xz;\n";
+          out << "      sched_wait_kind[idx] = (__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : GPGA_SCHED_WAIT_TIME;\n";
+          out << "      sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
+          out << "      sched_wait_id[idx] = __gpga_delay_pending | (__gpga_arg & 0x7FFFFFFFu);\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          }
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_JUMP) {\n";
+          out << "      if (__gpga_arg >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_arg;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_FORCE) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_FORCE_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_force(";
+          emit_sched_param_names();
+          out << ", pid, idx, __gpga_arg);\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_RELEASE) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_RELEASE_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_release(";
+          emit_sched_param_names();
+          out << ", pid, idx, __gpga_arg);\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_SERVICE_CALL) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_SERVICE_CALL_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      gpga_" << MslName(module.name)
+              << "_sched_vm_exec_service_call(";
+          emit_sched_param_names();
+          out << ", pid, idx, __gpga_arg, &steps, &finished, &stopped, &__gpga_time);\n";
+          out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] =\n";
+          out << "            (sched_state[idx] == GPGA_SCHED_PROC_READY)\n";
+          out << "                ? __gpga_next_ip\n";
+          out << "                : 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_SERVICE) {\n";
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_SERVICE;\n";
+          out << "      sched_wait_time[idx] = 0ul;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_SERVICE_RET_ASSIGN) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      gpga_" << MslName(module.name)
+              << "_sched_vm_exec_service_ret_assign(";
+          emit_sched_param_names();
+          out << ", pid, idx, __gpga_arg);\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_SERVICE_RET_BRANCH) {\n";
+          out << "      if (__gpga_next_ip + 1u >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_true_ip = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "      uint __gpga_false_ip = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + 1u];\n";
+          out << "      if (__gpga_true_ip >= __gpga_bc_len || __gpga_false_ip >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      ulong __gpga_ret = sched_wait_time[idx];\n";
+          out << "      bool __gpga_cond = ((__gpga_ret & 1ul) != 0ul);\n";
+          out << "      if (__gpga_arg != 0u) {\n";
+          out << "        __gpga_cond = !__gpga_cond;\n";
+          out << "      }\n";
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "      __gpga_ip = __gpga_cond ? __gpga_true_ip : __gpga_false_ip;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_HALT_SIM) {\n";
+          out << "      if (__gpga_arg == 0u) {\n";
+          out << "        finished = true;\n";
+          out << "      } else if (__gpga_arg == 1u) {\n";
+          out << "        stopped = true;\n";
+          out << "      } else {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "      }\n";
+          out << "      steps = 0u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_JUMP_IF) {\n";
+          out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_target = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_COND_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_cond_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                 "          GPGA_SCHED_VM_COND_COUNT;\n";
+          out << "      uint __gpga_cond_val = 0u;\n";
+          out << "      uint __gpga_cond_xz = 1u;\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_vm_eval_cond(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg, &__gpga_cond_val, &__gpga_cond_xz);\n";
+          out << "      sched_vm_cond_val[__gpga_cond_base + __gpga_arg] = __gpga_cond_val;\n";
+          out << "      sched_vm_cond_xz[__gpga_cond_base + __gpga_arg] = __gpga_cond_xz;\n";
+          out << "      bool __gpga_take = (__gpga_cond_xz == 0u) && (__gpga_cond_val != 0u);\n";
+          out << "      if (__gpga_target >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_take ? __gpga_target : (__gpga_next_ip + 1u);\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CASE) {\n";
+          out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_case_count = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "      uint __gpga_target_base = __gpga_next_ip + 1u;\n";
+          out << "      uint __gpga_default_index = __gpga_target_base + __gpga_case_count;\n";
+          out << "      if (__gpga_default_index >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_CASE_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_match = gpga_" << MslName(module.name)
+              << "_sched_vm_eval_case(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg);\n";
+          out << "      uint __gpga_target_index = __gpga_default_index;\n";
+          out << "      if (__gpga_match != 0xFFFFFFFFu) {\n";
+          out << "        if (__gpga_match >= __gpga_case_count) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
+          out << "        __gpga_target_index = __gpga_target_base + __gpga_match;\n";
+          out << "      }\n";
+          out << "      uint __gpga_target = sched_vm_bytecode[__gpga_bc_base + __gpga_target_index];\n";
+          out << "      if (__gpga_target >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_target;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_REPEAT) {\n";
+          out << "      if (__gpga_next_ip + 1u >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_body = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "      uint __gpga_after = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + 1u];\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_REPEAT_COUNT ||\n";
+          out << "          __gpga_body >= __gpga_bc_len || __gpga_after >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          if (repeat_state_count == 0u) {
+            out << "      sched_error[gid] = 1u;\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+            out << "      return;\n";
+          } else {
+          out << "      uint __gpga_rep_slot = (gid * GPGA_SCHED_REPEAT_COUNT) + __gpga_arg;\n";
+          out << "      uint __gpga_rep_left = sched_repeat_left[__gpga_rep_slot];\n";
+          out << "      uint __gpga_rep_active = sched_repeat_active[__gpga_rep_slot];\n";
+          out << "      if (__gpga_rep_active == 0u) {\n";
+          out << "        uint __gpga_rep_count = 0u;\n";
+          out << "        bool __gpga_rep_valid = true;\n";
+          out << "        switch (__gpga_arg) {\n";
+          for (size_t i = 0; i < vm_tables.repeat_stmts.size(); ++i) {
+            const Statement* stmt = vm_tables.repeat_stmts[i];
+            if (!stmt || !stmt->repeat_count) {
+              continue;
+            }
+            out << "          case " << i << "u: {\n";
+            FsExpr rep_count = emit_expr4_sized(*stmt->repeat_count, 32);
+            rep_count = maybe_hoist_full(rep_count, 10, false, false);
+            out << "            __gpga_rep_count = uint(" << rep_count.val
+                << ");\n";
+            out << "            break;\n";
+            out << "          }\n";
+          }
+          out << "          default: {\n";
+          out << "            __gpga_rep_valid = false;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        if (!__gpga_rep_valid) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
+          out << "        sched_repeat_left[__gpga_rep_slot] = __gpga_rep_count;\n";
+          out << "        sched_repeat_active[__gpga_rep_slot] = 1u;\n";
+          out << "        __gpga_rep_left = __gpga_rep_count;\n";
+          out << "      }\n";
+          out << "      if (__gpga_rep_left == 0u) {\n";
+          out << "        sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+          out << "        __gpga_ip = __gpga_after;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      if (__gpga_body == __gpga_after) {\n";
+          out << "        sched_repeat_left[__gpga_rep_slot] = 0u;\n";
+          out << "        sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+          out << "        __gpga_ip = __gpga_after;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      sched_repeat_left[__gpga_rep_slot] = __gpga_rep_left - 1u;\n";
+          out << "      __gpga_ip = __gpga_body;\n";
+          out << "      continue;\n";
+          }
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_FORK) {\n";
+          out << "      uint __gpga_fork_count = (__gpga_arg & 0x00FFFFFFu);\n";
+          out << "      uint __gpga_join_kind = (__gpga_arg >> 24u) & 0xFFu;\n";
+          out << "      (void)__gpga_join_kind;\n";
+          out << "      if (__gpga_fork_count == 0u ||\n";
+          out << "          __gpga_next_ip + __gpga_fork_count >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_after_ip = __gpga_next_ip + __gpga_fork_count;\n";
+          out << "      uint __gpga_join_tag = 0u;\n";
+          out << "      #pragma clang loop unroll(disable)\n";
+          out << "      for (uint c = 0u; c < __gpga_fork_count; ++c) {\n";
+          out << "        uint __gpga_child = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + c];\n";
+          out << "        if (__gpga_child >= GPGA_SCHED_PROC_COUNT) {\n";
+            out << "          sched_error[gid] = 1u;\n";
+            out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+            out << "          return;\n";
+          out << "        }\n";
+          out << "        uint __gpga_cidx = gpga_sched_index(gid, __gpga_child);\n";
+          out << "        if (c == 0u) {\n";
+          out << "          __gpga_join_tag = sched_join_tag[__gpga_cidx];\n";
+          out << "        }\n";
+          out << "        sched_pc[__gpga_cidx] = 0u;\n";
+          out << "        uint __gpga_child_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + __gpga_child;\n";
+          out << "        sched_vm_ip[__gpga_child_vm_idx] = 0u;\n";
+          out << "        sched_pc[__gpga_child_vm_idx] = 0u;\n";
+          out << "        sched_vm_call_sp[__gpga_child_vm_idx] = 0u;\n";
+          out << "        sched_state[__gpga_cidx] = GPGA_SCHED_PROC_READY;\n";
+          out << "        sched_wait_kind[__gpga_cidx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "        sched_wait_id[__gpga_cidx] = 0u;\n";
+          out << "        sched_wait_event[__gpga_cidx] = 0u;\n";
+          out << "        sched_wait_time[__gpga_cidx] = 0ul;\n";
+          out << "        sched_join_count[__gpga_cidx] = 0u;\n";
+          out << "      }\n";
+          out << "      sched_join_count[idx] = __gpga_fork_count;\n";
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_JOIN;\n";
+          out << "      sched_wait_id[idx] = __gpga_join_tag;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_after_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_DISABLE) {\n";
+          out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      if (__gpga_arg == "
+              << static_cast<uint32_t>(SchedulerVmDisableKind::kBlock)
+              << "u) {\n";
+          out << "        uint __gpga_target = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "        if (__gpga_target >= __gpga_bc_len) {\n";
+            out << "          sched_error[gid] = 1u;\n";
+            out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+            out << "          return;\n";
+          out << "        }\n";
+          out << "        __gpga_ip = __gpga_target;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      if (__gpga_arg == "
+              << static_cast<uint32_t>(SchedulerVmDisableKind::kChildProc)
+              << "u) {\n";
+          out << "        uint __gpga_child = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "        if (__gpga_child >= GPGA_SCHED_PROC_COUNT) {\n";
+            out << "          sched_error[gid] = 1u;\n";
+            out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+            out << "          return;\n";
+          out << "        }\n";
+          out << "        uint __gpga_cidx = gpga_sched_index(gid, __gpga_child);\n";
+          out << "        if (sched_state[__gpga_cidx] != GPGA_SCHED_PROC_DONE) {\n";
+          out << "          sched_state[__gpga_cidx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_wait_kind[__gpga_cidx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "          uint __gpga_child_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + __gpga_child;\n";
+          out << "          sched_vm_ip[__gpga_child_vm_idx] = 0u;\n";
+          out << "          sched_pc[__gpga_child_vm_idx] = 0u;\n";
+          out << "          sched_vm_call_sp[__gpga_child_vm_idx] = 0u;\n";
+          out << "          uint parent = sched_parent[__gpga_cidx];\n";
+          out << "          if (parent != GPGA_SCHED_NO_PARENT) {\n";
+          out << "            uint pidx = gpga_sched_index(gid, parent);\n";
+          out << "            if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+          out << "                sched_wait_id[pidx] == sched_join_tag[__gpga_cidx]) {\n";
+          out << "              if (sched_join_count[pidx] > 0u) {\n";
+          out << "                sched_join_count[pidx] -= 1u;\n";
+          out << "              }\n";
+          out << "              if (sched_join_count[pidx] == 0u) {\n";
+          out << "                sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "                sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+          out << "              }\n";
+          out << "            }\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        __gpga_ip = __gpga_next_ip + 1u;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      if (__gpga_arg == "
+              << static_cast<uint32_t>(SchedulerVmDisableKind::kCrossProc)
+              << "u) {\n";
+          out << "        if (__gpga_next_ip + 1u >= __gpga_bc_len) {\n";
+            out << "          sched_error[gid] = 1u;\n";
+            out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
+          out << "        uint __gpga_target_pid = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "        uint __gpga_target_ip = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + 1u];\n";
+          out << "        if (__gpga_target_pid >= GPGA_SCHED_PROC_COUNT) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
+          out << "        uint __gpga_target_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + __gpga_target_pid;\n";
+          out << "        uint __gpga_target_len = sched_vm_proc_bytecode_length[__gpga_target_vm_idx];\n";
+          out << "        if (__gpga_target_ip >= __gpga_target_len) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
+          out << "        uint __gpga_tidx = gpga_sched_index(gid, __gpga_target_pid);\n";
+          out << "        sched_vm_ip[__gpga_target_vm_idx] = __gpga_target_ip;\n";
+          out << "        sched_pc[__gpga_target_vm_idx] = __gpga_target_ip;\n";
+          out << "        sched_wait_kind[__gpga_tidx] = GPGA_SCHED_WAIT_NONE;\n";
+          out << "        sched_state[__gpga_tidx] = GPGA_SCHED_PROC_READY;\n";
+          out << "        __gpga_ip = __gpga_next_ip + 2u;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_TIME) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_DELAY_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      ulong __gpga_delay = gpga_" << MslName(module.name)
+              << "_sched_vm_eval_delay(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg);\n";
+          out << "      sched_wait_kind[idx] = (__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : GPGA_SCHED_WAIT_TIME;\n";
+          out << "      sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_DELTA) {\n";
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_DELTA;\n";
+          out << "      sched_wait_time[idx] = __gpga_time;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_EVENT) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_EVENT_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_EVENT;\n";
+          out << "      sched_wait_event[idx] = __gpga_arg;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_EVENT_TRIGGER) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_EVENT_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          if (has_events) {
+          out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + __gpga_arg] = 1u;\n";
+          out << "      __gpga_ip = __gpga_next_ip;\n";
+          out << "      continue;\n";
+          } else {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "      return;\n";
+          }
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_EDGE) {\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_EDGE_WAIT_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          if (!has_edges && !has_edge_star) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "      return;\n";
+          } else {
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_EDGE;\n";
+          out << "      sched_wait_id[idx] = __gpga_arg;\n";
+          out << "      sched_wait_edge_kind[idx] = gpga_sched_edge_wait_kind[__gpga_arg];\n";
+          out << "      uint __gpga_item_offset = gpga_sched_edge_wait_item_offset[__gpga_arg];\n";
+          out << "      uint __gpga_item_count = gpga_sched_edge_wait_item_count[__gpga_arg];\n";
+          out << "      uint __gpga_star_offset = gpga_sched_edge_wait_star_offset[__gpga_arg];\n";
+          out << "      uint __gpga_star_count = gpga_sched_edge_wait_star_count[__gpga_arg];\n";
+          if (has_edges) {
+          out << "      if (__gpga_item_count > 0u) {\n";
+          out << "        uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + __gpga_item_offset;\n";
+          out << "        #pragma clang loop unroll(disable)\n";
+          out << "        for (uint j = 0u; j < __gpga_item_count; ++j) {\n";
+          out << "          uint __gpga_edge_index = __gpga_item_offset + j;\n";
+          out << "          ulong __gpga_curr_val = 0ul;\n";
+          out << "          ulong __gpga_curr_xz = 0ul;\n";
+          out << "          ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_item_switch4(10, "__gpga_edge_index");
+          out << "          sched_edge_prev_val[__gpga_edge_base + j] = __gpga_curr_val;\n";
+          out << "          sched_edge_prev_xz[__gpga_edge_base + j] = __gpga_curr_xz;\n";
+          out << "        }\n";
+          out << "      }\n";
+          }
+          if (has_edge_star) {
+          out << "      if (__gpga_star_count > 0u) {\n";
+          out << "        uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + __gpga_star_offset;\n";
+          out << "        #pragma clang loop unroll(disable)\n";
+          out << "        for (uint s = 0u; s < __gpga_star_count; ++s) {\n";
+          out << "          uint __gpga_star_index = __gpga_star_offset + s;\n";
+          out << "          ulong __gpga_curr_val = 0ul;\n";
+          out << "          ulong __gpga_curr_xz = 0ul;\n";
+          out << "          ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_star_switch4(10, "__gpga_star_index");
+          out << "          sched_edge_star_prev_val[__gpga_edge_star_base + s] = __gpga_curr_val;\n";
+          out << "          sched_edge_star_prev_xz[__gpga_edge_star_base + s] = __gpga_curr_xz;\n";
+          out << "        }\n";
+          out << "      }\n";
+          }
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          }
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_COND) {\n";
+          out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_wait_id = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+          out << "      if (__gpga_arg >= GPGA_SCHED_VM_COND_COUNT) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_cond_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                 "          GPGA_SCHED_VM_COND_COUNT;\n";
+          out << "      uint __gpga_cond_val = 0u;\n";
+          out << "      uint __gpga_cond_xz = 1u;\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_vm_eval_cond(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg, &__gpga_cond_val, &__gpga_cond_xz);\n";
+          out << "      sched_vm_cond_val[__gpga_cond_base + __gpga_arg] = __gpga_cond_val;\n";
+          out << "      sched_vm_cond_xz[__gpga_cond_base + __gpga_arg] = __gpga_cond_xz;\n";
+          out << "      bool __gpga_take = (__gpga_cond_xz == 0u) && (__gpga_cond_val != 0u);\n";
+          out << "      if (__gpga_take) {\n";
+          out << "        __gpga_ip = __gpga_next_ip + 1u;\n";
+          out << "        continue;\n";
+          out << "      }\n";
+          out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_COND;\n";
+          out << "      sched_wait_id[idx] = __gpga_wait_id;\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip + 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_TASK_CALL) {\n";
+          out << "      uint __gpga_sp = sched_vm_call_sp[__gpga_vm_idx];\n";
+          out << "      if (__gpga_sp >= GPGA_SCHED_VM_CALL_FRAME_DEPTH) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      uint __gpga_frame_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                 "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
+          out << "      uint __gpga_frame_offset = __gpga_frame_base +\n"
+                 "          (__gpga_sp * GPGA_SCHED_VM_CALL_FRAME_WORDS);\n";
+          out << "      sched_vm_call_frame[__gpga_frame_offset] = __gpga_next_ip;\n";
+          out << "      sched_vm_call_sp[__gpga_vm_idx] = __gpga_sp + 1u;\n";
+          out << "      if (__gpga_arg >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_arg;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_RET) {\n";
+          out << "      uint __gpga_sp = sched_vm_call_sp[__gpga_vm_idx];\n";
+          out << "      if (__gpga_sp == 0u) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_sp -= 1u;\n";
+          out << "      uint __gpga_frame_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                 "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
+          out << "      uint __gpga_frame_offset = __gpga_frame_base +\n"
+                 "          (__gpga_sp * GPGA_SCHED_VM_CALL_FRAME_WORDS);\n";
+          out << "      uint __gpga_ret_pc = sched_vm_call_frame[__gpga_frame_offset];\n";
+          out << "      sched_vm_call_sp[__gpga_vm_idx] = __gpga_sp;\n";
+          out << "      if (__gpga_ret_pc >= __gpga_bc_len) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
+          out << "      __gpga_ip = __gpga_ret_pc;\n";
+          out << "      continue;\n";
+          out << "    }\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_DONE) {\n";
+          out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "      return;\n";
+          out << "    }\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "}\n";
+        }
       }
     }
     return out.str();
@@ -21726,8 +26638,67 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       for_each_proc_stmt(
           [&](const Statement& stmt) { collect_edge_waits(stmt); });
 
+      std::vector<const Expr*> edge_item_exprs;
+      std::vector<EventEdgeKind> edge_item_kinds;
+      std::vector<std::string> edge_star_signals;
+      std::vector<uint32_t> edge_wait_item_offset;
+      std::vector<uint32_t> edge_wait_item_count;
+      std::vector<uint32_t> edge_wait_star_offset;
+      std::vector<uint32_t> edge_wait_star_count;
+      std::vector<const char*> edge_wait_kinds;
+      edge_item_exprs.reserve(edge_item_count);
+      edge_item_kinds.reserve(edge_item_count);
+      edge_star_signals.reserve(edge_star_count);
+      edge_wait_item_offset.reserve(edge_waits.size());
+      edge_wait_item_count.reserve(edge_waits.size());
+      edge_wait_star_offset.reserve(edge_waits.size());
+      edge_wait_star_count.reserve(edge_waits.size());
+      edge_wait_kinds.reserve(edge_waits.size());
+      for (const auto& info : edge_waits) {
+        const char* wait_kind = "GPGA_SCHED_EDGE_ANY";
+        uint32_t item_count = 0u;
+        if (!info.items.empty()) {
+          item_count = static_cast<uint32_t>(info.items.size());
+          wait_kind = "GPGA_SCHED_EDGE_LIST";
+          for (const auto& item : info.items) {
+            edge_item_exprs.push_back(item.expr);
+            edge_item_kinds.push_back(item.edge);
+          }
+        } else if (info.expr) {
+          item_count = 1u;
+          switch (info.stmt ? info.stmt->event_edge : EventEdgeKind::kAny) {
+            case EventEdgeKind::kPosedge:
+              wait_kind = "GPGA_SCHED_EDGE_POSEDGE";
+              break;
+            case EventEdgeKind::kNegedge:
+              wait_kind = "GPGA_SCHED_EDGE_NEGEDGE";
+              break;
+            case EventEdgeKind::kAny:
+            default:
+              wait_kind = "GPGA_SCHED_EDGE_ANY";
+              break;
+          }
+          edge_item_exprs.push_back(info.expr);
+          edge_item_kinds.push_back(EventEdgeKind::kAny);
+        } else {
+          wait_kind = "GPGA_SCHED_EDGE_ANY";
+          for (const auto& name : info.star_signals) {
+            edge_star_signals.push_back(name);
+          }
+        }
+        edge_wait_kinds.push_back(wait_kind);
+        edge_wait_item_offset.push_back(
+            static_cast<uint32_t>(info.item_offset));
+        edge_wait_item_count.push_back(item_count);
+        edge_wait_star_offset.push_back(
+            static_cast<uint32_t>(info.star_offset));
+        edge_wait_star_count.push_back(
+            static_cast<uint32_t>(info.star_signals.size()));
+      }
+
       struct DelayAssignInfo {
         const Statement* stmt = nullptr;
+        const Expr* delay_expr = nullptr;
         std::string lhs;
         bool nonblocking = false;
         bool inertial = false;
@@ -21756,6 +26727,7 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
           DelayAssignInfo info;
           info.stmt = &stmt;
+          info.delay_expr = stmt.assign.delay.get();
           info.lhs = stmt.assign.lhs;
           info.nonblocking = stmt.assign.nonblocking;
         auto show_it = specify_delay_showcancelled.find(&stmt);
@@ -22082,6 +27054,11 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       };
       for_each_proc_stmt(
           [&](const Statement& stmt) { collect_nb_targets(stmt); });
+      for (const auto& task : module.tasks) {
+        for (const auto& inner : task.body) {
+          collect_nb_targets(inner);
+        }
+      }
 
       std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
                                                  nb_targets.end());
@@ -22152,6 +27129,114 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       std::vector<std::string> sched_reg_names(sched_reg_set.begin(),
                                                sched_reg_set.end());
       std::sort(sched_reg_names.begin(), sched_reg_names.end());
+
+      SchedulerVmTables vm_tables;
+      uint32_t vm_cond_count = 0u;
+      uint32_t vm_assign_count = 0u;
+      uint32_t vm_delay_count = 0u;
+      uint32_t vm_case_count = 0u;
+      uint32_t vm_case_header_count = 0u;
+      uint32_t vm_case_entry_count = 0u;
+      uint32_t vm_case_word_count = 0u;
+      uint32_t vm_force_count = 0u;
+      uint32_t vm_release_count = 0u;
+      uint32_t vm_service_call_count = 0u;
+      uint32_t vm_service_assign_count = 0u;
+      uint32_t vm_words_per_proc = kSchedulerVmWordsPerProc;
+      uint32_t vm_expr_word_count = 0u;
+      uint32_t vm_expr_imm_word_count = 0u;
+      uint32_t vm_signal_count = 0u;
+      if (options.sched_vm) {
+        for_each_proc_stmt(
+            [&](const Statement& stmt) { CollectSchedulerVmTables(stmt, &vm_tables); });
+        vm_cond_count = static_cast<uint32_t>(vm_tables.cond_exprs.size());
+        if (vm_cond_count == 0u) {
+          vm_cond_count = 1u;
+        }
+        vm_assign_count =
+            static_cast<uint32_t>(vm_tables.assign_stmts.size());
+        vm_delay_count =
+            static_cast<uint32_t>(vm_tables.delay_exprs.size());
+        vm_case_count =
+            static_cast<uint32_t>(vm_tables.case_stmts.size());
+        vm_force_count =
+            static_cast<uint32_t>(vm_tables.force_stmts.size());
+        vm_release_count =
+            static_cast<uint32_t>(vm_tables.release_stmts.size());
+        vm_service_call_count =
+            static_cast<uint32_t>(vm_tables.service_calls.size());
+        vm_service_assign_count =
+            static_cast<uint32_t>(vm_tables.service_assign_stmts.size());
+        SchedulerVmLayout vm_layout;
+        if (BuildSchedulerVmLayoutFromModule(
+                module, &vm_layout, nullptr, options.four_state)) {
+          vm_words_per_proc = vm_layout.words_per_proc;
+          vm_case_header_count =
+              static_cast<uint32_t>(vm_layout.case_headers.size());
+          vm_case_entry_count =
+              static_cast<uint32_t>(vm_layout.case_entries.size());
+          vm_case_word_count =
+              static_cast<uint32_t>(vm_layout.case_words.size());
+        vm_expr_word_count =
+            static_cast<uint32_t>(vm_layout.expr_table.words.size());
+        vm_expr_imm_word_count =
+            static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
+        vm_signal_count =
+            static_cast<uint32_t>(vm_layout.signal_entries.size());
+      }
+      } else {
+        vm_cond_count = 0u;
+        vm_assign_count = 0u;
+        vm_delay_count = 0u;
+        vm_case_count = 0u;
+        vm_case_header_count = 0u;
+        vm_case_entry_count = 0u;
+        vm_case_word_count = 0u;
+        vm_force_count = 0u;
+        vm_release_count = 0u;
+        vm_service_call_count = 0u;
+        vm_service_assign_count = 0u;
+        vm_words_per_proc = kSchedulerVmWordsPerProc;
+        vm_expr_word_count = 0u;
+        vm_expr_imm_word_count = 0u;
+        vm_signal_count = 0u;
+      }
+      if (options.sched_vm) {
+        for (const auto* stmt : vm_tables.assign_stmts) {
+          if (!stmt || !stmt->assign.nonblocking) {
+            continue;
+          }
+          if (stmt->assign.lhs_index || !stmt->assign.lhs_indices.empty()) {
+            nb_array_targets.insert(stmt->assign.lhs);
+          } else {
+            nb_targets.insert(stmt->assign.lhs);
+          }
+        }
+        nb_targets_sorted.assign(nb_targets.begin(), nb_targets.end());
+        std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+        packed_nb_signals.clear();
+        if (pack_nb && !nb_targets_sorted.empty()) {
+          packed_nb_signals.reserve(nb_targets_sorted.size());
+          for (const auto& target : nb_targets_sorted) {
+            PackedSignal sig;
+            sig.name = "nb_" + MslName(target);
+            sig.type = TypeForWidth(SignalWidth(module, target));
+            sig.array_size = 1;
+            packed_nb_signals.push_back(std::move(sig));
+          }
+        }
+        nb_array_nets.clear();
+        for (const auto& net : module.nets) {
+          if (net.array_size <= 0) {
+            continue;
+          }
+          if (nb_array_targets.count(net.name) > 0) {
+            nb_array_nets.push_back(&net);
+          }
+        }
+        std::sort(nb_array_nets.begin(), nb_array_nets.end(),
+                  [](const Net* a, const Net* b) { return a->name < b->name; });
+      }
 
       std::unordered_map<const Statement*, uint32_t> monitor_pid;
       std::unordered_map<const Statement*, uint32_t> strobe_pid;
@@ -22288,6 +27373,24 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
               : 0u;
       const uint32_t timing_check_count =
           static_cast<uint32_t>(module.timing_checks.size());
+      const uint32_t sched_proc_group_size = 8u;
+      const uint32_t sched_proc_group_count =
+          (static_cast<uint32_t>(procs.size()) + sched_proc_group_size - 1u) /
+          sched_proc_group_size;
+      if (!options.sched_vm) {
+        vm_cond_count = 0u;
+        vm_assign_count = 0u;
+        vm_delay_count = 0u;
+        vm_case_count = 0u;
+        vm_case_header_count = 0u;
+        vm_case_entry_count = 0u;
+        vm_case_word_count = 0u;
+        vm_force_count = 0u;
+        vm_release_count = 0u;
+        vm_expr_word_count = 0u;
+        vm_expr_imm_word_count = 0u;
+        vm_signal_count = 0u;
+      }
       out << "GPGA_SCHED_DEFINE_CONSTANTS(" << procs.size() << "u, "
           << root_proc_count << "u, " << module.events.size() << "u, "
           << edge_item_count << "u, " << edge_star_count << "u, "
@@ -22300,6 +27403,191 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           << passign_target_list.size() << "u)\n";
       out << "constant constexpr uint GPGA_SCHED_TIMING_CHECK_COUNT = "
           << timing_check_count << "u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PROC_GROUP_SIZE = "
+          << sched_proc_group_size << "u;\n";
+      out << "constant constexpr uint GPGA_SCHED_PROC_GROUP_COUNT = "
+          << sched_proc_group_count << "u;\n";
+      if (options.sched_vm) {
+        out << "constant constexpr uint GPGA_SCHED_VM_ENABLED = 1u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_WORDS_PER_PROC = "
+            << vm_words_per_proc << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_BYTECODE_WORDS = "
+               "GPGA_SCHED_PROC_COUNT * GPGA_SCHED_VM_WORDS_PER_PROC;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_COND_COUNT = "
+            << vm_cond_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_ASSIGN_COUNT = "
+            << vm_assign_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_DELAY_COUNT = "
+            << vm_delay_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_COUNT = "
+            << vm_case_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_HEADER_COUNT = "
+            << vm_case_header_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_ENTRY_COUNT = "
+            << vm_case_entry_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_WORD_COUNT = "
+            << vm_case_word_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_FORCE_COUNT = "
+            << vm_force_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_RELEASE_COUNT = "
+            << vm_release_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_CALL_COUNT = "
+            << vm_service_call_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT = "
+            << vm_service_assign_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WORD_COUNT = "
+            << vm_expr_word_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT = "
+            << vm_expr_imm_word_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_SIGNAL_COUNT = "
+            << vm_signal_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CALL_FRAME_WORDS = "
+            << kSchedulerVmCallFrameWords << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CALL_FRAME_DEPTH = "
+            << kSchedulerVmCallFrameDepth << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_COND_KIND_DYNAMIC = "
+            << static_cast<uint32_t>(SchedulerVmCondKind::kDynamic) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_COND_KIND_CONST = "
+            << static_cast<uint32_t>(SchedulerVmCondKind::kConst) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_COND_KIND_EXPR = "
+            << static_cast<uint32_t>(SchedulerVmCondKind::kExpr) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_STACK_MAX = "
+            << kSchedulerVmExprStackMax << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_ARG_SIGNED = "
+            << kSchedulerVmExprSignedFlag << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_DONE = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kDone) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_PUSH_CONST = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kPushConst) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_PUSH_SIGNAL = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kPushSignal) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_UNARY = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kUnary) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_BINARY = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kBinary) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_TERNARY = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kTernary) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_PLUS = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kPlus) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_MINUS = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kMinus) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kBitNot) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kLogNot) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_ADD = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAdd) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SUB = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kSub) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_MUL = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kMul) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_DIV = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kDiv) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_MOD = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kMod) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SHL = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kShl) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SHR = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kShr) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_ASHR = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAshr) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_AND = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAnd) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_OR = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kOr) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_XOR = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kXor) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_XNOR = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kXnor) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LOG_AND = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLogAnd) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LOG_OR = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLogOr) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_EQ = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kEq) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_NEQ = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kNeq) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kCaseEq) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kCaseNeq) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LT = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLt) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_LE = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kLe) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_GT = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kGt) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_GE = "
+            << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kGe) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_SIGNAL_FLAG_REAL = "
+            << kSchedulerVmSignalFlagReal << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_KIND_CASE = "
+            << static_cast<uint32_t>(SchedulerVmCaseKind::kCase) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_KIND_CASEX = "
+            << static_cast<uint32_t>(SchedulerVmCaseKind::kCaseX) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_CASE_KIND_CASEZ = "
+            << static_cast<uint32_t>(SchedulerVmCaseKind::kCaseZ) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_DONE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kDone) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_CALL_GROUP = "
+            << static_cast<uint32_t>(SchedulerVmOp::kCallGroup) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_NOOP = "
+            << static_cast<uint32_t>(SchedulerVmOp::kNoop) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_JUMP = "
+            << static_cast<uint32_t>(SchedulerVmOp::kJump) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_JUMP_IF = "
+            << static_cast<uint32_t>(SchedulerVmOp::kJumpIf) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_CASE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kCase) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_REPEAT = "
+            << static_cast<uint32_t>(SchedulerVmOp::kRepeat) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_ASSIGN = "
+            << static_cast<uint32_t>(SchedulerVmOp::kAssign) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_ASSIGN_NB = "
+            << static_cast<uint32_t>(SchedulerVmOp::kAssignNb) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_ASSIGN_DELAY = "
+            << static_cast<uint32_t>(SchedulerVmOp::kAssignDelay) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_FORCE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kForce) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_RELEASE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kRelease) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_TIME = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitTime) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_DELTA = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitDelta) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_EVENT = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitEvent) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_EDGE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitEdge) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_COND = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitCond) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_JOIN = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitJoin) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_WAIT_SERVICE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kWaitService) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_EVENT_TRIGGER = "
+            << static_cast<uint32_t>(SchedulerVmOp::kEventTrigger) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_FORK = "
+            << static_cast<uint32_t>(SchedulerVmOp::kFork) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_DISABLE = "
+            << static_cast<uint32_t>(SchedulerVmOp::kDisable) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_SERVICE_CALL = "
+            << static_cast<uint32_t>(SchedulerVmOp::kServiceCall) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_SERVICE_RET_ASSIGN = "
+            << static_cast<uint32_t>(SchedulerVmOp::kServiceRetAssign) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_SERVICE_RET_BRANCH = "
+            << static_cast<uint32_t>(SchedulerVmOp::kServiceRetBranch) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_TASK_CALL = "
+            << static_cast<uint32_t>(SchedulerVmOp::kTaskCall) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_RET = "
+            << static_cast<uint32_t>(SchedulerVmOp::kRet) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_HALT_SIM = "
+            << static_cast<uint32_t>(SchedulerVmOp::kHaltSim) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_MASK = "
+            << kSchedulerVmOpMask << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_OP_SHIFT = "
+            << kSchedulerVmOpShift << "u;\n";
+      }
       if (has_services) {
         if (service_wide_words_local > 0u) {
           out << "struct GpgaServiceRecord {\n";
@@ -22348,178 +27636,454 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << tag << "u";
       }
       out << ")\n";
+      if (options.sched_vm) {
+        out << "struct GpgaSchedVmArgs {\n";
+        out << "  device const uint* sched_vm_bytecode [[id(0)]];\n";
+        out << "  device const uint* sched_vm_proc_bytecode_offset [[id(1)]];\n";
+        out << "  device const uint* sched_vm_proc_bytecode_length [[id(2)]];\n";
+        out << "  device uint* sched_vm_cond_val [[id(3)]];\n";
+        out << "  device uint* sched_vm_cond_xz [[id(4)]];\n";
+        out << "  device const GpgaSchedVmCondEntry* sched_vm_cond_entry [[id(5)]];\n";
+        out << "  device const GpgaSchedVmSignalEntry* sched_vm_signal_entry [[id(6)]];\n";
+        out << "  device uint* sched_vm_ip [[id(7)]];\n";
+        out << "  device uint* sched_vm_call_sp [[id(8)]];\n";
+        out << "  device uint* sched_vm_call_frame [[id(9)]];\n";
+        out << "  device const GpgaSchedVmCaseHeader* sched_vm_case_header [[id(10)]];\n";
+        out << "  device const GpgaSchedVmCaseEntry* sched_vm_case_entry [[id(11)]];\n";
+        out << "  device const ulong* sched_vm_case_words [[id(12)]];\n";
+        out << "  device const uint* sched_vm_expr [[id(13)]];\n";
+        out << "  device const uint* sched_vm_expr_imm [[id(14)]];\n";
+        out << "};\n";
+        out << "#define sched_vm_bytecode (sched_vm_args.sched_vm_bytecode)\n";
+        out << "#define sched_vm_proc_bytecode_offset (sched_vm_args.sched_vm_proc_bytecode_offset)\n";
+        out << "#define sched_vm_proc_bytecode_length (sched_vm_args.sched_vm_proc_bytecode_length)\n";
+        out << "#define sched_vm_cond_val (sched_vm_args.sched_vm_cond_val)\n";
+        out << "#define sched_vm_cond_xz (sched_vm_args.sched_vm_cond_xz)\n";
+        out << "#define sched_vm_cond_entry (sched_vm_args.sched_vm_cond_entry)\n";
+        out << "#define sched_vm_signal_entry (sched_vm_args.sched_vm_signal_entry)\n";
+        out << "#define sched_vm_ip (sched_vm_args.sched_vm_ip)\n";
+        out << "#define sched_vm_call_sp (sched_vm_args.sched_vm_call_sp)\n";
+        out << "#define sched_vm_call_frame (sched_vm_args.sched_vm_call_frame)\n";
+        out << "#define sched_vm_case_header (sched_vm_args.sched_vm_case_header)\n";
+        out << "#define sched_vm_case_entry (sched_vm_args.sched_vm_case_entry)\n";
+        out << "#define sched_vm_case_words (sched_vm_args.sched_vm_case_words)\n";
+        out << "#define sched_vm_expr (sched_vm_args.sched_vm_expr)\n";
+        out << "#define sched_vm_expr_imm (sched_vm_args.sched_vm_expr_imm)\n";
+      }
+      const uint32_t edge_wait_table_size =
+          edge_waits.empty() ? 1u : static_cast<uint32_t>(edge_waits.size());
+      const uint32_t edge_item_kind_size =
+          edge_item_kinds.empty()
+              ? 1u
+              : static_cast<uint32_t>(edge_item_kinds.size());
+      auto edge_kind_literal = [](EventEdgeKind edge) -> const char* {
+        switch (edge) {
+          case EventEdgeKind::kPosedge:
+            return "GPGA_SCHED_EDGE_POSEDGE";
+          case EventEdgeKind::kNegedge:
+            return "GPGA_SCHED_EDGE_NEGEDGE";
+          case EventEdgeKind::kAny:
+          default:
+            return "GPGA_SCHED_EDGE_ANY";
+        }
+      };
+      out << "constant constexpr uint GPGA_SCHED_EDGE_WAIT_COUNT = "
+          << edge_waits.size() << "u;\n";
+      out << "constant uint gpga_sched_edge_wait_item_offset["
+          << edge_wait_table_size << "] = {";
+      if (edge_wait_item_offset.empty()) {
+        out << "0u";
+      } else {
+        for (size_t i = 0; i < edge_wait_item_offset.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << edge_wait_item_offset[i] << "u";
+        }
+      }
+      out << "};\n";
+      out << "constant uint gpga_sched_edge_wait_item_count["
+          << edge_wait_table_size << "] = {";
+      if (edge_wait_item_count.empty()) {
+        out << "0u";
+      } else {
+        for (size_t i = 0; i < edge_wait_item_count.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << edge_wait_item_count[i] << "u";
+        }
+      }
+      out << "};\n";
+      out << "constant uint gpga_sched_edge_wait_star_offset["
+          << edge_wait_table_size << "] = {";
+      if (edge_wait_star_offset.empty()) {
+        out << "0u";
+      } else {
+        for (size_t i = 0; i < edge_wait_star_offset.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << edge_wait_star_offset[i] << "u";
+        }
+      }
+      out << "};\n";
+      out << "constant uint gpga_sched_edge_wait_star_count["
+          << edge_wait_table_size << "] = {";
+      if (edge_wait_star_count.empty()) {
+        out << "0u";
+      } else {
+        for (size_t i = 0; i < edge_wait_star_count.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << edge_wait_star_count[i] << "u";
+        }
+      }
+      out << "};\n";
+      out << "constant uint gpga_sched_edge_wait_kind["
+          << edge_wait_table_size << "] = {";
+      if (edge_wait_kinds.empty()) {
+        out << "GPGA_SCHED_EDGE_ANY";
+      } else {
+        for (size_t i = 0; i < edge_wait_kinds.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << edge_wait_kinds[i];
+        }
+      }
+      out << "};\n";
+      out << "constant uint gpga_sched_edge_item_kind[" << edge_item_kind_size
+          << "] = {";
+      if (edge_item_kinds.empty()) {
+        out << "GPGA_SCHED_EDGE_ANY";
+      } else {
+        for (size_t i = 0; i < edge_item_kinds.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << edge_kind_literal(edge_item_kinds[i]);
+        }
+      }
+      out << "};\n";
       drive_declared.clear();
 
+      auto emit_edge_item_switch2 = [&](int indent,
+                                        const std::string& index_name) {
+        std::string pad(indent, ' ');
+        int case_indent = indent + 4;
+        std::string case_pad(case_indent, ' ');
+        out << pad << "switch (" << index_name << ") {\n";
+        for (size_t i = 0; i < edge_item_exprs.size(); ++i) {
+          int width = ExprWidth(*edge_item_exprs[i], module);
+          std::string curr =
+              EmitExprSized(*edge_item_exprs[i], width, module, sched_locals,
+                            sched_regs);
+          std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
+          out << pad << "  case " << i << "u: {\n";
+          out << case_pad << "__gpga_curr_val = ((ulong)(" << curr << ")) & "
+              << mask << ";\n";
+          out << case_pad << "__gpga_curr_mask = " << mask << ";\n";
+          out << pad << "  } break;\n";
+        }
+        out << pad << "  default:\n";
+        out << pad << "    break;\n";
+        out << pad << "}\n";
+      };
+      auto emit_edge_star_switch2 = [&](int indent,
+                                        const std::string& index_name) {
+        std::string pad(indent, ' ');
+        int case_indent = indent + 4;
+        std::string case_pad(case_indent, ' ');
+        out << pad << "switch (" << index_name << ") {\n";
+        for (size_t i = 0; i < edge_star_signals.size(); ++i) {
+          Expr ident_expr;
+          ident_expr.kind = ExprKind::kIdentifier;
+          ident_expr.ident = edge_star_signals[i];
+          int width = ExprWidth(ident_expr, module);
+          std::string curr = EmitExprSized(ident_expr, width, module,
+                                           sched_locals, sched_regs);
+          std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
+          out << pad << "  case " << i << "u: {\n";
+          out << case_pad << "__gpga_curr_val = ((ulong)(" << curr << ")) & "
+              << mask << ";\n";
+          out << case_pad << "__gpga_curr_mask = " << mask << ";\n";
+          out << pad << "  } break;\n";
+        }
+        out << pad << "  default:\n";
+        out << pad << "    break;\n";
+        out << pad << "}\n";
+      };
+
       out << "\n";
+      struct SchedParam {
+        std::string decl;
+        std::string name;
+      };
+      std::vector<SchedParam> sched_params;
+      auto sched_param_decl = [](const std::string& text) {
+        std::string decl = text;
+        size_t first = decl.find_first_not_of(' ');
+        if (first != std::string::npos) {
+          decl.erase(0, first);
+        }
+        size_t attr = decl.find("[[");
+        if (attr != std::string::npos) {
+          decl.erase(attr);
+        }
+        while (!decl.empty() &&
+               std::isspace(static_cast<unsigned char>(decl.back()))) {
+          decl.pop_back();
+        }
+        return decl;
+      };
+      auto sched_param_name = [](const std::string& decl) {
+        size_t space = decl.find_last_of(' ');
+        if (space == std::string::npos) {
+          return decl;
+        }
+        return decl.substr(space + 1);
+      };
+      auto for_each_sched_param = [&](const auto& emit_param_fn) {
+        int buffer_index = 0;
+        if (pack_signals) {
+          emit_param_fn("  device uchar* gpga_state [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (!pack_signals) {
+          for (const auto& port : module.ports) {
+            std::string qualifier =
+                (port.dir == PortDir::kInput) ? "constant" : "device";
+            std::string type = TypeForWidth(port.width);
+            emit_param_fn("  " + qualifier + " " + type + "* " +
+                          MslName(port.name) + " [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+          for (const auto& reg : sched_reg_names) {
+            std::string type = TypeForWidth(SignalWidth(module, reg));
+            emit_param_fn("  device " + type + "* " + MslName(reg) +
+                          " [[buffer(" + std::to_string(buffer_index++) +
+                          ")]]");
+          }
+          for (const auto* reg : trireg_nets) {
+            emit_param_fn("  device ulong* " + decay_name(reg->name) +
+                          " [[buffer(" + std::to_string(buffer_index++) +
+                          ")]]");
+          }
+          for (const auto* net : array_nets) {
+            std::string type = TypeForWidth(net->width);
+            emit_param_fn("  device " + type + "* " + MslName(net->name) +
+                          " [[buffer(" + std::to_string(buffer_index++) +
+                          ")]]");
+          }
+        }
+        if (pack_nb && !packed_nb_signals.empty()) {
+          emit_param_fn("  device uchar* nb_state [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (!pack_nb) {
+          for (const auto& target : nb_targets_sorted) {
+            std::string type = TypeForWidth(SignalWidth(module, target));
+            emit_param_fn("  device " + type + "* nb_" + MslName(target) +
+                          " [[buffer(" + std::to_string(buffer_index++) +
+                          ")]]");
+          }
+        }
+        for (const auto* net : nb_array_nets) {
+          std::string type = TypeForWidth(net->width);
+          emit_param_fn("  device " + type + "* " + MslNameNext(net->name) +
+                        " [[buffer(" + std::to_string(buffer_index++) +
+                        ")]]");
+        }
+        if (needs_force_shadow) {
+          emit_param_fn("  device uchar* sched_force_state [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (!force_target_list.empty()) {
+          emit_param_fn("  device uint* sched_force_id [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (!passign_target_list.empty()) {
+          emit_param_fn("  device uint* sched_passign_id [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        emit_param_fn("  device uint* sched_pc [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_state [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_wait_kind [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_wait_edge_kind [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_wait_id [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_wait_event [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        if (has_edges) {
+          emit_param_fn("  device ulong* sched_edge_prev_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (has_edge_star) {
+          emit_param_fn("  device ulong* sched_edge_star_prev_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (timing_check_count > 0u) {
+          emit_param_fn("  device ulong* sched_timing_prev_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_timing_data_time [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_timing_ref_time [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_timing_window_start [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_timing_window_end [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        emit_param_fn("  device ulong* sched_wait_time [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_join_count [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_parent [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_join_tag [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        if (repeat_state_count > 0) {
+          emit_param_fn("  device uint* sched_repeat_left [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_repeat_active [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        emit_param_fn("  device ulong* sched_time [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_phase [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_flags [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_halt_mode [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        if (has_events) {
+          emit_param_fn("  device uint* sched_event_pending [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        emit_param_fn("  device uint* sched_error [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  device uint* sched_status [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        if (options.sched_vm) {
+          emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (has_delayed_assigns) {
+          emit_param_fn("  device ulong* sched_delay_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_delay_index_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (has_delayed_nba) {
+          emit_param_fn("  device uint* sched_dnba_count [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_dnba_time [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_dnba_id [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_dnba_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_dnba_index_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (!system_task_info.monitor_stmts.empty()) {
+          emit_param_fn("  device uint* sched_monitor_active [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_monitor_enable [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device ulong* sched_monitor_val [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          if (service_wide_words > 0u) {
+            emit_param_fn("  device ulong* sched_monitor_wide_val [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
+        }
+        if (!system_task_info.strobe_stmts.empty()) {
+          emit_param_fn("  device uint* sched_strobe_pending [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+        }
+        if (has_services) {
+          emit_param_fn("  device uint* sched_service_count [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
+          emit_param_fn(
+              "  device GpgaServiceRecord* sched_service [[buffer(" +
+              std::to_string(buffer_index++) + ")]]");
+        }
+        emit_param_fn("  constant GpgaSchedParams& sched [[buffer(" +
+                      std::to_string(buffer_index++) + ")]]");
+        emit_param_fn("  uint gid [[thread_position_in_grid]]) {\n");
+      };
+      for_each_sched_param([&](const std::string& text) {
+        std::string decl = sched_param_decl(text);
+        std::string name = sched_param_name(decl);
+        sched_params.push_back({decl, name});
+      });
+
+      auto emit_sched_param_decls = [&](int indent) {
+        std::string pad(indent, ' ');
+        for (size_t i = 0; i < sched_params.size(); ++i) {
+          if (i > 0) {
+            out << ",\n";
+          }
+          out << pad << sched_params[i].decl;
+        }
+      };
+      auto emit_sched_param_names = [&]() {
+        for (size_t i = 0; i < sched_params.size(); ++i) {
+          if (i > 0) {
+            out << ", ";
+          }
+          out << sched_params[i].name;
+        }
+      };
+
+      for (const auto& proc : procs) {
+        out << "static __attribute__((noinline)) void gpga_"
+            << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
+        emit_sched_param_decls(2);
+        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+               "  thread bool* did_work_ptr,\n"
+               "  thread bool* finished_ptr,\n"
+               "  thread bool* stopped_ptr,\n"
+               "  thread ulong* __gpga_time_ptr);\n";
+      }
+
+      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+        out << "static __attribute__((noinline)) void gpga_"
+            << MslName(module.name) << "_sched_group_" << group << "(";
+        emit_sched_param_decls(2);
+        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+               "  thread bool* did_work_ptr,\n"
+               "  thread bool* finished_ptr,\n"
+               "  thread bool* stopped_ptr,\n"
+               "  thread ulong* __gpga_time_ptr);\n";
+      }
+      if (options.sched_vm) {
+        out << "static __attribute__((noinline)) void gpga_"
+            << MslName(module.name) << "_sched_vm_exec(";
+        emit_sched_param_decls(2);
+        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+               "  thread bool* did_work_ptr,\n"
+               "  thread bool* finished_ptr,\n"
+               "  thread bool* stopped_ptr,\n"
+               "  thread ulong* __gpga_time_ptr);\n";
+      }
+
       out << "kernel void gpga_" << MslName(module.name) << "_sched_step(";
-      int buffer_index = 0;
       bool first = true;
-      auto emit_param = [&](const std::string& text) {
+      for_each_sched_param([&](const std::string& text) {
         if (!first) {
           out << ",\n";
         }
         first = false;
         out << text;
-      };
-      if (pack_signals) {
-        emit_param("  device uchar* gpga_state [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (!pack_signals) {
-        for (const auto& port : module.ports) {
-          std::string qualifier =
-              (port.dir == PortDir::kInput) ? "constant" : "device";
-          std::string type = TypeForWidth(port.width);
-          emit_param("  " + qualifier + " " + type + "* " + MslName(port.name) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-        }
-        for (const auto& reg : sched_reg_names) {
-          std::string type = TypeForWidth(SignalWidth(module, reg));
-          emit_param("  device " + type + "* " + MslName(reg) + " [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        for (const auto* reg : trireg_nets) {
-          emit_param("  device ulong* " + decay_name(reg->name) + " [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-        for (const auto* net : array_nets) {
-          std::string type = TypeForWidth(net->width);
-          emit_param("  device " + type + "* " + MslName(net->name) +
-                     " [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-      }
-      if (pack_nb && !packed_nb_signals.empty()) {
-        emit_param("  device uchar* nb_state [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (!pack_nb) {
-        for (const auto& target : nb_targets_sorted) {
-          std::string type = TypeForWidth(SignalWidth(module, target));
-          emit_param("  device " + type + "* nb_" + MslName(target) +
-                     " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-        }
-      }
-      for (const auto* net : nb_array_nets) {
-        std::string type = TypeForWidth(net->width);
-        emit_param("  device " + type + "* " + MslNameNext(net->name) +
-                   " [[buffer(" + std::to_string(buffer_index++) + ")]]");
-      };
-      if (needs_force_shadow) {
-        emit_param("  device uchar* sched_force_state [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (!force_target_list.empty()) {
-        emit_param("  device uint* sched_force_id [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (!passign_target_list.empty()) {
-        emit_param("  device uint* sched_passign_id [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      emit_param("  device uint* sched_pc [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_state [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_wait_kind [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_wait_edge_kind [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_wait_id [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_wait_event [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      if (has_edges) {
-        emit_param("  device ulong* sched_edge_prev_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (has_edge_star) {
-        emit_param("  device ulong* sched_edge_star_prev_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (timing_check_count > 0u) {
-        emit_param("  device ulong* sched_timing_prev_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_timing_data_time [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_timing_ref_time [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_timing_window_start [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_timing_window_end [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      emit_param("  device ulong* sched_wait_time [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_join_count [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_parent [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_join_tag [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      if (repeat_state_count > 0) {
-        emit_param("  device uint* sched_repeat_left [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_repeat_active [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      emit_param("  device ulong* sched_time [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_phase [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_flags [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      if (has_events) {
-        emit_param("  device uint* sched_event_pending [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      emit_param("  device uint* sched_error [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      emit_param("  device uint* sched_status [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-      if (has_delayed_assigns) {
-        emit_param("  device ulong* sched_delay_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_delay_index_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (has_delayed_nba) {
-        emit_param("  device uint* sched_dnba_count [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_dnba_time [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_dnba_id [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_dnba_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_dnba_index_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (!system_task_info.monitor_stmts.empty()) {
-        emit_param("  device uint* sched_monitor_active [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device uint* sched_monitor_enable [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device ulong* sched_monitor_val [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        if (service_wide_words > 0u) {
-          emit_param("  device ulong* sched_monitor_wide_val [[buffer(" +
-                     std::to_string(buffer_index++) + ")]]");
-        }
-      }
-      if (!system_task_info.strobe_stmts.empty()) {
-        emit_param("  device uint* sched_strobe_pending [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      if (has_services) {
-        emit_param("  device uint* sched_service_count [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-        emit_param("  device GpgaServiceRecord* sched_service [[buffer(" +
-                   std::to_string(buffer_index++) + ")]]");
-      }
-      emit_param("  constant GpgaSchedParams& sched [[buffer(" +
-                 std::to_string(buffer_index++) + ")]]");
-    emit_param("  uint gid [[thread_position_in_grid]]) {\n");
+      });
     out << "  if (gid >= sched.count) {\n";
     out << "    return;\n";
     out << "  }\n";
@@ -23492,6 +29056,18 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "  bool finished = false;\n";
       out << "  bool stopped = false;\n";
       out << "  uint steps = sched.max_steps;\n";
+      out << "  uint __gpga_halt = sched_halt_mode[gid];\n";
+      out << "  if (__gpga_halt != GPGA_SCHED_HALT_NONE) {\n";
+      out << "    sched_halt_mode[gid] = GPGA_SCHED_HALT_NONE;\n";
+      out << "    if (__gpga_halt == GPGA_SCHED_HALT_FINISH) {\n";
+      out << "      finished = true;\n";
+      out << "    } else if (__gpga_halt == GPGA_SCHED_HALT_STOP) {\n";
+      out << "      stopped = true;\n";
+      out << "    } else {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "    }\n";
+      out << "    steps = 0u;\n";
+      out << "  }\n";
       out << "  while (steps > 0u) {\n";
       out << "    bool did_work = false;\n";
       out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
@@ -23550,7 +29126,29 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
       out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
       out << "          did_work = true;\n";
       out << "          steps--;\n";
-      out << "          switch (pid) {\n";
+      if (options.sched_vm) {
+        out << "          gpga_" << MslName(module.name)
+            << "_sched_vm_exec(";
+        emit_sched_param_names();
+        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+        out << "          sched_pc[idx] = sched_vm_ip[idx];\n";
+      } else {
+        out << "          uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+        out << "          switch (__gpga_group) {\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "            case " << group << "u:\n";
+          out << "              gpga_" << MslName(module.name) << "_sched_group_"
+              << group << "(";
+          emit_sched_param_names();
+          out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+          out << "              break;\n";
+        }
+        out << "            default: {\n";
+        out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "              break;\n";
+        out << "            }\n";
+        out << "          }\n";
+      }
 
     auto emit_inline_assign =
         [&](const SequentialAssign& assign, int indent,
@@ -25138,7 +30736,12 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         g_task_arg_real = prev_real;
       };
 
-      for (const auto& proc : procs) {
+      auto emit_proc_group_helpers = [&](uint32_t group) {
+        for (const auto& proc : procs) {
+          if ((static_cast<uint32_t>(proc.pid) / sched_proc_group_size) !=
+              group) {
+            continue;
+          }
         std::vector<const Statement*> stmts;
         std::unordered_map<const Statement*,
                            std::pair<const Statement*, const Statement*>>
@@ -25377,12 +30980,49 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
           }
         }
 
-        out << "            case " << proc.pid << ": {\n";
+        out << "static __attribute__((noinline)) void gpga_"
+            << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
+        emit_sched_param_decls(2);
+        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+               "  thread bool* did_work_ptr,\n"
+               "  thread bool* finished_ptr,\n"
+               "  thread bool* stopped_ptr,\n"
+               "  thread ulong* __gpga_time_ptr) {\n";
+        out << "  thread uint& steps = *steps_ptr;\n";
+        out << "  thread bool& did_work = *did_work_ptr;\n";
+        out << "  thread bool& finished = *finished_ptr;\n";
+        out << "  thread bool& stopped = *stopped_ptr;\n";
+        out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+        emit_packed_signal_setup("sched.count");
+        emit_packed_nb_setup("sched.count");
+        emit_packed_force_setup("sched.count");
+        const int kPcChunkSize = 32;
+        int max_pc = pc_done;
+        for (int pc_value : pc_for_index) {
+          if (pc_value > max_pc) {
+            max_pc = pc_value;
+          }
+        }
+        for (const auto& body_case : body_cases) {
+          if (body_case.pc > max_pc) {
+            max_pc = body_case.pc;
+          }
+        }
+        const int pc_bucket_count = (max_pc / kPcChunkSize) + 1;
         out << "              uint pc = sched_pc[idx];\n";
-        out << "              switch (pc) {\n";
+        out << "              uint pc_bucket = pc / " << kPcChunkSize << "u;\n";
+        out << "              switch (pc_bucket) {\n";
+        for (int bucket = 0; bucket < pc_bucket_count; ++bucket) {
+          const int start_pc = bucket * kPcChunkSize;
+          const int end_pc = start_pc + kPcChunkSize;
+          out << "                case " << bucket << "u: {\n";
+          out << "                  switch (pc) {\n";
         for (size_t i = 0; i < stmts.size(); ++i) {
           const Statement& stmt = *stmts[i];
           int pc = pc_for_index[i];
+          if (pc < start_pc || pc >= end_pc) {
+            continue;
+          }
           int next_pc =
               (i + 1 < stmts.size()) ? pc_for_index[i + 1] : pc_done;
           auto next_override_it = next_pc_override.find(&stmt);
@@ -26361,6 +32001,9 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         for (size_t body_index = 0; body_index < body_cases.size();
              ++body_index) {
           const BodyCase body_case = body_cases[body_index];
+          if (body_case.pc < start_pc || body_case.pc >= end_pc) {
+            continue;
+          }
           out << "                case " << body_case.pc << ": {\n";
           if (body_case.is_assign_delay) {
             out << "                  uint __gpga_delay_slot = (gid * "
@@ -26434,16 +32077,36 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
         out << "                  break;\n";
         out << "                }\n";
+        out << "                  }\n";
+        out << "                  break;\n";
+        out << "                }\n";
+        }
+        out << "                default: {\n";
+        out << "                  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "                  break;\n";
+        out << "                }\n";
         out << "              }\n";
-        out << "              break;\n";
-        out << "            }\n";
+        out << "}\n";
       }
+      };
 
-      out << "            default: {\n";
-      out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "              break;\n";
-      out << "            }\n";
-      out << "          }\n";
+      auto emit_proc_group_cases = [&](uint32_t group) {
+        for (const auto& proc : procs) {
+          if ((static_cast<uint32_t>(proc.pid) / sched_proc_group_size) !=
+              group) {
+            continue;
+          }
+          out << "            case " << proc.pid << ": {\n";
+          out << "              gpga_" << MslName(module.name)
+              << "_sched_proc_" << proc.pid << "(";
+          emit_sched_param_names();
+          out << ", pid, idx, &steps, &did_work, &finished, &stopped, "
+                 "&__gpga_time);\n";
+          out << "              break;\n";
+          out << "            }\n";
+        }
+      };
+
       out << "          if (sched_state[idx] == GPGA_SCHED_PROC_DONE) {\n";
       out << "            uint parent = sched_parent[idx];\n";
       out << "            if (parent != GPGA_SCHED_NO_PARENT) {\n";
@@ -26489,121 +32152,78 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "            continue;\n";
         out << "          }\n";
       }
-      out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
-      out << "            bool ready = false;\n";
-      out << "            uint edge_kind = sched_wait_edge_kind[idx];\n";
-      out << "            switch (sched_wait_id[idx]) {\n";
-      for (size_t i = 0; i < edge_waits.size(); ++i) {
-        const EdgeWaitInfo& info = edge_waits[i];
-        out << "              case " << i << "u: {\n";
-        if (!info.items.empty()) {
-          out << "                uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
-              << info.item_offset << "u;\n";
-          out << "                bool __gpga_any = false;\n";
-          for (size_t j = 0; j < info.items.size(); ++j) {
-            int width = ExprWidth(*info.items[j].expr, module);
-            std::string curr =
-                EmitExprSized(*info.items[j].expr, width, module, sched_locals,
-                              sched_regs);
-            std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
-            out << "                {\n";
-            out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
-                << j << "u];\n";
-            out << "                ulong __gpga_curr_val = ((ulong)(" << curr
-                << ")) & " << mask << ";\n";
-            if (info.items[j].edge == EventEdgeKind::kAny) {
-              out << "                if (__gpga_curr_val != __gpga_prev_val) { __gpga_any = true; }\n";
-            } else {
-              out << "                {\n";
-              out << "                  ulong __gpga_prev_zero = (~__gpga_prev_val) & "
-                  << mask << ";\n";
-              out << "                  ulong __gpga_prev_one = __gpga_prev_val & " << mask
-                  << ";\n";
-              out << "                  ulong __gpga_curr_zero = (~__gpga_curr_val) & "
-                  << mask << ";\n";
-              out << "                  ulong __gpga_curr_one = __gpga_curr_val & " << mask
-                  << ";\n";
-              if (info.items[j].edge == EventEdgeKind::kPosedge) {
-                out << "                  if ((__gpga_prev_zero & __gpga_curr_one) != 0ul) { __gpga_any = true; }\n";
-              } else {
-                out << "                  if ((__gpga_prev_one & __gpga_curr_zero) != 0ul) { __gpga_any = true; }\n";
-              }
-              out << "                }\n";
-            }
-            out << "                sched_edge_prev_val[__gpga_edge_base + " << j
-                << "u] = __gpga_curr_val;\n";
-            out << "                }\n";
-          }
-          out << "                ready = __gpga_any;\n";
-        } else if (info.expr) {
-          int width = ExprWidth(*info.expr, module);
-          std::string curr =
-              EmitExprSized(*info.expr, width, module, sched_locals, sched_regs);
-          std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
-          out << "                uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-              << info.item_offset << "u;\n";
-          out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_idx];\n";
-          out << "                ulong __gpga_curr_val = ((ulong)(" << curr
-              << ")) & " << mask << ";\n";
-          out << "                if (edge_kind == GPGA_SCHED_EDGE_ANY) {\n";
-          out << "                  ready = (__gpga_curr_val != __gpga_prev_val);\n";
-          out << "                } else {\n";
-          out << "                  ulong __gpga_prev_zero = (~__gpga_prev_val) & "
-              << mask << ";\n";
-          out << "                  ulong __gpga_prev_one = __gpga_prev_val & " << mask
-              << ";\n";
-          out << "                  ulong __gpga_curr_zero = (~__gpga_curr_val) & "
-              << mask << ";\n";
-          out << "                  ulong __gpga_curr_one = __gpga_curr_val & " << mask
-              << ";\n";
-          out << "                  if (edge_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
-          out << "                    ready = ((__gpga_prev_zero & __gpga_curr_one) != 0ul);\n";
-          out << "                  } else if (edge_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
-          out << "                    ready = ((__gpga_prev_one & __gpga_curr_zero) != 0ul);\n";
-          out << "                  }\n";
-          out << "                }\n";
-          out << "                sched_edge_prev_val[__gpga_edge_idx] = __gpga_curr_val;\n";
-        } else {
-          out << "                uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + "
-              << info.star_offset << "u;\n";
+      if (!edge_waits.empty()) {
+        out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+        out << "            bool ready = false;\n";
+        out << "            uint edge_kind = sched_wait_edge_kind[idx];\n";
+        out << "            uint wait_id = sched_wait_id[idx];\n";
+        out << "            if (wait_id < GPGA_SCHED_EDGE_WAIT_COUNT) {\n";
+        out << "              uint item_offset = gpga_sched_edge_wait_item_offset[wait_id];\n";
+        out << "              uint item_count = gpga_sched_edge_wait_item_count[wait_id];\n";
+        out << "              uint star_offset = gpga_sched_edge_wait_star_offset[wait_id];\n";
+        out << "              uint star_count = gpga_sched_edge_wait_star_count[wait_id];\n";
+        if (has_edge_star) {
+          out << "              if (star_count > 0u) {\n";
+          out << "                uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + star_offset;\n";
           out << "                bool __gpga_changed = false;\n";
-          for (size_t s = 0; s < info.star_signals.size(); ++s) {
-            Expr ident_expr;
-            ident_expr.kind = ExprKind::kIdentifier;
-            ident_expr.ident = info.star_signals[s];
-            int width = ExprWidth(ident_expr, module);
-            std::string curr =
-                EmitExprSized(ident_expr, width, module, sched_locals,
-                              sched_regs);
-            std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
-            out << "                {\n";
-            out << "                  ulong __gpga_curr_val = ((ulong)(" << curr
-                << ")) & " << mask << ";\n";
-            out << "                  ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_base + "
-                << s << "u];\n";
-            out << "                  if (__gpga_curr_val != __gpga_prev_val) {\n";
-            out << "                    __gpga_changed = true;\n";
-            out << "                  }\n";
-            out << "                  sched_edge_star_prev_val[__gpga_edge_base + "
-                << s << "u] = __gpga_curr_val;\n";
-            out << "                }\n";
-          }
+          out << "                #pragma clang loop unroll(disable)\n";
+          out << "                for (uint s = 0u; s < star_count; ++s) {\n";
+          out << "                  uint star_index = star_offset + s;\n";
+          out << "                  ulong __gpga_curr_val = 0ul;\n";
+          out << "                  ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_star_switch2(18, "star_index");
+          out << "                  ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_star_base + s];\n";
+          out << "                  if (__gpga_curr_val != __gpga_prev_val) {\n";
+          out << "                    __gpga_changed = true;\n";
+          out << "                  }\n";
+          out << "                  sched_edge_star_prev_val[__gpga_edge_star_base + s] = __gpga_curr_val;\n";
+          out << "                }\n";
           out << "                ready = __gpga_changed;\n";
+          out << "              }\n";
         }
-        out << "                break;\n";
+        out << "              if (item_count > 0u) {\n";
+        out << "                uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + item_offset;\n";
+        out << "                bool __gpga_any = false;\n";
+        out << "                #pragma clang loop unroll(disable)\n";
+        out << "                for (uint j = 0u; j < item_count; ++j) {\n";
+        out << "                  uint item_index = item_offset + j;\n";
+        out << "                  uint item_kind = (edge_kind == GPGA_SCHED_EDGE_LIST)\n";
+        out << "                      ? gpga_sched_edge_item_kind[item_index]\n";
+        out << "                      : edge_kind;\n";
+        out << "                  ulong __gpga_curr_val = 0ul;\n";
+        out << "                  ulong __gpga_curr_mask = 0ul;\n";
+        emit_edge_item_switch2(18, "item_index");
+        out << "                  ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + j];\n";
+        out << "                  if (item_kind == GPGA_SCHED_EDGE_ANY) {\n";
+        out << "                    if (__gpga_curr_val != __gpga_prev_val) { __gpga_any = true; }\n";
+        out << "                  } else {\n";
+        out << "                    ulong __gpga_prev_zero = (~__gpga_prev_val) & __gpga_curr_mask;\n";
+        out << "                    ulong __gpga_prev_one = __gpga_prev_val & __gpga_curr_mask;\n";
+        out << "                    ulong __gpga_curr_zero = (~__gpga_curr_val) & __gpga_curr_mask;\n";
+        out << "                    ulong __gpga_curr_one = __gpga_curr_val & __gpga_curr_mask;\n";
+        out << "                    if (item_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
+        out << "                      if ((__gpga_prev_zero & __gpga_curr_one) != 0ul) { __gpga_any = true; }\n";
+        out << "                    } else if (item_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
+        out << "                      if ((__gpga_prev_one & __gpga_curr_zero) != 0ul) { __gpga_any = true; }\n";
+        out << "                    }\n";
+        out << "                  }\n";
+        out << "                  sched_edge_prev_val[__gpga_edge_base + j] = __gpga_curr_val;\n";
+        out << "                }\n";
+        out << "                ready = __gpga_any;\n";
         out << "              }\n";
+        out << "            }\n";
+        out << "            if (ready) {\n";
+        out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "              any_ready = true;\n";
+        out << "            }\n";
+        out << "            continue;\n";
+        out << "          }\n";
+      } else {
+        out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+        out << "            continue;\n";
+        out << "          }\n";
       }
-      out << "              default:\n";
-      out << "                ready = false;\n";
-      out << "                break;\n";
-      out << "            }\n";
-      out << "            if (ready) {\n";
-      out << "              sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-      out << "              sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-      out << "              any_ready = true;\n";
-      out << "            }\n";
-      out << "            continue;\n";
-      out << "          }\n";
       out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_COND) {\n";
       out << "            bool ready = false;\n";
       out << "            switch (sched_wait_id[idx]) {\n";
@@ -26746,121 +32366,78 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
         out << "          continue;\n";
         out << "        }\n";
       }
-      out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
-      out << "          bool ready = false;\n";
-      out << "          uint edge_kind = sched_wait_edge_kind[idx];\n";
-      out << "          switch (sched_wait_id[idx]) {\n";
-      for (size_t i = 0; i < edge_waits.size(); ++i) {
-        const EdgeWaitInfo& info = edge_waits[i];
-        out << "            case " << i << "u: {\n";
-        if (!info.items.empty()) {
-          out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + "
-              << info.item_offset << "u;\n";
-          out << "              bool __gpga_any = false;\n";
-          for (size_t j = 0; j < info.items.size(); ++j) {
-            int width = ExprWidth(*info.items[j].expr, module);
-            std::string curr =
-                EmitExprSized(*info.items[j].expr, width, module, sched_locals,
-                              sched_regs);
-            std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
-            out << "              {\n";
-            out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + "
-                << j << "u];\n";
-            out << "              ulong __gpga_curr_val = ((ulong)(" << curr
-                << ")) & " << mask << ";\n";
-            if (info.items[j].edge == EventEdgeKind::kAny) {
-              out << "              if (__gpga_curr_val != __gpga_prev_val) { __gpga_any = true; }\n";
-            } else {
-              out << "              {\n";
-              out << "                ulong __gpga_prev_zero = (~__gpga_prev_val) & "
-                  << mask << ";\n";
-              out << "                ulong __gpga_prev_one = __gpga_prev_val & " << mask
-                  << ";\n";
-              out << "                ulong __gpga_curr_zero = (~__gpga_curr_val) & "
-                  << mask << ";\n";
-              out << "                ulong __gpga_curr_one = __gpga_curr_val & " << mask
-                  << ";\n";
-              if (info.items[j].edge == EventEdgeKind::kPosedge) {
-                out << "                if ((__gpga_prev_zero & __gpga_curr_one) != 0ul) { __gpga_any = true; }\n";
-              } else {
-                out << "                if ((__gpga_prev_one & __gpga_curr_zero) != 0ul) { __gpga_any = true; }\n";
-              }
-              out << "              }\n";
-            }
-            out << "              sched_edge_prev_val[__gpga_edge_base + " << j
-                << "u] = __gpga_curr_val;\n";
-            out << "              }\n";
-          }
-          out << "              ready = __gpga_any;\n";
-        } else if (info.expr) {
-          int width = ExprWidth(*info.expr, module);
-          std::string curr =
-              EmitExprSized(*info.expr, width, module, sched_locals, sched_regs);
-          std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
-          out << "              uint __gpga_edge_idx = (gid * GPGA_SCHED_EDGE_COUNT) + "
-              << info.item_offset << "u;\n";
-          out << "              ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_idx];\n";
-          out << "              ulong __gpga_curr_val = ((ulong)(" << curr
-              << ")) & " << mask << ";\n";
-          out << "              if (edge_kind == GPGA_SCHED_EDGE_ANY) {\n";
-          out << "                ready = (__gpga_curr_val != __gpga_prev_val);\n";
-          out << "              } else {\n";
-          out << "                ulong __gpga_prev_zero = (~__gpga_prev_val) & "
-              << mask << ";\n";
-          out << "                ulong __gpga_prev_one = __gpga_prev_val & " << mask
-              << ";\n";
-          out << "                ulong __gpga_curr_zero = (~__gpga_curr_val) & "
-              << mask << ";\n";
-          out << "                ulong __gpga_curr_one = __gpga_curr_val & " << mask
-              << ";\n";
-          out << "                if (edge_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
-          out << "                  ready = ((__gpga_prev_zero & __gpga_curr_one) != 0ul);\n";
-          out << "                } else if (edge_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
-          out << "                  ready = ((__gpga_prev_one & __gpga_curr_zero) != 0ul);\n";
-          out << "                }\n";
-          out << "              }\n";
-          out << "              sched_edge_prev_val[__gpga_edge_idx] = __gpga_curr_val;\n";
-        } else {
-          out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + "
-              << info.star_offset << "u;\n";
+      if (!edge_waits.empty()) {
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+        out << "          bool ready = false;\n";
+        out << "          uint edge_kind = sched_wait_edge_kind[idx];\n";
+        out << "          uint wait_id = sched_wait_id[idx];\n";
+        out << "          if (wait_id < GPGA_SCHED_EDGE_WAIT_COUNT) {\n";
+        out << "            uint item_offset = gpga_sched_edge_wait_item_offset[wait_id];\n";
+        out << "            uint item_count = gpga_sched_edge_wait_item_count[wait_id];\n";
+        out << "            uint star_offset = gpga_sched_edge_wait_star_offset[wait_id];\n";
+        out << "            uint star_count = gpga_sched_edge_wait_star_count[wait_id];\n";
+        if (has_edge_star) {
+          out << "            if (star_count > 0u) {\n";
+          out << "              uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + star_offset;\n";
           out << "              bool __gpga_changed = false;\n";
-          for (size_t s = 0; s < info.star_signals.size(); ++s) {
-            Expr ident_expr;
-            ident_expr.kind = ExprKind::kIdentifier;
-            ident_expr.ident = info.star_signals[s];
-            int width = ExprWidth(ident_expr, module);
-            std::string curr =
-                EmitExprSized(ident_expr, width, module, sched_locals,
-                              sched_regs);
-            std::string mask = std::to_string(MaskForWidth64(width)) + "ul";
-            out << "              {\n";
-            out << "                ulong __gpga_curr_val = ((ulong)(" << curr
-                << ")) & " << mask << ";\n";
-            out << "                ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_base + "
-                << s << "u];\n";
-            out << "                if (__gpga_curr_val != __gpga_prev_val) {\n";
-            out << "                  __gpga_changed = true;\n";
-            out << "                }\n";
-            out << "                sched_edge_star_prev_val[__gpga_edge_base + "
-                << s << "u] = __gpga_curr_val;\n";
-            out << "              }\n";
-          }
+          out << "              #pragma clang loop unroll(disable)\n";
+          out << "              for (uint s = 0u; s < star_count; ++s) {\n";
+          out << "                uint star_index = star_offset + s;\n";
+          out << "                ulong __gpga_curr_val = 0ul;\n";
+          out << "                ulong __gpga_curr_mask = 0ul;\n";
+          emit_edge_star_switch2(18, "star_index");
+          out << "                ulong __gpga_prev_val = sched_edge_star_prev_val[__gpga_edge_star_base + s];\n";
+          out << "                if (__gpga_curr_val != __gpga_prev_val) {\n";
+          out << "                  __gpga_changed = true;\n";
+          out << "                }\n";
+          out << "                sched_edge_star_prev_val[__gpga_edge_star_base + s] = __gpga_curr_val;\n";
+          out << "              }\n";
           out << "              ready = __gpga_changed;\n";
+          out << "            }\n";
         }
-        out << "              break;\n";
+        out << "            if (item_count > 0u) {\n";
+        out << "              uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + item_offset;\n";
+        out << "              bool __gpga_any = false;\n";
+        out << "              #pragma clang loop unroll(disable)\n";
+        out << "              for (uint j = 0u; j < item_count; ++j) {\n";
+        out << "                uint item_index = item_offset + j;\n";
+        out << "                uint item_kind = (edge_kind == GPGA_SCHED_EDGE_LIST)\n";
+        out << "                    ? gpga_sched_edge_item_kind[item_index]\n";
+        out << "                    : edge_kind;\n";
+        out << "                ulong __gpga_curr_val = 0ul;\n";
+        out << "                ulong __gpga_curr_mask = 0ul;\n";
+        emit_edge_item_switch2(18, "item_index");
+        out << "                ulong __gpga_prev_val = sched_edge_prev_val[__gpga_edge_base + j];\n";
+        out << "                if (item_kind == GPGA_SCHED_EDGE_ANY) {\n";
+        out << "                  if (__gpga_curr_val != __gpga_prev_val) { __gpga_any = true; }\n";
+        out << "                } else {\n";
+        out << "                  ulong __gpga_prev_zero = (~__gpga_prev_val) & __gpga_curr_mask;\n";
+        out << "                  ulong __gpga_prev_one = __gpga_prev_val & __gpga_curr_mask;\n";
+        out << "                  ulong __gpga_curr_zero = (~__gpga_curr_val) & __gpga_curr_mask;\n";
+        out << "                  ulong __gpga_curr_one = __gpga_curr_val & __gpga_curr_mask;\n";
+        out << "                  if (item_kind == GPGA_SCHED_EDGE_POSEDGE) {\n";
+        out << "                    if ((__gpga_prev_zero & __gpga_curr_one) != 0ul) { __gpga_any = true; }\n";
+        out << "                  } else if (item_kind == GPGA_SCHED_EDGE_NEGEDGE) {\n";
+        out << "                    if ((__gpga_prev_one & __gpga_curr_zero) != 0ul) { __gpga_any = true; }\n";
+        out << "                  }\n";
+        out << "                }\n";
+        out << "                sched_edge_prev_val[__gpga_edge_base + j] = __gpga_curr_val;\n";
+        out << "              }\n";
+        out << "              ready = __gpga_any;\n";
         out << "            }\n";
+        out << "          }\n";
+        out << "          if (ready) {\n";
+        out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "            any_ready = true;\n";
+        out << "          }\n";
+        out << "          continue;\n";
+        out << "        }\n";
+      } else {
+        out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_EDGE) {\n";
+        out << "          continue;\n";
+        out << "        }\n";
       }
-      out << "            default:\n";
-      out << "              ready = false;\n";
-      out << "              break;\n";
-      out << "          }\n";
-      out << "          if (ready) {\n";
-      out << "            sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
-      out << "            sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
-      out << "            any_ready = true;\n";
-      out << "          }\n";
-      out << "          continue;\n";
-      out << "        }\n";
       out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_COND) {\n";
       out << "          bool ready = false;\n";
       out << "          switch (sched_wait_id[idx]) {\n";
@@ -26959,7 +32536,1835 @@ std::string EmitMSLStub(const Module& module, bool four_state) {
     out << "  } else {\n";
     out << "    sched_status[gid] = GPGA_SCHED_STATUS_IDLE;\n";
     out << "  }\n";
+    out << "}\n";
+    for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+      emit_proc_group_helpers(group);
+    }
+    for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_group_" << group << "(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+             "  thread bool* did_work_ptr,\n"
+             "  thread bool* finished_ptr,\n"
+             "  thread bool* stopped_ptr,\n"
+             "  thread ulong* __gpga_time_ptr) {\n";
+      out << "  thread uint& steps = *steps_ptr;\n";
+      out << "  thread bool& did_work = *did_work_ptr;\n";
+      out << "  thread bool& finished = *finished_ptr;\n";
+      out << "  thread bool& stopped = *stopped_ptr;\n";
+      out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+      out << "  switch (pid) {\n";
+      emit_proc_group_cases(group);
+      out << "    default: {\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
       out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_cond_exprs = vm_tables.cond_exprs;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_eval_cond(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint cond_id,\n"
+             "  thread uint* out_val,\n"
+             "  thread uint* out_xz) {\n";
+      out << "  uint __gpga_cond_val = 0u;\n";
+      out << "  uint __gpga_cond_xz = 0u;\n";
+      out << "  bool __gpga_cond_known = false;\n";
+      emit_packed_signal_setup("sched.count");
+      out << "  if (cond_id < GPGA_SCHED_VM_COND_COUNT) {\n";
+      out << "    const GpgaSchedVmCondEntry __gpga_entry = "
+             "sched_vm_cond_entry[cond_id];\n";
+      out << "    if (__gpga_entry.kind == GPGA_SCHED_VM_COND_KIND_CONST) {\n";
+      out << "      __gpga_cond_val = __gpga_entry.val;\n";
+      out << "      __gpga_cond_xz = 0u;\n";
+      out << "      __gpga_cond_known = true;\n";
+      out << "    }\n";
+      out << "    if (!__gpga_cond_known && __gpga_entry.kind == "
+             "GPGA_SCHED_VM_COND_KIND_EXPR) {\n";
+      out << "      uint __gpga_ip = __gpga_entry.expr_offset;\n";
+      out << "      uint __gpga_sp = 0u;\n";
+      out << "      bool __gpga_expr_ok = true;\n";
+      out << "      thread ulong __gpga_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      out << "      thread uint __gpga_widths[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      out << "      while (__gpga_expr_ok) {\n";
+      out << "        uint __gpga_instr = sched_vm_expr[__gpga_ip++];\n";
+      out << "        uint __gpga_op = (__gpga_instr & 0xFFu);\n";
+      out << "        uint __gpga_arg = (__gpga_instr >> 8u);\n";
+      out << "        if (__gpga_op == GPGA_SCHED_VM_EXPR_OP_DONE) {\n";
+      out << "          if (__gpga_sp == 0u) {\n";
+      out << "            __gpga_expr_ok = false;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          uint __gpga_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "          ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "              ? ~0ul\n";
+      out << "              : ((__gpga_width == 0u)\n";
+      out << "                     ? 0ul\n";
+      out << "                     : ((1ul << __gpga_width) - 1ul));\n";
+      out << "          ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "          __gpga_cond_val = (((__gpga_val & __gpga_mask) != 0ul) "
+             "? 1u : 0u);\n";
+      out << "          __gpga_cond_xz = 0u;\n";
+      out << "          __gpga_cond_known = true;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        switch (__gpga_op) {\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_PUSH_CONST: {\n";
+      out << "            if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            uint __gpga_imm = __gpga_arg;\n";
+      out << "            ulong __gpga_val =\n";
+      out << "                (ulong)(sched_vm_expr_imm[__gpga_imm]) |\n";
+      out << "                ((ulong)(sched_vm_expr_imm[__gpga_imm + 1u]) << 32u);\n";
+      out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+      out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+      out << "            __gpga_widths[__gpga_sp] = __gpga_width;\n";
+      out << "            __gpga_sp += 1u;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_PUSH_SIGNAL: {\n";
+      out << "            if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "                sched_vm_signal_entry[__gpga_arg];\n";
+      out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "                __gpga_sig.array_size != 1u) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            ulong __gpga_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "                ((ulong)gid * (ulong)__gpga_sig.array_size) *\n";
+      out << "                    ((__gpga_width > 32u) ? 8ul : 4ul);\n";
+      out << "            ulong __gpga_val = 0ul;\n";
+      out << "            if (__gpga_width > 32u) {\n";
+      out << "              __gpga_val = ((device const ulong*)(gpga_state + __gpga_addr))[0];\n";
+      out << "            } else {\n";
+      out << "              __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_addr))[0];\n";
+      out << "            }\n";
+      out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+      out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+      out << "            __gpga_widths[__gpga_sp] = __gpga_width;\n";
+      out << "            __gpga_sp += 1u;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_UNARY: {\n";
+      out << "            if (__gpga_sp == 0u) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            uint __gpga_uop = __gpga_arg;\n";
+      out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "            uint __gpga_in_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "            ulong __gpga_mask = (__gpga_in_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_in_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_in_width) - 1ul));\n";
+      out << "            __gpga_val &= __gpga_mask;\n";
+      out << "            if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+      out << "              __gpga_val = (__gpga_val == 0ul) ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+      out << "              __gpga_val = ~__gpga_val;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+      out << "              __gpga_val = 0ul - __gpga_val;\n";
+      out << "            }\n";
+      out << "            ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+      out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_out_mask;\n";
+      out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_BINARY: {\n";
+      out << "            if (__gpga_sp < 2u) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            uint __gpga_bop = (__gpga_arg & 0xFFu);\n";
+      out << "            bool __gpga_signed =\n";
+      out << "                ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+      out << "            ulong __gpga_rhs = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "            ulong __gpga_lhs = __gpga_vals[__gpga_sp - 2u];\n";
+      out << "            uint __gpga_rhs_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "            uint __gpga_lhs_width = __gpga_widths[__gpga_sp - 2u];\n";
+      out << "            ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_lhs_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_lhs_width) - 1ul));\n";
+      out << "            ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_rhs_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_rhs_width) - 1ul));\n";
+      out << "            __gpga_lhs &= __gpga_lhs_mask;\n";
+      out << "            __gpga_rhs &= __gpga_rhs_mask;\n";
+      out << "            ulong __gpga_result = 0ul;\n";
+      out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+      out << "                __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+      out << "              bool __gpga_lhs_true = (__gpga_lhs != 0ul);\n";
+      out << "              bool __gpga_rhs_true = (__gpga_rhs != 0ul);\n";
+      out << "              bool __gpga_true =\n";
+      out << "                  (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+      out << "                      ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+      out << "                      : (__gpga_lhs_true || __gpga_rhs_true);\n";
+      out << "              __gpga_result = __gpga_true ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+      out << "              bool __gpga_eq = (__gpga_lhs == __gpga_rhs);\n";
+      out << "              bool __gpga_ne = !__gpga_eq;\n";
+      out << "              bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                                  __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+      out << "                                     ? __gpga_eq\n";
+      out << "                                     : __gpga_ne;\n";
+      out << "              __gpga_result = __gpga_true ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+      out << "              bool __gpga_true = false;\n";
+      out << "              if (__gpga_signed) {\n";
+      out << "                long __gpga_lhs_s = (long)__gpga_lhs;\n";
+      out << "                long __gpga_rhs_s = (long)__gpga_rhs;\n";
+      out << "                if (__gpga_lhs_width < 64u && __gpga_lhs_width > 0u) {\n";
+      out << "                  ulong __gpga_sign = 1ul << (__gpga_lhs_width - 1u);\n";
+      out << "                  if ((__gpga_lhs & __gpga_sign) != 0ul) {\n";
+      out << "                    __gpga_lhs_s |= (long)(~__gpga_lhs_mask);\n";
+      out << "                  }\n";
+      out << "                }\n";
+      out << "                if (__gpga_rhs_width < 64u && __gpga_rhs_width > 0u) {\n";
+      out << "                  ulong __gpga_sign = 1ul << (__gpga_rhs_width - 1u);\n";
+      out << "                  if ((__gpga_rhs & __gpga_sign) != 0ul) {\n";
+      out << "                    __gpga_rhs_s |= (long)(~__gpga_rhs_mask);\n";
+      out << "                  }\n";
+      out << "                }\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+      out << "                  __gpga_true = (__gpga_lhs_s < __gpga_rhs_s);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+      out << "                  __gpga_true = (__gpga_lhs_s <= __gpga_rhs_s);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+      out << "                  __gpga_true = (__gpga_lhs_s > __gpga_rhs_s);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_true = (__gpga_lhs_s >= __gpga_rhs_s);\n";
+      out << "                }\n";
+      out << "              } else {\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+      out << "                  __gpga_true = (__gpga_lhs < __gpga_rhs);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+      out << "                  __gpga_true = (__gpga_lhs <= __gpga_rhs);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+      out << "                  __gpga_true = (__gpga_lhs > __gpga_rhs);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_true = (__gpga_lhs >= __gpga_rhs);\n";
+      out << "                }\n";
+      out << "              }\n";
+      out << "              __gpga_result = __gpga_true ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+      out << "              uint __gpga_shift = uint(__gpga_rhs);\n";
+      out << "              if (__gpga_shift >= __gpga_lhs_width) {\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR &&\n";
+      out << "                    __gpga_lhs_width > 0u && __gpga_signed) {\n";
+      out << "                  ulong __gpga_sign = 1ul << (__gpga_lhs_width - 1u);\n";
+      out << "                  __gpga_result = (__gpga_lhs & __gpga_sign) ? __gpga_lhs_mask : 0ul;\n";
+      out << "                } else {\n";
+      out << "                  __gpga_result = 0ul;\n";
+      out << "                }\n";
+      out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+      out << "                __gpga_result = __gpga_lhs << __gpga_shift;\n";
+      out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR) {\n";
+      out << "                __gpga_result = __gpga_lhs >> __gpga_shift;\n";
+      out << "              } else {\n";
+      out << "                __gpga_result = __gpga_lhs >> __gpga_shift;\n";
+      out << "                if (__gpga_signed && __gpga_lhs_width > 0u &&\n";
+      out << "                    __gpga_shift > 0u) {\n";
+      out << "                  ulong __gpga_sign = 1ul << (__gpga_lhs_width - 1u);\n";
+      out << "                  if ((__gpga_lhs & __gpga_sign) != 0ul) {\n";
+      out << "                    ulong __gpga_fill = __gpga_lhs_mask;\n";
+      out << "                    __gpga_fill = __gpga_fill << (__gpga_lhs_width - __gpga_shift);\n";
+      out << "                    __gpga_result |= __gpga_fill;\n";
+      out << "                  }\n";
+      out << "                }\n";
+      out << "              }\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+      out << "              __gpga_result = __gpga_lhs & __gpga_rhs;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+      out << "              __gpga_result = __gpga_lhs | __gpga_rhs;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR) {\n";
+      out << "              __gpga_result = __gpga_lhs ^ __gpga_rhs;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+      out << "              __gpga_result = ~(__gpga_lhs ^ __gpga_rhs);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+      out << "              if (__gpga_signed) {\n";
+      out << "                long __gpga_lhs_s = (long)__gpga_lhs;\n";
+      out << "                long __gpga_rhs_s = (long)__gpga_rhs;\n";
+      out << "                if (__gpga_lhs_width < 64u && __gpga_lhs_width > 0u) {\n";
+      out << "                  ulong __gpga_sign = 1ul << (__gpga_lhs_width - 1u);\n";
+      out << "                  if ((__gpga_lhs & __gpga_sign) != 0ul) {\n";
+      out << "                    __gpga_lhs_s |= (long)(~__gpga_lhs_mask);\n";
+      out << "                  }\n";
+      out << "                }\n";
+      out << "                if (__gpga_rhs_width < 64u && __gpga_rhs_width > 0u) {\n";
+      out << "                  ulong __gpga_sign = 1ul << (__gpga_rhs_width - 1u);\n";
+      out << "                  if ((__gpga_rhs & __gpga_sign) != 0ul) {\n";
+      out << "                    __gpga_rhs_s |= (long)(~__gpga_rhs_mask);\n";
+      out << "                  }\n";
+      out << "                }\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+      out << "                  __gpga_result = (ulong)(__gpga_lhs_s + __gpga_rhs_s);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+      out << "                  __gpga_result = (ulong)(__gpga_lhs_s - __gpga_rhs_s);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+      out << "                  __gpga_result = (ulong)(__gpga_lhs_s * __gpga_rhs_s);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+      out << "                  __gpga_result = (__gpga_rhs_s == 0) ? 0ul : (ulong)(__gpga_lhs_s / __gpga_rhs_s);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_result = (__gpga_rhs_s == 0) ? 0ul : (ulong)(__gpga_lhs_s % __gpga_rhs_s);\n";
+      out << "                }\n";
+      out << "              } else {\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+      out << "                  __gpga_result = __gpga_lhs + __gpga_rhs;\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+      out << "                  __gpga_result = __gpga_lhs - __gpga_rhs;\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+      out << "                  __gpga_result = __gpga_lhs * __gpga_rhs;\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+      out << "                  __gpga_result = (__gpga_rhs == 0ul) ? 0ul : (__gpga_lhs / __gpga_rhs);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_result = (__gpga_rhs == 0ul) ? 0ul : (__gpga_lhs % __gpga_rhs);\n";
+      out << "                }\n";
+      out << "              }\n";
+      out << "            } else {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "            }\n";
+      out << "            ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+      out << "            __gpga_vals[__gpga_sp - 2u] = __gpga_result & __gpga_out_mask;\n";
+      out << "            __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+      out << "            __gpga_sp -= 1u;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_TERNARY: {\n";
+      out << "            if (__gpga_sp < 3u) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            ulong __gpga_else = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "            ulong __gpga_then = __gpga_vals[__gpga_sp - 2u];\n";
+      out << "            ulong __gpga_cond = __gpga_vals[__gpga_sp - 3u];\n";
+      out << "            uint __gpga_cond_width = __gpga_widths[__gpga_sp - 3u];\n";
+      out << "            ulong __gpga_cond_mask = (__gpga_cond_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_cond_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_cond_width) - 1ul));\n";
+      out << "            bool __gpga_true = ((__gpga_cond & __gpga_cond_mask) != 0ul);\n";
+      out << "            ulong __gpga_val = __gpga_true ? __gpga_then : __gpga_else;\n";
+      out << "            ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+      out << "            __gpga_vals[__gpga_sp - 3u] = __gpga_val & __gpga_out_mask;\n";
+      out << "            __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+      out << "            __gpga_sp -= 2u;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          default: {\n";
+      out << "            __gpga_expr_ok = false;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (!__gpga_expr_ok) {\n";
+      out << "        __gpga_cond_known = false;\n";
+      out << "      }\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  if (!__gpga_cond_known) {\n";
+      out << "    switch (cond_id) {\n";
+      for (size_t i = 0; i < vm_cond_exprs.size(); ++i) {
+        const Expr* expr = vm_cond_exprs[i];
+        if (!expr) {
+          continue;
+        }
+        std::string cond = EmitCondExpr(*expr, module, sched_locals, sched_regs);
+        out << "    case " << i << "u: {\n";
+        out << "      __gpga_cond_val = (" << cond << ") ? 1u : 0u;\n";
+        out << "      __gpga_cond_xz = 0u;\n";
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      __gpga_cond_val = 0u;\n";
+      out << "      __gpga_cond_xz = 0u;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  }\n";
+      out << "  if (out_val) {\n";
+      out << "    *out_val = __gpga_cond_val;\n";
+      out << "  }\n";
+      out << "  if (out_xz) {\n";
+      out << "    *out_xz = __gpga_cond_xz;\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_delay_exprs = vm_tables.delay_exprs;
+      out << "static __attribute__((noinline)) ulong gpga_"
+          << MslName(module.name) << "_sched_vm_eval_delay(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint delay_id) {\n";
+      out << "  ulong __gpga_delay = 0ul;\n";
+      emit_packed_signal_setup("sched.count");
+      out << "  switch (delay_id) {\n";
+      for (size_t i = 0; i < vm_delay_exprs.size(); ++i) {
+        const Expr* expr = vm_delay_exprs[i];
+        if (!expr) {
+          continue;
+        }
+        out << "    case " << i << "u: {\n";
+        out << "      __gpga_delay = " << emit_delay_value2(*expr) << ";\n";
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      __gpga_delay = 0ul;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  return __gpga_delay;\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_case_stmts = vm_tables.case_stmts;
+      out << "static __attribute__((noinline)) uint gpga_"
+          << MslName(module.name) << "_sched_vm_eval_case(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint case_id) {\n";
+      out << "  uint __gpga_match = 0xFFFFFFFFu;\n";
+      emit_packed_signal_setup("sched.count");
+      out << "  switch (case_id) {\n";
+      for (size_t i = 0; i < vm_case_stmts.size(); ++i) {
+        const Statement* stmt = vm_case_stmts[i];
+        out << "    case " << i << "u: {\n";
+        if (!stmt || !stmt->case_expr) {
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        int case_width = ExprWidth(*stmt->case_expr, module);
+        std::string case_value =
+            EmitExpr(*stmt->case_expr, module, sched_locals, sched_regs);
+        std::string case_expr = case_value;
+        if (!IsSimpleValueExpr(case_value)) {
+          out << "      " << TypeForWidth(case_width) << " __gpga_case_val = "
+              << case_value << ";\n";
+          case_expr = "__gpga_case_val";
+        }
+        if (case_width > 0 && case_width <= 64) {
+          out << "      if (" << i
+              << "u < GPGA_SCHED_VM_CASE_HEADER_COUNT) {\n";
+          out << "        const GpgaSchedVmCaseHeader __gpga_header = "
+                 "sched_vm_case_header["
+              << i << "u];\n";
+          out << "        if (__gpga_header.entry_count > 0u && "
+                 "__gpga_header.width == "
+              << case_width << "u) {\n";
+          out << "          ulong __gpga_case_val = (ulong)(" << case_expr
+              << ");\n";
+          out << "          const ulong __gpga_mask = "
+              << std::to_string(MaskForWidth64(case_width)) << "ul;\n";
+          out << "          __gpga_case_val &= __gpga_mask;\n";
+          out << "          for (uint __gpga_entry = 0u; "
+                 "__gpga_entry < __gpga_header.entry_count; "
+                 "++__gpga_entry) {\n";
+          out << "            const GpgaSchedVmCaseEntry __gpga_entry_rec = "
+                 "sched_vm_case_entry[__gpga_header.entry_offset + "
+                 "__gpga_entry];\n";
+          out << "            ulong __gpga_want = "
+                 "sched_vm_case_words[__gpga_entry_rec.want_offset];\n";
+          out << "            __gpga_want &= __gpga_mask;\n";
+          out << "            if ((__gpga_case_val ^ __gpga_want) == 0ul) {\n";
+          out << "              __gpga_match = __gpga_entry_rec.target;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "          }\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "      }\n";
+        }
+        for (size_t item_idx = 0; item_idx < stmt->case_items.size();
+             ++item_idx) {
+          const auto& item = stmt->case_items[item_idx];
+          std::string cond;
+          for (const auto& label : item.labels) {
+            int label_width = ExprWidth(*label, module);
+            int target = std::max(case_width, label_width);
+            std::string lhs = ExtendExpr(case_expr, case_width, target);
+            std::string rhs =
+                EmitExpr(*label, module, sched_locals, sched_regs);
+            std::string rhs_ext = ExtendExpr(rhs, label_width, target);
+            std::string piece = "(" + lhs + " == " + rhs_ext + ")";
+            if (!cond.empty()) {
+              cond += " || ";
+            }
+            cond += piece;
+          }
+          if (cond.empty()) {
+            continue;
+          }
+          out << "      if (" << cond << ") {\n";
+          out << "        __gpga_match = " << item_idx << "u;\n";
+          out << "        break;\n";
+          out << "      }\n";
+        }
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  return __gpga_match;\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_assigns = vm_tables.assign_stmts;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec_assign(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  uint assign_id,\n"
+             "  bool nonblocking) {\n";
+      emit_packed_signal_setup("sched.count");
+      emit_packed_nb_setup("sched.count");
+      emit_packed_force_setup("sched.count");
+      out << "  switch (assign_id) {\n";
+      for (size_t i = 0; i < vm_assigns.size(); ++i) {
+        const Statement* stmt = vm_assigns[i];
+        if (!stmt || stmt->kind != StatementKind::kAssign) {
+          continue;
+        }
+        SequentialAssign blocking = CloneSequentialAssign(stmt->assign);
+        blocking.nonblocking = false;
+        out << "    case " << i << "u: {\n";
+        if (stmt->assign.nonblocking) {
+          SequentialAssign nonblocking_assign =
+              CloneSequentialAssign(stmt->assign);
+          nonblocking_assign.nonblocking = true;
+          out << "      if (nonblocking) {\n";
+          emit_inline_assign(nonblocking_assign, 6, sched_locals);
+          out << "      } else {\n";
+          emit_inline_assign(blocking, 6, sched_locals);
+          out << "      }\n";
+        } else {
+          out << "      if (nonblocking) {\n";
+          out << "        sched_error[gid] = 1u;\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      } else {\n";
+          emit_inline_assign(blocking, 6, sched_locals);
+          out << "      }\n";
+        }
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_force_stmts = vm_tables.force_stmts;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec_force(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  uint force_id) {\n";
+      emit_packed_signal_setup("sched.count");
+      emit_packed_nb_setup("sched.count");
+      emit_packed_force_setup("sched.count");
+      out << "  switch (force_id) {\n";
+      for (size_t i = 0; i < vm_force_stmts.size(); ++i) {
+        const Statement* stmt = vm_force_stmts[i];
+        out << "    case " << i << "u: {\n";
+        if (!stmt) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        if (stmt->assign.delay) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        const bool is_proc = stmt->is_procedural;
+        const std::string& target = stmt->force_target;
+        auto target_it = is_proc ? passign_target_index.find(target)
+                                 : force_target_index.find(target);
+        if (target_it == (is_proc ? passign_target_index.end()
+                                  : force_target_index.end())) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        auto id_it = is_proc ? passign_stmt_ids.find(stmt)
+                             : force_stmt_ids.find(stmt);
+        if (id_it == (is_proc ? passign_stmt_ids.end()
+                              : force_stmt_ids.end())) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        LvalueInfo lhs =
+            BuildLvalue(stmt->assign, module, sched_locals, sched_regs, false);
+        if (!lhs.ok) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        if (override_is_reg[target]) {
+          out << "      if (!(" << override_active_expr(target) << ")) {\n";
+          out << "        " << shadow_name(target) << "[gid] = " << lhs.expr
+              << ";\n";
+          out << "      }\n";
+        }
+        std::string slot =
+            is_proc ? passign_slot_expr(target) : force_slot_expr(target);
+        if (is_proc) {
+          out << "      sched_passign_id[" << slot << "] = " << id_it->second
+              << "u;\n";
+          std::string force_active = force_active_expr(target);
+          if (force_active != "false") {
+            out << "      if (!" << force_active << ") {\n";
+            emit_force_value_assign(*stmt, lhs.expr, 8);
+            out << "      }\n";
+          } else {
+            emit_force_value_assign(*stmt, lhs.expr, 6);
+          }
+        } else {
+          out << "      sched_force_id[" << slot << "] = " << id_it->second
+              << "u;\n";
+          emit_force_value_assign(*stmt, lhs.expr, 6);
+        }
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_release_stmts = vm_tables.release_stmts;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec_release(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  uint release_id) {\n";
+      emit_packed_signal_setup("sched.count");
+      emit_packed_nb_setup("sched.count");
+      emit_packed_force_setup("sched.count");
+      out << "  switch (release_id) {\n";
+      for (size_t i = 0; i < vm_release_stmts.size(); ++i) {
+        const Statement* stmt = vm_release_stmts[i];
+        out << "    case " << i << "u: {\n";
+        if (!stmt) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        const bool is_proc = stmt->is_procedural;
+        const std::string& target = stmt->release_target;
+        auto target_it = is_proc ? passign_target_index.find(target)
+                                 : force_target_index.find(target);
+        if (target_it == (is_proc ? passign_target_index.end()
+                                  : force_target_index.end())) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        std::string slot =
+            is_proc ? passign_slot_expr(target) : force_slot_expr(target);
+        if (is_proc) {
+          out << "      sched_passign_id[" << slot
+              << "] = 0xFFFFFFFFu;\n";
+          if (override_is_reg[target]) {
+            std::string force_active = force_active_expr(target);
+            if (force_active != "false") {
+              out << "      if (!" << force_active << ") {\n";
+              out << "        " << MslName(target) << "[gid] = "
+                  << shadow_name(target) << "[gid];\n";
+              out << "      }\n";
+            } else {
+              out << "      " << MslName(target) << "[gid] = "
+                  << shadow_name(target) << "[gid];\n";
+            }
+          }
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        out << "      sched_force_id[" << slot << "] = 0xFFFFFFFFu;\n";
+        LvalueInfo lhs =
+            BuildLvalue(stmt->assign, module, sched_locals, sched_regs, false);
+        if (!lhs.ok) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        if (passign_target_index.count(target) > 0) {
+          std::string passign_active = passign_active_expr(target);
+          out << "      if (" << passign_active << ") {\n";
+          emit_passign_apply_target(target, lhs, 8);
+          out << "      } else {\n";
+          if (override_is_reg[target]) {
+            out << "        " << MslName(target) << "[gid] = "
+                << shadow_name(target) << "[gid];\n";
+          }
+          out << "      }\n";
+        } else if (override_is_reg[target]) {
+          out << "      " << MslName(target) << "[gid] = "
+              << shadow_name(target) << "[gid];\n";
+        }
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    auto emit_syscall_record = [&](const Expr& call, int indent) -> void {
+      std::string pad(indent, ' ');
+      if (call.kind != ExprKind::kCall ||
+          !IsFileSystemFunctionName(call.ident)) {
+        out << pad << "sched_error[gid] = 1u;\n";
+        out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        return;
+      }
+      const char* kind_expr = nullptr;
+      if (call.ident == "$fopen") {
+        kind_expr = "GPGA_SERVICE_KIND_FOPEN";
+      } else if (call.ident == "$fclose") {
+        kind_expr = "GPGA_SERVICE_KIND_FCLOSE";
+      } else if (call.ident == "$fgetc") {
+        kind_expr = "GPGA_SERVICE_KIND_FGETC";
+      } else if (call.ident == "$fgets") {
+        kind_expr = "GPGA_SERVICE_KIND_FGETS";
+      } else if (call.ident == "$feof") {
+        kind_expr = "GPGA_SERVICE_KIND_FEOF";
+      } else if (call.ident == "$ftell") {
+        kind_expr = "GPGA_SERVICE_KIND_FTELL";
+      } else if (call.ident == "$fseek") {
+        kind_expr = "GPGA_SERVICE_KIND_FSEEK";
+      } else if (call.ident == "$ferror") {
+        kind_expr = "GPGA_SERVICE_KIND_FERROR";
+      } else if (call.ident == "$ungetc") {
+        kind_expr = "GPGA_SERVICE_KIND_FUNGETC";
+      } else if (call.ident == "$fread") {
+        kind_expr = "GPGA_SERVICE_KIND_FREAD";
+      } else if (call.ident == "$fscanf") {
+        kind_expr = "GPGA_SERVICE_KIND_FSCANF";
+      } else if (call.ident == "$sscanf") {
+        kind_expr = "GPGA_SERVICE_KIND_SSCANF";
+      } else if (call.ident == "$test$plusargs") {
+        kind_expr = "GPGA_SERVICE_KIND_TESTPLUSARGS";
+      } else if (call.ident == "$value$plusargs") {
+        kind_expr = "GPGA_SERVICE_KIND_VALUEPLUSARGS";
+      }
+      if (!kind_expr) {
+        out << pad << "sched_error[gid] = 1u;\n";
+        out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        return;
+      }
+      std::string format_id_expr;
+      std::vector<ServiceArg> args;
+      if (!build_syscall_args(call, call.ident, &format_id_expr, &args)) {
+        out << pad << "sched_error[gid] = 1u;\n";
+        out << pad << "sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        return;
+      }
+      emit_service_record(kind_expr, format_id_expr, args, indent);
+    };
+    if (options.sched_vm) {
+      const auto& vm_service_calls = vm_tables.service_calls;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec_service_call(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  uint service_id,\n"
+             "  thread uint* steps_ptr,\n"
+             "  thread bool* finished_ptr,\n"
+             "  thread bool* stopped_ptr,\n"
+             "  thread ulong* __gpga_time_ptr) {\n";
+      out << "  thread uint& steps = *steps_ptr;\n";
+      out << "  thread bool& finished = *finished_ptr;\n";
+      out << "  thread bool& stopped = *stopped_ptr;\n";
+      out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+      emit_packed_signal_setup("sched.count");
+      emit_packed_nb_setup("sched.count");
+      emit_packed_force_setup("sched.count");
+      out << "  switch (service_id) {\n";
+      for (size_t i = 0; i < vm_service_calls.size(); ++i) {
+        const auto& call = vm_service_calls[i];
+        out << "    case " << i << "u: {\n";
+        if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
+          if (!call.stmt) {
+            out << "      sched_error[gid] = 1u;\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      break;\n";
+            out << "    }\n";
+            continue;
+          }
+          emit_system_task(*call.stmt, 6);
+        } else {
+          if (!call.call) {
+            out << "      sched_error[gid] = 1u;\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      break;\n";
+            out << "    }\n";
+            continue;
+          }
+          emit_syscall_record(*call.call, 6);
+        }
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      const auto& vm_service_assigns = vm_tables.service_assign_stmts;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec_service_ret_assign(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  uint assign_id) {\n";
+      out << "  ulong __gpga_ret = sched_wait_time[idx];\n";
+      out << "  sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      emit_packed_signal_setup("sched.count");
+      emit_packed_nb_setup("sched.count");
+      emit_packed_force_setup("sched.count");
+      out << "  switch (assign_id) {\n";
+      for (size_t i = 0; i < vm_service_assigns.size(); ++i) {
+        const Statement* stmt = vm_service_assigns[i];
+        out << "    case " << i << "u: {\n";
+        if (!stmt || stmt->kind != StatementKind::kAssign ||
+            !stmt->assign.rhs) {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          continue;
+        }
+        int width = SignalWidth(module, stmt->assign.lhs);
+        if (width <= 0) {
+          width = ExprWidth(*stmt->assign.rhs, module);
+        }
+        if (width <= 0) {
+          width = 1;
+        }
+        emit_lvalue_value(stmt->assign, "__gpga_ret", width, 6, sched_locals);
+        out << "      break;\n";
+        out << "    }\n";
+      }
+      out << "    default: {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+             "  thread bool* did_work_ptr,\n"
+             "  thread bool* finished_ptr,\n"
+             "  thread bool* stopped_ptr,\n"
+             "  thread ulong* __gpga_time_ptr) {\n";
+      out << "  thread uint& steps = *steps_ptr;\n";
+      out << "  thread bool& did_work = *did_work_ptr;\n";
+      out << "  thread bool& finished = *finished_ptr;\n";
+      out << "  thread bool& stopped = *stopped_ptr;\n";
+      out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+      emit_packed_signal_setup("sched.count");
+      emit_packed_nb_setup("sched.count");
+      emit_packed_force_setup("sched.count");
+      out << "  uint __gpga_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
+      out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
+      out << "  if (__gpga_bc_len == 0u) {\n";
+      out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+      out << "    switch (__gpga_group) {\n";
+      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+        out << "      case " << group << "u:\n";
+        out << "        gpga_" << MslName(module.name) << "_sched_group_"
+            << group << "(";
+        emit_sched_param_names();
+        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+        out << "        break;\n";
+      }
+      out << "      default: {\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "    }\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  uint __gpga_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+      out << "  uint __gpga_ip = sched_vm_ip[__gpga_vm_idx];\n";
+      out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
+      out << "    __gpga_ip = 0u;\n";
+      out << "  }\n";
+      out << "  #pragma clang loop unroll(disable)\n";
+      out << "  for (; __gpga_ip < __gpga_bc_len;) {\n";
+      out << "    uint __gpga_instr = sched_vm_bytecode[__gpga_bc_base + __gpga_ip];\n";
+      out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
+      out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
+      out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
+      out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+      out << "      switch (__gpga_group) {\n";
+      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+        out << "        case " << group << "u:\n";
+        out << "          gpga_" << MslName(module.name) << "_sched_group_"
+            << group << "(";
+        emit_sched_param_names();
+        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+        out << "          break;\n";
+      }
+      out << "        default: {\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "      }\n";
+      out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_NOOP) {\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_ASSIGN) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_ASSIGN_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+      emit_sched_param_names();
+      out << ", pid, idx, __gpga_arg, false);\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_ASSIGN_NB) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_ASSIGN_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+      emit_sched_param_names();
+      out << ", pid, idx, __gpga_arg, true);\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_ASSIGN_DELAY) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_DELAY_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      if (!has_delayed_assigns) {
+        out << "      sched_error[gid] = 1u;\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+        out << "      return;\n";
+      } else {
+      out << "      const uint __gpga_delay_pending = 0x80000000u;\n";
+      out << "      if ((sched_wait_id[idx] & __gpga_delay_pending) != 0u) {\n";
+      out << "        sched_wait_id[idx] = 0u;\n";
+      out << "        uint __gpga_delay_slot = (gid * GPGA_SCHED_DELAY_COUNT) + __gpga_arg;\n";
+      out << "        ulong __gpga_dval = sched_delay_val[__gpga_delay_slot];\n";
+      out << "        uint __gpga_didx_val = sched_delay_index_val[__gpga_delay_slot];\n";
+      emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_didx_val",
+                              false, 8);
+      out << "        __gpga_ip = __gpga_next_ip;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      ulong __gpga_dval = 0ul;\n";
+      out << "      uint __gpga_didx_val = 0u;\n";
+      out << "      ulong __gpga_delay = 0ul;\n";
+      out << "      bool __gpga_nb = false;\n";
+      out << "      bool __gpga_inertial = false;\n";
+      out << "      bool __gpga_showcancelled = false;\n";
+      out << "      bool __gpga_has_pulse = false;\n";
+      out << "      bool __gpga_has_pulse_error = false;\n";
+      out << "      ulong __gpga_pulse_reject = 0ul;\n";
+      out << "      ulong __gpga_pulse_error = 0ul;\n";
+      out << "      bool __gpga_valid = true;\n";
+      out << "      switch (__gpga_arg) {\n";
+      for (size_t i = 0; i < delay_assigns.size(); ++i) {
+        const DelayAssignInfo& info = delay_assigns[i];
+        const Statement* stmt = info.stmt;
+        out << "      case " << i << "u: {\n";
+        if (!stmt || !stmt->assign.rhs || !info.delay_expr) {
+          out << "        __gpga_valid = false;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          continue;
+        }
+        std::string rhs =
+            info.lhs_real
+                ? EmitRealBitsExpr(*stmt->assign.rhs, module, sched_locals,
+                                   sched_regs)
+                : EmitExprSized(*stmt->assign.rhs, info.width, module,
+                                sched_locals, sched_regs);
+        std::string mask = std::to_string(MaskForWidth64(info.width)) + "ul";
+        out << "        __gpga_dval = ((ulong)(" << rhs << ")) & " << mask
+            << ";\n";
+        std::string idx_val = "0u";
+        if (info.is_array || info.is_bit_select || info.is_indexed_range) {
+          const Expr* idx_expr = nullptr;
+          if (info.is_indexed_range) {
+            idx_expr = stmt->assign.lhs_lsb_expr.get();
+          } else {
+            idx_expr = stmt->assign.lhs_index.get();
+          }
+          if (!idx_expr) {
+            out << "        __gpga_valid = false;\n";
+            out << "        break;\n";
+            out << "      }\n";
+            continue;
+          }
+          idx_val = EmitExpr(*idx_expr, module, sched_locals, sched_regs);
+        }
+        out << "        __gpga_didx_val = uint(" << idx_val << ");\n";
+        out << "        __gpga_delay = " << emit_delay_value2(*info.delay_expr)
+            << ";\n";
+        out << "        __gpga_nb = " << (info.nonblocking ? "true" : "false")
+            << ";\n";
+        out << "        __gpga_inertial = "
+            << (info.inertial ? "true" : "false") << ";\n";
+        out << "        __gpga_showcancelled = "
+            << (info.showcancelled ? "true" : "false") << ";\n";
+        out << "        __gpga_has_pulse = "
+            << (info.has_pulse ? "true" : "false") << ";\n";
+        out << "        __gpga_has_pulse_error = "
+            << (info.has_pulse_error ? "true" : "false") << ";\n";
+        if (info.has_pulse) {
+          std::string pulse_reject_expr =
+              info.pulse_reject ? emit_delay_limit2(*info.pulse_reject)
+                                : "0ul";
+          std::string pulse_error_expr = pulse_reject_expr;
+          if (info.has_pulse_error && info.pulse_error) {
+            pulse_error_expr = emit_delay_limit2(*info.pulse_error);
+          }
+          out << "        __gpga_pulse_reject = " << pulse_reject_expr
+              << ";\n";
+          out << "        __gpga_pulse_error = " << pulse_error_expr << ";\n";
+        }
+        out << "        break;\n";
+        out << "      }\n";
+      }
+      out << "      default: {\n";
+      out << "        __gpga_valid = false;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      }\n";
+      out << "      if (!__gpga_valid) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      if (has_delayed_nba) {
+      out << "      if (__gpga_nb) {\n";
+      out << "        if (__gpga_delay == 0ul) {\n";
+      emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_didx_val",
+                              true, 10);
+      out << "          __gpga_ip = __gpga_next_ip;\n";
+      out << "          continue;\n";
+      out << "        }\n";
+      out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
+      out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+      out << "        bool __gpga_pulse_suppress = false;\n";
+      out << "        bool __gpga_pulse_x = false;\n";
+      out << "        if (__gpga_inertial) {\n";
+      out << "          if (__gpga_dnba_count != 0u) {\n";
+      out << "            uint __gpga_dnba_write = 0u;\n";
+      out << "            for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+      out << "              uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
+      out << "              if (sched_dnba_id[__gpga_dnba_idx] == __gpga_arg &&\n";
+      out << "                  sched_dnba_index_val[__gpga_dnba_idx] == __gpga_didx_val) {\n";
+      out << "                if (__gpga_has_pulse) {\n";
+      out << "                  ulong __gpga_new_time = __gpga_time + __gpga_delay;\n";
+      out << "                  ulong __gpga_pulse_width = (__gpga_new_time >= sched_dnba_time[__gpga_dnba_idx])\n";
+      out << "                      ? (__gpga_new_time - sched_dnba_time[__gpga_dnba_idx])\n";
+      out << "                      : (sched_dnba_time[__gpga_dnba_idx] - __gpga_new_time);\n";
+      out << "                  if (__gpga_pulse_width < __gpga_pulse_reject) {\n";
+      out << "                    __gpga_pulse_suppress = true;\n";
+      out << "                  } else if (__gpga_pulse_width < __gpga_pulse_error) {\n";
+      out << "                    __gpga_pulse_x = true;\n";
+      out << "                  }\n";
+      out << "                }\n";
+      if (has_showcancelled) {
+        std::vector<ServiceArg> cancel_args;
+        cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                         "__gpga_arg", false});
+        cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32,
+                                         "sched_dnba_index_val[__gpga_dnba_idx]",
+                                         false});
+        cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 32, "0u",
+                                         false});
+        cancel_args.push_back(ServiceArg{"GPGA_SERVICE_ARG_VALUE", 64,
+                                         "sched_dnba_time[__gpga_dnba_idx]",
+                                         false});
+        out << "                if (__gpga_showcancelled) {\n";
+        emit_service_record("GPGA_SERVICE_KIND_SHOWCANCELLED",
+                            "GPGA_SERVICE_INVALID_ID", cancel_args, 18);
+        out << "                }\n";
+      }
+      out << "                continue;\n";
+      out << "              }\n";
+      out << "              uint __gpga_dnba_out = __gpga_dnba_base + __gpga_dnba_write;\n";
+      out << "              if (__gpga_dnba_out != __gpga_dnba_idx) {\n";
+      out << "                sched_dnba_time[__gpga_dnba_out] = sched_dnba_time[__gpga_dnba_idx];\n";
+      out << "                sched_dnba_id[__gpga_dnba_out] = sched_dnba_id[__gpga_dnba_idx];\n";
+      out << "                sched_dnba_val[__gpga_dnba_out] = sched_dnba_val[__gpga_dnba_idx];\n";
+      out << "                sched_dnba_index_val[__gpga_dnba_out] = sched_dnba_index_val[__gpga_dnba_idx];\n";
+      out << "              }\n";
+      out << "              __gpga_dnba_write += 1u;\n";
+      out << "            }\n";
+      out << "            __gpga_dnba_count = __gpga_dnba_write;\n";
+      out << "            sched_dnba_count[gid] = __gpga_dnba_write;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (__gpga_has_pulse) {\n";
+      out << "          if (__gpga_pulse_suppress) {\n";
+      out << "            __gpga_ip = __gpga_next_ip;\n";
+      out << "            continue;\n";
+      out << "          }\n";
+      out << "          if (__gpga_pulse_x) {\n";
+      out << "            __gpga_dval = 0ul;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (__gpga_dnba_count >= GPGA_SCHED_MAX_DNBA) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "        } else {\n";
+      out << "          uint __gpga_dnba_slot = __gpga_dnba_base + __gpga_dnba_count;\n";
+      out << "          sched_dnba_count[gid] = __gpga_dnba_count + 1u;\n";
+      out << "          sched_dnba_time[__gpga_dnba_slot] = __gpga_time + __gpga_delay;\n";
+      out << "          sched_dnba_id[__gpga_dnba_slot] = __gpga_arg;\n";
+      out << "          sched_dnba_val[__gpga_dnba_slot] = __gpga_dval;\n";
+      out << "          sched_dnba_index_val[__gpga_dnba_slot] = __gpga_didx_val;\n";
+      out << "        }\n";
+      out << "        __gpga_ip = __gpga_next_ip;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      } else {
+      out << "      if (__gpga_nb) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      }
+      out << "      if (__gpga_delay == 0ul) {\n";
+      emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_didx_val",
+                              false, 8);
+      out << "        __gpga_ip = __gpga_next_ip;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      uint __gpga_delay_slot = (gid * GPGA_SCHED_DELAY_COUNT) + __gpga_arg;\n";
+      out << "      sched_delay_val[__gpga_delay_slot] = __gpga_dval;\n";
+      out << "      sched_delay_index_val[__gpga_delay_slot] = __gpga_didx_val;\n";
+      out << "      sched_wait_kind[idx] = (__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : GPGA_SCHED_WAIT_TIME;\n";
+      out << "      sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
+      out << "      sched_wait_id[idx] = __gpga_delay_pending | (__gpga_arg & 0x7FFFFFFFu);\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      }
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_JUMP) {\n";
+      out << "      if (__gpga_arg >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_arg;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_FORCE) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_FORCE_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_force(";
+      emit_sched_param_names();
+      out << ", pid, idx, __gpga_arg);\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_RELEASE) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_RELEASE_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_release(";
+      emit_sched_param_names();
+      out << ", pid, idx, __gpga_arg);\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_SERVICE_CALL) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_SERVICE_CALL_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      gpga_" << MslName(module.name)
+          << "_sched_vm_exec_service_call(";
+      emit_sched_param_names();
+      out << ", pid, idx, __gpga_arg, &steps, &finished, &stopped, &__gpga_time);\n";
+      out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] =\n";
+      out << "            (sched_state[idx] == GPGA_SCHED_PROC_READY)\n";
+      out << "                ? __gpga_next_ip\n";
+      out << "                : 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_SERVICE) {\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_SERVICE;\n";
+      out << "      sched_wait_time[idx] = 0ul;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_SERVICE_RET_ASSIGN) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      gpga_" << MslName(module.name)
+          << "_sched_vm_exec_service_ret_assign(";
+      emit_sched_param_names();
+      out << ", pid, idx, __gpga_arg);\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_SERVICE_RET_BRANCH) {\n";
+      out << "      if (__gpga_next_ip + 1u >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_true_ip = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "      uint __gpga_false_ip = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + 1u];\n";
+      out << "      if (__gpga_true_ip >= __gpga_bc_len || __gpga_false_ip >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      ulong __gpga_ret = sched_wait_time[idx];\n";
+      out << "      bool __gpga_cond = ((__gpga_ret & 1ul) != 0ul);\n";
+      out << "      if (__gpga_arg != 0u) {\n";
+      out << "        __gpga_cond = !__gpga_cond;\n";
+      out << "      }\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "      __gpga_ip = __gpga_cond ? __gpga_true_ip : __gpga_false_ip;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_HALT_SIM) {\n";
+      out << "      if (__gpga_arg == 0u) {\n";
+      out << "        finished = true;\n";
+      out << "      } else if (__gpga_arg == 1u) {\n";
+      out << "        stopped = true;\n";
+      out << "      } else {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "      }\n";
+      out << "      steps = 0u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_JUMP_IF) {\n";
+      out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_target = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_COND_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_cond_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+             "          GPGA_SCHED_VM_COND_COUNT;\n";
+      out << "      uint __gpga_cond_val = 0u;\n";
+      out << "      uint __gpga_cond_xz = 0u;\n";
+      out << "      gpga_" << MslName(module.name) << "_sched_vm_eval_cond(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg, &__gpga_cond_val, &__gpga_cond_xz);\n";
+      out << "      sched_vm_cond_val[__gpga_cond_base + __gpga_arg] = __gpga_cond_val;\n";
+      out << "      sched_vm_cond_xz[__gpga_cond_base + __gpga_arg] = __gpga_cond_xz;\n";
+      out << "      bool __gpga_take = (__gpga_cond_xz == 0u) && (__gpga_cond_val != 0u);\n";
+      out << "      if (__gpga_target >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_take ? __gpga_target : (__gpga_next_ip + 1u);\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CASE) {\n";
+      out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_case_count = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "      uint __gpga_target_base = __gpga_next_ip + 1u;\n";
+      out << "      uint __gpga_default_index = __gpga_target_base + __gpga_case_count;\n";
+      out << "      if (__gpga_default_index >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_CASE_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_match = gpga_" << MslName(module.name)
+          << "_sched_vm_eval_case(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg);\n";
+      out << "      uint __gpga_target_index = __gpga_default_index;\n";
+      out << "      if (__gpga_match != 0xFFFFFFFFu) {\n";
+      out << "        if (__gpga_match >= __gpga_case_count) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        __gpga_target_index = __gpga_target_base + __gpga_match;\n";
+      out << "      }\n";
+      out << "      uint __gpga_target = sched_vm_bytecode[__gpga_bc_base + __gpga_target_index];\n";
+      out << "      if (__gpga_target >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_target;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_REPEAT) {\n";
+      out << "      if (__gpga_next_ip + 1u >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_body = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "      uint __gpga_after = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + 1u];\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_REPEAT_COUNT ||\n";
+      out << "          __gpga_body >= __gpga_bc_len || __gpga_after >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      if (repeat_state_count == 0u) {
+        out << "      sched_error[gid] = 1u;\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+        out << "      return;\n";
+      } else {
+      out << "      uint __gpga_rep_slot = (gid * GPGA_SCHED_REPEAT_COUNT) + __gpga_arg;\n";
+      out << "      uint __gpga_rep_left = sched_repeat_left[__gpga_rep_slot];\n";
+      out << "      uint __gpga_rep_active = sched_repeat_active[__gpga_rep_slot];\n";
+      out << "      if (__gpga_rep_active == 0u) {\n";
+      out << "        uint __gpga_rep_count = 0u;\n";
+      out << "        bool __gpga_rep_valid = true;\n";
+      out << "        switch (__gpga_arg) {\n";
+      for (size_t i = 0; i < vm_tables.repeat_stmts.size(); ++i) {
+        const Statement* stmt = vm_tables.repeat_stmts[i];
+        if (!stmt || !stmt->repeat_count) {
+          continue;
+        }
+        out << "          case " << i << "u: {\n";
+        std::string rep_expr =
+            EmitExprSized(*stmt->repeat_count, 32, module, sched_locals,
+                          sched_regs);
+        out << "            __gpga_rep_count = uint(" << rep_expr << ");\n";
+        out << "            break;\n";
+        out << "          }\n";
+      }
+      out << "          default: {\n";
+      out << "            __gpga_rep_valid = false;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (!__gpga_rep_valid) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        sched_repeat_left[__gpga_rep_slot] = __gpga_rep_count;\n";
+      out << "        sched_repeat_active[__gpga_rep_slot] = 1u;\n";
+      out << "        __gpga_rep_left = __gpga_rep_count;\n";
+      out << "      }\n";
+      out << "      if (__gpga_rep_left == 0u) {\n";
+      out << "        sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+      out << "        __gpga_ip = __gpga_after;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      if (__gpga_body == __gpga_after) {\n";
+      out << "        sched_repeat_left[__gpga_rep_slot] = 0u;\n";
+      out << "        sched_repeat_active[__gpga_rep_slot] = 0u;\n";
+      out << "        __gpga_ip = __gpga_after;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      sched_repeat_left[__gpga_rep_slot] = __gpga_rep_left - 1u;\n";
+      out << "      __gpga_ip = __gpga_body;\n";
+      out << "      continue;\n";
+      }
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_FORK) {\n";
+      out << "      uint __gpga_fork_count = (__gpga_arg & 0x00FFFFFFu);\n";
+      out << "      uint __gpga_join_kind = (__gpga_arg >> 24u) & 0xFFu;\n";
+      out << "      (void)__gpga_join_kind;\n";
+      out << "      if (__gpga_fork_count == 0u ||\n";
+      out << "          __gpga_next_ip + __gpga_fork_count >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_after_ip = __gpga_next_ip + __gpga_fork_count;\n";
+      out << "      uint __gpga_join_tag = 0u;\n";
+      out << "      #pragma clang loop unroll(disable)\n";
+      out << "      for (uint c = 0u; c < __gpga_fork_count; ++c) {\n";
+      out << "        uint __gpga_child = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + c];\n";
+      out << "        if (__gpga_child >= GPGA_SCHED_PROC_COUNT) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        uint __gpga_cidx = gpga_sched_index(gid, __gpga_child);\n";
+      out << "        if (c == 0u) {\n";
+      out << "          __gpga_join_tag = sched_join_tag[__gpga_cidx];\n";
+      out << "        }\n";
+      out << "        sched_pc[__gpga_cidx] = 0u;\n";
+      out << "        uint __gpga_child_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + __gpga_child;\n";
+      out << "        sched_vm_ip[__gpga_child_vm_idx] = 0u;\n";
+      out << "        sched_pc[__gpga_child_vm_idx] = 0u;\n";
+      out << "        sched_vm_call_sp[__gpga_child_vm_idx] = 0u;\n";
+      out << "        sched_state[__gpga_cidx] = GPGA_SCHED_PROC_READY;\n";
+      out << "        sched_wait_kind[__gpga_cidx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "        sched_wait_id[__gpga_cidx] = 0u;\n";
+      out << "        sched_wait_event[__gpga_cidx] = 0u;\n";
+      out << "        sched_wait_time[__gpga_cidx] = 0ul;\n";
+      out << "        sched_join_count[__gpga_cidx] = 0u;\n";
+      out << "      }\n";
+      out << "      sched_join_count[idx] = __gpga_fork_count;\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_JOIN;\n";
+      out << "      sched_wait_id[idx] = __gpga_join_tag;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_after_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_DISABLE) {\n";
+      out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      if (__gpga_arg == "
+          << static_cast<uint32_t>(SchedulerVmDisableKind::kBlock)
+          << "u) {\n";
+      out << "        uint __gpga_target = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "        if (__gpga_target >= __gpga_bc_len) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        __gpga_ip = __gpga_target;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      if (__gpga_arg == "
+          << static_cast<uint32_t>(SchedulerVmDisableKind::kChildProc)
+          << "u) {\n";
+      out << "        uint __gpga_child = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "        if (__gpga_child >= GPGA_SCHED_PROC_COUNT) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        uint __gpga_cidx = gpga_sched_index(gid, __gpga_child);\n";
+      out << "        if (sched_state[__gpga_cidx] != GPGA_SCHED_PROC_DONE) {\n";
+      out << "          sched_state[__gpga_cidx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_wait_kind[__gpga_cidx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "          uint __gpga_child_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + __gpga_child;\n";
+      out << "          sched_vm_ip[__gpga_child_vm_idx] = 0u;\n";
+      out << "          sched_pc[__gpga_child_vm_idx] = 0u;\n";
+      out << "          sched_vm_call_sp[__gpga_child_vm_idx] = 0u;\n";
+      out << "          uint parent = sched_parent[__gpga_cidx];\n";
+      out << "          if (parent != GPGA_SCHED_NO_PARENT) {\n";
+      out << "            uint pidx = gpga_sched_index(gid, parent);\n";
+      out << "            if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+      out << "                sched_wait_id[pidx] == sched_join_tag[__gpga_cidx]) {\n";
+      out << "              if (sched_join_count[pidx] > 0u) {\n";
+      out << "                sched_join_count[pidx] -= 1u;\n";
+      out << "              }\n";
+      out << "              if (sched_join_count[pidx] == 0u) {\n";
+      out << "                sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "                sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+      out << "              }\n";
+      out << "            }\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        __gpga_ip = __gpga_next_ip + 1u;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      if (__gpga_arg == "
+          << static_cast<uint32_t>(SchedulerVmDisableKind::kCrossProc)
+          << "u) {\n";
+      out << "        if (__gpga_next_ip + 1u >= __gpga_bc_len) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        uint __gpga_target_pid = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "        uint __gpga_target_ip = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip + 1u];\n";
+      out << "        if (__gpga_target_pid >= GPGA_SCHED_PROC_COUNT) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        uint __gpga_target_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + __gpga_target_pid;\n";
+      out << "        uint __gpga_target_len = sched_vm_proc_bytecode_length[__gpga_target_vm_idx];\n";
+      out << "        if (__gpga_target_ip >= __gpga_target_len) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
+      out << "        uint __gpga_tidx = gpga_sched_index(gid, __gpga_target_pid);\n";
+      out << "        sched_vm_ip[__gpga_target_vm_idx] = __gpga_target_ip;\n";
+      out << "        sched_pc[__gpga_target_vm_idx] = __gpga_target_ip;\n";
+      out << "        sched_wait_kind[__gpga_tidx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "        sched_state[__gpga_tidx] = GPGA_SCHED_PROC_READY;\n";
+      out << "        __gpga_ip = __gpga_next_ip + 2u;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_TIME) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_DELAY_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      ulong __gpga_delay = gpga_" << MslName(module.name)
+          << "_sched_vm_eval_delay(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg);\n";
+      out << "      sched_wait_kind[idx] = (__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : GPGA_SCHED_WAIT_TIME;\n";
+      out << "      sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_DELTA) {\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_DELTA;\n";
+      out << "      sched_wait_time[idx] = __gpga_time;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_EVENT) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_EVENT_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_EVENT;\n";
+      out << "      sched_wait_event[idx] = __gpga_arg;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_EVENT_TRIGGER) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_EVENT_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      if (has_events) {
+      out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + __gpga_arg] = 1u;\n";
+      out << "      __gpga_ip = __gpga_next_ip;\n";
+      out << "      continue;\n";
+      } else {
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "      return;\n";
+      }
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_EDGE) {\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_EDGE_WAIT_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      if (!has_edges && !has_edge_star) {
+      out << "      sched_error[gid] = 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "      return;\n";
+      } else {
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_EDGE;\n";
+      out << "      sched_wait_id[idx] = __gpga_arg;\n";
+      out << "      sched_wait_edge_kind[idx] = gpga_sched_edge_wait_kind[__gpga_arg];\n";
+      out << "      uint __gpga_item_offset = gpga_sched_edge_wait_item_offset[__gpga_arg];\n";
+      out << "      uint __gpga_item_count = gpga_sched_edge_wait_item_count[__gpga_arg];\n";
+      out << "      uint __gpga_star_offset = gpga_sched_edge_wait_star_offset[__gpga_arg];\n";
+      out << "      uint __gpga_star_count = gpga_sched_edge_wait_star_count[__gpga_arg];\n";
+      if (has_edges) {
+      out << "      if (__gpga_item_count > 0u) {\n";
+      out << "        uint __gpga_edge_base = (gid * GPGA_SCHED_EDGE_COUNT) + __gpga_item_offset;\n";
+      out << "        #pragma clang loop unroll(disable)\n";
+      out << "        for (uint j = 0u; j < __gpga_item_count; ++j) {\n";
+      out << "          uint __gpga_edge_index = __gpga_item_offset + j;\n";
+      out << "          ulong __gpga_curr_val = 0ul;\n";
+      out << "          ulong __gpga_curr_mask = 0ul;\n";
+      emit_edge_item_switch2(10, "__gpga_edge_index");
+      out << "          sched_edge_prev_val[__gpga_edge_base + j] = __gpga_curr_val;\n";
+      out << "        }\n";
+      out << "      }\n";
+      }
+      if (has_edge_star) {
+      out << "      if (__gpga_star_count > 0u) {\n";
+      out << "        uint __gpga_edge_star_base = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + __gpga_star_offset;\n";
+      out << "        #pragma clang loop unroll(disable)\n";
+      out << "        for (uint s = 0u; s < __gpga_star_count; ++s) {\n";
+      out << "          uint __gpga_star_index = __gpga_star_offset + s;\n";
+      out << "          ulong __gpga_curr_val = 0ul;\n";
+      out << "          ulong __gpga_curr_mask = 0ul;\n";
+      emit_edge_star_switch2(10, "__gpga_star_index");
+      out << "          sched_edge_star_prev_val[__gpga_edge_star_base + s] = __gpga_curr_val;\n";
+      out << "        }\n";
+      out << "      }\n";
+      }
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      }
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_WAIT_COND) {\n";
+      out << "      if (__gpga_next_ip >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_wait_id = sched_vm_bytecode[__gpga_bc_base + __gpga_next_ip];\n";
+      out << "      if (__gpga_arg >= GPGA_SCHED_VM_COND_COUNT) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_cond_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+             "          GPGA_SCHED_VM_COND_COUNT;\n";
+      out << "      uint __gpga_cond_val = 0u;\n";
+      out << "      uint __gpga_cond_xz = 0u;\n";
+      out << "      gpga_" << MslName(module.name) << "_sched_vm_eval_cond(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg, &__gpga_cond_val, &__gpga_cond_xz);\n";
+      out << "      sched_vm_cond_val[__gpga_cond_base + __gpga_arg] = __gpga_cond_val;\n";
+      out << "      sched_vm_cond_xz[__gpga_cond_base + __gpga_arg] = __gpga_cond_xz;\n";
+      out << "      bool __gpga_take = (__gpga_cond_xz == 0u) && (__gpga_cond_val != 0u);\n";
+      out << "      if (__gpga_take) {\n";
+      out << "        __gpga_ip = __gpga_next_ip + 1u;\n";
+      out << "        continue;\n";
+      out << "      }\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_COND;\n";
+      out << "      sched_wait_id[idx] = __gpga_wait_id;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip + 1u;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_BLOCKED;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_TASK_CALL) {\n";
+      out << "      uint __gpga_sp = sched_vm_call_sp[__gpga_vm_idx];\n";
+      out << "      if (__gpga_sp >= GPGA_SCHED_VM_CALL_FRAME_DEPTH) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_frame_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+             "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
+      out << "      uint __gpga_frame_offset = __gpga_frame_base +\n"
+             "          (__gpga_sp * GPGA_SCHED_VM_CALL_FRAME_WORDS);\n";
+      out << "      sched_vm_call_frame[__gpga_frame_offset] = __gpga_next_ip;\n";
+      out << "      sched_vm_call_sp[__gpga_vm_idx] = __gpga_sp + 1u;\n";
+      out << "      if (__gpga_arg >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_arg;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_RET) {\n";
+      out << "      uint __gpga_sp = sched_vm_call_sp[__gpga_vm_idx];\n";
+      out << "      if (__gpga_sp == 0u) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      uint __gpga_frame_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+             "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
+      out << "      uint __gpga_frame_offset = __gpga_frame_base +\n"
+             "          ((__gpga_sp - 1u) * GPGA_SCHED_VM_CALL_FRAME_WORDS);\n";
+      out << "      uint __gpga_return = sched_vm_call_frame[__gpga_frame_offset];\n";
+      out << "      sched_vm_call_sp[__gpga_vm_idx] = __gpga_sp - 1u;\n";
+      out << "      if (__gpga_return >= __gpga_bc_len) {\n";
+      out << "        sched_error[gid] = 1u;\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
+      out << "      __gpga_ip = __gpga_return;\n";
+      out << "      continue;\n";
+      out << "    }\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_DONE) {\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "      return;\n";
+      out << "    }\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+      out << "}\n";
+    }
     }
   }
   return out.str();

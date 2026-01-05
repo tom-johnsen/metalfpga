@@ -41,6 +41,10 @@ constant constexpr uint GPGA_SCHED_STATUS_ERROR = 3u;
 constant constexpr uint GPGA_SCHED_STATUS_STOPPED = 4u;
 constant constexpr uint GPGA_SCHED_FLAG_INITIALIZED = 1u;
 constant constexpr uint GPGA_SCHED_FLAG_ACTIVE_INIT = 2u;
+constant constexpr uint GPGA_SCHED_HALT_FINISH = 0u;
+constant constexpr uint GPGA_SCHED_HALT_STOP = 1u;
+constant constexpr uint GPGA_SCHED_HALT_ERROR = 2u;
+constant constexpr uint GPGA_SCHED_HALT_NONE = 0xFFFFFFFFu;
 
 constant constexpr uint GPGA_SERVICE_INVALID_ID = 0xFFFFFFFFu;
 constant constexpr uint GPGA_SERVICE_ARG_VALUE = 0u;
@@ -142,6 +146,33 @@ struct GpgaServiceRecord { \
   ulong arg_xz[GPGA_SCHED_SERVICE_MAX_ARGS]; \
   ulong arg_wide_val[GPGA_SCHED_SERVICE_MAX_ARGS * GPGA_SCHED_SERVICE_WIDE_WORDS]; \
   ulong arg_wide_xz[GPGA_SCHED_SERVICE_MAX_ARGS * GPGA_SCHED_SERVICE_WIDE_WORDS]; \
+};
+
+struct GpgaSchedVmCaseHeader {
+  uint kind;
+  uint strategy;
+  uint width;
+  uint entry_count;
+  uint entry_offset;
+  uint default_target;
+};
+struct GpgaSchedVmCondEntry {
+  uint kind;
+  uint val;
+  uint xz;
+  uint expr_offset;
+};
+struct GpgaSchedVmSignalEntry {
+  uint val_offset;
+  uint xz_offset;
+  uint width;
+  uint array_size;
+  uint flags;
+};
+struct GpgaSchedVmCaseEntry {
+  uint want_offset;
+  uint care_offset;
+  uint target;
 };
 
 #define GPGA_SCHED_DEFINE_PROC_PARENT(...) \

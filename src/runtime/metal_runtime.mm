@@ -1,6 +1,7 @@
 #include "runtime/metal_runtime.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -38,6 +39,7 @@ namespace gpga {
 
 std::string FormatNSError(NSError* error);
 void LogPipeline(bool enabled, const std::string& message);
+std::string FormatTimestamp();
 
 struct MetalRuntime::Impl {
   struct PipelineTask {
@@ -45,6 +47,8 @@ struct MetalRuntime::Impl {
     id<MTLComputePipelineState> pipeline = nil;
     NSError* error = nil;
     dispatch_semaphore_t done = nullptr;
+    std::chrono::steady_clock::time_point start =
+        std::chrono::steady_clock::time_point{};
   };
   id<MTLDevice> device = nil;
   id<MTL4CommandQueue> queue = nil;
@@ -64,6 +68,10 @@ struct MetalRuntime::Impl {
   bool pipeline_archive_save = false;
   bool pipeline_async = false;
   bool pipeline_log = false;
+  bool pipeline_progress = true;
+  bool pipeline_trace = true;
+  size_t precompile_total = 0;
+  size_t precompile_done = 0;
   uint32_t threadgroup_override = 0;
   bool use_residency_set = false;
   bool gpu_timestamps = false;
@@ -1190,7 +1198,69 @@ void LogPipeline(bool enabled, const std::string& message) {
   if (!enabled) {
     return;
   }
-  std::cerr << "[metal_runtime] " << message << "\n";
+  std::cerr << FormatTimestamp() << " [metal_runtime] " << message << "\n";
+}
+
+std::string FormatProgressBar(size_t done, size_t total, size_t width = 24u) {
+  if (width == 0u) {
+    width = 1u;
+  }
+  size_t filled = 0;
+  if (total > 0u) {
+    filled = (done * width) / total;
+    if (filled > width) {
+      filled = width;
+    }
+  }
+  std::string bar = "[";
+  bar.append(filled, '#');
+  bar.append(width - filled, '-');
+  bar += "] ";
+  bar += std::to_string(done);
+  bar += "/";
+  bar += std::to_string(total);
+  return bar;
+}
+
+std::string FormatTimestamp() {
+  using namespace std::chrono;
+  static const auto start = steady_clock::now();
+  auto elapsed = steady_clock::now() - start;
+  auto total_ms = duration_cast<milliseconds>(elapsed).count();
+  auto ms = total_ms % 1000;
+  auto total_sec = total_ms / 1000;
+  auto sec = total_sec % 60;
+  auto total_min = total_sec / 60;
+  auto min = total_min % 60;
+  auto hours = total_min / 60;
+  std::ostringstream oss;
+  oss << std::setfill('0') << std::setw(2) << hours << ":"
+      << std::setw(2) << min << ":" << std::setw(2) << sec << ":"
+      << std::setw(3) << ms;
+  return oss.str();
+}
+
+void LogPipelineTrace(bool enabled, const std::string& message) {
+  if (!enabled) {
+    return;
+  }
+  std::cerr << FormatTimestamp() << " [metal_runtime][pipeline] " << message
+            << "\n";
+}
+
+void LogPipelineProgress(bool enabled, size_t done, size_t total,
+                         const std::string& name, const std::string& status,
+                         double ms) {
+  if (!enabled) {
+    return;
+  }
+  std::ostringstream oss;
+  oss << FormatTimestamp() << " [metal_runtime][progress] "
+      << FormatProgressBar(done, total) << " " << status << " " << name;
+  if (ms >= 0.0) {
+    oss << " " << std::fixed << std::setprecision(1) << ms << "ms";
+  }
+  std::cerr << oss.str() << "\n";
 }
 
 std::string FormatNSError(NSError* error) {
@@ -1261,6 +1331,7 @@ MetalKernel::~MetalKernel() {
 MetalKernel::MetalKernel(MetalKernel&& other) noexcept
     : pipeline_(other.pipeline_),
       argument_table_(other.argument_table_),
+      name_(std::move(other.name_)),
       buffer_indices_(std::move(other.buffer_indices_)),
       max_buffer_bindings_(other.max_buffer_bindings_),
       thread_execution_width_(other.thread_execution_width_),
@@ -1288,6 +1359,7 @@ MetalKernel& MetalKernel::operator=(MetalKernel&& other) noexcept {
   }
   pipeline_ = other.pipeline_;
   argument_table_ = other.argument_table_;
+  name_ = std::move(other.name_);
   buffer_indices_ = std::move(other.buffer_indices_);
   max_buffer_bindings_ = other.max_buffer_bindings_;
   thread_execution_width_ = other.thread_execution_width_;
@@ -1357,6 +1429,12 @@ bool MetalRuntime::Initialize(std::string* error) {
       impl_->pipeline_async = false;
     }
     impl_->pipeline_log = EnvEnabled("METALFPGA_PIPELINE_LOG");
+    if (auto trace_pref = EnvTriState("METALFPGA_PIPELINE_TRACE")) {
+      impl_->pipeline_trace = *trace_pref;
+    }
+    if (auto progress_pref = EnvTriState("METALFPGA_PIPELINE_PROGRESS")) {
+      impl_->pipeline_progress = *progress_pref;
+    }
     if (auto override_size = EnvU32("METALFPGA_THREADGROUP_SIZE")) {
       impl_->threadgroup_override = *override_size;
     }
@@ -1544,6 +1622,8 @@ bool MetalRuntime::CompileSource(const std::string& source,
         }
       }
       impl_->pipeline_tasks.clear();
+      impl_->precompile_total = 0;
+      impl_->precompile_done = 0;
     }
   }
   return true;
@@ -1592,7 +1672,30 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
       }
     }
     if (pending_done) {
-      dispatch_semaphore_wait(pending_done, DISPATCH_TIME_FOREVER);
+      if (impl_->pipeline_trace) {
+        LogPipelineTrace(true, "awaiting async compile: " + name);
+      }
+      auto wait_start = std::chrono::steady_clock::now();
+      auto last_log = wait_start;
+      while (true) {
+        long wait_result = dispatch_semaphore_wait(
+            pending_done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+        if (wait_result == 0) {
+          break;
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (impl_->pipeline_trace &&
+            std::chrono::duration_cast<std::chrono::seconds>(now - last_log)
+                    .count() >= 5) {
+          auto elapsed_ms =
+              std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                                    wait_start)
+                  .count();
+          LogPipelineTrace(true, "still waiting: " + name + " " +
+                                    std::to_string(elapsed_ms) + "ms");
+          last_log = now;
+        }
+      }
       NSError* task_error = nil;
       {
         std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
@@ -1650,10 +1753,17 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     desc.options = pipe_opts;
 
     NSError* err = nil;
+    auto compile_start = std::chrono::steady_clock::now();
+    if (impl_->pipeline_trace) {
+      LogPipelineTrace(true, "compile sync start: " + name);
+    }
     if (impl_->pipeline_archive) {
       pipeline =
           [impl_->pipeline_archive newComputePipelineStateWithDescriptor:desc
                                                                    error:&err];
+      if (pipeline && impl_->pipeline_trace) {
+        LogPipelineTrace(true, "archive hit: " + name);
+      }
     }
     if (!pipeline) {
       err = nil;
@@ -1665,10 +1775,27 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     [desc release];
     [fn_desc release];
     if (!pipeline) {
+      if (impl_->pipeline_trace) {
+        double ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - compile_start)
+                        .count();
+        LogPipelineTrace(true,
+                         "compile sync failed: " + name + " " +
+                             std::to_string(static_cast<int64_t>(ms)) +
+                             "ms");
+      }
       if (error) {
         *error = FormatNSError(err);
       }
       return false;
+    }
+    if (impl_->pipeline_trace) {
+      double ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - compile_start)
+                      .count();
+      LogPipelineTrace(true, "compile sync done: " + name + " " +
+                                std::to_string(static_cast<int64_t>(ms)) +
+                                "ms");
     }
     impl_->pipeline_cache[name] = [pipeline retain];
   }
@@ -1750,6 +1877,7 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     temp.last_binding_addresses_.assign(temp.max_buffer_bindings_,
                                         std::numeric_limits<uint64_t>::max());
   }
+  temp.name_ = name;
   *kernel = std::move(temp);
   return true;
 }
@@ -1782,6 +1910,9 @@ bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
       std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
       if (impl_->pipeline_cache.find(name) != impl_->pipeline_cache.end() ||
           impl_->pipeline_tasks.find(name) != impl_->pipeline_tasks.end()) {
+        if (impl_->pipeline_trace) {
+          LogPipelineTrace(true, "precompile skip (cached/pending): " + name);
+        }
         continue;
       }
     }
@@ -1813,6 +1944,9 @@ bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
       std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
       impl_->pipeline_cache[name] = [archive_pipeline retain];
       [archive_pipeline release];
+      if (impl_->pipeline_trace) {
+        LogPipelineTrace(true, "archive hit: " + name);
+      }
       [pipe_opts release];
       [desc release];
       [fn_desc release];
@@ -1820,11 +1954,26 @@ bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
     }
 
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    size_t queued_total = 0;
+    size_t queued_done = 0;
     {
       std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
       Impl::PipelineTask pending;
       pending.done = done;
+      pending.start = std::chrono::steady_clock::now();
       impl_->pipeline_tasks.emplace(name, std::move(pending));
+      if (impl_->pipeline_progress) {
+        impl_->precompile_total += 1u;
+        queued_total = impl_->precompile_total;
+        queued_done = impl_->precompile_done;
+      }
+    }
+    if (impl_->pipeline_trace) {
+      LogPipelineTrace(true, "compile queued: " + name);
+    }
+    if (impl_->pipeline_progress) {
+      LogPipelineProgress(true, queued_done, queued_total, name, "queued",
+                          -1.0);
     }
 
     Impl* impl_ptr = impl_.get();
@@ -1835,22 +1984,81 @@ bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
                                 compilerTaskOptions:nil
                                   completionHandler:^(id<MTLComputePipelineState> pipeline,
                                                       NSError* compile_error) {
-                                    std::lock_guard<std::mutex> lock(
-                                        impl_ptr->pipeline_mutex);
-                                    auto it =
-                                        impl_ptr->pipeline_tasks.find(key);
-                                    if (it == impl_ptr->pipeline_tasks.end()) {
-                                      return;
+                                    size_t done_count = 0;
+                                    size_t total_count = 0;
+                                    bool progress_enabled = false;
+                                    bool trace_enabled = false;
+                                    auto start_time =
+                                        std::chrono::steady_clock::time_point{};
+                                    {
+                                      std::lock_guard<std::mutex> lock(
+                                          impl_ptr->pipeline_mutex);
+                                      auto it =
+                                          impl_ptr->pipeline_tasks.find(key);
+                                      if (it ==
+                                          impl_ptr->pipeline_tasks.end()) {
+                                        return;
+                                      }
+                                      progress_enabled =
+                                          impl_ptr->pipeline_progress;
+                                      trace_enabled =
+                                          impl_ptr->pipeline_trace;
+                                      start_time = it->second.start;
+                                      if (pipeline) {
+                                        it->second.pipeline =
+                                            [pipeline retain];
+                                      }
+                                      if (compile_error) {
+                                        it->second.error =
+                                            [compile_error retain];
+                                      }
+                                      if (progress_enabled) {
+                                        impl_ptr->precompile_done += 1u;
+                                        done_count =
+                                            impl_ptr->precompile_done;
+                                        total_count =
+                                            impl_ptr->precompile_total;
+                                      }
+                                      dispatch_semaphore_signal(
+                                          it->second.done);
                                     }
-                                    if (pipeline) {
-                                      it->second.pipeline =
-                                          [pipeline retain];
+                                    double elapsed_ms = -1.0;
+                                    if (start_time !=
+                                        std::chrono::steady_clock::time_point{}) {
+                                      elapsed_ms =
+                                          std::chrono::duration_cast<
+                                              std::chrono::milliseconds>(
+                                              std::chrono::steady_clock::now() -
+                                              start_time)
+                                              .count();
                                     }
-                                    if (compile_error) {
-                                      it->second.error =
-                                          [compile_error retain];
+                                    if (trace_enabled) {
+                                      if (compile_error) {
+                                        LogPipelineTrace(
+                                            true,
+                                            "compile failed: " + key + " " +
+                                                std::to_string(
+                                                    static_cast<int64_t>(
+                                                        elapsed_ms)) +
+                                                "ms (" +
+                                                FormatNSError(compile_error) +
+                                                ")");
+                                      } else {
+                                        LogPipelineTrace(
+                                            true,
+                                            "compile done: " + key + " " +
+                                                std::to_string(
+                                                    static_cast<int64_t>(
+                                                        elapsed_ms)) +
+                                                "ms");
+                                      }
                                     }
-                                    dispatch_semaphore_signal(it->second.done);
+                                    if (progress_enabled) {
+                                      LogPipelineProgress(
+                                          true, done_count, total_count, key,
+                                          compile_error ? "failed" : "done",
+                                          elapsed_ms);
+                                    }
                                   }];
 
     [pipe_opts release];
@@ -1911,6 +2119,83 @@ MetalBuffer MetalRuntime::CreateBuffer(size_t length,
     std::memcpy(buffer.contents_, initial_data, length);
   }
   return buffer;
+}
+
+bool MetalRuntime::EncodeArgumentBuffer(
+    const MetalKernel& kernel, uint32_t buffer_index,
+    const std::vector<MetalBufferBinding>& bindings, MetalBuffer* out,
+    std::string* error) {
+  if (!out) {
+    if (error) {
+      *error = "argument buffer output is null";
+    }
+    return false;
+  }
+  *out = MetalBuffer{};
+  if (!impl_ || !impl_->device || !kernel.pipeline_) {
+    if (error) {
+      *error = "Metal runtime not initialized for argument buffer";
+    }
+    return false;
+  }
+  id<MTLFunction> function = nil;
+  if (impl_->library && !kernel.name_.empty()) {
+    NSString* fn_name = [NSString stringWithUTF8String:kernel.name_.c_str()];
+    function = [impl_->library newFunctionWithName:fn_name];
+  }
+  if (!function) {
+    if (error) {
+      *error = "Failed to resolve Metal function for argument buffer";
+    }
+    return false;
+  }
+  id<MTLArgumentEncoder> encoder =
+      [function newArgumentEncoderWithBufferIndex:buffer_index];
+  [function release];
+  if (!encoder) {
+    if (error) {
+      *error = "Failed to create Metal argument encoder";
+    }
+    return false;
+  }
+  size_t length = static_cast<size_t>(encoder.encodedLength);
+  if (length == 0u) {
+    [encoder release];
+    if (error) {
+      *error = "Metal argument encoder reported zero length";
+    }
+    return false;
+  }
+  MetalBuffer buffer = CreateBuffer(length, nullptr);
+  if (!buffer.handle_) {
+    [encoder release];
+    if (error) {
+      *error = "Failed to allocate Metal argument buffer";
+    }
+    return false;
+  }
+  id<MTLBuffer> arg_buffer = (id<MTLBuffer>)buffer.handle_;
+  [encoder setArgumentBuffer:arg_buffer offset:0];
+  for (const auto& binding : bindings) {
+    if (!binding.buffer || !binding.buffer->handle_) {
+      continue;
+    }
+    if (binding.offset >= binding.buffer->length()) {
+      [encoder release];
+      if (error) {
+        *error =
+            "Metal argument buffer binding offset out of range (offset=" +
+            std::to_string(binding.offset) + ", length=" +
+            std::to_string(binding.buffer->length()) + ")";
+      }
+      return false;
+    }
+    id<MTLBuffer> buffer_obj = (id<MTLBuffer>)binding.buffer->handle_;
+    [encoder setBuffer:buffer_obj offset:binding.offset atIndex:binding.index];
+  }
+  [encoder release];
+  *out = std::move(buffer);
+  return true;
 }
 
 bool MetalRuntime::Dispatch(const MetalKernel& kernel,
@@ -2304,6 +2589,30 @@ bool ParseSchedulerConstants(const std::string& source,
   }
   ParseUintConst(source, "GPGA_SCHED_TIMING_CHECK_COUNT",
                  &info.timing_check_count);
+  uint32_t vm_enabled = 0u;
+  if (ParseUintConst(source, "GPGA_SCHED_VM_ENABLED", &vm_enabled)) {
+    info.vm_enabled = (vm_enabled != 0u);
+  }
+  ParseUintConst(source, "GPGA_SCHED_VM_BYTECODE_WORDS",
+                 &info.vm_bytecode_words);
+  ParseUintConst(source, "GPGA_SCHED_VM_COND_COUNT",
+                 &info.vm_cond_count);
+  ParseUintConst(source, "GPGA_SCHED_VM_CALL_FRAME_WORDS",
+                 &info.vm_call_frame_words);
+  ParseUintConst(source, "GPGA_SCHED_VM_CALL_FRAME_DEPTH",
+                 &info.vm_call_frame_depth);
+  ParseUintConst(source, "GPGA_SCHED_VM_CASE_HEADER_COUNT",
+                 &info.vm_case_header_count);
+  ParseUintConst(source, "GPGA_SCHED_VM_CASE_ENTRY_COUNT",
+                 &info.vm_case_entry_count);
+  ParseUintConst(source, "GPGA_SCHED_VM_CASE_WORD_COUNT",
+                 &info.vm_case_word_count);
+  ParseUintConst(source, "GPGA_SCHED_VM_EXPR_WORD_COUNT",
+                 &info.vm_expr_word_count);
+  ParseUintConst(source, "GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT",
+                 &info.vm_expr_imm_word_count);
+  ParseUintConst(source, "GPGA_SCHED_VM_SIGNAL_COUNT",
+                 &info.vm_signal_count);
   info.has_scheduler = info.proc_count > 0u;
   info.has_services = info.service_max_args > 0u;
   *out = info;
@@ -2366,11 +2675,16 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
   };
   specs->clear();
   const auto& indices = kernel.BufferIndices();
+  const bool use_vm_arg_buffer =
+      sched.vm_enabled && kernel.HasBuffer("sched_vm_args");
   specs->reserve(indices.size());
   for (const auto& entry : indices) {
     BufferSpec spec;
     spec.name = entry.first;
     const std::string& name = spec.name;
+    if (name == "sched_vm_args") {
+      continue;
+    }
     if (name == "gpga_state") {
       spec.length = packed_state_bytes();
       specs->push_back(spec);
@@ -2398,6 +2712,12 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
         }
         return false;
       }
+      if (StartsWith(name, "sched_vm_") && !sched.vm_enabled) {
+        if (error) {
+          *error = "scheduler VM buffers requested but VM not enabled";
+        }
+        return false;
+      }
       if (name == "sched_pc" || name == "sched_state" ||
           name == "sched_wait_kind" || name == "sched_wait_edge_kind" ||
           name == "sched_wait_id" || name == "sched_wait_event" ||
@@ -2409,7 +2729,8 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       } else if (name == "sched_time") {
         spec.length = sizeof(uint64_t) * instance_count;
       } else if (name == "sched_phase" || name == "sched_flags" ||
-                 name == "sched_error" || name == "sched_status") {
+                 name == "sched_error" || name == "sched_status" ||
+                 name == "sched_halt_mode") {
         spec.length = sizeof(uint32_t) * instance_count;
       } else if (name == "sched_repeat_left" ||
                  name == "sched_repeat_active") {
@@ -2480,6 +2801,68 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
         spec.length = sizeof(uint32_t) * instance_count * sched.pcont_count;
       } else if (name == "sched_force_state") {
         spec.length = packed_state_bytes();
+      } else if (name == "sched_vm_bytecode") {
+        if (sched.vm_bytecode_words == 0u) {
+          if (error) {
+            *error = "sched_vm_bytecode requested without bytecode words";
+          }
+          return false;
+        }
+        spec.length =
+            sizeof(uint32_t) * instance_count * sched.vm_bytecode_words;
+      } else if (name == "sched_vm_cond_val" ||
+                 name == "sched_vm_cond_xz") {
+        if (sched.vm_cond_count == 0u) {
+          if (error) {
+            *error = "sched_vm_cond buffers requested without cond sizing";
+          }
+          return false;
+        }
+        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count *
+                      sched.vm_cond_count;
+      } else if (name == "sched_vm_cond_entry") {
+        const size_t count =
+            (sched.vm_cond_count > 0u) ? sched.vm_cond_count : 1u;
+        spec.length = sizeof(uint32_t) * 4u * count;
+      } else if (name == "sched_vm_signal_entry") {
+        const size_t count =
+            (sched.vm_signal_count > 0u) ? sched.vm_signal_count : 1u;
+        spec.length = sizeof(uint32_t) * 5u * count;
+      } else if (name == "sched_vm_proc_bytecode_offset" ||
+                 name == "sched_vm_proc_bytecode_length" ||
+                 name == "sched_vm_ip" ||
+                 name == "sched_vm_call_sp") {
+        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count;
+      } else if (name == "sched_vm_call_frame") {
+        if (sched.vm_call_frame_words == 0u || sched.vm_call_frame_depth == 0u) {
+          if (error) {
+            *error = "sched_vm_call_frame requested without frame sizing";
+          }
+          return false;
+        }
+        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count *
+                      sched.vm_call_frame_words * sched.vm_call_frame_depth;
+      } else if (name == "sched_vm_case_header") {
+        const size_t count =
+            (sched.vm_case_header_count > 0u) ? sched.vm_case_header_count : 1u;
+        spec.length = sizeof(uint32_t) * 6u * count;
+      } else if (name == "sched_vm_case_entry") {
+        const size_t count =
+            (sched.vm_case_entry_count > 0u) ? sched.vm_case_entry_count : 1u;
+        spec.length = sizeof(uint32_t) * 3u * count;
+      } else if (name == "sched_vm_case_words") {
+        const size_t count =
+            (sched.vm_case_word_count > 0u) ? sched.vm_case_word_count : 1u;
+        spec.length = sizeof(uint64_t) * count;
+      } else if (name == "sched_vm_expr") {
+        const size_t count =
+            (sched.vm_expr_word_count > 0u) ? sched.vm_expr_word_count : 1u;
+        spec.length = sizeof(uint32_t) * count;
+      } else if (name == "sched_vm_expr_imm") {
+        const size_t count = (sched.vm_expr_imm_word_count > 0u)
+                                 ? sched.vm_expr_imm_word_count
+                                 : 1u;
+        spec.length = sizeof(uint32_t) * count;
       } else {
         if (error) {
           *error = "unknown scheduler buffer: " + name;
@@ -2512,6 +2895,87 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
     const SignalInfo& signal = it->second;
     spec.length = signal_bytes(signal) * signal_elements(signal);
     specs->push_back(spec);
+  }
+  if (use_vm_arg_buffer) {
+    auto push_vm = [&](const std::string& name, size_t length) {
+      BufferSpec spec;
+      spec.name = name;
+      spec.length = length;
+      specs->push_back(spec);
+    };
+    if (sched.vm_bytecode_words == 0u) {
+      if (error) {
+        *error = "sched_vm_bytecode requested without bytecode words";
+      }
+      return false;
+    }
+    push_vm("sched_vm_bytecode",
+            sizeof(uint32_t) * instance_count * sched.vm_bytecode_words);
+    if (sched.vm_cond_count == 0u) {
+      if (error) {
+        *error = "sched_vm_cond buffers requested without cond sizing";
+      }
+      return false;
+    }
+    const size_t cond_len = sizeof(uint32_t) * instance_count *
+                            sched.proc_count * sched.vm_cond_count;
+    push_vm("sched_vm_cond_val", cond_len);
+    push_vm("sched_vm_cond_xz", cond_len);
+    {
+      const size_t count =
+          (sched.vm_cond_count > 0u) ? sched.vm_cond_count : 1u;
+      push_vm("sched_vm_cond_entry", sizeof(uint32_t) * 4u * count);
+    }
+    {
+      const size_t count =
+          (sched.vm_signal_count > 0u) ? sched.vm_signal_count : 1u;
+      push_vm("sched_vm_signal_entry", sizeof(uint32_t) * 5u * count);
+    }
+    const size_t proc_words =
+        sizeof(uint32_t) * instance_count * sched.proc_count;
+    push_vm("sched_vm_proc_bytecode_offset", proc_words);
+    push_vm("sched_vm_proc_bytecode_length", proc_words);
+    push_vm("sched_vm_ip", proc_words);
+    push_vm("sched_vm_call_sp", proc_words);
+    if (sched.vm_call_frame_words == 0u || sched.vm_call_frame_depth == 0u) {
+      if (error) {
+        *error = "sched_vm_call_frame requested without frame sizing";
+      }
+      return false;
+    }
+    push_vm("sched_vm_call_frame",
+            sizeof(uint32_t) * instance_count * sched.proc_count *
+                sched.vm_call_frame_words * sched.vm_call_frame_depth);
+    {
+      const size_t count = (sched.vm_case_header_count > 0u)
+                               ? sched.vm_case_header_count
+                               : 1u;
+      push_vm("sched_vm_case_header", sizeof(uint32_t) * 6u * count);
+    }
+    {
+      const size_t count = (sched.vm_case_entry_count > 0u)
+                               ? sched.vm_case_entry_count
+                               : 1u;
+      push_vm("sched_vm_case_entry", sizeof(uint32_t) * 3u * count);
+    }
+    {
+      const size_t count = (sched.vm_case_word_count > 0u)
+                               ? sched.vm_case_word_count
+                               : 1u;
+      push_vm("sched_vm_case_words", sizeof(uint64_t) * count);
+    }
+    {
+      const size_t count = (sched.vm_expr_word_count > 0u)
+                               ? sched.vm_expr_word_count
+                               : 1u;
+      push_vm("sched_vm_expr", sizeof(uint32_t) * count);
+    }
+    {
+      const size_t count = (sched.vm_expr_imm_word_count > 0u)
+                               ? sched.vm_expr_imm_word_count
+                               : 1u;
+      push_vm("sched_vm_expr_imm", sizeof(uint32_t) * count);
+    }
   }
   return true;
 }

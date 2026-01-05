@@ -141,6 +141,17 @@ struct SchedulerConstants {
   uint32_t pcont_count = 0;
   uint32_t timing_check_count = 0;
   bool has_services = false;
+  bool vm_enabled = false;
+  uint32_t vm_bytecode_words = 0;
+  uint32_t vm_cond_count = 0;
+  uint32_t vm_call_frame_words = 0;
+  uint32_t vm_call_frame_depth = 0;
+  uint32_t vm_case_header_count = 0;
+  uint32_t vm_case_entry_count = 0;
+  uint32_t vm_case_word_count = 0;
+  uint32_t vm_expr_word_count = 0;
+  uint32_t vm_expr_imm_word_count = 0;
+  uint32_t vm_signal_count = 0;
 };
 
 struct BufferSpec {
@@ -191,6 +202,7 @@ class MetalKernel {
 
   uint32_t BufferIndex(const std::string& name) const;
   bool HasBuffer(const std::string& name) const;
+  const std::string& Name() const { return name_; }
   const std::unordered_map<std::string, uint32_t>& BufferIndices() const {
     return buffer_indices_;
   }
@@ -204,6 +216,7 @@ class MetalKernel {
   friend class MetalRuntime;
   void* pipeline_ = nullptr;
   void* argument_table_ = nullptr;
+  std::string name_;
   std::unordered_map<std::string, uint32_t> buffer_indices_;
   uint32_t max_buffer_bindings_ = 0;
   uint32_t thread_execution_width_ = 0;
@@ -229,6 +242,9 @@ class MetalRuntime {
   bool PrecompileKernels(const std::vector<std::string>& names,
                          std::string* error);
   MetalBuffer CreateBuffer(size_t length, const void* initial_data);
+  bool EncodeArgumentBuffer(const MetalKernel& kernel, uint32_t buffer_index,
+                            const std::vector<MetalBufferBinding>& bindings,
+                            MetalBuffer* out, std::string* error);
   bool Dispatch(const MetalKernel& kernel,
                 const std::vector<MetalBufferBinding>& bindings,
                 uint32_t grid_size, std::string* error,
