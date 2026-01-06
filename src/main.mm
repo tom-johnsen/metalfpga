@@ -1730,10 +1730,27 @@ bool InitSchedulerVmBuffers(
       FindBufferMutable(buffers, "sched_vm_case_words", "");
   auto* expr_buf = FindBufferMutable(buffers, "sched_vm_expr", "");
   auto* expr_imm_buf = FindBufferMutable(buffers, "sched_vm_expr_imm", "");
+  auto* assign_entry_buf =
+      FindBufferMutable(buffers, "sched_vm_assign_entry", "");
+  auto* delay_assign_buf =
+      FindBufferMutable(buffers, "sched_vm_delay_assign_entry", "");
+  auto* force_entry_buf =
+      FindBufferMutable(buffers, "sched_vm_force_entry", "");
+  auto* release_entry_buf =
+      FindBufferMutable(buffers, "sched_vm_release_entry", "");
+  auto* service_entry_buf =
+      FindBufferMutable(buffers, "sched_vm_service_entry", "");
+  auto* service_arg_buf =
+      FindBufferMutable(buffers, "sched_vm_service_arg", "");
+  auto* service_ret_assign_buf =
+      FindBufferMutable(buffers, "sched_vm_service_ret_assign_entry", "");
   if (!bytecode_buf || !offset_buf || !length_buf || !cond_val_buf ||
       !cond_xz_buf || !cond_entry_buf || !signal_entry_buf || !ip_buf ||
       !call_sp_buf || !call_frame_buf || !case_header_buf ||
-      !case_entry_buf || !case_words_buf || !expr_buf || !expr_imm_buf) {
+      !case_entry_buf || !case_words_buf || !expr_buf || !expr_imm_buf ||
+      !assign_entry_buf || !delay_assign_buf || !force_entry_buf ||
+      !release_entry_buf || !service_entry_buf || !service_arg_buf ||
+      !service_ret_assign_buf) {
     if (error) {
       *error = "missing scheduler VM buffers";
     }
@@ -1746,7 +1763,10 @@ bool InitSchedulerVmBuffers(
       !call_sp_buf->contents() || !call_frame_buf->contents() ||
       !case_header_buf->contents() || !case_entry_buf->contents() ||
       !case_words_buf->contents() || !expr_buf->contents() ||
-      !expr_imm_buf->contents()) {
+      !expr_imm_buf->contents() || !assign_entry_buf->contents() ||
+      !delay_assign_buf->contents() || !force_entry_buf->contents() ||
+      !release_entry_buf->contents() || !service_entry_buf->contents() ||
+      !service_arg_buf->contents() || !service_ret_assign_buf->contents()) {
     if (error) {
       *error = "scheduler VM buffers are not CPU-visible";
     }
@@ -1796,6 +1816,27 @@ bool InitSchedulerVmBuffers(
   const size_t expr_imm_word_count =
       layout ? layout->expr_table.imm_words.size()
              : static_cast<size_t>(sched.vm_expr_imm_word_count);
+  const size_t assign_entry_count =
+      layout ? layout->assign_entries.size()
+             : static_cast<size_t>(sched.vm_assign_count);
+  const size_t delay_assign_entry_count =
+      layout ? layout->delay_assign_entries.size()
+             : static_cast<size_t>(sched.delay_count);
+  const size_t force_entry_count =
+      layout ? layout->force_entries.size()
+             : static_cast<size_t>(sched.vm_force_count);
+  const size_t release_entry_count =
+      layout ? layout->release_entries.size()
+             : static_cast<size_t>(sched.vm_release_count);
+  const size_t service_entry_count =
+      layout ? layout->service_entries.size()
+             : static_cast<size_t>(sched.vm_service_call_count);
+  const size_t service_arg_count =
+      layout ? layout->service_args.size()
+             : static_cast<size_t>(sched.vm_service_arg_count);
+  const size_t service_ret_entry_count =
+      layout ? layout->service_ret_entries.size()
+             : static_cast<size_t>(sched.vm_service_assign_count);
   if (case_header_count > 0u &&
       case_header_buf->length() <
           case_header_count * sizeof(GpgaSchedVmCaseHeader)) {
@@ -1849,6 +1890,62 @@ bool InitSchedulerVmBuffers(
     }
     return false;
   }
+  if (assign_entry_count > 0u &&
+      assign_entry_buf->length() <
+          assign_entry_count * sizeof(GpgaSchedVmAssignEntry)) {
+    if (error) {
+      *error = "scheduler VM assign entry buffer length mismatch";
+    }
+    return false;
+  }
+  if (delay_assign_entry_count > 0u &&
+      delay_assign_buf->length() <
+          delay_assign_entry_count * sizeof(GpgaSchedVmDelayAssignEntry)) {
+    if (error) {
+      *error = "scheduler VM delay assign buffer length mismatch";
+    }
+    return false;
+  }
+  if (force_entry_count > 0u &&
+      force_entry_buf->length() <
+          force_entry_count * sizeof(GpgaSchedVmForceEntry)) {
+    if (error) {
+      *error = "scheduler VM force entry buffer length mismatch";
+    }
+    return false;
+  }
+  if (release_entry_count > 0u &&
+      release_entry_buf->length() <
+          release_entry_count * sizeof(GpgaSchedVmReleaseEntry)) {
+    if (error) {
+      *error = "scheduler VM release entry buffer length mismatch";
+    }
+    return false;
+  }
+  if (service_entry_count > 0u &&
+      service_entry_buf->length() <
+          service_entry_count * sizeof(GpgaSchedVmServiceEntry)) {
+    if (error) {
+      *error = "scheduler VM service entry buffer length mismatch";
+    }
+    return false;
+  }
+  if (service_arg_count > 0u &&
+      service_arg_buf->length() <
+          service_arg_count * sizeof(GpgaSchedVmServiceArg)) {
+    if (error) {
+      *error = "scheduler VM service arg buffer length mismatch";
+    }
+    return false;
+  }
+  if (service_ret_entry_count > 0u &&
+      service_ret_assign_buf->length() <
+          service_ret_entry_count * sizeof(GpgaSchedVmServiceRetAssignEntry)) {
+    if (error) {
+      *error = "scheduler VM service ret-assign buffer length mismatch";
+    }
+    return false;
+  }
 
   std::memset(bytecode_buf->contents(), 0, bytecode_buf->length());
   std::memset(cond_val_buf->contents(), 0, cond_val_buf->length());
@@ -1863,6 +1960,14 @@ bool InitSchedulerVmBuffers(
   std::memset(case_words_buf->contents(), 0, case_words_buf->length());
   std::memset(expr_buf->contents(), 0, expr_buf->length());
   std::memset(expr_imm_buf->contents(), 0, expr_imm_buf->length());
+  std::memset(assign_entry_buf->contents(), 0, assign_entry_buf->length());
+  std::memset(delay_assign_buf->contents(), 0, delay_assign_buf->length());
+  std::memset(force_entry_buf->contents(), 0, force_entry_buf->length());
+  std::memset(release_entry_buf->contents(), 0, release_entry_buf->length());
+  std::memset(service_entry_buf->contents(), 0, service_entry_buf->length());
+  std::memset(service_arg_buf->contents(), 0, service_arg_buf->length());
+  std::memset(service_ret_assign_buf->contents(), 0,
+              service_ret_assign_buf->length());
 
   auto* bytecode = static_cast<uint32_t*>(bytecode_buf->contents());
   auto* offsets = static_cast<uint32_t*>(offset_buf->contents());
@@ -1911,6 +2016,7 @@ bool InitSchedulerVmBuffers(
         headers[i].width = src.width;
         headers[i].entry_count = src.entry_count;
         headers[i].entry_offset = src.entry_offset;
+        headers[i].expr_offset = src.expr_offset;
         headers[i].default_target = src.default_target;
       }
     }
@@ -1981,6 +2087,97 @@ bool InitSchedulerVmBuffers(
       std::memcpy(expr_imm_buf->contents(),
                   layout->expr_table.imm_words.data(),
                   sizeof(uint32_t) * layout->expr_table.imm_words.size());
+    }
+    if (!layout->assign_entries.empty()) {
+      auto* entries = static_cast<GpgaSchedVmAssignEntry*>(
+          assign_entry_buf->contents());
+      for (size_t i = 0; i < layout->assign_entries.size(); ++i) {
+        const gpga::SchedulerVmAssignEntry& src = layout->assign_entries[i];
+        entries[i].flags = src.flags;
+        entries[i].signal_id = src.signal_id;
+        entries[i].rhs_expr = src.rhs_expr;
+      }
+    }
+    if (!layout->delay_assign_entries.empty()) {
+      auto* entries = static_cast<GpgaSchedVmDelayAssignEntry*>(
+          delay_assign_buf->contents());
+      for (size_t i = 0; i < layout->delay_assign_entries.size(); ++i) {
+        const gpga::SchedulerVmDelayAssignEntry& src =
+            layout->delay_assign_entries[i];
+        entries[i].flags = src.flags;
+        entries[i].signal_id = src.signal_id;
+        entries[i].rhs_expr = src.rhs_expr;
+        entries[i].delay_expr = src.delay_expr;
+        entries[i].idx_expr = src.idx_expr;
+        entries[i].width = src.width;
+        entries[i].base_width = src.base_width;
+        entries[i].range_lsb = src.range_lsb;
+        entries[i].array_size = src.array_size;
+        entries[i].pulse_reject_expr = src.pulse_reject_expr;
+        entries[i].pulse_error_expr = src.pulse_error_expr;
+      }
+    }
+    if (!layout->force_entries.empty()) {
+      auto* entries = static_cast<GpgaSchedVmForceEntry*>(
+          force_entry_buf->contents());
+      for (size_t i = 0; i < layout->force_entries.size(); ++i) {
+        const gpga::SchedulerVmForceEntry& src = layout->force_entries[i];
+        entries[i].flags = src.flags;
+        entries[i].signal_id = src.signal_id;
+        entries[i].rhs_expr = src.rhs_expr;
+        entries[i].force_id = src.force_id;
+        entries[i].force_slot = src.force_slot;
+        entries[i].passign_slot = src.passign_slot;
+      }
+    }
+    if (!layout->release_entries.empty()) {
+      auto* entries = static_cast<GpgaSchedVmReleaseEntry*>(
+          release_entry_buf->contents());
+      for (size_t i = 0; i < layout->release_entries.size(); ++i) {
+        const gpga::SchedulerVmReleaseEntry& src = layout->release_entries[i];
+        entries[i].flags = src.flags;
+        entries[i].signal_id = src.signal_id;
+        entries[i].force_slot = src.force_slot;
+        entries[i].passign_slot = src.passign_slot;
+      }
+    }
+    if (!layout->service_entries.empty()) {
+      auto* entries = static_cast<GpgaSchedVmServiceEntry*>(
+          service_entry_buf->contents());
+      for (size_t i = 0; i < layout->service_entries.size(); ++i) {
+        const gpga::SchedulerVmServiceEntry& src = layout->service_entries[i];
+        entries[i].kind = src.kind;
+        entries[i].format_id = src.format_id;
+        entries[i].arg_offset = src.arg_offset;
+        entries[i].arg_count = src.arg_count;
+        entries[i].flags = src.flags;
+        entries[i].aux = src.aux;
+      }
+    }
+    if (!layout->service_args.empty()) {
+      auto* entries = static_cast<GpgaSchedVmServiceArg*>(
+          service_arg_buf->contents());
+      for (size_t i = 0; i < layout->service_args.size(); ++i) {
+        const gpga::SchedulerVmServiceArg& src = layout->service_args[i];
+        entries[i].kind = src.kind;
+        entries[i].width = src.width;
+        entries[i].payload = src.payload;
+        entries[i].flags = src.flags;
+      }
+    }
+    if (!layout->service_ret_entries.empty()) {
+      auto* entries = static_cast<GpgaSchedVmServiceRetAssignEntry*>(
+          service_ret_assign_buf->contents());
+      for (size_t i = 0; i < layout->service_ret_entries.size(); ++i) {
+        const gpga::SchedulerVmServiceRetAssignEntry& src =
+            layout->service_ret_entries[i];
+        entries[i].flags = src.flags;
+        entries[i].signal_id = src.signal_id;
+        entries[i].width = src.width;
+        entries[i].force_slot = src.force_slot;
+        entries[i].passign_slot = src.passign_slot;
+        entries[i].reserved = src.reserved;
+      }
     }
   }
   return true;
@@ -5729,8 +5926,15 @@ bool BuildSchedulerVmArgBuffer(
   constexpr uint32_t kVmArgIdCaseWords = 12u;
   constexpr uint32_t kVmArgIdExpr = 13u;
   constexpr uint32_t kVmArgIdExprImm = 14u;
+  constexpr uint32_t kVmArgIdDelayAssignEntry = 15u;
+  constexpr uint32_t kVmArgIdAssignEntry = 16u;
+  constexpr uint32_t kVmArgIdForceEntry = 17u;
+  constexpr uint32_t kVmArgIdReleaseEntry = 18u;
+  constexpr uint32_t kVmArgIdServiceEntry = 19u;
+  constexpr uint32_t kVmArgIdServiceArg = 20u;
+  constexpr uint32_t kVmArgIdServiceRetAssignEntry = 21u;
   std::vector<gpga::MetalBufferBinding> bindings;
-  bindings.reserve(15);
+  bindings.reserve(19);
   auto add_binding = [&](const char* name, uint32_t index) -> bool {
     auto it = buffers->find(name);
     if (it == buffers->end()) {
@@ -5756,7 +5960,16 @@ bool BuildSchedulerVmArgBuffer(
       !add_binding("sched_vm_case_entry", kVmArgIdCaseEntry) ||
       !add_binding("sched_vm_case_words", kVmArgIdCaseWords) ||
       !add_binding("sched_vm_expr", kVmArgIdExpr) ||
-      !add_binding("sched_vm_expr_imm", kVmArgIdExprImm)) {
+      !add_binding("sched_vm_expr_imm", kVmArgIdExprImm) ||
+      !add_binding("sched_vm_delay_assign_entry",
+                   kVmArgIdDelayAssignEntry) ||
+      !add_binding("sched_vm_assign_entry", kVmArgIdAssignEntry) ||
+      !add_binding("sched_vm_force_entry", kVmArgIdForceEntry) ||
+      !add_binding("sched_vm_release_entry", kVmArgIdReleaseEntry) ||
+      !add_binding("sched_vm_service_entry", kVmArgIdServiceEntry) ||
+      !add_binding("sched_vm_service_arg", kVmArgIdServiceArg) ||
+      !add_binding("sched_vm_service_ret_assign_entry",
+                   kVmArgIdServiceRetAssignEntry)) {
     return false;
   }
   const uint32_t arg_index = kernel.BufferIndex("sched_vm_args");
@@ -5860,11 +6073,51 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           static_cast<uint32_t>(vm_layout.case_entries.size());
       sched.vm_case_word_count =
           static_cast<uint32_t>(vm_layout.case_words.size());
+      sched.vm_assign_count =
+          static_cast<uint32_t>(vm_layout.assign_entries.size());
+      sched.vm_service_call_count =
+          static_cast<uint32_t>(vm_layout.service_entries.size());
+      sched.vm_service_assign_count =
+          static_cast<uint32_t>(vm_layout.service_ret_entries.size());
+      sched.vm_service_arg_count =
+          static_cast<uint32_t>(vm_layout.service_args.size());
       sched.vm_expr_word_count =
           static_cast<uint32_t>(vm_layout.expr_table.words.size());
       sched.vm_expr_imm_word_count =
           static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
       vm_layout_ptr = &vm_layout;
+    }
+    if (run_verbose) {
+      uint32_t callgroup_procs = 0u;
+      uint32_t empty_procs = 0u;
+      const size_t proc_count = std::min(vm_layout.proc_offsets.size(),
+                                         vm_layout.proc_lengths.size());
+      for (size_t pid = 0; pid < proc_count; ++pid) {
+        const uint32_t len = vm_layout.proc_lengths[pid];
+        if (len == 0u) {
+          empty_procs += 1u;
+          continue;
+        }
+        const size_t offset = vm_layout.proc_offsets[pid];
+        if (offset >= vm_layout.bytecode.size()) {
+          callgroup_procs += 1u;
+          continue;
+        }
+        if (gpga::DecodeSchedulerVmOp(vm_layout.bytecode[offset]) ==
+            gpga::SchedulerVmOp::kCallGroup) {
+          callgroup_procs += 1u;
+        }
+      }
+      if (callgroup_procs == 0u) {
+        std::cerr << "sched-vm: no CallGroup fallbacks; A-full helpers skipped\n";
+      } else {
+        std::cerr << "sched-vm: CallGroup fallbacks in " << callgroup_procs
+                  << " of " << proc_count << " procs";
+        if (empty_procs > 0u) {
+          std::cerr << " (" << empty_procs << " empty bytecode)";
+        }
+        std::cerr << "\n";
+      }
     }
   }
 

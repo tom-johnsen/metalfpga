@@ -23,6 +23,14 @@
 #define gpga_double_asin gpga_real_impl_double_asin
 #define gpga_double_acos gpga_real_impl_double_acos
 #define gpga_double_atan gpga_real_impl_double_atan
+#define gpga_double_sinh gpga_real_impl_double_sinh
+#define gpga_double_cosh gpga_real_impl_double_cosh
+#define gpga_double_tanh gpga_real_impl_double_tanh
+#define gpga_double_asinh gpga_real_impl_double_asinh
+#define gpga_double_acosh gpga_real_impl_double_acosh
+#define gpga_double_atanh gpga_real_impl_double_atanh
+#define gpga_double_atan2 gpga_real_impl_double_atan2
+#define gpga_double_hypot gpga_real_impl_double_hypot
 #define gpga_double_eq gpga_real_impl_double_eq
 #define gpga_double_lt gpga_real_impl_double_lt
 #define gpga_double_gt gpga_real_impl_double_gt
@@ -57,6 +65,14 @@
 #undef gpga_double_asin
 #undef gpga_double_acos
 #undef gpga_double_atan
+#undef gpga_double_sinh
+#undef gpga_double_cosh
+#undef gpga_double_tanh
+#undef gpga_double_asinh
+#undef gpga_double_acosh
+#undef gpga_double_atanh
+#undef gpga_double_atan2
+#undef gpga_double_hypot
 #undef gpga_double_eq
 #undef gpga_double_lt
 #undef gpga_double_gt
@@ -162,6 +178,38 @@ gpga_double gpga_double_acos(gpga_double value) {
 
 gpga_double gpga_double_atan(gpga_double value) {
   return gpga_real_impl_double_atan(value);
+}
+
+gpga_double gpga_double_sinh(gpga_double value) {
+  return gpga_real_impl_double_sinh(value);
+}
+
+gpga_double gpga_double_cosh(gpga_double value) {
+  return gpga_real_impl_double_cosh(value);
+}
+
+gpga_double gpga_double_tanh(gpga_double value) {
+  return gpga_real_impl_double_tanh(value);
+}
+
+gpga_double gpga_double_asinh(gpga_double value) {
+  return gpga_real_impl_double_asinh(value);
+}
+
+gpga_double gpga_double_acosh(gpga_double value) {
+  return gpga_real_impl_double_acosh(value);
+}
+
+gpga_double gpga_double_atanh(gpga_double value) {
+  return gpga_real_impl_double_atanh(value);
+}
+
+gpga_double gpga_double_atan2(gpga_double y, gpga_double x) {
+  return gpga_real_impl_double_atan2(y, x);
+}
+
+gpga_double gpga_double_hypot(gpga_double x, gpga_double y) {
+  return gpga_real_impl_double_hypot(x, y);
 }
 
 bool gpga_double_eq(gpga_double a, gpga_double b) {

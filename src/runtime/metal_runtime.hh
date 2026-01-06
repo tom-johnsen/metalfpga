@@ -144,6 +144,12 @@ struct SchedulerConstants {
   bool vm_enabled = false;
   uint32_t vm_bytecode_words = 0;
   uint32_t vm_cond_count = 0;
+  uint32_t vm_assign_count = 0;
+  uint32_t vm_force_count = 0;
+  uint32_t vm_release_count = 0;
+  uint32_t vm_service_call_count = 0;
+  uint32_t vm_service_assign_count = 0;
+  uint32_t vm_service_arg_count = 0;
   uint32_t vm_call_frame_words = 0;
   uint32_t vm_call_frame_depth = 0;
   uint32_t vm_case_header_count = 0;

@@ -1002,8 +1002,8 @@ inline gpga_double gpga_double_atanh(gpga_double x) {
   }
   gpga_double num = gpga_double_add(one, x);
   gpga_double den = gpga_double_sub(one, x);
-  gpga_double half = gpga_double_div(one, gpga_double_from_u32(2u));
-  return gpga_double_mul(half, gpga_double_ln(gpga_double_div(num, den)));
+  gpga_double half_val = gpga_double_div(one, gpga_double_from_u32(2u));
+  return gpga_double_mul(half_val, gpga_double_ln(gpga_double_div(num, den)));
 }
 inline gpga_double gpga_double_atan2(gpga_double y, gpga_double x) {
   if (gpga_double_is_nan(x) || gpga_double_is_nan(y)) {

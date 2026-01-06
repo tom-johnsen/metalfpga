@@ -108,6 +108,37 @@ enum class SchedulerVmExprBinaryOp : uint32_t {
   kGe = 22u,
 };
 
+enum class SchedulerVmExprCallOp : uint32_t {
+  kTime = 0u,
+  kStime = 1u,
+  kRealtime = 2u,
+  kIToR = 3u,
+  kBitsToReal = 4u,
+  kRealToBits = 5u,
+  kRToI = 6u,
+  kLog10 = 7u,
+  kLn = 8u,
+  kExp = 9u,
+  kSqrt = 10u,
+  kFloor = 11u,
+  kCeil = 12u,
+  kSin = 13u,
+  kCos = 14u,
+  kTan = 15u,
+  kAsin = 16u,
+  kAcos = 17u,
+  kAtan = 18u,
+  kSinh = 19u,
+  kCosh = 20u,
+  kTanh = 21u,
+  kAsinh = 22u,
+  kAcosh = 23u,
+  kAtanh = 24u,
+  kPow = 25u,
+  kAtan2 = 26u,
+  kHypot = 27u,
+};
+
 enum class SchedulerVmCaseKind : uint32_t {
   kCase = 0u,
   kCaseX = 1u,
@@ -129,6 +160,35 @@ constexpr uint32_t kSchedulerVmForkJoinShift = 24u;
 constexpr uint32_t kSchedulerVmForkCountMask = 0x00FFFFFFu;
 constexpr uint32_t kSchedulerVmExprNoExtra = 0xFFFFFFFFu;
 constexpr uint32_t kSchedulerVmExprSignedFlag = 1u << 8u;
+constexpr uint32_t kSchedulerVmAssignFlagNonblocking = 1u << 0u;
+constexpr uint32_t kSchedulerVmAssignFlagFallback = 1u << 1u;
+constexpr uint32_t kSchedulerVmForceFlagProcedural = 1u << 0u;
+constexpr uint32_t kSchedulerVmForceFlagFallback = 1u << 1u;
+constexpr uint32_t kSchedulerVmForceFlagOverrideReg = 1u << 2u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagNonblocking = 1u << 0u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagInertial = 1u << 1u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagShowcancelled = 1u << 2u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagHasPulse = 1u << 3u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagHasPulseError = 1u << 4u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagIsArray = 1u << 5u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagIsBitSelect = 1u << 6u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagIsRange = 1u << 7u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagIsIndexedRange = 1u << 8u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagIsReal = 1u << 9u;
+constexpr uint32_t kSchedulerVmDelayAssignFlagFallback = 1u << 10u;
+constexpr uint32_t kSchedulerVmServiceFlagFallback = 1u << 0u;
+constexpr uint32_t kSchedulerVmServiceFlagGlobalOnly = 1u << 1u;
+constexpr uint32_t kSchedulerVmServiceFlagGuardFd = 1u << 2u;
+constexpr uint32_t kSchedulerVmServiceFlagMonitor = 1u << 3u;
+constexpr uint32_t kSchedulerVmServiceFlagMonitorOn = 1u << 4u;
+constexpr uint32_t kSchedulerVmServiceFlagMonitorOff = 1u << 5u;
+constexpr uint32_t kSchedulerVmServiceFlagStrobe = 1u << 6u;
+constexpr uint32_t kSchedulerVmServiceFlagFinish = 1u << 7u;
+constexpr uint32_t kSchedulerVmServiceFlagStop = 1u << 8u;
+constexpr uint32_t kSchedulerVmServiceArgFlagExpr = 1u << 0u;
+constexpr uint32_t kSchedulerVmServiceArgFlagTime = 1u << 1u;
+constexpr uint32_t kSchedulerVmServiceArgFlagStime = 1u << 2u;
+constexpr uint32_t kSchedulerVmServiceRetAssignFlagFallback = 1u << 0u;
 
 constexpr uint32_t MakeSchedulerVmInstr(SchedulerVmOp op,
                                         uint32_t arg = 0u) {
@@ -199,6 +259,7 @@ struct SchedulerVmCaseHeader {
   uint32_t width = 0u;
   uint32_t entry_count = 0u;
   uint32_t entry_offset = 0u;
+  uint32_t expr_offset = kSchedulerVmExprNoExtra;
   uint32_t default_target = 0u;
 };
 
@@ -206,6 +267,67 @@ struct SchedulerVmCaseEntry {
   uint32_t want_offset = 0u;
   uint32_t care_offset = 0u;
   uint32_t target = 0u;
+};
+
+struct SchedulerVmAssignEntry {
+  uint32_t flags = 0u;
+  uint32_t signal_id = 0u;
+  uint32_t rhs_expr = kSchedulerVmExprNoExtra;
+};
+
+struct SchedulerVmDelayAssignEntry {
+  uint32_t flags = 0u;
+  uint32_t signal_id = 0u;
+  uint32_t rhs_expr = kSchedulerVmExprNoExtra;
+  uint32_t delay_expr = kSchedulerVmExprNoExtra;
+  uint32_t idx_expr = kSchedulerVmExprNoExtra;
+  uint32_t width = 0u;
+  uint32_t base_width = 0u;
+  uint32_t range_lsb = 0u;
+  uint32_t array_size = 0u;
+  uint32_t pulse_reject_expr = kSchedulerVmExprNoExtra;
+  uint32_t pulse_error_expr = kSchedulerVmExprNoExtra;
+};
+
+struct SchedulerVmForceEntry {
+  uint32_t flags = 0u;
+  uint32_t signal_id = 0u;
+  uint32_t rhs_expr = kSchedulerVmExprNoExtra;
+  uint32_t force_id = 0u;
+  uint32_t force_slot = 0xFFFFFFFFu;
+  uint32_t passign_slot = 0xFFFFFFFFu;
+};
+
+struct SchedulerVmReleaseEntry {
+  uint32_t flags = 0u;
+  uint32_t signal_id = 0u;
+  uint32_t force_slot = 0xFFFFFFFFu;
+  uint32_t passign_slot = 0xFFFFFFFFu;
+};
+
+struct SchedulerVmServiceEntry {
+  uint32_t kind = 0u;
+  uint32_t format_id = 0u;
+  uint32_t arg_offset = 0u;
+  uint32_t arg_count = 0u;
+  uint32_t flags = 0u;
+  uint32_t aux = 0u;
+};
+
+struct SchedulerVmServiceArg {
+  uint32_t kind = 0u;
+  uint32_t width = 0u;
+  uint32_t payload = 0u;
+  uint32_t flags = 0u;
+};
+
+struct SchedulerVmServiceRetAssignEntry {
+  uint32_t flags = 0u;
+  uint32_t signal_id = 0u;
+  uint32_t width = 0u;
+  uint32_t force_slot = 0xFFFFFFFFu;
+  uint32_t passign_slot = 0xFFFFFFFFu;
+  uint32_t reserved = 0u;
 };
 
 struct SchedulerVmLayout {
@@ -220,6 +342,13 @@ struct SchedulerVmLayout {
   std::vector<SchedulerVmCaseHeader> case_headers;
   std::vector<SchedulerVmCaseEntry> case_entries;
   std::vector<uint64_t> case_words;
+  std::vector<SchedulerVmAssignEntry> assign_entries;
+  std::vector<SchedulerVmDelayAssignEntry> delay_assign_entries;
+  std::vector<SchedulerVmForceEntry> force_entries;
+  std::vector<SchedulerVmReleaseEntry> release_entries;
+  std::vector<SchedulerVmServiceEntry> service_entries;
+  std::vector<SchedulerVmServiceArg> service_args;
+  std::vector<SchedulerVmServiceRetAssignEntry> service_ret_entries;
   SchedulerVmExprTable expr_table;
 };
 
@@ -288,6 +417,13 @@ inline bool BuildSchedulerVmLayout(
   out->case_headers.clear();
   out->case_entries.clear();
   out->case_words.clear();
+  out->assign_entries.clear();
+  out->delay_assign_entries.clear();
+  out->force_entries.clear();
+  out->release_entries.clear();
+  out->service_entries.clear();
+  out->service_args.clear();
+  out->service_ret_entries.clear();
   out->expr_table.words.clear();
   out->expr_table.imm_words.clear();
   const uint32_t proc_count = static_cast<uint32_t>(procs.size());

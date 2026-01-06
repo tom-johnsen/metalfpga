@@ -154,6 +154,7 @@ struct GpgaSchedVmCaseHeader {
   uint width;
   uint entry_count;
   uint entry_offset;
+  uint expr_offset;
   uint default_target;
 };
 struct GpgaSchedVmCondEntry {
@@ -174,6 +175,94 @@ struct GpgaSchedVmCaseEntry {
   uint care_offset;
   uint target;
 };
+struct GpgaSchedVmAssignEntry {
+  uint flags;
+  uint signal_id;
+  uint rhs_expr;
+};
+struct GpgaSchedVmDelayAssignEntry {
+  uint flags;
+  uint signal_id;
+  uint rhs_expr;
+  uint delay_expr;
+  uint idx_expr;
+  uint width;
+  uint base_width;
+  uint range_lsb;
+  uint array_size;
+  uint pulse_reject_expr;
+  uint pulse_error_expr;
+};
+struct GpgaSchedVmForceEntry {
+  uint flags;
+  uint signal_id;
+  uint rhs_expr;
+  uint force_id;
+  uint force_slot;
+  uint passign_slot;
+};
+struct GpgaSchedVmReleaseEntry {
+  uint flags;
+  uint signal_id;
+  uint force_slot;
+  uint passign_slot;
+};
+struct GpgaSchedVmServiceEntry {
+  uint kind;
+  uint format_id;
+  uint arg_offset;
+  uint arg_count;
+  uint flags;
+  uint aux;
+};
+struct GpgaSchedVmServiceArg {
+  uint kind;
+  uint width;
+  uint payload;
+  uint flags;
+};
+struct GpgaSchedVmServiceRetAssignEntry {
+  uint flags;
+  uint signal_id;
+  uint width;
+  uint force_slot;
+  uint passign_slot;
+  uint reserved;
+};
+
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_NONBLOCKING = 1u << 0u;
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_FALLBACK = 1u << 1u;
+constant constexpr uint GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL = 1u << 0u;
+constant constexpr uint GPGA_SCHED_VM_FORCE_FLAG_FALLBACK = 1u << 1u;
+constant constexpr uint GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG = 1u << 2u;
+
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_NONBLOCKING = 1u << 0u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_INERTIAL = 1u << 1u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_SHOWCANCELLED = 1u << 2u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_HAS_PULSE = 1u << 3u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_HAS_PULSE_ERROR = 1u << 4u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_ARRAY = 1u << 5u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_BIT_SELECT = 1u << 6u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_RANGE = 1u << 7u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_INDEXED_RANGE = 1u << 8u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_REAL = 1u << 9u;
+constant constexpr uint GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_FALLBACK = 1u << 10u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_FALLBACK = 1u << 0u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_GLOBAL_ONLY = 1u << 1u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_GUARD_FD = 1u << 2u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_MONITOR = 1u << 3u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_ON = 1u << 4u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_OFF = 1u << 5u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_STROBE = 1u << 6u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_FINISH = 1u << 7u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_FLAG_STOP = 1u << 8u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_FLAG_EXPR = 1u << 0u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_FLAG_TIME = 1u << 1u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_FLAG_STIME = 1u << 2u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_VALUE = 0u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_IDENT = 1u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_STRING = 2u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_RET_ASSIGN_FLAG_FALLBACK = 1u << 0u;
 
 #define GPGA_SCHED_DEFINE_PROC_PARENT(...) \
 constant uint gpga_proc_parent[(GPGA_SCHED_PROC_COUNT > 0u) ? \

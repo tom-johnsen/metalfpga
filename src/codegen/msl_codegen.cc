@@ -4651,7 +4651,14 @@ bool ExprUsesReal(const Expr& expr, const Module& module) {
           name = name.substr(1);
         }
         if (name == "realtime" || name == "itor" || name == "bitstoreal" ||
-            name == "rtoi" || name == "realtobits") {
+            name == "rtoi" || name == "realtobits" || name == "log10" ||
+            name == "ln" || name == "exp" || name == "sqrt" ||
+            name == "floor" || name == "ceil" || name == "sin" ||
+            name == "cos" || name == "tan" || name == "asin" ||
+            name == "acos" || name == "atan" || name == "sinh" ||
+            name == "cosh" || name == "tanh" || name == "asinh" ||
+            name == "acosh" || name == "atanh" || name == "pow" ||
+            name == "atan2" || name == "hypot") {
           return true;
         }
       }
@@ -6579,6 +6586,26 @@ struct SchedulerVmPackedSignalSlot {
   uint32_t array_size = 1u;
 };
 
+bool VmLayoutNeedsCallGroup(const SchedulerVmLayout& layout) {
+  const size_t proc_count =
+      std::min(layout.proc_offsets.size(), layout.proc_lengths.size());
+  for (size_t pid = 0; pid < proc_count; ++pid) {
+    const uint32_t len = layout.proc_lengths[pid];
+    if (len == 0u) {
+      continue;
+    }
+    const size_t offset = layout.proc_offsets[pid];
+    if (offset >= layout.bytecode.size()) {
+      return true;
+    }
+    if (DecodeSchedulerVmOp(layout.bytecode[offset]) ==
+        SchedulerVmOp::kCallGroup) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void BuildSchedulerVmSignalLayout(
     const Module& module,
     std::vector<SchedulerVmPackedSlot>* packed_slots,
@@ -6642,7 +6669,16 @@ void BuildSchedulerVmSignalLayout(
   auto add_slot = [&](const std::string& name, uint32_t width,
                       uint32_t array_size, bool is_real) {
     SchedulerVmPackedSlot slot;
-    slot.word_size = (is_real || width > 32u) ? 8u : 4u;
+    if (is_real) {
+      slot.word_size = 8u;
+    } else if (width > 64u) {
+      const uint32_t word_count = (width + 63u) / 64u;
+      slot.word_size = word_count * 8u;
+    } else if (width > 32u) {
+      slot.word_size = 8u;
+    } else {
+      slot.word_size = 4u;
+    }
     slot.array_size = std::max<uint32_t>(1u, array_size);
     packed_ids.emplace(name, static_cast<uint32_t>(packed_slots->size()));
     packed_slots->push_back(slot);
@@ -6717,17 +6753,23 @@ struct SchedulerVmExprEmitContext {
   uint32_t max_depth = 0u;
 };
 
+enum class SchedulerVmExprUse {
+  kValue = 0u,
+  kCond = 1u,
+};
+
 bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
-                             uint32_t* out_width) {
+                             SchedulerVmExprUse use, uint32_t* out_width) {
   if (!ctx || !ctx->module || !ctx->signal_ids || !ctx->signal_entries ||
       !ctx->builder || !out_width) {
     return false;
   }
-  if (ExprIsRealValue(expr, *ctx->module)) {
+  const bool expr_is_real = ExprIsRealValue(expr, *ctx->module);
+  if (expr_is_real && use != SchedulerVmExprUse::kCond) {
     return false;
   }
   const int width = ExprWidth(expr, *ctx->module);
-  if (width <= 0 || width > 64) {
+  if (width <= 0 || (width > 64 && use != SchedulerVmExprUse::kCond)) {
     return false;
   }
   auto bump_depth = [&]() -> bool {
@@ -6749,6 +6791,56 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
     ctx->depth -= 2u;
     return true;
   };
+  auto push_const = [&](uint64_t value, uint32_t width) -> bool {
+    if (width == 0u ||
+        (width > 64u && use != SchedulerVmExprUse::kCond)) {
+      return false;
+    }
+    const uint32_t base = ctx->builder->EmitImmTable(
+        {static_cast<uint32_t>(value & 0xFFFFFFFFu),
+         static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFu)});
+    ctx->builder->EmitOp(SchedulerVmExprOp::kPushConst, base, width);
+    return bump_depth();
+  };
+  auto emit_binary = [&](SchedulerVmExprBinaryOp op, uint32_t result_width,
+                         bool signed_op) -> bool {
+    if (!pop_binary()) {
+      return false;
+    }
+    uint32_t arg = static_cast<uint32_t>(op);
+    if (signed_op) {
+      arg |= kSchedulerVmExprSignedFlag;
+    }
+    ctx->builder->EmitOp(SchedulerVmExprOp::kBinary, arg, result_width);
+    return true;
+  };
+  auto emit_call = [&](SchedulerVmExprCallOp op, uint32_t result_width,
+                       uint32_t arg_count, bool signed_arg) -> bool {
+    if (ctx->depth < arg_count) {
+      return false;
+    }
+    ctx->depth = ctx->depth - arg_count + 1u;
+    ctx->max_depth = std::max(ctx->max_depth, ctx->depth);
+    if (ctx->max_depth > kSchedulerVmExprStackMax) {
+      return false;
+    }
+    uint32_t arg = static_cast<uint32_t>(op);
+    if (signed_arg) {
+      arg |= kSchedulerVmExprSignedFlag;
+    }
+    ctx->builder->EmitOp(SchedulerVmExprOp::kCall, arg, result_width);
+    return true;
+  };
+  auto emit_mask = [&](uint32_t width) -> bool {
+    if (width == 0u || width > 64u) {
+      return false;
+    }
+    uint64_t mask = MaskForWidth64(static_cast<int>(width));
+    if (!push_const(mask, width)) {
+      return false;
+    }
+    return emit_binary(SchedulerVmExprBinaryOp::kAnd, width, false);
+  };
   switch (expr.kind) {
     case ExprKind::kIdentifier: {
       const auto it = ctx->signal_ids->find(expr.ident);
@@ -6757,7 +6849,8 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
       }
       const SchedulerVmSignalEntry& entry =
           (*ctx->signal_entries)[it->second];
-      if (entry.flags & kSchedulerVmSignalFlagReal) {
+      if ((entry.flags & kSchedulerVmSignalFlagReal) != 0u &&
+          use != SchedulerVmExprUse::kCond) {
         return false;
       }
       if (entry.array_size > 1u) {
@@ -6772,8 +6865,26 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
       return true;
     }
     case ExprKind::kNumber: {
-      if (expr.x_bits != 0 || expr.z_bits != 0 || IsRealLiteralExpr(expr)) {
+      if (expr.x_bits != 0 || expr.z_bits != 0) {
         return false;
+      }
+      if (IsRealLiteralExpr(expr)) {
+        if (use != SchedulerVmExprUse::kCond) {
+          return false;
+        }
+        const uint64_t value = expr.value_bits;
+        const uint32_t base = ctx->builder->EmitImmTable(
+            {static_cast<uint32_t>(value & 0xFFFFFFFFu),
+             static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFu)});
+        ctx->builder->EmitOp(SchedulerVmExprOp::kPushConst, base, 64u);
+        if (!bump_depth()) {
+          return false;
+        }
+        if (!emit_call(SchedulerVmExprCallOp::kBitsToReal, 64u, 1u, false)) {
+          return false;
+        }
+        *out_width = 64u;
+        return true;
       }
       const uint64_t value = expr.value_bits;
       const uint32_t base = ctx->builder->EmitImmTable(
@@ -6792,12 +6903,19 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
         return false;
       }
       uint32_t op_width = 0u;
-      if (!EmitSchedulerVmCondExpr(*expr.operand, ctx, &op_width)) {
+      if (!EmitSchedulerVmCondExpr(*expr.operand, ctx, use, &op_width)) {
         return false;
       }
       if (expr.unary_op == 'S' || expr.unary_op == 'U' ||
           expr.unary_op == '+') {
         *out_width = op_width;
+        return true;
+      }
+      if (expr.unary_op == 'C') {
+        if (!emit_mask(32u)) {
+          return false;
+        }
+        *out_width = 32u;
         return true;
       }
       if (expr.unary_op == 'B') {
@@ -6819,6 +6937,15 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
       } else if (expr.unary_op == '!') {
         op = SchedulerVmExprUnaryOp::kLogNot;
         result_width = 1u;
+      } else if (expr.unary_op == '&') {
+        op = SchedulerVmExprUnaryOp::kRedAnd;
+        result_width = 1u;
+      } else if (expr.unary_op == '|') {
+        op = SchedulerVmExprUnaryOp::kRedOr;
+        result_width = 1u;
+      } else if (expr.unary_op == '^') {
+        op = SchedulerVmExprUnaryOp::kRedXor;
+        result_width = 1u;
       } else {
         return false;
       }
@@ -6833,10 +6960,10 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
       }
       uint32_t lhs_width = 0u;
       uint32_t rhs_width = 0u;
-      if (!EmitSchedulerVmCondExpr(*expr.lhs, ctx, &lhs_width)) {
+      if (!EmitSchedulerVmCondExpr(*expr.lhs, ctx, use, &lhs_width)) {
         return false;
       }
-      if (!EmitSchedulerVmCondExpr(*expr.rhs, ctx, &rhs_width)) {
+      if (!EmitSchedulerVmCondExpr(*expr.rhs, ctx, use, &rhs_width)) {
         return false;
       }
       if (expr.op == 'p') {
@@ -6924,13 +7051,13 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
       uint32_t cond_width = 0u;
       uint32_t then_width = 0u;
       uint32_t else_width = 0u;
-      if (!EmitSchedulerVmCondExpr(*expr.condition, ctx, &cond_width)) {
+      if (!EmitSchedulerVmCondExpr(*expr.condition, ctx, use, &cond_width)) {
         return false;
       }
-      if (!EmitSchedulerVmCondExpr(*expr.then_expr, ctx, &then_width)) {
+      if (!EmitSchedulerVmCondExpr(*expr.then_expr, ctx, use, &then_width)) {
         return false;
       }
-      if (!EmitSchedulerVmCondExpr(*expr.else_expr, ctx, &else_width)) {
+      if (!EmitSchedulerVmCondExpr(*expr.else_expr, ctx, use, &else_width)) {
         return false;
       }
       if (!pop_ternary()) {
@@ -6943,9 +7070,526 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
       return true;
     }
     case ExprKind::kSelect:
+      if (!expr.base) {
+        return false;
+      }
+      {
+        uint32_t base_width = 0u;
+        if (!EmitSchedulerVmCondExpr(*expr.base, ctx, use, &base_width)) {
+          return false;
+        }
+        if (base_width == 0u ||
+            (base_width > 64u && use != SchedulerVmExprUse::kCond)) {
+          return false;
+        }
+        if (expr.indexed_range && expr.indexed_width > 0 && expr.lsb_expr) {
+          uint32_t slice_width =
+              static_cast<uint32_t>(expr.indexed_width);
+          if (slice_width == 0u || slice_width > 64u) {
+            return false;
+          }
+          uint32_t idx_width = 0u;
+          if (!EmitSchedulerVmCondExpr(*expr.lsb_expr, ctx, use, &idx_width)) {
+            return false;
+          }
+          if (idx_width == 0u ||
+              (idx_width > 64u && use != SchedulerVmExprUse::kCond)) {
+            return false;
+          }
+          if (!emit_binary(SchedulerVmExprBinaryOp::kShr, base_width,
+                           false)) {
+            return false;
+          }
+          if (!emit_mask(slice_width)) {
+            return false;
+          }
+          *out_width = slice_width;
+          return true;
+        }
+        int lo = std::min(expr.msb, expr.lsb);
+        int hi = std::max(expr.msb, expr.lsb);
+        if (lo < 0) {
+          return false;
+        }
+        uint32_t slice_width =
+            static_cast<uint32_t>(std::max(0, hi - lo + 1));
+        if (slice_width == 0u || slice_width > 64u) {
+          return false;
+        }
+        if (!push_const(static_cast<uint64_t>(lo), 32u)) {
+          return false;
+        }
+        if (!emit_binary(SchedulerVmExprBinaryOp::kShr, base_width, false)) {
+          return false;
+        }
+        if (!emit_mask(slice_width)) {
+          return false;
+        }
+        *out_width = slice_width;
+        return true;
+      }
     case ExprKind::kIndex:
+      if (!expr.base || !expr.index) {
+        return false;
+      }
+      if (expr.base->kind == ExprKind::kIdentifier) {
+        const auto it = ctx->signal_ids->find(expr.base->ident);
+        if (it != ctx->signal_ids->end()) {
+          const SchedulerVmSignalEntry& entry =
+              (*ctx->signal_entries)[it->second];
+          if (entry.array_size > 1u) {
+            if ((entry.flags & kSchedulerVmSignalFlagReal) != 0u &&
+                use != SchedulerVmExprUse::kCond) {
+              return false;
+            }
+          if (entry.width == 0u ||
+              (entry.width > 64u && use != SchedulerVmExprUse::kCond)) {
+            return false;
+          }
+            uint32_t idx_width = 0u;
+            if (!EmitSchedulerVmCondExpr(*expr.index, ctx, use, &idx_width)) {
+              return false;
+            }
+            if (idx_width == 0u ||
+                (idx_width > 64u && use != SchedulerVmExprUse::kCond)) {
+              return false;
+            }
+            if (ctx->depth == 0u) {
+              return false;
+            }
+            ctx->builder->EmitOp(SchedulerVmExprOp::kIndex, it->second,
+                                 entry.width);
+            *out_width = entry.width;
+            return true;
+          }
+        }
+      }
+      {
+        uint32_t base_width = 0u;
+        if (!EmitSchedulerVmCondExpr(*expr.base, ctx, use, &base_width)) {
+          return false;
+        }
+        if (base_width == 0u ||
+            (base_width > 64u && use != SchedulerVmExprUse::kCond)) {
+          return false;
+        }
+        uint32_t idx_width = 0u;
+        if (!EmitSchedulerVmCondExpr(*expr.index, ctx, use, &idx_width)) {
+          return false;
+        }
+        if (idx_width == 0u ||
+            (idx_width > 64u && use != SchedulerVmExprUse::kCond)) {
+          return false;
+        }
+        if (!emit_binary(SchedulerVmExprBinaryOp::kShr, base_width, false)) {
+          return false;
+        }
+        if (!emit_mask(1u)) {
+          return false;
+        }
+        *out_width = 1u;
+        return true;
+      }
     case ExprKind::kCall:
+      if (use != SchedulerVmExprUse::kCond) {
+        return false;
+      }
+      {
+        std::string name = expr.ident;
+        if (!name.empty() && name.front() == '$') {
+          name = name.substr(1);
+        }
+        auto emit_arg = [&](size_t index, uint32_t* arg_width) -> bool {
+          if (!arg_width) {
+            return false;
+          }
+          if (index >= expr.call_args.size() || !expr.call_args[index]) {
+            return false;
+          }
+          return EmitSchedulerVmCondExpr(*expr.call_args[index], ctx, use,
+                                         arg_width);
+        };
+        if (name == "time") {
+          if (!emit_call(SchedulerVmExprCallOp::kTime,
+                         static_cast<uint32_t>(width), 0u, false)) {
+            return false;
+          }
+          *out_width = static_cast<uint32_t>(width);
+          return true;
+        }
+        if (name == "stime") {
+          if (!emit_call(SchedulerVmExprCallOp::kStime,
+                         static_cast<uint32_t>(width), 0u, false)) {
+            return false;
+          }
+          *out_width = static_cast<uint32_t>(width);
+          return true;
+        }
+        if (name == "realtime") {
+          if (!emit_call(SchedulerVmExprCallOp::kRealtime, 64u, 0u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "itor") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          bool signed_arg =
+              expr.call_args[0] ? ExprSigned(*expr.call_args[0], *ctx->module)
+                                : false;
+          if (!emit_call(SchedulerVmExprCallOp::kIToR, 64u, 1u, signed_arg)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "bitstoreal") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kBitsToReal, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "realtobits") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kRealToBits,
+                         static_cast<uint32_t>(width), 1u, false)) {
+            return false;
+          }
+          *out_width = static_cast<uint32_t>(width);
+          return true;
+        }
+        if (name == "rtoi") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kRToI,
+                         static_cast<uint32_t>(width), 1u, true)) {
+            return false;
+          }
+          *out_width = static_cast<uint32_t>(width);
+          return true;
+        }
+        if (name == "log10") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kLog10, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "ln") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kLn, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "exp") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kExp, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "sqrt") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kSqrt, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "floor") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kFloor, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "ceil") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kCeil, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "sin") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kSin, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "cos") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kCos, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "tan") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kTan, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "asin") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAsin, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "acos") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAcos, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "atan") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAtan, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "sinh") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kSinh, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "cosh") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kCosh, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "tanh") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kTanh, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "asinh") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAsinh, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "acosh") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAcosh, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "atanh") {
+          uint32_t arg_width = 0u;
+          if (!emit_arg(0u, &arg_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAtanh, 64u, 1u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "pow") {
+          uint32_t lhs_width = 0u;
+          uint32_t rhs_width = 0u;
+          if (!emit_arg(0u, &lhs_width) || !emit_arg(1u, &rhs_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kPow, 64u, 2u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "atan2") {
+          uint32_t lhs_width = 0u;
+          uint32_t rhs_width = 0u;
+          if (!emit_arg(0u, &lhs_width) || !emit_arg(1u, &rhs_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kAtan2, 64u, 2u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+        if (name == "hypot") {
+          uint32_t lhs_width = 0u;
+          uint32_t rhs_width = 0u;
+          if (!emit_arg(0u, &lhs_width) || !emit_arg(1u, &rhs_width)) {
+            return false;
+          }
+          if (!emit_call(SchedulerVmExprCallOp::kHypot, 64u, 2u, false)) {
+            return false;
+          }
+          *out_width = 64u;
+          return true;
+        }
+      }
     case ExprKind::kConcat:
+      if (expr.elements.empty()) {
+        return false;
+      }
+      if (expr.repeat_expr) {
+        return false;
+      }
+      {
+        int base_width = 0;
+        std::vector<uint32_t> element_widths;
+        element_widths.reserve(expr.elements.size());
+        for (const auto& element : expr.elements) {
+          if (!element) {
+            return false;
+          }
+          int width = ExprWidth(*element, *ctx->module);
+          if (width <= 0 || (width > 64 && use != SchedulerVmExprUse::kCond)) {
+            return false;
+          }
+          element_widths.push_back(static_cast<uint32_t>(width));
+          base_width += width;
+        }
+        int repeats = std::max(0, expr.repeat);
+        if (repeats == 0 || base_width <= 0) {
+          return false;
+        }
+        const uint32_t total_width =
+            static_cast<uint32_t>(base_width * repeats);
+        if (total_width == 0u ||
+            (total_width > 64u && use != SchedulerVmExprUse::kCond)) {
+          return false;
+        }
+        if (!push_const(0u, total_width)) {
+          return false;
+        }
+        int shift = static_cast<int>(total_width);
+        for (int r = 0; r < repeats; ++r) {
+          for (size_t i = 0; i < expr.elements.size(); ++i) {
+            const auto& element = expr.elements[i];
+            const uint32_t elem_width = element_widths[i];
+            if (elem_width == 0u ||
+                (elem_width > 64u && use != SchedulerVmExprUse::kCond)) {
+              return false;
+            }
+            shift -= static_cast<int>(elem_width);
+            if (shift < 0) {
+              shift = 0;
+            }
+            uint32_t part_width = 0u;
+            if (!EmitSchedulerVmCondExpr(*element, ctx, use, &part_width)) {
+              return false;
+            }
+            if (part_width == 0u ||
+                (part_width > 64u && use != SchedulerVmExprUse::kCond)) {
+              return false;
+            }
+            if (shift > 0) {
+              if (!push_const(static_cast<uint64_t>(shift), 32u)) {
+                return false;
+              }
+              if (!emit_binary(SchedulerVmExprBinaryOp::kShl, total_width,
+                               false)) {
+                return false;
+              }
+            }
+            if (!emit_binary(SchedulerVmExprBinaryOp::kOr, total_width,
+                             false)) {
+              return false;
+            }
+          }
+        }
+        *out_width = total_width;
+        return true;
+      }
     case ExprKind::kString:
       return false;
   }
@@ -6953,7 +7597,7 @@ bool EmitSchedulerVmCondExpr(const Expr& expr, SchedulerVmExprEmitContext* ctx,
 }
 
 bool TryEmitSchedulerVmCondExpr(
-    const Expr& expr, const Module& module,
+    const Expr& expr, SchedulerVmExprUse use, const Module& module,
     const std::unordered_map<std::string, uint32_t>& signal_ids,
     const std::vector<SchedulerVmSignalEntry>& signal_entries,
     SchedulerVmExprBuilder* builder, uint32_t* out_offset) {
@@ -6968,7 +7612,7 @@ bool TryEmitSchedulerVmCondExpr(
   ctx.signal_entries = &signal_entries;
   ctx.builder = builder;
   uint32_t width = 0u;
-  bool ok = EmitSchedulerVmCondExpr(expr, &ctx, &width);
+  bool ok = EmitSchedulerVmCondExpr(expr, &ctx, use, &width);
   if (ok && ctx.max_depth <= kSchedulerVmExprStackMax) {
     builder->EmitOp(SchedulerVmExprOp::kDone);
     *out_offset = static_cast<uint32_t>(word_base);
@@ -6978,10 +7622,812 @@ bool TryEmitSchedulerVmCondExpr(
   return false;
 }
 
-bool BuildSchedulerVmCaseTables(const Module& module,
-                                const SchedulerVmTables& tables,
-                                SchedulerVmCaseTableData* out,
-                                std::string* error) {
+enum class SchedulerVmServiceKind : uint32_t {
+  kDisplay = 0u,
+  kMonitor = 1u,
+  kFinish = 2u,
+  kDumpfile = 3u,
+  kDumpvars = 4u,
+  kReadmemh = 5u,
+  kReadmemb = 6u,
+  kStop = 7u,
+  kStrobe = 8u,
+  kDumpoff = 9u,
+  kDumpon = 10u,
+  kDumpflush = 11u,
+  kDumpall = 12u,
+  kDumplimit = 13u,
+  kFwrite = 14u,
+  kFdisplay = 15u,
+  kFopen = 16u,
+  kFclose = 17u,
+  kFgetc = 18u,
+  kFgets = 19u,
+  kFeof = 20u,
+  kFscanf = 21u,
+  kSscanf = 22u,
+  kFtell = 23u,
+  kRewind = 24u,
+  kWritememh = 25u,
+  kWritememb = 26u,
+  kFseek = 27u,
+  kFflush = 28u,
+  kFerror = 29u,
+  kFungetc = 30u,
+  kFread = 31u,
+  kWrite = 32u,
+  kSformat = 33u,
+  kTimeformat = 34u,
+  kPrinttimescale = 35u,
+  kTestplusargs = 36u,
+  kValueplusargs = 37u,
+  kAsyncAndArray = 38u,
+  kSyncOrPlane = 39u,
+  kAsyncNorPlane = 40u,
+  kSyncNandPlane = 41u,
+  kShowcancelled = 42u,
+};
+
+constexpr uint32_t kSchedulerVmServiceInvalidId = 0xFFFFFFFFu;
+constexpr uint32_t kSchedulerVmServiceArgValue = 0u;
+constexpr uint32_t kSchedulerVmServiceArgIdent = 1u;
+constexpr uint32_t kSchedulerVmServiceArgString = 2u;
+
+bool BuildSchedulerVmServiceTables(
+    const Module& module, const SchedulerVmTables& tables,
+    const SystemTaskInfo& system_task_info,
+    const std::unordered_map<std::string, uint32_t>& signal_ids,
+    const std::unordered_map<std::string, uint32_t>& force_target_index,
+    const std::unordered_map<std::string, uint32_t>& passign_target_index,
+    const std::vector<SchedulerVmSignalEntry>& signal_entries,
+    SchedulerVmExprBuilder* expr_builder,
+    std::vector<SchedulerVmServiceEntry>* service_entries,
+    std::vector<SchedulerVmServiceArg>* service_args,
+    std::vector<SchedulerVmServiceRetAssignEntry>* service_ret_entries) {
+  if (!expr_builder || !service_entries || !service_args ||
+      !service_ret_entries) {
+    return false;
+  }
+  service_entries->clear();
+  service_args->clear();
+  service_ret_entries->clear();
+  service_entries->resize(tables.service_calls.size());
+  service_ret_entries->resize(tables.service_assign_stmts.size());
+
+  auto string_id_for = [&](const std::string& value,
+                           uint32_t* out_id) -> bool {
+    auto it = system_task_info.string_ids.find(value);
+    if (it == system_task_info.string_ids.end()) {
+      return false;
+    }
+    if (out_id) {
+      *out_id = it->second;
+    }
+    return true;
+  };
+
+  auto add_string_arg = [&](uint32_t id,
+                            std::vector<SchedulerVmServiceArg>* args) -> bool {
+    if (!args) {
+      return false;
+    }
+    SchedulerVmServiceArg arg;
+    arg.kind = kSchedulerVmServiceArgString;
+    arg.width = 0u;
+    arg.payload = id;
+    arg.flags = 0u;
+    args->push_back(arg);
+    return true;
+  };
+
+  auto add_ident_arg = [&](uint32_t id, uint32_t width,
+                           std::vector<SchedulerVmServiceArg>* args) -> bool {
+    if (!args) {
+      return false;
+    }
+    SchedulerVmServiceArg arg;
+    arg.kind = kSchedulerVmServiceArgIdent;
+    arg.width = width;
+    arg.payload = id;
+    arg.flags = 0u;
+    args->push_back(arg);
+    return true;
+  };
+
+  auto add_time_arg = [&](bool stime,
+                          std::vector<SchedulerVmServiceArg>* args) -> bool {
+    if (!args) {
+      return false;
+    }
+    SchedulerVmServiceArg arg;
+    arg.kind = kSchedulerVmServiceArgValue;
+    arg.width = stime ? 32u : 64u;
+    arg.payload = 0u;
+    arg.flags =
+        stime ? kSchedulerVmServiceArgFlagStime
+              : kSchedulerVmServiceArgFlagTime;
+    args->push_back(arg);
+    return true;
+  };
+
+  auto add_expr_arg =
+      [&](const Expr& expr, uint32_t width_override,
+          std::vector<SchedulerVmServiceArg>* args) -> bool {
+    if (!args) {
+      return false;
+    }
+    if (ExprIsRealValue(expr, module)) {
+      return false;
+    }
+    int width = ExprWidth(expr, module);
+    if (width_override > 0u) {
+      width = static_cast<int>(width_override);
+    }
+    if (width <= 0) {
+      width = 1;
+    }
+    if (width > 64) {
+      return false;
+    }
+    uint32_t expr_offset = 0u;
+    if (!TryEmitSchedulerVmCondExpr(expr, SchedulerVmExprUse::kValue, module,
+                                    signal_ids, signal_entries, expr_builder,
+                                    &expr_offset)) {
+      return false;
+    }
+    SchedulerVmServiceArg arg;
+    arg.kind = kSchedulerVmServiceArgValue;
+    arg.width = static_cast<uint32_t>(width);
+    arg.payload = expr_offset;
+    arg.flags = kSchedulerVmServiceArgFlagExpr;
+    args->push_back(arg);
+    return true;
+  };
+
+  auto build_task_args =
+      [&](const Statement& stmt, const std::string& name, size_t arg_start,
+          uint32_t* format_id, std::vector<SchedulerVmServiceArg>* args)
+          -> bool {
+    if (!format_id || !args) {
+      return false;
+    }
+    *format_id = kSchedulerVmServiceInvalidId;
+    if (stmt.task_args.size() > arg_start && stmt.task_args[arg_start] &&
+        stmt.task_args[arg_start]->kind == ExprKind::kString) {
+      uint32_t id = 0u;
+      if (!string_id_for(stmt.task_args[arg_start]->string_value, &id)) {
+        return false;
+      }
+      *format_id = id;
+    }
+
+    std::vector<char> format_specs;
+    bool has_format_specs =
+        stmt.task_args.size() > arg_start && stmt.task_args[arg_start] &&
+        stmt.task_args[arg_start]->kind == ExprKind::kString;
+    if (has_format_specs) {
+      format_specs =
+          ExtractFormatSpecs(stmt.task_args[arg_start]->string_value);
+    }
+    size_t format_arg_index = 0;
+
+    bool requires_string =
+        name == "$dumpfile" || name == "$readmemh" || name == "$readmemb" ||
+        name == "$writememh" || name == "$writememb";
+    if (requires_string && *format_id == kSchedulerVmServiceInvalidId) {
+      return false;
+    }
+
+    bool ident_as_string = TaskTreatsIdentifierAsString(name);
+    args->clear();
+    if (stmt.task_args.size() > arg_start) {
+      args->reserve(stmt.task_args.size() - arg_start);
+    }
+    for (size_t i = arg_start; i < stmt.task_args.size(); ++i) {
+      const auto& arg = stmt.task_args[i];
+      if (!arg) {
+        continue;
+      }
+      bool is_format_literal =
+          has_format_specs && i == arg_start && arg->kind == ExprKind::kString;
+      char spec = '\0';
+      if (has_format_specs && !is_format_literal) {
+        if (format_arg_index < format_specs.size()) {
+          spec = format_specs[format_arg_index];
+        }
+        ++format_arg_index;
+      }
+      if (arg->kind == ExprKind::kString) {
+        uint32_t id = 0u;
+        if (!string_id_for(arg->string_value, &id)) {
+          return false;
+        }
+        if (!add_string_arg(id, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (ident_as_string && arg->kind == ExprKind::kIdentifier) {
+        uint32_t id = 0u;
+        if (!string_id_for(arg->ident, &id)) {
+          return false;
+        }
+        if (!add_ident_arg(id, 0u, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (spec == 's' && arg->kind == ExprKind::kIdentifier) {
+        uint32_t id = 0u;
+        if (!string_id_for(arg->ident, &id)) {
+          return false;
+        }
+        int width = SignalWidth(module, arg->ident);
+        if (width <= 0) {
+          width = 1;
+        }
+        if (!add_ident_arg(id, static_cast<uint32_t>(width), args)) {
+          return false;
+        }
+        continue;
+      }
+      if (arg->kind == ExprKind::kCall && arg->ident == "$time") {
+        if (!add_time_arg(false, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (arg->kind == ExprKind::kCall && arg->ident == "$stime") {
+        if (!add_time_arg(true, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (ExprIsRealValue(*arg, module)) {
+        return false;
+      }
+      if (!add_expr_arg(*arg, 0u, args)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  auto build_syscall_args =
+      [&](const Expr& call, const std::string& name, uint32_t* format_id,
+          std::vector<SchedulerVmServiceArg>* args) -> bool {
+    if (!format_id || !args) {
+      return false;
+    }
+    *format_id = kSchedulerVmServiceInvalidId;
+    args->clear();
+    args->reserve(call.call_args.size());
+    for (size_t i = 0; i < call.call_args.size(); ++i) {
+      const Expr* arg = call.call_args[i].get();
+      if (!arg) {
+        continue;
+      }
+      if (name == "$fgets" && i == 0) {
+        if (arg->kind != ExprKind::kIdentifier) {
+          return false;
+        }
+        uint32_t id = 0u;
+        if (!string_id_for(arg->ident, &id)) {
+          return false;
+        }
+        int width = SignalWidth(module, arg->ident);
+        if (width <= 0) {
+          width = 1;
+        }
+        if (!add_ident_arg(id, static_cast<uint32_t>(width), args)) {
+          return false;
+        }
+        continue;
+      }
+      if (name == "$fread" && i == 0) {
+        if (arg->kind != ExprKind::kIdentifier) {
+          return false;
+        }
+        uint32_t id = 0u;
+        if (!string_id_for(arg->ident, &id)) {
+          return false;
+        }
+        int width = SignalWidth(module, arg->ident);
+        if (width <= 0) {
+          width = 1;
+        }
+        if (!add_ident_arg(id, static_cast<uint32_t>(width), args)) {
+          return false;
+        }
+        continue;
+      }
+      if ((name == "$fscanf" || name == "$sscanf") && i >= 2) {
+        if (arg->kind != ExprKind::kIdentifier) {
+          return false;
+        }
+        uint32_t id = 0u;
+        if (!string_id_for(arg->ident, &id)) {
+          return false;
+        }
+        int width = SignalWidth(module, arg->ident);
+        if (width <= 0) {
+          width = 1;
+        }
+        if (!add_ident_arg(id, static_cast<uint32_t>(width), args)) {
+          return false;
+        }
+        continue;
+      }
+      if (name == "$value$plusargs" && i >= 1) {
+        if (arg->kind != ExprKind::kIdentifier) {
+          return false;
+        }
+        uint32_t id = 0u;
+        if (!string_id_for(arg->ident, &id)) {
+          return false;
+        }
+        int width = SignalWidth(module, arg->ident);
+        if (width <= 0) {
+          width = 1;
+        }
+        if (!add_ident_arg(id, static_cast<uint32_t>(width), args)) {
+          return false;
+        }
+        continue;
+      }
+      if (name == "$sscanf" && i == 0) {
+        if (arg->kind == ExprKind::kString) {
+          uint32_t id = 0u;
+          if (!string_id_for(arg->string_value, &id)) {
+            return false;
+          }
+          if (!add_string_arg(id, args)) {
+            return false;
+          }
+          continue;
+        }
+        if (arg->kind == ExprKind::kIdentifier) {
+          uint32_t id = 0u;
+          if (!string_id_for(arg->ident, &id)) {
+            return false;
+          }
+          int width = SignalWidth(module, arg->ident);
+          if (width <= 0) {
+            width = 1;
+          }
+          if (!add_ident_arg(id, static_cast<uint32_t>(width), args)) {
+            return false;
+          }
+          continue;
+        }
+        return false;
+      }
+      if ((name == "$test$plusargs" || name == "$value$plusargs") && i == 0) {
+        if (arg->kind == ExprKind::kString) {
+          uint32_t id = 0u;
+          if (!string_id_for(arg->string_value, &id)) {
+            return false;
+          }
+          *format_id = id;
+          if (!add_string_arg(id, args)) {
+            return false;
+          }
+          continue;
+        }
+        if (arg->kind == ExprKind::kIdentifier) {
+          uint32_t id = 0u;
+          if (!string_id_for(arg->ident, &id)) {
+            return false;
+          }
+          *format_id = id;
+          if (!add_ident_arg(id, 0u, args)) {
+            return false;
+          }
+          continue;
+        }
+        return false;
+      }
+      if (name == "$fopen" && i < 2) {
+        if (arg->kind == ExprKind::kString) {
+          uint32_t id = 0u;
+          if (!string_id_for(arg->string_value, &id)) {
+            return false;
+          }
+          if (!add_string_arg(id, args)) {
+            return false;
+          }
+          continue;
+        }
+        if (arg->kind == ExprKind::kIdentifier) {
+          uint32_t id = 0u;
+          if (!string_id_for(arg->ident, &id)) {
+            return false;
+          }
+          if (!add_ident_arg(id, 0u, args)) {
+            return false;
+          }
+          continue;
+        }
+        return false;
+      }
+      if ((name == "$fscanf" || name == "$sscanf") && i == 1 &&
+          arg->kind == ExprKind::kString) {
+        uint32_t id = 0u;
+        if (!string_id_for(arg->string_value, &id)) {
+          return false;
+        }
+        *format_id = id;
+        if (!add_string_arg(id, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (arg->kind == ExprKind::kCall && arg->ident == "$time") {
+        if (!add_time_arg(false, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (arg->kind == ExprKind::kCall && arg->ident == "$stime") {
+        if (!add_time_arg(true, args)) {
+          return false;
+        }
+        continue;
+      }
+      if (ExprIsRealValue(*arg, module)) {
+        return false;
+      }
+      if (!add_expr_arg(*arg, 0u, args)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  for (size_t i = 0; i < tables.service_calls.size(); ++i) {
+    const SchedulerVmServiceCall& call = tables.service_calls[i];
+    SchedulerVmServiceEntry entry;
+    entry.kind = 0u;
+    entry.format_id = kSchedulerVmServiceInvalidId;
+    entry.arg_offset = 0u;
+    entry.arg_count = 0u;
+    entry.flags = 0u;
+    entry.aux = 0u;
+    bool ok = true;
+    std::vector<SchedulerVmServiceArg> args;
+    uint32_t format_id = kSchedulerVmServiceInvalidId;
+    uint32_t service_kind = 0u;
+    bool guard_fd = false;
+    bool dump_control = false;
+    bool monitor_on = false;
+    bool monitor_off = false;
+    bool strobe = false;
+    bool monitor = false;
+    bool finish = false;
+    bool stop = false;
+    size_t arg_start = 0u;
+    if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
+      if (!call.stmt || call.stmt->kind != StatementKind::kTaskCall) {
+        ok = false;
+      } else {
+        const std::string& name = call.stmt->task_name;
+        if (name == "$monitoron") {
+          monitor_on = true;
+        } else if (name == "$monitoroff") {
+          monitor_off = true;
+        } else if (name == "$strobe") {
+          strobe = true;
+        } else if (name == "$sformat") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kSformat);
+          arg_start = 1u;
+        } else if (name == "$display") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kDisplay);
+        } else if (name == "$write") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kWrite);
+        } else if (name == "$fdisplay") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFdisplay);
+          arg_start = 1u;
+          guard_fd = true;
+        } else if (name == "$monitor") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kMonitor);
+          monitor = true;
+        } else if (name == "$finish") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFinish);
+          finish = true;
+        } else if (name == "$stop") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kStop);
+          stop = true;
+        } else if (name == "$fwrite") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFwrite);
+          arg_start = 1u;
+          guard_fd = true;
+        } else if (name == "$fclose") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFclose);
+          guard_fd = true;
+        } else if (name == "$fflush") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFflush);
+          guard_fd = !call.stmt->task_args.empty();
+        } else if (name == "$ftell") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFtell);
+          guard_fd = true;
+        } else if (name == "$rewind") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kRewind);
+          guard_fd = true;
+        } else if (name == "$dumpfile") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumpfile);
+          dump_control = true;
+        } else if (name == "$dumpvars") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumpvars);
+          dump_control = true;
+        } else if (name == "$readmemh") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kReadmemh);
+        } else if (name == "$readmemb") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kReadmemb);
+        } else if (name == "$writememh") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kWritememh);
+          dump_control = true;
+        } else if (name == "$writememb") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kWritememb);
+          dump_control = true;
+        } else if (name == "$dumpoff") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumpoff);
+          dump_control = true;
+        } else if (name == "$dumpon") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumpon);
+          dump_control = true;
+        } else if (name == "$dumpflush") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumpflush);
+          dump_control = true;
+        } else if (name == "$dumpall") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumpall);
+          dump_control = true;
+        } else if (name == "$dumplimit") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kDumplimit);
+          dump_control = true;
+        } else if (name == "$timeformat") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kTimeformat);
+        } else if (name == "$printtimescale") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kPrinttimescale);
+        } else if (name == "$async$and$array") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kAsyncAndArray);
+        } else if (name == "$sync$or$plane") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kSyncOrPlane);
+        } else if (name == "$async$nor$plane") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kAsyncNorPlane);
+        } else if (name == "$sync$nand$plane") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kSyncNandPlane);
+        } else {
+          ok = false;
+        }
+        if (ok && monitor) {
+          auto it = system_task_info.monitor_ids.find(call.stmt);
+          if (it == system_task_info.monitor_ids.end()) {
+            ok = false;
+          } else {
+            entry.aux = it->second;
+          }
+        }
+        if (ok && strobe) {
+          auto it = system_task_info.strobe_ids.find(call.stmt);
+          if (it == system_task_info.strobe_ids.end()) {
+            ok = false;
+          } else {
+            entry.aux = it->second;
+          }
+        }
+        if (ok && !monitor_on && !monitor_off && !strobe) {
+          ok = build_task_args(*call.stmt, name, arg_start, &format_id, &args);
+          if (ok && name == "$sformat") {
+            if (call.stmt->task_args.empty() ||
+                !call.stmt->task_args[0] ||
+                call.stmt->task_args[0]->kind != ExprKind::kIdentifier) {
+              ok = false;
+            } else {
+              const Expr* target = call.stmt->task_args[0].get();
+              uint32_t target_id = 0u;
+              if (!string_id_for(target->ident, &target_id)) {
+                ok = false;
+              } else {
+                int width = SignalWidth(module, target->ident);
+                if (width <= 0) {
+                  width = 1;
+                }
+                args.insert(args.begin(),
+                            SchedulerVmServiceArg{
+                                kSchedulerVmServiceArgIdent,
+                                static_cast<uint32_t>(width), target_id, 0u});
+              }
+            }
+          }
+          if (ok && guard_fd && arg_start > 0u) {
+            if (call.stmt->task_args.empty() || !call.stmt->task_args[0]) {
+              ok = false;
+            } else if (!add_expr_arg(*call.stmt->task_args[0], 32u, &args)) {
+              ok = false;
+            } else {
+              std::rotate(args.begin(), args.end() - 1u, args.end());
+            }
+          }
+        }
+      }
+    } else {
+      if (!call.call || call.call->kind != ExprKind::kCall) {
+        ok = false;
+      } else {
+        const std::string& name = call.call->ident;
+        if (name == "$fopen") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFopen);
+        } else if (name == "$fclose") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFclose);
+        } else if (name == "$fgetc") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFgetc);
+        } else if (name == "$fgets") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFgets);
+        } else if (name == "$feof") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFeof);
+        } else if (name == "$ftell") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFtell);
+        } else if (name == "$fseek") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFseek);
+        } else if (name == "$ferror") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFerror);
+        } else if (name == "$ungetc") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFungetc);
+        } else if (name == "$fread") {
+          service_kind = static_cast<uint32_t>(SchedulerVmServiceKind::kFread);
+        } else if (name == "$fscanf") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kFscanf);
+        } else if (name == "$sscanf") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kSscanf);
+        } else if (name == "$test$plusargs") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kTestplusargs);
+        } else if (name == "$value$plusargs") {
+          service_kind =
+              static_cast<uint32_t>(SchedulerVmServiceKind::kValueplusargs);
+        } else {
+          ok = false;
+        }
+        if (ok) {
+          ok = build_syscall_args(*call.call, name, &format_id, &args);
+        }
+      }
+    }
+    if (!ok) {
+      entry.flags |= kSchedulerVmServiceFlagFallback;
+      entry.kind = 0u;
+      entry.format_id = kSchedulerVmServiceInvalidId;
+      entry.arg_offset = 0u;
+      entry.arg_count = 0u;
+      entry.aux = 0u;
+    } else {
+      entry.kind = service_kind;
+      entry.format_id = format_id;
+      entry.flags = 0u;
+      if (guard_fd) {
+        entry.flags |= kSchedulerVmServiceFlagGuardFd;
+      }
+      if (dump_control) {
+        entry.flags |= kSchedulerVmServiceFlagGlobalOnly;
+      }
+      if (monitor) {
+        entry.flags |= kSchedulerVmServiceFlagMonitor;
+      }
+      if (monitor_on) {
+        entry.flags |= kSchedulerVmServiceFlagMonitorOn;
+      }
+      if (monitor_off) {
+        entry.flags |= kSchedulerVmServiceFlagMonitorOff;
+      }
+      if (strobe) {
+        entry.flags |= kSchedulerVmServiceFlagStrobe;
+      }
+      if (finish) {
+        entry.flags |= kSchedulerVmServiceFlagFinish;
+      }
+      if (stop) {
+        entry.flags |= kSchedulerVmServiceFlagStop;
+      }
+      entry.arg_offset = static_cast<uint32_t>(service_args->size());
+      entry.arg_count = static_cast<uint32_t>(args.size());
+      service_args->insert(service_args->end(), args.begin(), args.end());
+    }
+    (*service_entries)[i] = entry;
+  }
+
+  for (size_t i = 0; i < tables.service_assign_stmts.size(); ++i) {
+    SchedulerVmServiceRetAssignEntry entry;
+    entry.flags = 0u;
+    entry.signal_id = 0u;
+    entry.width = 0u;
+    entry.force_slot = 0xFFFFFFFFu;
+    entry.passign_slot = 0xFFFFFFFFu;
+    entry.reserved = 0u;
+    const Statement* stmt = tables.service_assign_stmts[i];
+    bool ok = true;
+    if (!stmt || stmt->kind != StatementKind::kAssign) {
+      ok = false;
+    }
+    if (ok) {
+      if (stmt->assign.lhs_index || stmt->assign.lhs_has_range ||
+          !stmt->assign.lhs_indices.empty()) {
+        ok = false;
+      }
+    }
+    if (ok && SignalIsReal(module, stmt->assign.lhs)) {
+      ok = false;
+    }
+    int width = ok ? SignalWidth(module, stmt->assign.lhs) : 0;
+    if (ok && (width <= 0 || width > 64)) {
+      ok = false;
+    }
+    if (ok) {
+      auto it = signal_ids.find(stmt->assign.lhs);
+      if (it == signal_ids.end()) {
+        ok = false;
+      } else {
+        entry.signal_id = it->second;
+      }
+    }
+    if (ok) {
+      entry.width = static_cast<uint32_t>(width);
+      auto force_it = force_target_index.find(stmt->assign.lhs);
+      if (force_it != force_target_index.end()) {
+        entry.force_slot = force_it->second;
+      }
+      auto passign_it = passign_target_index.find(stmt->assign.lhs);
+      if (passign_it != passign_target_index.end()) {
+        entry.passign_slot = passign_it->second;
+      }
+    }
+    if (!ok) {
+      entry.flags |= kSchedulerVmServiceRetAssignFlagFallback;
+      entry.signal_id = 0u;
+      entry.width = 0u;
+      entry.force_slot = 0xFFFFFFFFu;
+      entry.passign_slot = 0xFFFFFFFFu;
+    }
+    (*service_ret_entries)[i] = entry;
+  }
+  return true;
+}
+
+bool BuildSchedulerVmCaseTables(
+    const Module& module, const SchedulerVmTables& tables,
+    const std::unordered_map<std::string, uint32_t>& signal_ids,
+    const std::vector<SchedulerVmSignalEntry>& signal_entries,
+    SchedulerVmExprBuilder* expr_builder, SchedulerVmCaseTableData* out,
+    std::string* error) {
   if (!out) {
     if (error) {
       *error = "scheduler VM case table output is null";
@@ -7001,14 +8447,21 @@ bool BuildSchedulerVmCaseTables(const Module& module,
     header.width = 0u;
     header.entry_count = 0u;
     header.entry_offset = 0u;
+    header.expr_offset = kSchedulerVmExprNoExtra;
     header.default_target = 0xFFFFFFFFu;
     if (!stmt || !stmt->case_expr) {
+      header.width = 1u;
+      out->headers[case_id] = header;
+      continue;
+    }
+    if (stmt->case_items.empty()) {
       out->headers[case_id] = header;
       continue;
     }
     int case_width = ExprWidth(*stmt->case_expr, module);
     if (case_width <= 0 || case_width > 64) {
-      header.width = static_cast<uint32_t>(std::max(0, case_width));
+      header.width =
+          (case_width <= 0) ? 1u : static_cast<uint32_t>(case_width);
       out->headers[case_id] = header;
       continue;
     }
@@ -7072,6 +8525,24 @@ bool BuildSchedulerVmCaseTables(const Module& module,
         entry.care_offset = care_offset;
         entry.target = static_cast<uint32_t>(item_idx);
         out->entries.push_back(entry);
+      }
+    }
+    if (eligible) {
+      if (!expr_builder) {
+        eligible = false;
+      } else {
+        const size_t expr_word_base = expr_builder->words().size();
+        const size_t expr_imm_base = expr_builder->imm_words().size();
+        uint32_t expr_offset = kSchedulerVmExprNoExtra;
+        if (TryEmitSchedulerVmCondExpr(*stmt->case_expr,
+                                       SchedulerVmExprUse::kValue, module,
+                                       signal_ids, signal_entries,
+                                       expr_builder, &expr_offset)) {
+          header.expr_offset = expr_offset;
+        } else {
+          expr_builder->Truncate(expr_word_base, expr_imm_base);
+          eligible = false;
+        }
       }
     }
     if (!eligible) {
@@ -7680,6 +9151,7 @@ bool BuildSchedulerVmLayoutFromModule(const Module& module,
     }
     return false;
   }
+  const SystemTaskInfo system_task_info = BuildSystemTaskInfo(module);
 
   std::vector<SchedulerVmProcDef> procs;
   std::vector<int> proc_parent;
@@ -7740,6 +9212,106 @@ bool BuildSchedulerVmLayoutFromModule(const Module& module,
     ++next_pid;
   }
   const int root_proc_count = next_pid;
+
+  struct PathPulseRef {
+    const TimingCheckLimit* reject = nullptr;
+    const TimingCheckLimit* error = nullptr;
+    bool has_pulse = false;
+    bool has_error = false;
+  };
+  std::unordered_map<const Statement*, bool> specify_delay_showcancelled;
+  std::unordered_map<const Statement*, PathPulseRef> specify_delay_pulse;
+  auto collect_specify_delay = [&](const Statement& stmt, bool showcancelled,
+                                   const PathPulseRef& pulse,
+                                   const auto& self) -> void {
+    if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
+      specify_delay_showcancelled[&stmt] = showcancelled;
+      if (pulse.has_pulse) {
+        specify_delay_pulse[&stmt] = pulse;
+      }
+    }
+    switch (stmt.kind) {
+      case StatementKind::kIf:
+        for (const auto& inner : stmt.then_branch) {
+          self(inner, showcancelled, pulse, self);
+        }
+        for (const auto& inner : stmt.else_branch) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kBlock:
+        for (const auto& inner : stmt.block) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kFor:
+        for (const auto& inner : stmt.for_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kWhile:
+        for (const auto& inner : stmt.while_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kRepeat:
+        for (const auto& inner : stmt.repeat_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kDelay:
+        for (const auto& inner : stmt.delay_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kEventControl:
+        for (const auto& inner : stmt.event_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kWait:
+        for (const auto& inner : stmt.wait_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kForever:
+        for (const auto& inner : stmt.forever_body) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kFork:
+        for (const auto& inner : stmt.fork_branches) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      case StatementKind::kCase:
+        for (const auto& item : stmt.case_items) {
+          for (const auto& inner : item.body) {
+            self(inner, showcancelled, pulse, self);
+          }
+        }
+        for (const auto& inner : stmt.default_branch) {
+          self(inner, showcancelled, pulse, self);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  for (const auto& block : specify_blocks) {
+    PathPulseRef pulse;
+    if (block.has_pulse) {
+      pulse.has_pulse = true;
+      pulse.has_error = block.has_pulse_error;
+      pulse.reject = &block.pulse_reject;
+      pulse.error =
+          block.has_pulse_error ? &block.pulse_error : &block.pulse_reject;
+    }
+    for (const auto& stmt : block.block.statements) {
+      collect_specify_delay(stmt, block.showcancelled, pulse,
+                            collect_specify_delay);
+    }
+  }
 
   std::vector<std::unique_ptr<std::vector<Statement>>> expanded_proc_bodies;
   std::unordered_set<std::string> task_stack;
@@ -8233,6 +9805,169 @@ bool BuildSchedulerVmLayoutFromModule(const Module& module,
   CollectSchedulerVmTables(procs, &tables);
   std::unordered_map<const Statement*, uint32_t> delay_assign_ids;
   CollectSchedulerVmDelayAssignIds(procs, &delay_assign_ids);
+  struct DelayAssignInfo {
+    const Statement* stmt = nullptr;
+    const Expr* delay_expr = nullptr;
+    std::string lhs;
+    bool nonblocking = false;
+    bool inertial = false;
+    bool showcancelled = false;
+    bool has_pulse = false;
+    bool has_pulse_error = false;
+    const TimingCheckLimit* pulse_reject = nullptr;
+    const TimingCheckLimit* pulse_error = nullptr;
+    bool lhs_real = false;
+    bool is_array = false;
+    bool is_bit_select = false;
+    bool is_range = false;
+    bool is_indexed_range = false;
+    int width = 0;
+    int base_width = 0;
+    int range_lsb = 0;
+    int array_size = 0;
+    int element_width = 0;
+  };
+  std::vector<DelayAssignInfo> delay_assign_infos;
+  delay_assign_infos.resize(delay_assign_ids.size());
+  std::function<void(const Statement&)> collect_delay_assign_info;
+  collect_delay_assign_info = [&](const Statement& stmt) {
+    if (stmt.kind == StatementKind::kAssign && stmt.assign.delay) {
+      auto id_it = delay_assign_ids.find(&stmt);
+      if (id_it == delay_assign_ids.end()) {
+        return;
+      }
+      DelayAssignInfo info;
+      info.stmt = &stmt;
+      info.delay_expr = stmt.assign.delay.get();
+      info.lhs = stmt.assign.lhs;
+      info.nonblocking = stmt.assign.nonblocking;
+      auto show_it = specify_delay_showcancelled.find(&stmt);
+      bool specify_delay = (show_it != specify_delay_showcancelled.end());
+      info.inertial = specify_delay;
+      info.showcancelled = specify_delay && show_it->second;
+      auto pulse_it = specify_delay_pulse.find(&stmt);
+      if (pulse_it != specify_delay_pulse.end()) {
+        info.has_pulse = pulse_it->second.has_pulse;
+        info.has_pulse_error = pulse_it->second.has_error;
+        info.pulse_reject = pulse_it->second.reject;
+        info.pulse_error = pulse_it->second.error;
+      }
+      info.lhs_real = SignalIsReal(module, stmt.assign.lhs);
+      info.base_width = SignalWidth(module, stmt.assign.lhs);
+      int element_width = 0;
+      int array_size = 0;
+      bool is_array = stmt.assign.lhs_index &&
+                      IsArrayNet(module, stmt.assign.lhs, &element_width,
+                                 &array_size);
+      info.is_array = is_array;
+      info.element_width = element_width;
+      info.array_size = array_size;
+      if (is_array) {
+        info.width = element_width;
+      } else if (stmt.assign.lhs_index) {
+        info.is_bit_select = true;
+        info.width = 1;
+      } else if (stmt.assign.lhs_has_range) {
+        info.is_range = true;
+        info.base_width = SignalWidth(module, stmt.assign.lhs);
+        if (stmt.assign.lhs_indexed_range) {
+          info.is_indexed_range = true;
+          info.width = stmt.assign.lhs_indexed_width;
+        } else {
+          int lo = std::min(stmt.assign.lhs_msb, stmt.assign.lhs_lsb);
+          int hi = std::max(stmt.assign.lhs_msb, stmt.assign.lhs_lsb);
+          info.range_lsb = lo;
+          info.width = hi - lo + 1;
+        }
+      } else {
+        info.width = SignalWidth(module, stmt.assign.lhs);
+      }
+      if (info.width <= 0) {
+        info.width = info.base_width > 0 ? info.base_width : 1;
+      }
+      const uint32_t id = id_it->second;
+      if (id < delay_assign_infos.size()) {
+        delay_assign_infos[id] = std::move(info);
+      }
+      return;
+    }
+    switch (stmt.kind) {
+      case StatementKind::kIf:
+        for (const auto& inner : stmt.then_branch) {
+          collect_delay_assign_info(inner);
+        }
+        for (const auto& inner : stmt.else_branch) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kBlock:
+        for (const auto& inner : stmt.block) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kFor:
+        for (const auto& inner : stmt.for_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kWhile:
+        for (const auto& inner : stmt.while_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kRepeat:
+        for (const auto& inner : stmt.repeat_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kDelay:
+        for (const auto& inner : stmt.delay_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kEventControl:
+        for (const auto& inner : stmt.event_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kWait:
+        for (const auto& inner : stmt.wait_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kForever:
+        for (const auto& inner : stmt.forever_body) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kCase:
+        for (const auto& item : stmt.case_items) {
+          for (const auto& inner : item.body) {
+            collect_delay_assign_info(inner);
+          }
+        }
+        for (const auto& inner : stmt.default_branch) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      case StatementKind::kFork:
+        for (const auto& inner : stmt.fork_branches) {
+          collect_delay_assign_info(inner);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  for (const auto& proc : procs) {
+    if (proc.body) {
+      for (const auto& stmt : *proc.body) {
+        collect_delay_assign_info(stmt);
+      }
+    } else if (proc.single) {
+      collect_delay_assign_info(*proc.single);
+    }
+  }
   std::vector<SchedulerVmCrossProcPatch> cross_patches;
   SchedulerVmContext context;
   context.tables = &tables;
@@ -8317,6 +10052,78 @@ bool BuildSchedulerVmLayoutFromModule(const Module& module,
   BuildSchedulerVmSignalLayout(module, &out->packed_slots,
                                &out->signal_entries, &signal_ids, four_state);
   SchedulerVmExprBuilder expr_builder;
+  std::unordered_set<std::string> override_targets;
+  override_targets.reserve(tables.force_stmts.size() +
+                           tables.release_stmts.size());
+  for (const auto* stmt : tables.force_stmts) {
+    if (stmt) {
+      override_targets.insert(stmt->force_target);
+    }
+  }
+  for (const auto* stmt : tables.release_stmts) {
+    if (stmt) {
+      override_targets.insert(stmt->release_target);
+    }
+  }
+  std::unordered_map<std::string, bool> override_is_reg;
+  override_is_reg.reserve(override_targets.size());
+  for (const auto& name : override_targets) {
+    NetType net_type = SignalNetType(module, name);
+    bool is_reg = (net_type == NetType::kReg || IsTriregNet(net_type));
+    override_is_reg[name] = is_reg;
+  }
+  std::unordered_map<const Statement*, uint32_t> force_stmt_ids;
+  std::unordered_map<const Statement*, uint32_t> passign_stmt_ids;
+  std::unordered_map<std::string, uint32_t> force_target_index;
+  std::unordered_map<std::string, uint32_t> passign_target_index;
+  if (!tables.force_stmts.empty() || !tables.release_stmts.empty()) {
+    std::unordered_set<std::string> force_targets;
+    std::unordered_set<std::string> passign_targets;
+    std::vector<const Statement*> force_stmts;
+    std::vector<const Statement*> passign_stmts;
+    for (const auto* stmt : tables.force_stmts) {
+      if (!stmt) {
+        continue;
+      }
+      const std::string& target = stmt->force_target;
+      if (stmt->is_procedural) {
+        passign_targets.insert(target);
+        passign_stmts.push_back(stmt);
+      } else {
+        force_targets.insert(target);
+        force_stmts.push_back(stmt);
+      }
+    }
+    for (const auto* stmt : tables.release_stmts) {
+      if (!stmt) {
+        continue;
+      }
+      const std::string& target = stmt->release_target;
+      if (stmt->is_procedural) {
+        passign_targets.insert(target);
+      } else {
+        force_targets.insert(target);
+      }
+    }
+    std::vector<std::string> force_target_list(force_targets.begin(),
+                                               force_targets.end());
+    std::vector<std::string> passign_target_list(passign_targets.begin(),
+                                                 passign_targets.end());
+    std::sort(force_target_list.begin(), force_target_list.end());
+    std::sort(passign_target_list.begin(), passign_target_list.end());
+    for (size_t i = 0; i < force_target_list.size(); ++i) {
+      force_target_index[force_target_list[i]] = static_cast<uint32_t>(i);
+    }
+    for (size_t i = 0; i < passign_target_list.size(); ++i) {
+      passign_target_index[passign_target_list[i]] = static_cast<uint32_t>(i);
+    }
+    for (size_t i = 0; i < force_stmts.size(); ++i) {
+      force_stmt_ids[force_stmts[i]] = static_cast<uint32_t>(i);
+    }
+    for (size_t i = 0; i < passign_stmts.size(); ++i) {
+      passign_stmt_ids[passign_stmts[i]] = static_cast<uint32_t>(i);
+    }
+  }
   out->cond_entries.clear();
   out->cond_entries.reserve(tables.cond_exprs.size());
   const std::unordered_map<std::string, int64_t> empty_params;
@@ -8336,7 +10143,8 @@ bool BuildSchedulerVmLayoutFromModule(const Module& module,
         entry.xz = (xz == 0u) ? 0u : 1u;
       } else {
         uint32_t expr_offset = 0u;
-        if (TryEmitSchedulerVmCondExpr(*expr, module, signal_ids,
+        if (TryEmitSchedulerVmCondExpr(*expr, SchedulerVmExprUse::kCond,
+                                       module, signal_ids,
                                        out->signal_entries, &expr_builder,
                                        &expr_offset)) {
           entry.kind = static_cast<uint32_t>(SchedulerVmCondKind::kExpr);
@@ -8347,15 +10155,408 @@ bool BuildSchedulerVmLayoutFromModule(const Module& module,
     }
     out->cond_entries.push_back(entry);
   }
-  out->expr_table.words = expr_builder.words();
-  out->expr_table.imm_words = expr_builder.imm_words();
+  out->assign_entries.clear();
+  if (!tables.assign_stmts.empty()) {
+    out->assign_entries.resize(tables.assign_stmts.size());
+    for (size_t i = 0; i < tables.assign_stmts.size(); ++i) {
+      SchedulerVmAssignEntry entry;
+      entry.flags = 0u;
+      entry.signal_id = 0u;
+      entry.rhs_expr = kSchedulerVmExprNoExtra;
+      const Statement* stmt = tables.assign_stmts[i];
+      bool ok = true;
+      if (!stmt || stmt->kind != StatementKind::kAssign || !stmt->assign.rhs) {
+        ok = false;
+      }
+      if (stmt && stmt->assign.nonblocking) {
+        entry.flags |= kSchedulerVmAssignFlagNonblocking;
+      }
+      if (ok) {
+        if (stmt->assign.lhs_index || stmt->assign.lhs_has_range ||
+            !stmt->assign.lhs_indices.empty()) {
+          ok = false;
+        }
+      }
+      if (ok && override_targets.count(stmt->assign.lhs) > 0u) {
+        ok = false;
+      }
+      if (ok && SignalIsReal(module, stmt->assign.lhs)) {
+        ok = false;
+      }
+      int width = ok ? SignalWidth(module, stmt->assign.lhs) : 0;
+      if (ok && (width <= 0 || width > 64)) {
+        ok = false;
+      }
+      const size_t expr_word_base = expr_builder.words().size();
+      const size_t expr_imm_base = expr_builder.imm_words().size();
+      if (ok) {
+        auto it = signal_ids.find(stmt->assign.lhs);
+        if (it == signal_ids.end()) {
+          ok = false;
+        } else {
+          entry.signal_id = it->second;
+        }
+      }
+      uint32_t rhs_offset = kSchedulerVmExprNoExtra;
+      if (ok) {
+        ok = TryEmitSchedulerVmCondExpr(*stmt->assign.rhs,
+                                        SchedulerVmExprUse::kValue, module,
+                                        signal_ids, out->signal_entries,
+                                        &expr_builder, &rhs_offset);
+      }
+      if (!ok) {
+        expr_builder.Truncate(expr_word_base, expr_imm_base);
+        entry.flags |= kSchedulerVmAssignFlagFallback;
+        entry.signal_id = 0u;
+        rhs_offset = kSchedulerVmExprNoExtra;
+      }
+      entry.rhs_expr = rhs_offset;
+      out->assign_entries[i] = entry;
+    }
+  }
+  out->force_entries.clear();
+  if (!tables.force_stmts.empty()) {
+    out->force_entries.resize(tables.force_stmts.size());
+    for (size_t i = 0; i < tables.force_stmts.size(); ++i) {
+      SchedulerVmForceEntry entry;
+      entry.flags = 0u;
+      entry.signal_id = 0u;
+      entry.rhs_expr = kSchedulerVmExprNoExtra;
+      entry.force_id = 0u;
+      entry.force_slot = 0xFFFFFFFFu;
+      entry.passign_slot = 0xFFFFFFFFu;
+      const Statement* stmt = tables.force_stmts[i];
+      bool ok = true;
+      bool is_proc = false;
+      std::string target;
+      if (!stmt || !stmt->assign.rhs) {
+        ok = false;
+      }
+      if (stmt) {
+        is_proc = stmt->is_procedural;
+        target = stmt->force_target;
+      }
+      if (is_proc) {
+        entry.flags |= kSchedulerVmForceFlagProcedural;
+      }
+      if (ok && stmt->assign.delay) {
+        ok = false;
+      }
+      if (ok) {
+        if (stmt->assign.lhs_index || stmt->assign.lhs_has_range ||
+            !stmt->assign.lhs_indices.empty()) {
+          ok = false;
+        }
+      }
+      if (ok && (target.empty() || SignalIsReal(module, target))) {
+        ok = false;
+      }
+      int width = ok ? SignalWidth(module, target) : 0;
+      if (ok && (width <= 0 || width > 64)) {
+        ok = false;
+      }
+      const size_t expr_word_base = expr_builder.words().size();
+      const size_t expr_imm_base = expr_builder.imm_words().size();
+      if (ok) {
+        auto it = signal_ids.find(target);
+        if (it == signal_ids.end()) {
+          ok = false;
+        } else {
+          entry.signal_id = it->second;
+        }
+      }
+      uint32_t rhs_offset = kSchedulerVmExprNoExtra;
+      if (ok) {
+        ok = TryEmitSchedulerVmCondExpr(*stmt->assign.rhs,
+                                        SchedulerVmExprUse::kValue, module,
+                                        signal_ids, out->signal_entries,
+                                        &expr_builder, &rhs_offset);
+      }
+      if (ok) {
+        auto force_it = force_target_index.find(target);
+        if (force_it != force_target_index.end()) {
+          entry.force_slot = force_it->second;
+        }
+        auto passign_it = passign_target_index.find(target);
+        if (passign_it != passign_target_index.end()) {
+          entry.passign_slot = passign_it->second;
+        }
+        if (is_proc) {
+          if (passign_it == passign_target_index.end()) {
+            ok = false;
+          }
+        } else {
+          if (force_it == force_target_index.end()) {
+            ok = false;
+          }
+        }
+        if (ok) {
+          entry.force_id = static_cast<uint32_t>(i);
+        }
+      }
+      if (ok) {
+        auto override_it = override_is_reg.find(target);
+        if (override_it != override_is_reg.end() && override_it->second) {
+          entry.flags |= kSchedulerVmForceFlagOverrideReg;
+        }
+      }
+      if (!ok) {
+        expr_builder.Truncate(expr_word_base, expr_imm_base);
+        entry.flags |= kSchedulerVmForceFlagFallback;
+        entry.signal_id = 0u;
+        rhs_offset = kSchedulerVmExprNoExtra;
+        entry.force_id = 0u;
+        entry.force_slot = 0xFFFFFFFFu;
+        entry.passign_slot = 0xFFFFFFFFu;
+      }
+      entry.rhs_expr = rhs_offset;
+      out->force_entries[i] = entry;
+    }
+  }
+  out->release_entries.clear();
+  if (!tables.release_stmts.empty()) {
+    out->release_entries.resize(tables.release_stmts.size());
+    for (size_t i = 0; i < tables.release_stmts.size(); ++i) {
+      SchedulerVmReleaseEntry entry;
+      entry.flags = 0u;
+      entry.signal_id = 0u;
+      entry.force_slot = 0xFFFFFFFFu;
+      entry.passign_slot = 0xFFFFFFFFu;
+      const Statement* stmt = tables.release_stmts[i];
+      bool ok = true;
+      bool is_proc = false;
+      std::string target;
+      if (!stmt) {
+        ok = false;
+      }
+      if (stmt) {
+        is_proc = stmt->is_procedural;
+        target = stmt->release_target;
+      }
+      if (is_proc) {
+        entry.flags |= kSchedulerVmForceFlagProcedural;
+      }
+      if (ok && target.empty()) {
+        ok = false;
+      }
+      if (ok && SignalIsReal(module, target)) {
+        ok = false;
+      }
+      int width = ok ? SignalWidth(module, target) : 0;
+      if (ok && (width <= 0 || width > 64)) {
+        ok = false;
+      }
+      if (ok) {
+        auto it = signal_ids.find(target);
+        if (it == signal_ids.end()) {
+          ok = false;
+        } else {
+          entry.signal_id = it->second;
+        }
+      }
+      auto force_it = force_target_index.find(target);
+      if (force_it != force_target_index.end()) {
+        entry.force_slot = force_it->second;
+      }
+      auto passign_it = passign_target_index.find(target);
+      if (passign_it != passign_target_index.end()) {
+        entry.passign_slot = passign_it->second;
+      }
+      if (ok) {
+        if (is_proc) {
+          if (passign_it == passign_target_index.end()) {
+            ok = false;
+          }
+        } else {
+          if (force_it == force_target_index.end()) {
+            ok = false;
+          }
+          if (passign_it != passign_target_index.end()) {
+            ok = false;
+          }
+        }
+      }
+      if (ok) {
+        auto override_it = override_is_reg.find(target);
+        if (override_it != override_is_reg.end() && override_it->second) {
+          entry.flags |= kSchedulerVmForceFlagOverrideReg;
+        }
+      }
+      if (!ok) {
+        entry.flags |= kSchedulerVmForceFlagFallback;
+        entry.signal_id = 0u;
+        entry.force_slot = 0xFFFFFFFFu;
+        entry.passign_slot = 0xFFFFFFFFu;
+      }
+      out->release_entries[i] = entry;
+    }
+  }
+  out->delay_assign_entries.clear();
+  if (!delay_assign_infos.empty()) {
+    out->delay_assign_entries.resize(delay_assign_infos.size());
+    const TimingSelectMode timing_select_mode = GetTimingSelectMode();
+    for (size_t i = 0; i < delay_assign_infos.size(); ++i) {
+      const DelayAssignInfo& info = delay_assign_infos[i];
+      SchedulerVmDelayAssignEntry entry;
+      uint32_t flags = 0u;
+      if (info.nonblocking) {
+        flags |= kSchedulerVmDelayAssignFlagNonblocking;
+      }
+      if (info.inertial) {
+        flags |= kSchedulerVmDelayAssignFlagInertial;
+      }
+      if (info.showcancelled) {
+        flags |= kSchedulerVmDelayAssignFlagShowcancelled;
+      }
+      if (info.has_pulse) {
+        flags |= kSchedulerVmDelayAssignFlagHasPulse;
+      }
+      if (info.has_pulse_error) {
+        flags |= kSchedulerVmDelayAssignFlagHasPulseError;
+      }
+      if (info.is_array) {
+        flags |= kSchedulerVmDelayAssignFlagIsArray;
+      }
+      if (info.is_bit_select) {
+        flags |= kSchedulerVmDelayAssignFlagIsBitSelect;
+      }
+      if (info.is_range) {
+        flags |= kSchedulerVmDelayAssignFlagIsRange;
+      }
+      if (info.is_indexed_range) {
+        flags |= kSchedulerVmDelayAssignFlagIsIndexedRange;
+      }
+      if (info.lhs_real) {
+        flags |= kSchedulerVmDelayAssignFlagIsReal;
+      }
+      entry.flags = flags;
+      entry.width = (info.width > 0) ? static_cast<uint32_t>(info.width) : 1u;
+      entry.base_width = (info.base_width > 0)
+                             ? static_cast<uint32_t>(info.base_width)
+                             : entry.width;
+      entry.range_lsb = static_cast<uint32_t>(std::max(0, info.range_lsb));
+      entry.array_size = (info.array_size > 0)
+                             ? static_cast<uint32_t>(info.array_size)
+                             : 1u;
+      const size_t expr_word_base = expr_builder.words().size();
+      const size_t expr_imm_base = expr_builder.imm_words().size();
+      bool ok = true;
+      if (ok) {
+        auto it = signal_ids.find(info.lhs);
+        if (it == signal_ids.end()) {
+          ok = false;
+        } else {
+          entry.signal_id = it->second;
+        }
+      }
+      uint32_t rhs_offset = kSchedulerVmExprNoExtra;
+      uint32_t delay_offset = kSchedulerVmExprNoExtra;
+      uint32_t idx_offset = kSchedulerVmExprNoExtra;
+      uint32_t pulse_reject_offset = kSchedulerVmExprNoExtra;
+      uint32_t pulse_error_offset = kSchedulerVmExprNoExtra;
+      if (!info.stmt || !info.stmt->assign.rhs || !info.delay_expr ||
+          info.lhs_real) {
+        ok = false;
+      }
+      if (ok) {
+        ok = TryEmitSchedulerVmCondExpr(*info.stmt->assign.rhs,
+                                        SchedulerVmExprUse::kValue, module,
+                                        signal_ids, out->signal_entries,
+                                        &expr_builder, &rhs_offset);
+      }
+      if (ok) {
+        ok = TryEmitSchedulerVmCondExpr(*info.delay_expr,
+                                        SchedulerVmExprUse::kValue, module,
+                                        signal_ids, out->signal_entries,
+                                        &expr_builder, &delay_offset);
+      }
+      if (ok && (info.is_array || info.is_bit_select ||
+                 info.is_indexed_range)) {
+        const Expr* idx_expr = info.stmt->assign.lhs_index.get();
+        if (info.is_indexed_range) {
+          idx_expr = info.stmt->assign.lhs_lsb_expr.get();
+        }
+        if (!idx_expr) {
+          ok = false;
+        } else {
+          ok = TryEmitSchedulerVmCondExpr(*idx_expr,
+                                          SchedulerVmExprUse::kValue, module,
+                                          signal_ids, out->signal_entries,
+                                          &expr_builder, &idx_offset);
+        }
+      }
+      if (ok && info.has_pulse) {
+        const Expr* reject_expr =
+            info.pulse_reject
+                ? SelectTimingLimitExpr(*info.pulse_reject,
+                                        timing_select_mode)
+                : nullptr;
+        if (reject_expr) {
+          ok = TryEmitSchedulerVmCondExpr(*reject_expr,
+                                          SchedulerVmExprUse::kValue, module,
+                                          signal_ids, out->signal_entries,
+                                          &expr_builder, &pulse_reject_offset);
+        } else {
+          pulse_reject_offset = kSchedulerVmExprNoExtra;
+        }
+        if (ok && info.has_pulse_error) {
+          const Expr* error_expr =
+              info.pulse_error
+                  ? SelectTimingLimitExpr(*info.pulse_error,
+                                          timing_select_mode)
+                  : nullptr;
+          if (error_expr) {
+            ok = TryEmitSchedulerVmCondExpr(*error_expr,
+                                            SchedulerVmExprUse::kValue, module,
+                                            signal_ids, out->signal_entries,
+                                            &expr_builder, &pulse_error_offset);
+          } else {
+            pulse_error_offset = pulse_reject_offset;
+          }
+        }
+        if (ok && !info.has_pulse_error) {
+          pulse_error_offset = pulse_reject_offset;
+        }
+      }
+      if (!ok) {
+        expr_builder.Truncate(expr_word_base, expr_imm_base);
+        entry.flags |= kSchedulerVmDelayAssignFlagFallback;
+        entry.signal_id = 0u;
+        rhs_offset = kSchedulerVmExprNoExtra;
+        delay_offset = kSchedulerVmExprNoExtra;
+        idx_offset = kSchedulerVmExprNoExtra;
+        pulse_reject_offset = kSchedulerVmExprNoExtra;
+        pulse_error_offset = kSchedulerVmExprNoExtra;
+      }
+      entry.rhs_expr = rhs_offset;
+      entry.delay_expr = delay_offset;
+      entry.idx_expr = idx_offset;
+      entry.pulse_reject_expr = pulse_reject_offset;
+      entry.pulse_error_expr = pulse_error_offset;
+      out->delay_assign_entries[i] = entry;
+    }
+  }
+  if (!BuildSchedulerVmServiceTables(
+          module, tables, system_task_info, signal_ids, force_target_index,
+          passign_target_index, out->signal_entries, &expr_builder,
+          &out->service_entries, &out->service_args,
+          &out->service_ret_entries)) {
+    if (error) {
+      *error = "scheduler VM service table build failed";
+    }
+    return false;
+  }
   SchedulerVmCaseTableData case_tables;
-  if (!BuildSchedulerVmCaseTables(module, tables, &case_tables, error)) {
+  if (!BuildSchedulerVmCaseTables(module, tables, signal_ids,
+                                  out->signal_entries, &expr_builder,
+                                  &case_tables, error)) {
     return false;
   }
   out->case_headers = std::move(case_tables.headers);
   out->case_entries = std::move(case_tables.entries);
   out->case_words = std::move(case_tables.words);
+  out->expr_table.words = expr_builder.words();
+  out->expr_table.imm_words = expr_builder.imm_words();
   return true;
 }
 
@@ -8369,6 +10570,17 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     out << "#include \"gpga_4state.h\"\n";
   }
   std::vector<int> wide_widths = CollectWideWidths(module);
+  uint32_t vm_expr_wide_bits = 0u;
+  uint32_t vm_expr_wide_words = 0u;
+  for (int width : wide_widths) {
+    if (width > 64) {
+      vm_expr_wide_bits =
+          std::max(vm_expr_wide_bits, static_cast<uint32_t>(width));
+    }
+  }
+  if (vm_expr_wide_bits > 64u) {
+    vm_expr_wide_words = (vm_expr_wide_bits + 63u) / 64u;
+  }
   if (!wide_widths.empty()) {
     out << "#include \"gpga_wide.h\"\n";
   }
@@ -8466,6 +10678,48 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
   }
   if (uses_real) {
     out << "#include \"gpga_real_decl.h\"\n\n";
+  } else if (options.sched_vm) {
+    out << "// Real stubs for sched-vm when the module uses no real values.\n";
+    out << "typedef ulong gpga_double;\n";
+    out << "inline gpga_double gpga_bits_to_real(ulong bits) { return bits; }\n";
+    out << "inline ulong gpga_real_to_bits(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_from_u64(ulong value) { return value; }\n";
+    out << "inline gpga_double gpga_double_from_s64(long value) { return (ulong)value; }\n";
+    out << "inline gpga_double gpga_double_from_u32(uint value) { return (ulong)value; }\n";
+    out << "inline gpga_double gpga_double_from_s32(int value) { return (ulong)value; }\n";
+    out << "inline long gpga_double_to_s64(gpga_double value) { return (long)value; }\n";
+    out << "inline gpga_double gpga_double_neg(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_add(gpga_double a, gpga_double b) { return a + b; }\n";
+    out << "inline gpga_double gpga_double_sub(gpga_double a, gpga_double b) { return a - b; }\n";
+    out << "inline gpga_double gpga_double_mul(gpga_double a, gpga_double b) { return a * b; }\n";
+    out << "inline gpga_double gpga_double_div(gpga_double a, gpga_double b) { return b == 0ul ? 0ul : (a / b); }\n";
+    out << "inline gpga_double gpga_double_pow(gpga_double base, gpga_double exp) { return (exp == 0ul) ? 1ul : base; }\n";
+    out << "inline gpga_double gpga_double_log10(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_ln(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_exp_real(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_sqrt(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_floor(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_ceil(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_sin(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_cos(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_tan(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_asin(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_acos(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_atan(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_sinh(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_cosh(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_tanh(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_asinh(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_acosh(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_atanh(gpga_double value) { return value; }\n";
+    out << "inline gpga_double gpga_double_atan2(gpga_double y, gpga_double x) { return y + x; }\n";
+    out << "inline gpga_double gpga_double_hypot(gpga_double x, gpga_double y) { return x + y; }\n";
+    out << "inline bool gpga_double_eq(gpga_double a, gpga_double b) { return a == b; }\n";
+    out << "inline bool gpga_double_lt(gpga_double a, gpga_double b) { return a < b; }\n";
+    out << "inline bool gpga_double_gt(gpga_double a, gpga_double b) { return a > b; }\n";
+    out << "inline bool gpga_double_le(gpga_double a, gpga_double b) { return a <= b; }\n";
+    out << "inline bool gpga_double_ge(gpga_double a, gpga_double b) { return a >= b; }\n";
+    out << "inline bool gpga_double_is_zero(gpga_double value) { return value == 0ul; }\n\n";
   }
   out << "struct GpgaParams { uint count; };\n\n";
   out << "constant constexpr ulong __gpga_time = 0ul;\n\n";
@@ -11584,6 +13838,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     };
     std::vector<PackedSignal> packed_signals;
     std::vector<PackedSignal> packed_nb_signals;
+    std::unordered_set<std::string> nb_packed_names;
     bool needs_force_shadow = false;
     packed_signals.reserve(module.ports.size() * 2 +
                            reg_names.size() * 2 +
@@ -11670,11 +13925,14 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       }
       out << "  uint __gpga_nb_count = " << count_expr << ";\n";
       out << "  ulong __gpga_nb_offset = 0ul;\n";
-      for (const auto& sig : packed_nb_signals) {
+      for (const auto& sig : packed_signals) {
         int array_size = std::max(1, sig.array_size);
         out << "  __gpga_nb_offset = (__gpga_nb_offset + 7ul) & ~7ul;\n";
-        out << "  device " << sig.type << "* " << sig.name
-            << " = (device " << sig.type << "*)(nb_state + __gpga_nb_offset);\n";
+        if (nb_packed_names.count(sig.name) > 0u) {
+          out << "  device " << sig.type << "* nb_" << sig.name
+              << " = (device " << sig.type
+              << "*)(nb_state + __gpga_nb_offset);\n";
+        }
         out << "  __gpga_nb_offset += (ulong)__gpga_nb_count * " << array_size
             << "u * (ulong)sizeof(" << sig.type << ");\n";
       }
@@ -15892,6 +18150,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
                                                    nb_targets.end());
         std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+        nb_packed_names.clear();
+        for (const auto& target : nb_targets_sorted) {
+          nb_packed_names.insert(val_name(target));
+          nb_packed_names.insert(xz_name(target));
+        }
         packed_nb_signals.clear();
         if (pack_nb && !nb_targets_sorted.empty()) {
           packed_nb_signals.reserve(nb_targets_sorted.size() * 2);
@@ -15963,6 +18226,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         std::sort(sched_reg_names.begin(), sched_reg_names.end());
 
         SchedulerVmTables vm_tables;
+        SchedulerVmLayout vm_layout;
         uint32_t vm_cond_count = 0u;
         uint32_t vm_assign_count = 0u;
         uint32_t vm_delay_count = 0u;
@@ -15974,10 +18238,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         uint32_t vm_release_count = 0u;
         uint32_t vm_service_call_count = 0u;
         uint32_t vm_service_assign_count = 0u;
+        uint32_t vm_service_arg_count = 0u;
         uint32_t vm_words_per_proc = kSchedulerVmWordsPerProc;
         uint32_t vm_expr_word_count = 0u;
         uint32_t vm_expr_imm_word_count = 0u;
         uint32_t vm_signal_count = 0u;
+        bool vm_needs_call_group = false;
         if (options.sched_vm) {
           for_each_proc_stmt(
               [&](const Statement& stmt) { CollectSchedulerVmTables(stmt, &vm_tables); });
@@ -15999,7 +18265,6 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               static_cast<uint32_t>(vm_tables.service_calls.size());
           vm_service_assign_count =
               static_cast<uint32_t>(vm_tables.service_assign_stmts.size());
-          SchedulerVmLayout vm_layout;
           if (BuildSchedulerVmLayoutFromModule(
                   module, &vm_layout, nullptr, options.four_state)) {
             vm_words_per_proc = vm_layout.words_per_proc;
@@ -16015,6 +18280,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                 static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
             vm_signal_count =
                 static_cast<uint32_t>(vm_layout.signal_entries.size());
+            vm_service_arg_count =
+                static_cast<uint32_t>(vm_layout.service_args.size());
+            vm_needs_call_group = VmLayoutNeedsCallGroup(vm_layout);
+          } else {
+            vm_needs_call_group = true;
           }
         } else {
           vm_cond_count = 0u;
@@ -16028,6 +18298,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           vm_release_count = 0u;
           vm_service_call_count = 0u;
           vm_service_assign_count = 0u;
+          vm_service_arg_count = 0u;
           vm_expr_word_count = 0u;
           vm_expr_imm_word_count = 0u;
           vm_signal_count = 0u;
@@ -16045,6 +18316,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
           nb_targets_sorted.assign(nb_targets.begin(), nb_targets.end());
           std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+          nb_packed_names.clear();
+          for (const auto& target : nb_targets_sorted) {
+            nb_packed_names.insert(val_name(target));
+            nb_packed_names.insert(xz_name(target));
+          }
           packed_nb_signals.clear();
           if (pack_nb && !nb_targets_sorted.empty()) {
             packed_nb_signals.reserve(nb_targets_sorted.size() * 2);
@@ -16115,6 +18391,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         const uint32_t sched_proc_group_count =
             (static_cast<uint32_t>(procs.size()) + sched_proc_group_size - 1u) /
             sched_proc_group_size;
+        const bool emit_proc_helpers = (!options.sched_vm || vm_needs_call_group);
         if (!options.sched_vm) {
           vm_cond_count = 0u;
           vm_assign_count = 0u;
@@ -16127,6 +18404,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           vm_release_count = 0u;
           vm_service_call_count = 0u;
           vm_service_assign_count = 0u;
+          vm_service_arg_count = 0u;
           vm_expr_word_count = 0u;
           vm_expr_imm_word_count = 0u;
           vm_signal_count = 0u;
@@ -16175,6 +18453,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               << vm_service_call_count << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT = "
               << vm_service_assign_count << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_COUNT = "
+              << vm_service_arg_count << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WORD_COUNT = "
               << vm_expr_word_count << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT = "
@@ -16193,6 +18473,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               << static_cast<uint32_t>(SchedulerVmCondKind::kExpr) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_STACK_MAX = "
               << kSchedulerVmExprStackMax << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WIDE_WORDS = "
+              << vm_expr_wide_words << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WIDE_BITS = "
+              << vm_expr_wide_bits << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_ARG_SIGNED = "
               << kSchedulerVmExprSignedFlag << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_DONE = "
@@ -16207,6 +18491,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               << static_cast<uint32_t>(SchedulerVmExprOp::kBinary) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_TERNARY = "
               << static_cast<uint32_t>(SchedulerVmExprOp::kTernary) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_INDEX = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kIndex) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_CALL = "
+              << static_cast<uint32_t>(SchedulerVmExprOp::kCall) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_PLUS = "
               << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kPlus) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_MINUS = "
@@ -16215,6 +18503,76 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kBitNot) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT = "
               << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kLogNot) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_AND = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedAnd) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_NAND = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedNand) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_OR = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedOr) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_NOR = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedNor) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_XOR = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedXor) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR = "
+              << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedXnor) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_TIME = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kTime) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_STIME = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kStime) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_REALTIME = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kRealtime) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ITOR = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kIToR) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_BITSTOREAL = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kBitsToReal)
+              << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_REALTOBITS = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kRealToBits)
+              << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_RTOI = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kRToI) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_LOG10 = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kLog10) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_LN = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kLn) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_EXP = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kExp) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_SQRT = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kSqrt) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_FLOOR = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kFloor) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_CEIL = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kCeil) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_SIN = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kSin) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_COS = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kCos) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_TAN = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kTan) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ASIN = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAsin) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ACOS = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAcos) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ATAN = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAtan) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_SINH = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kSinh) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_COSH = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kCosh) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_TANH = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kTanh) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ASINH = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAsinh) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ACOSH = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAcosh) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ATANH = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAtanh) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_POW = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kPow) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ATAN2 = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kAtan2) << "u;\n";
+          out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_HYPOT = "
+              << static_cast<uint32_t>(SchedulerVmExprCallOp::kHypot) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_ADD = "
               << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAdd) << "u;\n";
           out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SUB = "
@@ -16375,6 +18733,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  device const ulong* sched_vm_case_words [[id(12)]];\n";
           out << "  device const uint* sched_vm_expr [[id(13)]];\n";
           out << "  device const uint* sched_vm_expr_imm [[id(14)]];\n";
+          out << "  device const GpgaSchedVmDelayAssignEntry* sched_vm_delay_assign_entry [[id(15)]];\n";
+          out << "  device const GpgaSchedVmAssignEntry* sched_vm_assign_entry [[id(16)]];\n";
+          out << "  device const GpgaSchedVmForceEntry* sched_vm_force_entry [[id(17)]];\n";
+          out << "  device const GpgaSchedVmReleaseEntry* sched_vm_release_entry [[id(18)]];\n";
+          out << "  device const GpgaSchedVmServiceEntry* sched_vm_service_entry [[id(19)]];\n";
+          out << "  device const GpgaSchedVmServiceArg* sched_vm_service_arg [[id(20)]];\n";
+          out << "  device const GpgaSchedVmServiceRetAssignEntry* sched_vm_service_ret_assign_entry [[id(21)]];\n";
           out << "};\n";
           out << "#define sched_vm_bytecode (sched_vm_args.sched_vm_bytecode)\n";
           out << "#define sched_vm_proc_bytecode_offset (sched_vm_args.sched_vm_proc_bytecode_offset)\n";
@@ -16391,6 +18756,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "#define sched_vm_case_words (sched_vm_args.sched_vm_case_words)\n";
           out << "#define sched_vm_expr (sched_vm_args.sched_vm_expr)\n";
           out << "#define sched_vm_expr_imm (sched_vm_args.sched_vm_expr_imm)\n";
+          out << "#define sched_vm_delay_assign_entry (sched_vm_args.sched_vm_delay_assign_entry)\n";
+          out << "#define sched_vm_assign_entry (sched_vm_args.sched_vm_assign_entry)\n";
+          out << "#define sched_vm_force_entry (sched_vm_args.sched_vm_force_entry)\n";
+          out << "#define sched_vm_release_entry (sched_vm_args.sched_vm_release_entry)\n";
+          out << "#define sched_vm_service_entry (sched_vm_args.sched_vm_service_entry)\n";
+          out << "#define sched_vm_service_arg (sched_vm_args.sched_vm_service_arg)\n";
+          out << "#define sched_vm_service_ret_assign_entry (sched_vm_args.sched_vm_service_ret_assign_entry)\n";
         }
 
         const uint32_t edge_wait_table_size =
@@ -16804,26 +19176,28 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
         };
 
-        for (const auto& proc : procs) {
-          out << "static __attribute__((noinline)) void gpga_"
-              << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
-          emit_sched_param_decls(2);
-          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
-                 "  thread bool* did_work_ptr,\n"
-                 "  thread bool* finished_ptr,\n"
-                 "  thread bool* stopped_ptr,\n"
-                 "  thread ulong* __gpga_time_ptr);\n";
-        }
+        if (emit_proc_helpers) {
+          for (const auto& proc : procs) {
+            out << "static __attribute__((noinline)) void gpga_"
+                << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
+            emit_sched_param_decls(2);
+            out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                   "  thread bool* did_work_ptr,\n"
+                   "  thread bool* finished_ptr,\n"
+                   "  thread bool* stopped_ptr,\n"
+                   "  thread ulong* __gpga_time_ptr);\n";
+          }
 
-        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-          out << "static __attribute__((noinline)) void gpga_"
-              << MslName(module.name) << "_sched_group_" << group << "(";
-          emit_sched_param_decls(2);
-          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
-                 "  thread bool* did_work_ptr,\n"
-                 "  thread bool* finished_ptr,\n"
-                 "  thread bool* stopped_ptr,\n"
-                 "  thread ulong* __gpga_time_ptr);\n";
+          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+            out << "static __attribute__((noinline)) void gpga_"
+                << MslName(module.name) << "_sched_group_" << group << "(";
+            emit_sched_param_decls(2);
+            out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                   "  thread bool* did_work_ptr,\n"
+                   "  thread bool* finished_ptr,\n"
+                   "  thread bool* stopped_ptr,\n"
+                   "  thread ulong* __gpga_time_ptr);\n";
+          }
         }
         if (options.sched_vm) {
           out << "static __attribute__((noinline)) void gpga_"
@@ -16834,6 +19208,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                  "  thread bool* finished_ptr,\n"
                  "  thread bool* stopped_ptr,\n"
                  "  thread ulong* __gpga_time_ptr);\n";
+          out << "static __attribute__((noinline)) bool gpga_"
+              << MslName(module.name) << "_sched_vm_eval_expr(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint expr_offset,\n"
+                 "  thread ulong* out_val,\n"
+                 "  thread ulong* out_xz,\n"
+                 "  thread uint* out_width);\n";
         }
 
         out << "kernel void gpga_" << MslName(module.name) << "_sched_step(";
@@ -17288,60 +19669,134 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         std::function<void(const SequentialAssign&, const FsExpr&, int,
                            const std::unordered_set<std::string>&)>
             emit_lvalue_assign;
-        emit_force_overrides = [&](int indent) -> void {
-          if (override_target_list.empty()) {
-            return;
-          }
-          std::string pad(indent, ' ');
-          out << pad << "{\n";
-          for (const auto& target : override_target_list) {
-            auto force_it = force_target_index.find(target);
-            auto passign_it = passign_target_index.find(target);
-            if (force_it == force_target_index.end() &&
-                passign_it == passign_target_index.end()) {
-              continue;
+        if (options.sched_vm) {
+          emit_force_overrides = [&](int indent) -> void {
+            if (override_target_list.empty()) {
+              return;
             }
-            SequentialAssign temp;
-            temp.lhs = target;
-            temp.nonblocking = false;
-            Lvalue4 lhs =
-                build_lvalue4(temp, sched_locals, sched_regs, false, indent + 2);
-            if (!lhs.ok) {
-              continue;
-            }
-            std::string suffix = MslName(target);
-            if (force_it != force_target_index.end()) {
-              std::string force_slot = force_slot_expr(target);
-              out << pad << "  uint __gpga_force_id_" << suffix
-                  << " = sched_force_id[" << force_slot << "];\n";
-              out << pad << "  if (__gpga_force_id_" << suffix
-                  << " != 0xFFFFFFFFu) {\n";
-              out << pad << "    switch (__gpga_force_id_" << suffix << ") {\n";
-              auto list_it = force_stmts_by_target.find(target);
-              if (list_it != force_stmts_by_target.end()) {
-                for (const auto* stmt : list_it->second) {
-                  auto id_it = force_stmt_ids.find(stmt);
-                  if (id_it == force_stmt_ids.end()) {
-                    continue;
-                  }
-                  out << pad << "      case " << id_it->second << "u: {\n";
-                  emit_force_value_assign(*stmt, lhs.val, lhs.xz, indent + 8);
-                  out << pad << "        break;\n";
-                  out << pad << "      }\n";
-                }
-              }
-              out << pad << "      default:\n";
-              out << pad << "        break;\n";
+            std::string pad(indent, ' ');
+            out << pad << "{\n";
+            if (!passign_target_list.empty()) {
+              out << pad
+                  << "  uint __gpga_passign_base = gid * GPGA_SCHED_PCONT_COUNT;\n";
+              out << pad << "  for (uint __gpga_passign_slot = 0u; __gpga_passign_slot < GPGA_SCHED_PCONT_COUNT; ++__gpga_passign_slot) {\n";
+              out << pad
+                  << "    uint __gpga_passign_id = sched_passign_id[__gpga_passign_base + __gpga_passign_slot];\n";
+              out << pad << "    if (__gpga_passign_id != 0xFFFFFFFFu) {\n";
+              out << pad << "      if (!gpga_" << MslName(module.name)
+                  << "_sched_vm_apply_force_entry(";
+              emit_sched_param_names();
+              out << ", 0u, __gpga_passign_id, __gpga_passign_slot, true)) {\n";
+              out << pad << "        sched_error[gid] = 1u;\n";
+              out << pad << "      }\n";
               out << pad << "    }\n";
-              out << pad << "  }";
-              if (passign_it != passign_target_index.end()) {
-                out << " else {\n";
-                std::string passign_slot = passign_slot_expr(target);
-                out << pad << "    uint __gpga_passign_id_" << suffix
-                    << " = sched_passign_id[" << passign_slot << "];\n";
-                out << pad << "    if (__gpga_passign_id_" << suffix
+              out << pad << "  }\n";
+            }
+            if (!force_target_list.empty()) {
+              out << pad
+                  << "  uint __gpga_force_base = gid * GPGA_SCHED_FORCE_COUNT;\n";
+              out << pad << "  for (uint __gpga_force_slot = 0u; __gpga_force_slot < GPGA_SCHED_FORCE_COUNT; ++__gpga_force_slot) {\n";
+              out << pad
+                  << "    uint __gpga_force_id = sched_force_id[__gpga_force_base + __gpga_force_slot];\n";
+              out << pad << "    if (__gpga_force_id != 0xFFFFFFFFu) {\n";
+              out << pad << "      if (!gpga_" << MslName(module.name)
+                  << "_sched_vm_apply_force_entry(";
+              emit_sched_param_names();
+              out << ", 0u, __gpga_force_id, __gpga_force_slot, false)) {\n";
+              out << pad << "        sched_error[gid] = 1u;\n";
+              out << pad << "      }\n";
+              out << pad << "    }\n";
+              out << pad << "  }\n";
+            }
+            out << pad << "}\n";
+          };
+        } else {
+          emit_force_overrides = [&](int indent) -> void {
+            if (override_target_list.empty()) {
+              return;
+            }
+            std::string pad(indent, ' ');
+            out << pad << "{\n";
+            for (const auto& target : override_target_list) {
+              auto force_it = force_target_index.find(target);
+              auto passign_it = passign_target_index.find(target);
+              if (force_it == force_target_index.end() &&
+                  passign_it == passign_target_index.end()) {
+                continue;
+              }
+              SequentialAssign temp;
+              temp.lhs = target;
+              temp.nonblocking = false;
+              Lvalue4 lhs =
+                  build_lvalue4(temp, sched_locals, sched_regs, false, indent + 2);
+              if (!lhs.ok) {
+                continue;
+              }
+              std::string suffix = MslName(target);
+              if (force_it != force_target_index.end()) {
+                std::string force_slot = force_slot_expr(target);
+                out << pad << "  uint __gpga_force_id_" << suffix
+                    << " = sched_force_id[" << force_slot << "];\n";
+                out << pad << "  if (__gpga_force_id_" << suffix
                     << " != 0xFFFFFFFFu) {\n";
-                out << pad << "      switch (__gpga_passign_id_" << suffix
+                out << pad << "    switch (__gpga_force_id_" << suffix << ") {\n";
+                auto list_it = force_stmts_by_target.find(target);
+                if (list_it != force_stmts_by_target.end()) {
+                  for (const auto* stmt : list_it->second) {
+                    auto id_it = force_stmt_ids.find(stmt);
+                    if (id_it == force_stmt_ids.end()) {
+                      continue;
+                    }
+                    out << pad << "      case " << id_it->second << "u: {\n";
+                    emit_force_value_assign(*stmt, lhs.val, lhs.xz, indent + 8);
+                    out << pad << "        break;\n";
+                    out << pad << "      }\n";
+                  }
+                }
+                out << pad << "      default:\n";
+                out << pad << "        break;\n";
+                out << pad << "    }\n";
+                out << pad << "  }";
+                if (passign_it != passign_target_index.end()) {
+                  out << " else {\n";
+                  std::string passign_slot = passign_slot_expr(target);
+                  out << pad << "    uint __gpga_passign_id_" << suffix
+                      << " = sched_passign_id[" << passign_slot << "];\n";
+                  out << pad << "    if (__gpga_passign_id_" << suffix
+                      << " != 0xFFFFFFFFu) {\n";
+                  out << pad << "      switch (__gpga_passign_id_" << suffix
+                      << ") {\n";
+                  auto plist_it = passign_stmts_by_target.find(target);
+                  if (plist_it != passign_stmts_by_target.end()) {
+                    for (const auto* stmt : plist_it->second) {
+                      auto id_it = passign_stmt_ids.find(stmt);
+                      if (id_it == passign_stmt_ids.end()) {
+                        continue;
+                      }
+                      out << pad << "        case " << id_it->second << "u: {\n";
+                      emit_force_value_assign(*stmt, lhs.val, lhs.xz,
+                                              indent + 10);
+                      out << pad << "          break;\n";
+                      out << pad << "        }\n";
+                    }
+                  }
+                  out << pad << "        default:\n";
+                  out << pad << "          break;\n";
+                  out << pad << "      }\n";
+                  out << pad << "    }\n";
+                  out << pad << "  }\n";
+                } else {
+                  out << "\n";
+                }
+                continue;
+              }
+              if (passign_it != passign_target_index.end()) {
+                std::string passign_slot = passign_slot_expr(target);
+                out << pad << "  uint __gpga_passign_id_" << suffix
+                    << " = sched_passign_id[" << passign_slot << "];\n";
+                out << pad << "  if (__gpga_passign_id_" << suffix
+                    << " != 0xFFFFFFFFu) {\n";
+                out << pad << "    switch (__gpga_passign_id_" << suffix
                     << ") {\n";
                 auto plist_it = passign_stmts_by_target.find(target);
                 if (plist_it != passign_stmts_by_target.end()) {
@@ -17350,52 +19805,21 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                     if (id_it == passign_stmt_ids.end()) {
                       continue;
                     }
-                    out << pad << "        case " << id_it->second << "u: {\n";
-                    emit_force_value_assign(*stmt, lhs.val, lhs.xz,
-                                            indent + 10);
-                    out << pad << "          break;\n";
-                    out << pad << "        }\n";
+                    out << pad << "      case " << id_it->second << "u: {\n";
+                    emit_force_value_assign(*stmt, lhs.val, lhs.xz, indent + 8);
+                    out << pad << "        break;\n";
+                    out << pad << "      }\n";
                   }
                 }
-                out << pad << "        default:\n";
-                out << pad << "          break;\n";
-                out << pad << "      }\n";
+                out << pad << "      default:\n";
+                out << pad << "        break;\n";
                 out << pad << "    }\n";
                 out << pad << "  }\n";
-              } else {
-                out << "\n";
               }
-              continue;
             }
-            if (passign_it != passign_target_index.end()) {
-              std::string passign_slot = passign_slot_expr(target);
-              out << pad << "  uint __gpga_passign_id_" << suffix
-                  << " = sched_passign_id[" << passign_slot << "];\n";
-              out << pad << "  if (__gpga_passign_id_" << suffix
-                  << " != 0xFFFFFFFFu) {\n";
-              out << pad << "    switch (__gpga_passign_id_" << suffix
-                  << ") {\n";
-              auto plist_it = passign_stmts_by_target.find(target);
-              if (plist_it != passign_stmts_by_target.end()) {
-                for (const auto* stmt : plist_it->second) {
-                  auto id_it = passign_stmt_ids.find(stmt);
-                  if (id_it == passign_stmt_ids.end()) {
-                    continue;
-                  }
-                  out << pad << "      case " << id_it->second << "u: {\n";
-                  emit_force_value_assign(*stmt, lhs.val, lhs.xz, indent + 8);
-                  out << pad << "        break;\n";
-                  out << pad << "      }\n";
-                }
-              }
-              out << pad << "      default:\n";
-              out << pad << "        break;\n";
-              out << pad << "    }\n";
-              out << pad << "  }\n";
-            }
-          }
-          out << pad << "}\n";
-        };
+            out << pad << "}\n";
+          };
+        }
 
         TimingSelectMode timing_select_mode = GetTimingSelectMode();
         auto emit_timing_checks = [&](int indent) -> void {
@@ -21788,34 +24212,162 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "    sched_status[gid] = GPGA_SCHED_STATUS_IDLE;\n";
         out << "  }\n";
         out << "}\n";
-        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-          emit_proc_group_helpers(group);
-        }
-        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-          out << "static __attribute__((noinline)) void gpga_"
-              << MslName(module.name) << "_sched_group_" << group << "(";
-          emit_sched_param_decls(2);
-          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
-                 "  thread bool* did_work_ptr,\n"
-                 "  thread bool* finished_ptr,\n"
-                 "  thread bool* stopped_ptr,\n"
-                 "  thread ulong* __gpga_time_ptr) {\n";
-          out << "  thread uint& steps = *steps_ptr;\n";
-          out << "  thread bool& did_work = *did_work_ptr;\n";
-          out << "  thread bool& finished = *finished_ptr;\n";
-          out << "  thread bool& stopped = *stopped_ptr;\n";
-          out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
-          out << "  switch (pid) {\n";
-          emit_proc_group_cases(group);
-          out << "    default: {\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          out << "  }\n";
-          out << "}\n";
+        if (emit_proc_helpers) {
+          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+            emit_proc_group_helpers(group);
+          }
+          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+            out << "static __attribute__((noinline)) void gpga_"
+                << MslName(module.name) << "_sched_group_" << group << "(";
+            emit_sched_param_decls(2);
+            out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                   "  thread bool* did_work_ptr,\n"
+                   "  thread bool* finished_ptr,\n"
+                   "  thread bool* stopped_ptr,\n"
+                   "  thread ulong* __gpga_time_ptr) {\n";
+            out << "  thread uint& steps = *steps_ptr;\n";
+            out << "  thread bool& did_work = *did_work_ptr;\n";
+            out << "  thread bool& finished = *finished_ptr;\n";
+            out << "  thread bool& stopped = *stopped_ptr;\n";
+            out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+            out << "  switch (pid) {\n";
+            emit_proc_group_cases(group);
+            out << "    default: {\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      break;\n";
+            out << "    }\n";
+            out << "  }\n";
+            out << "}\n";
+          }
         }
         if (options.sched_vm) {
-          const auto& vm_cond_exprs = vm_tables.cond_exprs;
+          if (vm_expr_wide_bits > 64u) {
+            const std::string wide_bits = std::to_string(vm_expr_wide_bits);
+            const std::string wide_type = "GpgaWide" + wide_bits;
+            out << "static inline " << wide_type
+                << " gpga_sched_vm_wide_mask_bits(uint width) {\n";
+            out << "  if (width == 0u) {\n";
+            out << "    return gpga_wide_zero_" << wide_bits << "();\n";
+            out << "  }\n";
+            out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+            out << "    return gpga_wide_mask_const_" << wide_bits << "();\n";
+            out << "  }\n";
+            out << "  " << wide_type << " out = gpga_wide_zero_" << wide_bits
+                << "();\n";
+            out << "  uint word = width >> 6u;\n";
+            out << "  uint bit = width & 63u;\n";
+            out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
+            out << "    if (i < word) {\n";
+            out << "      out.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
+            out << "    } else if (i == word) {\n";
+            out << "      out.w[i] = (bit == 0u) ? 0ul : ((1ul << bit) - 1ul);\n";
+            out << "    }\n";
+            out << "  }\n";
+            out << "  return out;\n";
+            out << "}\n";
+            out << "static inline " << wide_type
+                << " gpga_sched_vm_wide_mask_value(" << wide_type
+                << " v, uint width) {\n";
+            out << "  if (width == 0u) {\n";
+            out << "    return gpga_wide_zero_" << wide_bits << "();\n";
+            out << "  }\n";
+            out << "  v = gpga_wide_mask_" << wide_bits << "(v);\n";
+            out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+            out << "    return v;\n";
+            out << "  }\n";
+            out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
+            out << "  return gpga_wide_and_" << wide_bits << "(v, mask);\n";
+            out << "}\n";
+            out << "static inline bool gpga_sched_vm_wide_any_masked(" << wide_type
+                << " v, uint width) {\n";
+            out << "  if (width == 0u) {\n";
+            out << "    return false;\n";
+            out << "  }\n";
+            out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+            out << "    return gpga_wide_any_" << wide_bits << "(v);\n";
+            out << "  }\n";
+            out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
+            out << "  return gpga_wide_any_" << wide_bits << "(gpga_wide_and_"
+                << wide_bits << "(v, mask));\n";
+            out << "}\n";
+            out << "static inline bool gpga_sched_vm_wide_eq_masked(" << wide_type
+                << " a, " << wide_type << " b, uint width) {\n";
+            out << "  if (width == 0u) {\n";
+            out << "    return true;\n";
+            out << "  }\n";
+            out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+            out << "    return gpga_wide_eq_" << wide_bits
+                << "(gpga_wide_mask_" << wide_bits << "(a), gpga_wide_mask_"
+                << wide_bits << "(b));\n";
+            out << "  }\n";
+            out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
+            out << "  " << wide_type << " am = gpga_wide_and_" << wide_bits
+                << "(a, mask);\n";
+            out << "  " << wide_type << " bm = gpga_wide_and_" << wide_bits
+                << "(b, mask);\n";
+            out << "  return gpga_wide_eq_" << wide_bits << "(am, bm);\n";
+            out << "}\n";
+            out << "static inline uint gpga_sched_vm_wide_red_xor(" << wide_type
+                << " v, uint width) {\n";
+            out << "  if (width == 0u) {\n";
+            out << "    return 0u;\n";
+            out << "  }\n";
+            out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+            out << "    return gpga_wide_red_xor_" << wide_bits
+                << "(gpga_wide_mask_" << wide_bits << "(v));\n";
+            out << "  }\n";
+            out << "  uint parity = 0u;\n";
+            out << "  uint word = width >> 6u;\n";
+            out << "  uint bit = width & 63u;\n";
+            out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
+            out << "    ulong word_val = v.w[i];\n";
+            out << "    if (i > word) {\n";
+            out << "      word_val = 0ul;\n";
+            out << "    } else if (i == word) {\n";
+            out << "      word_val = (bit == 0u) ? 0ul : (word_val & ((1ul << bit) - 1ul));\n";
+            out << "    }\n";
+            out << "    uint lo = uint(word_val);\n";
+            out << "    uint hi = uint(word_val >> 32u);\n";
+            out << "    parity ^= (popcount(lo) + popcount(hi)) & 1u;\n";
+            out << "  }\n";
+            out << "  return parity & 1u;\n";
+            out << "}\n";
+            out << "static inline " << wide_type
+                << " gpga_sched_vm_wide_extend(" << wide_type
+                << " v, uint width, bool sign_extend) {\n";
+            out << "  v = gpga_sched_vm_wide_mask_value(v, width);\n";
+            out << "  if (!sign_extend || width == 0u ||\n";
+            out << "      width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+            out << "    return v;\n";
+            out << "  }\n";
+            out << "  uint sign = gpga_wide_get_bit_" << wide_bits << "(v, width - 1u);\n";
+            out << "  if (sign == 0u) {\n";
+            out << "    return v;\n";
+            out << "  }\n";
+            out << "  uint word = width >> 6u;\n";
+            out << "  uint bit = width & 63u;\n";
+            out << "  for (uint i = word; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
+            out << "    if (i == word) {\n";
+            out << "      ulong mask = (bit == 0u) ? 0xFFFFFFFFFFFFFFFFul\n";
+            out << "                               : (0xFFFFFFFFFFFFFFFFul << bit);\n";
+            out << "      v.w[i] |= mask;\n";
+            out << "    } else {\n";
+            out << "      v.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
+            out << "    }\n";
+            out << "  }\n";
+            out << "  return gpga_wide_mask_" << wide_bits << "(v);\n";
+            out << "}\n";
+          }
+          out << "static inline long gpga_sched_vm_sign64(ulong val, uint width) {\n";
+          out << "  if (width == 0u) {\n";
+          out << "    return 0l;\n";
+          out << "  }\n";
+          out << "  if (width >= 64u) {\n";
+          out << "    return long(val);\n";
+          out << "  }\n";
+          out << "  uint shift = 64u - width;\n";
+          out << "  return long(val << shift) >> shift;\n";
+          out << "}\n";
           out << "static __attribute__((noinline)) void gpga_"
               << MslName(module.name) << "_sched_vm_eval_cond(";
           emit_sched_param_decls(2);
@@ -21825,7 +24377,6 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  uint __gpga_cond_val = 0u;\n";
           out << "  uint __gpga_cond_xz = 1u;\n";
           out << "  bool __gpga_cond_known = false;\n";
-          emit_packed_signal_setup("sched.count");
           out << "  if (cond_id < GPGA_SCHED_VM_COND_COUNT) {\n";
           out << "    const GpgaSchedVmCondEntry __gpga_entry = "
                  "sched_vm_cond_entry[cond_id];\n";
@@ -21842,6 +24393,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      thread ulong __gpga_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
           out << "      thread ulong __gpga_xzs[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
           out << "      thread uint __gpga_widths[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "      thread bool __gpga_is_real[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "      thread GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+            out << "      thread GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_xzs[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          }
           out << "      while (__gpga_expr_ok) {\n";
           out << "        uint __gpga_instr = sched_vm_expr[__gpga_ip++];\n";
           out << "        uint __gpga_op = (__gpga_instr & 0xFFu);\n";
@@ -21852,6 +24410,42 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            break;\n";
           out << "          }\n";
           out << "          uint __gpga_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "          bool __gpga_real = __gpga_is_real[__gpga_sp - 1u];\n";
+          out << "          if (__gpga_real) {\n";
+          out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "            if (__gpga_xz != 0ul) {\n";
+          out << "              __gpga_cond_val = 0u;\n";
+          out << "              __gpga_cond_xz = 1u;\n";
+          out << "            } else {\n";
+          out << "              __gpga_cond_val = gpga_double_is_zero(__gpga_val) ? 0u : 1u;\n";
+          out << "              __gpga_cond_xz = 0u;\n";
+          out << "            }\n";
+          out << "            __gpga_cond_known = true;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "          if (__gpga_width > 64u) {\n";
+            out << "            GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "            GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_xz = __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "            bool __gpga_any_xz =\n";
+            out << "                gpga_sched_vm_wide_any_masked(__gpga_wide_xz, __gpga_width);\n";
+            out << "            if (__gpga_any_xz) {\n";
+            out << "              __gpga_cond_val = 0u;\n";
+            out << "              __gpga_cond_xz = 1u;\n";
+            out << "            } else {\n";
+            out << "              __gpga_cond_val =\n";
+            out << "                  gpga_sched_vm_wide_any_masked(__gpga_wide_val, __gpga_width)\n";
+            out << "                      ? 1u\n";
+            out << "                      : 0u;\n";
+            out << "              __gpga_cond_xz = 0u;\n";
+            out << "            }\n";
+            out << "            __gpga_cond_known = true;\n";
+            out << "            break;\n";
+            out << "          }\n";
+          }
           out << "          ulong __gpga_mask = (__gpga_width >= 64u)\n";
           out << "              ? ~0ul\n";
           out << "              : ((__gpga_width == 0u)\n";
@@ -21880,8 +24474,27 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "                : ((__gpga_width == 0u)\n";
           out << "                       ? 0ul\n";
           out << "                       : ((1ul << __gpga_width) - 1ul));\n";
-          out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
-          out << "            __gpga_xzs[__gpga_sp] = 0ul;\n";
+          out << "            __gpga_is_real[__gpga_sp] = false;\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_val = gpga_wide_from_u64_"
+                << vm_expr_wide_bits << "(__gpga_val);\n";
+            out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_val, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_sp] = __gpga_wide_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_sp] =\n";
+            out << "                  gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              __gpga_vals[__gpga_sp] = __gpga_wide_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_sp] = 0ul;\n";
+            out << "            } else {\n";
+            out << "              __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+            out << "              __gpga_xzs[__gpga_sp] = 0ul;\n";
+            out << "            }\n";
+          } else {
+            out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+            out << "            __gpga_xzs[__gpga_sp] = 0ul;\n";
+          }
           out << "            __gpga_widths[__gpga_sp] = __gpga_width;\n";
           out << "            __gpga_sp += 1u;\n";
           out << "            break;\n";
@@ -21898,11 +24511,67 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
           out << "            const GpgaSchedVmSignalEntry __gpga_sig =\n";
           out << "                sched_vm_signal_entry[__gpga_arg];\n";
-          out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
-          out << "                __gpga_sig.array_size != 1u) {\n";
+          out << "            __gpga_is_real[__gpga_sp] = false;\n";
+          out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
+          out << "              if (__gpga_sig.array_size != 1u) {\n";
+          out << "                __gpga_expr_ok = false;\n";
+          out << "                break;\n";
+          out << "              }\n";
+          out << "              ulong __gpga_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "                  ((ulong)gid * (ulong)__gpga_sig.array_size) * 8ul;\n";
+          out << "              ulong __gpga_val =\n";
+          out << "                  ((device const ulong*)(gpga_state + __gpga_addr))[0];\n";
+          out << "              __gpga_vals[__gpga_sp] = __gpga_val;\n";
+          out << "              __gpga_xzs[__gpga_sp] = 0ul;\n";
+          out << "              __gpga_widths[__gpga_sp] = 64u;\n";
+          out << "              __gpga_is_real[__gpga_sp] = true;\n";
+          out << "              __gpga_sp += 1u;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            if (__gpga_sig.array_size != 1u) {\n";
           out << "              __gpga_expr_ok = false;\n";
           out << "              break;\n";
           out << "            }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              uint __gpga_words = (__gpga_width + 63u) >> 6u;\n";
+            out << "              ulong __gpga_stride = (ulong)__gpga_words * 8ul;\n";
+            out << "              ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+            out << "              ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+            out << "                  __gpga_base * __gpga_stride;\n";
+            out << "              ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+            out << "                  __gpga_base * __gpga_stride;\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_val = gpga_wide_zero_" << vm_expr_wide_bits
+                << "();\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_xz = gpga_wide_zero_" << vm_expr_wide_bits
+                << "();\n";
+            out << "              #pragma clang loop unroll(disable)\n";
+            out << "              for (uint __gpga_w = 0u; __gpga_w < __gpga_words; ++__gpga_w) {\n";
+            out << "                __gpga_wide_val.w[__gpga_w] =\n";
+            out << "                    ((device const ulong*)(gpga_state + __gpga_val_addr))[__gpga_w];\n";
+            out << "                __gpga_wide_xz.w[__gpga_w] =\n";
+            out << "                    ((device const ulong*)(gpga_state + __gpga_xz_addr))[__gpga_w];\n";
+            out << "              }\n";
+            out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_val, __gpga_width);\n";
+            out << "              __gpga_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_xz, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_sp] = __gpga_wide_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_sp] = __gpga_wide_xz;\n";
+            out << "              __gpga_vals[__gpga_sp] = __gpga_wide_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_sp] = __gpga_wide_xz.w[0];\n";
+            out << "              __gpga_widths[__gpga_sp] = __gpga_width;\n";
+            out << "              __gpga_sp += 1u;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          } else {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              __gpga_expr_ok = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
           out << "            ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
           out << "            ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
           out << "            ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
@@ -21929,6 +24598,605 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            __gpga_sp += 1u;\n";
           out << "            break;\n";
           out << "          }\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_INDEX: {\n";
+          out << "            if (__gpga_sp == 0u) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "                sched_vm_signal_entry[__gpga_arg];\n";
+          out << "            if (__gpga_sig.array_size <= 1u) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            bool __gpga_idx_real = __gpga_is_real[__gpga_sp - 1u];\n";
+          out << "            uint __gpga_idx_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_idx_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "            ulong __gpga_idx_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "            if (__gpga_idx_real) {\n";
+          out << "              __gpga_idx_val = (ulong)gpga_double_to_s64(__gpga_idx_val);\n";
+          out << "              __gpga_idx_xz = 0ul;\n";
+          out << "            }\n";
+          out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
+          out << "              bool __gpga_idx_any_xz = false;\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "              if (__gpga_idx_width > 64u) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_idx_xz_wide = __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "                __gpga_idx_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                    __gpga_idx_xz_wide, __gpga_idx_width);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_idx_val_wide = __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "                __gpga_idx_val_wide = gpga_sched_vm_wide_mask_value(\n";
+            out << "                    __gpga_idx_val_wide, __gpga_idx_width);\n";
+            out << "                __gpga_idx_val = gpga_wide_to_u64_" << vm_expr_wide_bits
+                << "(__gpga_idx_val_wide);\n";
+            out << "              } else {\n";
+            out << "                ulong __gpga_idx_mask = (__gpga_idx_width >= 64u)\n";
+            out << "                    ? ~0ul\n";
+            out << "                    : ((__gpga_idx_width == 0u)\n";
+            out << "                           ? 0ul\n";
+            out << "                           : ((1ul << __gpga_idx_width) - 1ul));\n";
+            out << "                __gpga_idx_val &= __gpga_idx_mask;\n";
+            out << "                __gpga_idx_any_xz =\n";
+            out << "                    ((__gpga_idx_xz & __gpga_idx_mask) != 0ul);\n";
+            out << "              }\n";
+          } else {
+            out << "              if (__gpga_idx_width > 64u) {\n";
+            out << "                __gpga_expr_ok = false;\n";
+            out << "                break;\n";
+            out << "              }\n";
+            out << "              ulong __gpga_idx_mask = (__gpga_idx_width >= 64u)\n";
+            out << "                  ? ~0ul\n";
+            out << "                  : ((__gpga_idx_width == 0u)\n";
+            out << "                         ? 0ul\n";
+            out << "                         : ((1ul << __gpga_idx_width) - 1ul));\n";
+            out << "              __gpga_idx_val &= __gpga_idx_mask;\n";
+            out << "              __gpga_idx_any_xz =\n";
+            out << "                  ((__gpga_idx_xz & __gpga_idx_mask) != 0ul);\n";
+          }
+          out << "              if (__gpga_idx_any_xz) {\n";
+          out << "                __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+          out << "                __gpga_xzs[__gpga_sp - 1u] = 1ul;\n";
+          out << "                __gpga_widths[__gpga_sp - 1u] = 64u;\n";
+          out << "                __gpga_is_real[__gpga_sp - 1u] = true;\n";
+          out << "                break;\n";
+          out << "              }\n";
+          out << "              if (__gpga_idx_val >= (ulong)__gpga_sig.array_size) {\n";
+          out << "                __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+          out << "                __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+          out << "                __gpga_widths[__gpga_sp - 1u] = 64u;\n";
+          out << "                __gpga_is_real[__gpga_sp - 1u] = true;\n";
+          out << "                break;\n";
+          out << "              }\n";
+          out << "              ulong __gpga_stride = 8ul;\n";
+          out << "              ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "              ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "                  (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+          out << "              ulong __gpga_val =\n";
+          out << "                  ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "              __gpga_vals[__gpga_sp - 1u] = __gpga_val;\n";
+          out << "              __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+          out << "              __gpga_widths[__gpga_sp - 1u] = 64u;\n";
+          out << "              __gpga_is_real[__gpga_sp - 1u] = true;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            bool __gpga_idx_any_xz = false;\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_idx_width > 64u) {\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_idx_xz_wide = __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "              __gpga_idx_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                  __gpga_idx_xz_wide, __gpga_idx_width);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_idx_val_wide = __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "              __gpga_idx_val_wide = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_idx_val_wide, __gpga_idx_width);\n";
+            out << "              __gpga_idx_val = gpga_wide_to_u64_" << vm_expr_wide_bits
+                << "(__gpga_idx_val_wide);\n";
+            out << "            } else {\n";
+            out << "              ulong __gpga_idx_mask = (__gpga_idx_width >= 64u)\n";
+            out << "                  ? ~0ul\n";
+            out << "                  : ((__gpga_idx_width == 0u)\n";
+            out << "                         ? 0ul\n";
+            out << "                         : ((1ul << __gpga_idx_width) - 1ul));\n";
+            out << "              __gpga_idx_val &= __gpga_idx_mask;\n";
+            out << "              __gpga_idx_any_xz =\n";
+            out << "                  ((__gpga_idx_xz & __gpga_idx_mask) != 0ul);\n";
+            out << "            }\n";
+          } else {
+            out << "            if (__gpga_idx_width > 64u) {\n";
+            out << "              __gpga_expr_ok = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+            out << "            ulong __gpga_idx_mask = (__gpga_idx_width >= 64u)\n";
+            out << "                ? ~0ul\n";
+            out << "                : ((__gpga_idx_width == 0u)\n";
+            out << "                       ? 0ul\n";
+            out << "                       : ((1ul << __gpga_idx_width) - 1ul));\n";
+            out << "            __gpga_idx_val &= __gpga_idx_mask;\n";
+            out << "            __gpga_idx_any_xz =\n";
+            out << "                ((__gpga_idx_xz & __gpga_idx_mask) != 0ul);\n";
+          }
+          out << "            if (__gpga_idx_any_xz) {\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "              if (__gpga_width > 64u) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                __gpga_wide_vals[__gpga_sp - 1u] =\n";
+            out << "                    gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                __gpga_wide_xzs[__gpga_sp - 1u] = __gpga_mask;\n";
+            out << "                __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+            out << "                __gpga_xzs[__gpga_sp - 1u] = __gpga_mask.w[0];\n";
+            out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+            out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+            out << "                break;\n";
+            out << "              }\n";
+          }
+          out << "              ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "                  ? ~0ul\n";
+          out << "                  : ((__gpga_width == 0u)\n";
+          out << "                         ? 0ul\n";
+          out << "                         : ((1ul << __gpga_width) - 1ul));\n";
+          out << "              __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+          out << "              __gpga_xzs[__gpga_sp - 1u] = __gpga_mask;\n";
+          out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "              __gpga_is_real[__gpga_sp - 1u] = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            if (__gpga_idx_val >= (ulong)__gpga_sig.array_size) {\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "              if (__gpga_width > 64u) {\n";
+            out << "                __gpga_wide_vals[__gpga_sp - 1u] =\n";
+            out << "                    gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                __gpga_wide_xzs[__gpga_sp - 1u] =\n";
+            out << "                    gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+            out << "                __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+            out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+            out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+            out << "                break;\n";
+            out << "              }\n";
+          }
+          out << "              __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+          out << "              __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+          out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "              __gpga_is_real[__gpga_sp - 1u] = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              uint __gpga_words = (__gpga_width + 63u) >> 6u;\n";
+            out << "              ulong __gpga_stride = (ulong)__gpga_words * 8ul;\n";
+            out << "              ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+            out << "              ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+            out << "                  (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+            out << "              ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+            out << "                  (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_val = gpga_wide_zero_" << vm_expr_wide_bits
+                << "();\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_xz = gpga_wide_zero_" << vm_expr_wide_bits
+                << "();\n";
+            out << "              #pragma clang loop unroll(disable)\n";
+            out << "              for (uint __gpga_w = 0u; __gpga_w < __gpga_words; ++__gpga_w) {\n";
+            out << "                __gpga_wide_val.w[__gpga_w] =\n";
+            out << "                    ((device const ulong*)(gpga_state + __gpga_val_addr))[__gpga_w];\n";
+            out << "                __gpga_wide_xz.w[__gpga_w] =\n";
+            out << "                    ((device const ulong*)(gpga_state + __gpga_xz_addr))[__gpga_w];\n";
+            out << "              }\n";
+            out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_val, __gpga_width);\n";
+            out << "              __gpga_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_xz, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_sp - 1u] = __gpga_wide_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_sp - 1u] = __gpga_wide_xz;\n";
+            out << "              __gpga_vals[__gpga_sp - 1u] = __gpga_wide_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_sp - 1u] = __gpga_wide_xz.w[0];\n";
+            out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+            out << "              __gpga_is_real[__gpga_sp - 1u] = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          } else {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              __gpga_expr_ok = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
+          out << "            ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "            ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "            ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "                (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+          out << "            ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "                (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+          out << "            ulong __gpga_val = 0ul;\n";
+          out << "            ulong __gpga_xz = 0ul;\n";
+          out << "            if (__gpga_width > 32u) {\n";
+          out << "              __gpga_val = ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "              __gpga_xz = ((device const ulong*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "            } else {\n";
+          out << "              __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "              __gpga_xz = (ulong)((device const uint*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "            }\n";
+          out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "                ? ~0ul\n";
+          out << "                : ((__gpga_width == 0u)\n";
+          out << "                       ? 0ul\n";
+          out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+          out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_mask;\n";
+          out << "            __gpga_xzs[__gpga_sp - 1u] = __gpga_xz & __gpga_mask;\n";
+          out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
+          out << "            break;\n";
+          out << "          }\n";
+          out << "          case GPGA_SCHED_VM_EXPR_OP_CALL: {\n";
+          out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "            uint __gpga_call = (__gpga_arg & 0xFFu);\n";
+          out << "            bool __gpga_signed =\n";
+          out << "                ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+          out << "            uint __gpga_argc = 1u;\n";
+          out << "            if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TIME ||\n";
+          out << "                __gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME ||\n";
+          out << "                __gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTIME) {\n";
+          out << "              __gpga_argc = 0u;\n";
+          out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_POW ||\n";
+          out << "                       __gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN2 ||\n";
+          out << "                       __gpga_call == GPGA_SCHED_VM_EXPR_CALL_HYPOT) {\n";
+          out << "              __gpga_argc = 2u;\n";
+          out << "            }\n";
+          out << "            if (__gpga_sp < __gpga_argc) {\n";
+          out << "              __gpga_expr_ok = false;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            uint __gpga_base = __gpga_sp - __gpga_argc;\n";
+          out << "            ulong __gpga_out_val = 0ul;\n";
+          out << "            ulong __gpga_out_xz = 0ul;\n";
+          out << "            bool __gpga_out_real = false;\n";
+          out << "            if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TIME ||\n";
+          out << "                __gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME) {\n";
+          out << "              __gpga_out_val = (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME)\n";
+          out << "                  ? (ulong)((uint)__gpga_time)\n";
+          out << "                  : __gpga_time;\n";
+          out << "              __gpga_out_xz = 0ul;\n";
+          out << "              __gpga_out_real = false;\n";
+          out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTIME) {\n";
+          out << "              __gpga_out_val = gpga_double_from_u64(__gpga_time);\n";
+          out << "              __gpga_out_xz = 0ul;\n";
+          out << "              __gpga_out_real = true;\n";
+          out << "            } else if (__gpga_argc == 1u) {\n";
+          out << "              bool __gpga_arg_real = __gpga_is_real[__gpga_base];\n";
+          out << "              uint __gpga_arg_width = __gpga_widths[__gpga_base];\n";
+          out << "              ulong __gpga_arg_val = __gpga_vals[__gpga_base];\n";
+          out << "              ulong __gpga_arg_xz = __gpga_xzs[__gpga_base];\n";
+          out << "              bool __gpga_arg_any_xz = false;\n";
+          out << "              ulong __gpga_arg_real_val = 0ul;\n";
+          out << "              if (__gpga_arg_real) {\n";
+          out << "                __gpga_arg_any_xz = (__gpga_arg_xz != 0ul);\n";
+          out << "                __gpga_arg_real_val = __gpga_arg_val;\n";
+          out << "              } else {\n";
+          out << "                ulong __gpga_arg_mask = (__gpga_arg_width >= 64u)\n";
+          out << "                    ? ~0ul\n";
+          out << "                    : ((__gpga_arg_width == 0u)\n";
+          out << "                           ? 0ul\n";
+          out << "                           : ((1ul << __gpga_arg_width) - 1ul));\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                if (__gpga_arg_width > 64u) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_arg_wide_val = __gpga_wide_vals[__gpga_base];\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_arg_wide_xz = __gpga_wide_xzs[__gpga_base];\n";
+            out << "                  __gpga_arg_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                      __gpga_arg_wide_xz, __gpga_arg_width);\n";
+            out << "                  __gpga_arg_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_arg_wide_val, __gpga_arg_width);\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_arg_wide_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_arg_wide_val, __gpga_arg_width, true);\n";
+            out << "                  }\n";
+            out << "                  ulong __gpga_arg_u64 = gpga_wide_to_u64_"
+                << vm_expr_wide_bits << "(__gpga_arg_wide_val);\n";
+            out << "                  __gpga_arg_real_val = __gpga_signed\n";
+            out << "                      ? gpga_double_from_s64((long)__gpga_arg_u64)\n";
+            out << "                      : gpga_double_from_u64(__gpga_arg_u64);\n";
+            out << "                } else {\n";
+          }
+          out << "                  ulong __gpga_val = __gpga_arg_val & __gpga_arg_mask;\n";
+          out << "                  __gpga_arg_any_xz =\n";
+          out << "                      ((__gpga_arg_xz & __gpga_arg_mask) != 0ul);\n";
+          out << "                  if (__gpga_signed && __gpga_arg_width > 0u) {\n";
+          out << "                    long __gpga_arg_s = gpga_sched_vm_sign64(__gpga_val, __gpga_arg_width);\n";
+          out << "                    __gpga_arg_real_val = gpga_double_from_s64(__gpga_arg_s);\n";
+          out << "                  } else {\n";
+          out << "                    __gpga_arg_real_val = gpga_double_from_u64(__gpga_val);\n";
+          out << "                  }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                }\n";
+          } else {
+            out << "                if (__gpga_arg_width > 64u) {\n";
+            out << "                  __gpga_expr_ok = false;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "              }\n";
+          out << "              if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ITOR) {\n";
+          out << "                __gpga_out_real = true;\n";
+          out << "                if (__gpga_arg_any_xz) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out_val = __gpga_arg_real ? __gpga_arg_val\n";
+          out << "                      : __gpga_arg_real_val;\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_BITSTOREAL) {\n";
+          out << "                __gpga_out_real = true;\n";
+          out << "                if (__gpga_arg_any_xz) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else if (__gpga_arg_real) {\n";
+          out << "                  __gpga_out_val = __gpga_arg_val;\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out_val = gpga_bits_to_real(__gpga_arg_val);\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTOBITS) {\n";
+          out << "                __gpga_out_real = false;\n";
+          out << "                if (__gpga_arg_any_xz) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else {\n";
+          out << "                  ulong __gpga_real_bits = __gpga_arg_real\n";
+          out << "                      ? gpga_real_to_bits(__gpga_arg_val)\n";
+          out << "                      : gpga_real_to_bits(__gpga_arg_real_val);\n";
+          out << "                  __gpga_out_val = __gpga_real_bits;\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_RTOI) {\n";
+          out << "                __gpga_out_real = false;\n";
+          out << "                if (__gpga_arg_any_xz) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else if (__gpga_arg_real) {\n";
+          out << "                  long __gpga_real_i = gpga_double_to_s64(__gpga_arg_val);\n";
+          out << "                  __gpga_out_val = __gpga_signed\n";
+          out << "                      ? (ulong)__gpga_real_i\n";
+          out << "                      : (ulong)((ulong)__gpga_real_i);\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out_val = __gpga_arg_val;\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "              } else {\n";
+          out << "                __gpga_out_real = true;\n";
+          out << "                if (__gpga_arg_any_xz) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else {\n";
+          out << "                  if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_LOG10) {\n";
+          out << "                    __gpga_out_val = gpga_double_log10(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_LN) {\n";
+          out << "                    __gpga_out_val = gpga_double_ln(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_EXP) {\n";
+          out << "                    __gpga_out_val = gpga_double_exp_real(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SQRT) {\n";
+          out << "                    __gpga_out_val = gpga_double_sqrt(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_FLOOR) {\n";
+          out << "                    __gpga_out_val = gpga_double_floor(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_CEIL) {\n";
+          out << "                    __gpga_out_val = gpga_double_ceil(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SIN) {\n";
+          out << "                    __gpga_out_val = gpga_double_sin(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_COS) {\n";
+          out << "                    __gpga_out_val = gpga_double_cos(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TAN) {\n";
+          out << "                    __gpga_out_val = gpga_double_tan(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ASIN) {\n";
+          out << "                    __gpga_out_val = gpga_double_asin(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ACOS) {\n";
+          out << "                    __gpga_out_val = gpga_double_acos(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN) {\n";
+          out << "                    __gpga_out_val = gpga_double_atan(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SINH) {\n";
+          out << "                    __gpga_out_val = gpga_double_sinh(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_COSH) {\n";
+          out << "                    __gpga_out_val = gpga_double_cosh(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TANH) {\n";
+          out << "                    __gpga_out_val = gpga_double_tanh(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ASINH) {\n";
+          out << "                    __gpga_out_val = gpga_double_asinh(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ACOSH) {\n";
+          out << "                    __gpga_out_val = gpga_double_acosh(__gpga_arg_real_val);\n";
+          out << "                  } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATANH) {\n";
+          out << "                    __gpga_out_val = gpga_double_atanh(__gpga_arg_real_val);\n";
+          out << "                  } else {\n";
+          out << "                    __gpga_expr_ok = false;\n";
+          out << "                  }\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "              }\n";
+          out << "            } else {\n";
+          out << "              bool __gpga_lhs_real = __gpga_is_real[__gpga_base];\n";
+          out << "              bool __gpga_rhs_real = __gpga_is_real[__gpga_base + 1u];\n";
+          out << "              uint __gpga_lhs_width = __gpga_widths[__gpga_base];\n";
+          out << "              uint __gpga_rhs_width = __gpga_widths[__gpga_base + 1u];\n";
+          out << "              ulong __gpga_lhs_val = __gpga_vals[__gpga_base];\n";
+          out << "              ulong __gpga_rhs_val = __gpga_vals[__gpga_base + 1u];\n";
+          out << "              ulong __gpga_lhs_xz = __gpga_xzs[__gpga_base];\n";
+          out << "              ulong __gpga_rhs_xz = __gpga_xzs[__gpga_base + 1u];\n";
+          out << "              bool __gpga_lhs_any_xz = false;\n";
+          out << "              bool __gpga_rhs_any_xz = false;\n";
+          out << "              ulong __gpga_lhs_real_val = 0ul;\n";
+          out << "              ulong __gpga_rhs_real_val = 0ul;\n";
+          out << "              if (__gpga_lhs_real) {\n";
+          out << "                __gpga_lhs_any_xz = (__gpga_lhs_xz != 0ul);\n";
+          out << "                __gpga_lhs_real_val = __gpga_lhs_val;\n";
+          out << "              } else {\n";
+          out << "                ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+          out << "                    ? ~0ul\n";
+          out << "                    : ((__gpga_lhs_width == 0u)\n";
+          out << "                           ? 0ul\n";
+          out << "                           : ((1ul << __gpga_lhs_width) - 1ul));\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                if (__gpga_lhs_width > 64u) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_base];\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_wide_xz = __gpga_wide_xzs[__gpga_base];\n";
+            out << "                  __gpga_lhs_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                      __gpga_lhs_wide_xz, __gpga_lhs_width);\n";
+            out << "                  __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_lhs_wide_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_lhs_wide_val, __gpga_lhs_width, true);\n";
+            out << "                  }\n";
+            out << "                  ulong __gpga_lhs_u64 = gpga_wide_to_u64_"
+                << vm_expr_wide_bits << "(__gpga_lhs_wide_val);\n";
+            out << "                  __gpga_lhs_real_val = __gpga_signed\n";
+            out << "                      ? gpga_double_from_s64((long)__gpga_lhs_u64)\n";
+            out << "                      : gpga_double_from_u64(__gpga_lhs_u64);\n";
+            out << "                } else {\n";
+          }
+          out << "                  ulong __gpga_val = __gpga_lhs_val & __gpga_lhs_mask;\n";
+          out << "                  __gpga_lhs_any_xz =\n";
+          out << "                      ((__gpga_lhs_xz & __gpga_lhs_mask) != 0ul);\n";
+          out << "                  if (__gpga_signed && __gpga_lhs_width > 0u) {\n";
+          out << "                    long __gpga_lhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_lhs_width);\n";
+          out << "                    __gpga_lhs_real_val = gpga_double_from_s64(__gpga_lhs_s);\n";
+          out << "                  } else {\n";
+          out << "                    __gpga_lhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+          out << "                  }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                }\n";
+          } else {
+            out << "                if (__gpga_lhs_width > 64u) {\n";
+            out << "                  __gpga_expr_ok = false;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "              }\n";
+          out << "              if (__gpga_rhs_real) {\n";
+          out << "                __gpga_rhs_any_xz = (__gpga_rhs_xz != 0ul);\n";
+          out << "                __gpga_rhs_real_val = __gpga_rhs_val;\n";
+          out << "              } else {\n";
+          out << "                ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+          out << "                    ? ~0ul\n";
+          out << "                    : ((__gpga_rhs_width == 0u)\n";
+          out << "                           ? 0ul\n";
+          out << "                           : ((1ul << __gpga_rhs_width) - 1ul));\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                if (__gpga_rhs_width > 64u) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_base + 1u];\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_wide_xz = __gpga_wide_xzs[__gpga_base + 1u];\n";
+            out << "                  __gpga_rhs_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                      __gpga_rhs_wide_xz, __gpga_rhs_width);\n";
+            out << "                  __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_rhs_wide_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_rhs_wide_val, __gpga_rhs_width, true);\n";
+            out << "                  }\n";
+            out << "                  ulong __gpga_rhs_u64 = gpga_wide_to_u64_"
+                << vm_expr_wide_bits << "(__gpga_rhs_wide_val);\n";
+            out << "                  __gpga_rhs_real_val = __gpga_signed\n";
+            out << "                      ? gpga_double_from_s64((long)__gpga_rhs_u64)\n";
+            out << "                      : gpga_double_from_u64(__gpga_rhs_u64);\n";
+            out << "                } else {\n";
+          }
+          out << "                  ulong __gpga_val = __gpga_rhs_val & __gpga_rhs_mask;\n";
+          out << "                  __gpga_rhs_any_xz =\n";
+          out << "                      ((__gpga_rhs_xz & __gpga_rhs_mask) != 0ul);\n";
+          out << "                  if (__gpga_signed && __gpga_rhs_width > 0u) {\n";
+          out << "                    long __gpga_rhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_rhs_width);\n";
+          out << "                    __gpga_rhs_real_val = gpga_double_from_s64(__gpga_rhs_s);\n";
+          out << "                  } else {\n";
+          out << "                    __gpga_rhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+          out << "                  }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                }\n";
+          } else {
+            out << "                if (__gpga_rhs_width > 64u) {\n";
+            out << "                  __gpga_expr_ok = false;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "              }\n";
+          out << "              __gpga_out_real = true;\n";
+          out << "              if (__gpga_lhs_any_xz || __gpga_rhs_any_xz) {\n";
+          out << "                __gpga_out_val = 0ul;\n";
+          out << "                __gpga_out_xz = 1ul;\n";
+          out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_POW) {\n";
+          out << "                __gpga_out_val = gpga_double_pow(\n";
+          out << "                    __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                __gpga_out_xz = 0ul;\n";
+          out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN2) {\n";
+          out << "                __gpga_out_val = gpga_double_atan2(\n";
+          out << "                    __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                __gpga_out_xz = 0ul;\n";
+          out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_HYPOT) {\n";
+          out << "                __gpga_out_val = gpga_double_hypot(\n";
+          out << "                    __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                __gpga_out_xz = 0ul;\n";
+          out << "              } else {\n";
+          out << "                __gpga_expr_ok = false;\n";
+          out << "              }\n";
+          out << "            }\n";
+          out << "            if (!__gpga_expr_ok) {\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            __gpga_sp = __gpga_base + 1u;\n";
+          out << "            if (__gpga_out_real) {\n";
+          out << "              __gpga_vals[__gpga_base] = __gpga_out_val;\n";
+          out << "              __gpga_xzs[__gpga_base] = __gpga_out_xz;\n";
+          out << "              __gpga_widths[__gpga_base] = __gpga_width;\n";
+          out << "              __gpga_is_real[__gpga_base] = true;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "                ? ~0ul\n";
+          out << "                : ((__gpga_width == 0u)\n";
+          out << "                       ? 0ul\n";
+          out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_out_val);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_xz = (__gpga_out_xz != 0ul)\n";
+            out << "                  ? gpga_sched_vm_wide_mask_bits(__gpga_width)\n";
+            out << "                  : gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_val, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_base] = __gpga_wide_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_base] = __gpga_wide_xz;\n";
+            out << "              __gpga_vals[__gpga_base] = __gpga_wide_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_base] = __gpga_wide_xz.w[0];\n";
+            out << "              __gpga_widths[__gpga_base] = __gpga_width;\n";
+            out << "              __gpga_is_real[__gpga_base] = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          } else {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              __gpga_expr_ok = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
+          out << "            __gpga_vals[__gpga_base] = __gpga_out_val & __gpga_mask;\n";
+          out << "            __gpga_xzs[__gpga_base] = (__gpga_out_xz != 0ul) ? __gpga_mask : 0ul;\n";
+          out << "            __gpga_widths[__gpga_base] = __gpga_width;\n";
+          out << "            __gpga_is_real[__gpga_base] = false;\n";
+          out << "            break;\n";
+          out << "          }\n";
           out << "          case GPGA_SCHED_VM_EXPR_OP_UNARY: {\n";
           out << "            if (__gpga_sp == 0u) {\n";
           out << "              __gpga_expr_ok = false;\n";
@@ -21939,6 +25207,199 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
           out << "            ulong __gpga_xz = __gpga_xzs[__gpga_sp - 1u];\n";
           out << "            uint __gpga_in_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "            bool __gpga_real = __gpga_is_real[__gpga_sp - 1u];\n";
+          out << "            if (__gpga_real) {\n";
+          out << "              ulong __gpga_out_val = __gpga_val;\n";
+          out << "              ulong __gpga_out_xz = __gpga_xz;\n";
+          out << "              bool __gpga_out_real = true;\n";
+          out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+          out << "                if (__gpga_xz != 0ul) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out_val = gpga_double_is_zero(__gpga_val) ? 1ul : 0ul;\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "                __gpga_out_real = false;\n";
+          out << "              } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+          out << "                if (__gpga_xz != 0ul) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out_val = gpga_double_neg(__gpga_val);\n";
+          out << "                  __gpga_out_xz = 0ul;\n";
+          out << "                }\n";
+          out << "              } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_PLUS) {\n";
+          out << "                if (__gpga_xz != 0ul) {\n";
+          out << "                  __gpga_out_val = 0ul;\n";
+          out << "                  __gpga_out_xz = 1ul;\n";
+          out << "                }\n";
+          out << "              } else {\n";
+          out << "                __gpga_expr_ok = false;\n";
+          out << "              }\n";
+          out << "              if (!__gpga_expr_ok) {\n";
+          out << "                break;\n";
+          out << "              }\n";
+          out << "              __gpga_vals[__gpga_sp - 1u] = __gpga_out_val;\n";
+          out << "              __gpga_xzs[__gpga_sp - 1u] = __gpga_out_xz;\n";
+          out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "              __gpga_is_real[__gpga_sp - 1u] = __gpga_out_real;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_in_width > 64u) {\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_wide_xz = __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_val, __gpga_in_width);\n";
+            out << "              __gpga_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_wide_xz, __gpga_in_width);\n";
+            out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+            out << "                bool __gpga_any_xz =\n";
+            out << "                    gpga_sched_vm_wide_any_masked(__gpga_wide_xz, __gpga_in_width);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_wide_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_wide_xz));\n";
+            out << "                bool __gpga_any_known1 =\n";
+            out << "                    gpga_sched_vm_wide_any_masked(__gpga_known1, __gpga_in_width);\n";
+            out << "                bool __gpga_any_val =\n";
+            out << "                    gpga_sched_vm_wide_any_masked(__gpga_wide_val, __gpga_in_width);\n";
+            out << "                if (__gpga_any_known1) {\n";
+            out << "                  __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+            out << "                  __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+            out << "                } else if (!__gpga_any_xz && !__gpga_any_val) {\n";
+            out << "                  __gpga_vals[__gpga_sp - 1u] = 1ul;\n";
+            out << "                  __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+            out << "                } else {\n";
+            out << "                  __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+            out << "                  __gpga_xzs[__gpga_sp - 1u] = 1ul;\n";
+            out << "                }\n";
+            out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+            out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+            out << "                break;\n";
+            out << "              }\n";
+            out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND ||\n";
+            out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND ||\n";
+            out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR ||\n";
+            out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR ||\n";
+            out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR ||\n";
+            out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_in_width);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_ax = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_wide_xz, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_a0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_wide_val), gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_ax));\n";
+            out << "                __gpga_a0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_a0, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_a1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_wide_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_ax));\n";
+            out << "                __gpga_a1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_a1, __gpga_mask);\n";
+            out << "                ulong __gpga_red_val = 0ul;\n";
+            out << "                ulong __gpga_red_xz = 0ul;\n";
+            out << "                if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND ||\n";
+            out << "                    __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+            out << "                  if (gpga_sched_vm_wide_any_masked(__gpga_a0, __gpga_in_width)) {\n";
+            out << "                    __gpga_red_val = 0ul;\n";
+            out << "                    __gpga_red_xz = 0ul;\n";
+            out << "                  } else if (gpga_sched_vm_wide_eq_masked(__gpga_a1, __gpga_mask, __gpga_in_width)) {\n";
+            out << "                    __gpga_red_val = 1ul;\n";
+            out << "                    __gpga_red_xz = 0ul;\n";
+            out << "                  } else {\n";
+            out << "                    __gpga_red_val = 0ul;\n";
+            out << "                    __gpga_red_xz = 1ul;\n";
+            out << "                  }\n";
+            out << "                  if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND &&\n";
+            out << "                      __gpga_red_xz == 0ul) {\n";
+            out << "                    __gpga_red_val = (__gpga_red_val == 0ul) ? 1ul : 0ul;\n";
+            out << "                  }\n";
+            out << "                } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR ||\n";
+            out << "                           __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+            out << "                  if (gpga_sched_vm_wide_any_masked(__gpga_a1, __gpga_in_width)) {\n";
+            out << "                    __gpga_red_val = 1ul;\n";
+            out << "                    __gpga_red_xz = 0ul;\n";
+            out << "                  } else if (gpga_sched_vm_wide_eq_masked(__gpga_a0, __gpga_mask, __gpga_in_width)) {\n";
+            out << "                    __gpga_red_val = 0ul;\n";
+            out << "                    __gpga_red_xz = 0ul;\n";
+            out << "                  } else {\n";
+            out << "                    __gpga_red_val = 0ul;\n";
+            out << "                    __gpga_red_xz = 1ul;\n";
+            out << "                  }\n";
+            out << "                  if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR &&\n";
+            out << "                      __gpga_red_xz == 0ul) {\n";
+            out << "                    __gpga_red_val = (__gpga_red_val == 0ul) ? 1ul : 0ul;\n";
+            out << "                  }\n";
+            out << "                } else {\n";
+            out << "                  bool __gpga_any_xz =\n";
+            out << "                      gpga_sched_vm_wide_any_masked(__gpga_wide_xz, __gpga_in_width);\n";
+            out << "                  if (__gpga_any_xz) {\n";
+            out << "                    __gpga_red_val = 0ul;\n";
+            out << "                    __gpga_red_xz = 1ul;\n";
+            out << "                  } else {\n";
+            out << "                    __gpga_red_val =\n";
+            out << "                        (ulong)gpga_sched_vm_wide_red_xor(__gpga_wide_val, __gpga_in_width);\n";
+            out << "                    __gpga_red_xz = 0ul;\n";
+            out << "                  }\n";
+            out << "                  if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR &&\n";
+            out << "                      __gpga_red_xz == 0ul) {\n";
+            out << "                    __gpga_red_val = (__gpga_red_val == 0ul) ? 1ul : 0ul;\n";
+            out << "                  }\n";
+            out << "                }\n";
+            out << "                __gpga_vals[__gpga_sp - 1u] = __gpga_red_val;\n";
+            out << "                __gpga_xzs[__gpga_sp - 1u] = __gpga_red_xz;\n";
+            out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+            out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+            out << "                break;\n";
+            out << "              }\n";
+            out << "              bool __gpga_any_xz =\n";
+            out << "                  gpga_sched_vm_wide_any_masked(__gpga_wide_xz, __gpga_in_width);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_out_val = __gpga_wide_val;\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_out_xz = __gpga_wide_xz;\n";
+            out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+            out << "                __gpga_out_val = gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_wide_val);\n";
+            out << "              } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+            out << "                if (__gpga_any_xz) {\n";
+            out << "                  __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits
+                << "();\n";
+            out << "                  __gpga_out_xz = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                } else {\n";
+            out << "                  __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+                << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_wide_val);\n";
+            out << "                  __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits
+                << "();\n";
+            out << "                }\n";
+            out << "              } else if (__gpga_uop != GPGA_SCHED_VM_EXPR_UNARY_PLUS) {\n";
+            out << "                __gpga_expr_ok = false;\n";
+            out << "              }\n";
+            out << "              if (!__gpga_expr_ok) {\n";
+            out << "                break;\n";
+            out << "              }\n";
+            out << "              __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_out_val, __gpga_width);\n";
+            out << "              __gpga_out_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_out_xz, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_sp - 1u] = __gpga_out_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_sp - 1u] = __gpga_out_xz;\n";
+            out << "              __gpga_vals[__gpga_sp - 1u] = __gpga_out_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_sp - 1u] = __gpga_out_xz.w[0];\n";
+            out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+            out << "              __gpga_is_real[__gpga_sp - 1u] = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
           out << "            FourState64 __gpga_in =\n";
           out << "                fs_make64(__gpga_val, __gpga_xz, __gpga_in_width);\n";
           out << "            FourState64 __gpga_out = __gpga_in;\n";
@@ -21949,11 +25410,24 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
           out << "              FourState64 __gpga_zero = fs_make64(0ul, 0ul, __gpga_in_width);\n";
           out << "              __gpga_out = fs_sub64(__gpga_zero, __gpga_in, __gpga_in_width);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND) {\n";
+          out << "              __gpga_out = fs_red_and64(__gpga_in, __gpga_in_width);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+          out << "              __gpga_out = fs_log_not64(fs_red_and64(__gpga_in, __gpga_in_width), 1u);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR) {\n";
+          out << "              __gpga_out = fs_red_or64(__gpga_in, __gpga_in_width);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+          out << "              __gpga_out = fs_log_not64(fs_red_or64(__gpga_in, __gpga_in_width), 1u);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR) {\n";
+          out << "              __gpga_out = fs_red_xor64(__gpga_in, __gpga_in_width);\n";
+          out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+          out << "              __gpga_out = fs_log_not64(fs_red_xor64(__gpga_in, __gpga_in_width), 1u);\n";
           out << "            }\n";
           out << "            __gpga_out = fs_resize64(__gpga_out, __gpga_width);\n";
           out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_out.val;\n";
           out << "            __gpga_xzs[__gpga_sp - 1u] = __gpga_out.xz;\n";
           out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
           out << "            break;\n";
           out << "          }\n";
           out << "          case GPGA_SCHED_VM_EXPR_OP_BINARY: {\n";
@@ -21975,6 +25449,622 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "                (__gpga_lhs_width > __gpga_rhs_width)\n";
           out << "                    ? __gpga_lhs_width\n";
           out << "                    : __gpga_rhs_width;\n";
+          out << "            bool __gpga_lhs_real = __gpga_is_real[__gpga_sp - 2u];\n";
+          out << "            bool __gpga_rhs_real = __gpga_is_real[__gpga_sp - 1u];\n";
+          out << "            if (__gpga_lhs_real || __gpga_rhs_real) {\n";
+          out << "              bool __gpga_any_xz = false;\n";
+          out << "              ulong __gpga_lhs_real_val = 0ul;\n";
+          out << "              ulong __gpga_rhs_real_val = 0ul;\n";
+          out << "              if (__gpga_lhs_real) {\n";
+          out << "                __gpga_any_xz = (__gpga_lhs_xz != 0ul);\n";
+          out << "                __gpga_lhs_real_val = __gpga_lhs;\n";
+          out << "              } else {\n";
+          out << "                ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+          out << "                    ? ~0ul\n";
+          out << "                    : ((__gpga_lhs_width == 0u)\n";
+          out << "                           ? 0ul\n";
+          out << "                           : ((1ul << __gpga_lhs_width) - 1ul));\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                if (__gpga_lhs_width > 64u) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_sp - 2u];\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_wide_xz = __gpga_wide_xzs[__gpga_sp - 2u];\n";
+            out << "                  __gpga_any_xz = __gpga_any_xz ||\n";
+            out << "                      gpga_sched_vm_wide_any_masked(__gpga_lhs_wide_xz, __gpga_lhs_width);\n";
+            out << "                  __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_lhs_wide_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_lhs_wide_val, __gpga_lhs_width, true);\n";
+            out << "                  }\n";
+            out << "                  ulong __gpga_lhs_u64 = gpga_wide_to_u64_"
+                << vm_expr_wide_bits << "(__gpga_lhs_wide_val);\n";
+            out << "                  __gpga_lhs_real_val = __gpga_signed\n";
+            out << "                      ? gpga_double_from_s64((long)__gpga_lhs_u64)\n";
+            out << "                      : gpga_double_from_u64(__gpga_lhs_u64);\n";
+            out << "                } else {\n";
+          }
+          out << "                ulong __gpga_lhs_val = __gpga_lhs & __gpga_lhs_mask;\n";
+          out << "                __gpga_any_xz = __gpga_any_xz ||\n";
+          out << "                    ((__gpga_lhs_xz & __gpga_lhs_mask) != 0ul);\n";
+          out << "                if (__gpga_signed && __gpga_lhs_width > 0u) {\n";
+          out << "                  long __gpga_lhs_s = gpga_sched_vm_sign64(__gpga_lhs_val, __gpga_lhs_width);\n";
+          out << "                  __gpga_lhs_real_val = gpga_double_from_s64(__gpga_lhs_s);\n";
+          out << "                } else {\n";
+          out << "                  __gpga_lhs_real_val = gpga_double_from_u64(__gpga_lhs_val);\n";
+          out << "                }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                }\n";
+          } else {
+            out << "                if (__gpga_lhs_width > 64u) {\n";
+            out << "                  __gpga_expr_ok = false;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "              }\n";
+          out << "              if (__gpga_rhs_real) {\n";
+          out << "                __gpga_any_xz = __gpga_any_xz || (__gpga_rhs_xz != 0ul);\n";
+          out << "                __gpga_rhs_real_val = __gpga_rhs;\n";
+          out << "              } else {\n";
+          out << "                ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+          out << "                    ? ~0ul\n";
+          out << "                    : ((__gpga_rhs_width == 0u)\n";
+          out << "                           ? 0ul\n";
+          out << "                           : ((1ul << __gpga_rhs_width) - 1ul));\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                if (__gpga_rhs_width > 64u) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_wide_xz = __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "                  __gpga_any_xz = __gpga_any_xz ||\n";
+            out << "                      gpga_sched_vm_wide_any_masked(__gpga_rhs_wide_xz, __gpga_rhs_width);\n";
+            out << "                  __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_rhs_wide_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_rhs_wide_val, __gpga_rhs_width, true);\n";
+            out << "                  }\n";
+            out << "                  ulong __gpga_rhs_u64 = gpga_wide_to_u64_"
+                << vm_expr_wide_bits << "(__gpga_rhs_wide_val);\n";
+            out << "                  __gpga_rhs_real_val = __gpga_signed\n";
+            out << "                      ? gpga_double_from_s64((long)__gpga_rhs_u64)\n";
+            out << "                      : gpga_double_from_u64(__gpga_rhs_u64);\n";
+            out << "                } else {\n";
+          }
+          out << "                ulong __gpga_rhs_val = __gpga_rhs & __gpga_rhs_mask;\n";
+          out << "                __gpga_any_xz = __gpga_any_xz ||\n";
+          out << "                    ((__gpga_rhs_xz & __gpga_rhs_mask) != 0ul);\n";
+          out << "                if (__gpga_signed && __gpga_rhs_width > 0u) {\n";
+          out << "                  long __gpga_rhs_s = gpga_sched_vm_sign64(__gpga_rhs_val, __gpga_rhs_width);\n";
+          out << "                  __gpga_rhs_real_val = gpga_double_from_s64(__gpga_rhs_s);\n";
+          out << "                } else {\n";
+          out << "                  __gpga_rhs_real_val = gpga_double_from_u64(__gpga_rhs_val);\n";
+          out << "                }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                }\n";
+          } else {
+            out << "                if (__gpga_rhs_width > 64u) {\n";
+            out << "                  __gpga_expr_ok = false;\n";
+            out << "                  break;\n";
+            out << "                }\n";
+          }
+          out << "              }\n";
+          out << "              bool __gpga_real_arith =\n";
+          out << "                  (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV);\n";
+          out << "              bool __gpga_real_pred =\n";
+          out << "                  (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE);\n";
+          out << "              if (!__gpga_real_arith && !__gpga_real_pred) {\n";
+          out << "                __gpga_expr_ok = false;\n";
+          out << "                break;\n";
+          out << "              }\n";
+          out << "              bool __gpga_out_real = __gpga_real_arith;\n";
+          out << "              ulong __gpga_out_val = 0ul;\n";
+          out << "              ulong __gpga_out_xz = 0ul;\n";
+          out << "              ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+          out << "                  ? ~0ul\n";
+          out << "                  : ((__gpga_width == 0u)\n";
+          out << "                         ? 0ul\n";
+          out << "                         : ((1ul << __gpga_width) - 1ul));\n";
+          out << "              if (__gpga_any_xz) {\n";
+          out << "                __gpga_out_val = 0ul;\n";
+          out << "                __gpga_out_xz = __gpga_out_real ? 1ul : __gpga_out_mask;\n";
+          out << "              } else if (__gpga_real_arith) {\n";
+          out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+          out << "                  __gpga_out_val = gpga_double_add(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+          out << "                  __gpga_out_val = gpga_double_sub(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+          out << "                  __gpga_out_val = gpga_double_mul(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                } else {\n";
+          out << "                  __gpga_out_val = gpga_double_div(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                }\n";
+          out << "                __gpga_out_xz = 0ul;\n";
+          out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+          out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+          out << "                bool __gpga_lhs_true =\n";
+          out << "                    !gpga_double_is_zero(__gpga_lhs_real_val);\n";
+          out << "                bool __gpga_rhs_true =\n";
+          out << "                    !gpga_double_is_zero(__gpga_rhs_real_val);\n";
+          out << "                bool __gpga_true =\n";
+          out << "                    (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+          out << "                        ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+          out << "                        : (__gpga_lhs_true || __gpga_rhs_true);\n";
+          out << "                __gpga_out_val = __gpga_true ? 1ul : 0ul;\n";
+          out << "                __gpga_out_xz = 0ul;\n";
+          out << "              } else {\n";
+          out << "                bool __gpga_true = false;\n";
+          out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+          out << "                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+          out << "                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+          out << "                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+          out << "                  bool __gpga_eq = gpga_double_eq(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                  __gpga_true =\n";
+          out << "                      (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+          out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+          out << "                          ? __gpga_eq\n";
+          out << "                          : !__gpga_eq;\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+          out << "                  __gpga_true = gpga_double_lt(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+          out << "                  __gpga_true = gpga_double_le(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+          out << "                  __gpga_true = gpga_double_gt(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                } else {\n";
+          out << "                  __gpga_true = gpga_double_ge(\n";
+          out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+          out << "                }\n";
+          out << "                __gpga_out_val = __gpga_true ? 1ul : 0ul;\n";
+          out << "                __gpga_out_xz = 0ul;\n";
+          out << "              }\n";
+          out << "              __gpga_vals[__gpga_sp - 2u] = __gpga_out_val;\n";
+          out << "              __gpga_xzs[__gpga_sp - 2u] = __gpga_out_xz;\n";
+          out << "              __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+          out << "              __gpga_is_real[__gpga_sp - 2u] = __gpga_out_real;\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_sp - 2u];\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_wide_xz = __gpga_wide_xzs[__gpga_sp - 2u];\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_wide_xz = __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "              __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+            out << "              __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+            out << "              __gpga_lhs_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_lhs_wide_xz, __gpga_lhs_width);\n";
+            out << "              __gpga_rhs_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_rhs_wide_xz, __gpga_rhs_width);\n";
+            out << "              bool __gpga_lhs_any_xz =\n";
+            out << "                  gpga_sched_vm_wide_any_masked(__gpga_lhs_wide_xz, __gpga_lhs_width);\n";
+            out << "              bool __gpga_rhs_any_xz =\n";
+            out << "                  gpga_sched_vm_wide_any_masked(__gpga_rhs_wide_xz, __gpga_rhs_width);\n";
+            out << "              bool __gpga_any_xz = __gpga_lhs_any_xz || __gpga_rhs_any_xz;\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+            out << "                  __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_known1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_xz));\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_known1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_rhs_wide_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_rhs_wide_xz));\n";
+            out << "                bool __gpga_lhs_true = gpga_sched_vm_wide_any_masked(\n";
+            out << "                    __gpga_lhs_known1, __gpga_lhs_width);\n";
+            out << "                bool __gpga_rhs_true = gpga_sched_vm_wide_any_masked(\n";
+            out << "                    __gpga_rhs_known1, __gpga_rhs_width);\n";
+            out << "                bool __gpga_lhs_false = (!__gpga_lhs_any_xz &&\n";
+            out << "                    !gpga_sched_vm_wide_any_masked(__gpga_lhs_wide_val, __gpga_lhs_width));\n";
+            out << "                bool __gpga_rhs_false = (!__gpga_rhs_any_xz &&\n";
+            out << "                    !gpga_sched_vm_wide_any_masked(__gpga_rhs_wide_val, __gpga_rhs_width));\n";
+            out << "                bool __gpga_true = false;\n";
+            out << "                bool __gpga_unknown = false;\n";
+            out << "                if (__gpga_lhs_false || __gpga_rhs_false) {\n";
+            out << "                  __gpga_true = false;\n";
+            out << "                  __gpga_unknown = false;\n";
+            out << "                } else if (__gpga_lhs_true && __gpga_rhs_true) {\n";
+            out << "                  __gpga_true = true;\n";
+            out << "                  __gpga_unknown = false;\n";
+            out << "                } else {\n";
+            out << "                  __gpga_true = false;\n";
+            out << "                  __gpga_unknown = true;\n";
+            out << "                }\n";
+            out << "                __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_true ? 1ul : 0ul);\n";
+            out << "                __gpga_out_xz = gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_unknown ? 1ul : 0ul);\n";
+            out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ) {\n";
+            out << "                if (__gpga_any_xz) {\n";
+            out << "                  __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  __gpga_out_xz = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                } else {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_lhs_wide_val, __gpga_eval_width);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_rhs_wide_val, __gpga_eval_width);\n";
+            out << "                  bool __gpga_eq = gpga_wide_eq_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                  bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ)\n";
+            out << "                      ? __gpga_eq\n";
+            out << "                      : !__gpga_eq;\n";
+            out << "                  __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_true ? 1ul : 0ul);\n";
+            out << "                  __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                }\n";
+            out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_eval_width);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_ax = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_xz, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_bx = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_rhs_wide_xz, __gpga_mask);\n";
+            out << "                bool __gpga_xz_same = gpga_wide_eq_" << vm_expr_wide_bits
+                << "(__gpga_ax, __gpga_bx);\n";
+            out << "                bool __gpga_eq = false;\n";
+            out << "                if (__gpga_xz_same) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(gpga_wide_or_" << vm_expr_wide_bits
+                << "(__gpga_ax, __gpga_bx)), __gpga_mask);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_diff = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_xor_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val), __gpga_known);\n";
+            out << "                  __gpga_eq = !gpga_sched_vm_wide_any_masked(\n";
+            out << "                      __gpga_diff, __gpga_eval_width);\n";
+            out << "                }\n";
+            out << "                bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+            out << "                    ? __gpga_eq\n";
+            out << "                    : !__gpga_eq;\n";
+            out << "                __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_true ? 1ul : 0ul);\n";
+            out << "                __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+            out << "                if (__gpga_any_xz) {\n";
+            out << "                  __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  __gpga_out_xz = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                } else {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_cmp = __gpga_lhs_wide_val;\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_cmp = __gpga_rhs_wide_val;\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_lhs_cmp = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_lhs_cmp, __gpga_lhs_width, true);\n";
+            out << "                    __gpga_rhs_cmp = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_rhs_cmp, __gpga_rhs_width, true);\n";
+            out << "                  }\n";
+            out << "                  __gpga_lhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_lhs_cmp, __gpga_eval_width);\n";
+            out << "                  __gpga_rhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_rhs_cmp, __gpga_eval_width);\n";
+            out << "                  bool __gpga_true = false;\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+            out << "                      __gpga_true = gpga_wide_lt_s_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+            out << "                      __gpga_true = gpga_wide_le_s_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+            out << "                      __gpga_true = gpga_wide_gt_s_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    } else {\n";
+            out << "                      __gpga_true = gpga_wide_ge_s_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    }\n";
+            out << "                  } else {\n";
+            out << "                    if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+            out << "                      __gpga_true = gpga_wide_lt_u_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+            out << "                      __gpga_true = gpga_wide_le_u_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+            out << "                      __gpga_true = gpga_wide_gt_u_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    } else {\n";
+            out << "                      __gpga_true = gpga_wide_ge_u_" << vm_expr_wide_bits
+                << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+            out << "                    }\n";
+            out << "                  }\n";
+            out << "                  __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_true ? 1ul : 0ul);\n";
+            out << "                  __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                }\n";
+            out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+            out << "                if (__gpga_rhs_any_xz) {\n";
+            out << "                  __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  __gpga_out_xz = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                } else {\n";
+            out << "                  uint __gpga_shift = 0u;\n";
+            out << "                  if (__gpga_rhs_width > 64u) {\n";
+            out << "                    GpgaWide" << vm_expr_wide_bits
+                << " __gpga_shift_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                        __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+            out << "                    __gpga_shift = (uint)gpga_wide_to_u64_" << vm_expr_wide_bits
+                << "(__gpga_shift_val);\n";
+            out << "                  } else {\n";
+            out << "                    ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+            out << "                        ? ~0ul\n";
+            out << "                        : ((__gpga_rhs_width == 0u)\n";
+            out << "                               ? 0ul\n";
+            out << "                               : ((1ul << __gpga_rhs_width) - 1ul));\n";
+            out << "                    __gpga_shift = (uint)(__gpga_rhs & __gpga_rhs_mask);\n";
+            out << "                  }\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_lhs_wide_val, __gpga_width);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                      __gpga_lhs_wide_xz, __gpga_width);\n";
+            out << "                  if (__gpga_shift >= __gpga_width) {\n";
+            out << "                    __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                    __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+            out << "                    __gpga_out_val = gpga_wide_shl_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_shift);\n";
+            out << "                    __gpga_out_xz = gpga_wide_shl_" << vm_expr_wide_bits
+                << "(__gpga_lhs_xz, __gpga_shift);\n";
+            out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR || !__gpga_signed) {\n";
+            out << "                    __gpga_out_val = gpga_wide_shr_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_shift);\n";
+            out << "                    __gpga_out_xz = gpga_wide_shr_" << vm_expr_wide_bits
+                << "(__gpga_lhs_xz, __gpga_shift);\n";
+            out << "                  } else {\n";
+            out << "                    __gpga_out_val = gpga_wide_sar_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_shift);\n";
+            out << "                    __gpga_out_xz = gpga_wide_shr_" << vm_expr_wide_bits
+                << "(__gpga_lhs_xz, __gpga_shift);\n";
+            out << "                  }\n";
+            out << "                }\n";
+            out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_ax = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_xz, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_bx = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_rhs_wide_xz, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_a0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_val), gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_ax));\n";
+            out << "                __gpga_a0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_a0, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_b0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_rhs_wide_val), gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_bx));\n";
+            out << "                __gpga_b0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_b0, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_a1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_ax));\n";
+            out << "                __gpga_a1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_a1, __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_b1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_rhs_wide_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_bx));\n";
+            out << "                __gpga_b1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_b1, __gpga_mask);\n";
+            out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known0 = gpga_wide_or_" << vm_expr_wide_bits
+                << "(__gpga_a0, __gpga_b0);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known1 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_a1, __gpga_b1);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_unknown = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(gpga_wide_or_" << vm_expr_wide_bits
+                << "(__gpga_known0, __gpga_known1)), __gpga_mask);\n";
+            out << "                  __gpga_out_val = __gpga_known1;\n";
+            out << "                  __gpga_out_xz = __gpga_unknown;\n";
+            out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known1 = gpga_wide_or_" << vm_expr_wide_bits
+                << "(__gpga_a1, __gpga_b1);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known0 = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_a0, __gpga_b0);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_unknown = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(gpga_wide_or_" << vm_expr_wide_bits
+                << "(__gpga_known0, __gpga_known1)), __gpga_mask);\n";
+            out << "                  __gpga_out_val = __gpga_known1;\n";
+            out << "                  __gpga_out_xz = __gpga_unknown;\n";
+            out << "                } else {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_unknown = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_or_" << vm_expr_wide_bits
+                << "(__gpga_ax, __gpga_bx), __gpga_mask);\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_val = gpga_wide_xor_" << vm_expr_wide_bits
+                << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+            out << "                  if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+            out << "                    __gpga_val = gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_val);\n";
+            out << "                  }\n";
+            out << "                  __gpga_val = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_val, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_unknown));\n";
+            out << "                  __gpga_out_val = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_val, __gpga_mask);\n";
+            out << "                  __gpga_out_xz = __gpga_unknown;\n";
+            out << "                }\n";
+            out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV ||\n";
+            out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                if (__gpga_any_xz) {\n";
+            out << "                  __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  __gpga_out_xz = __gpga_mask;\n";
+            out << "                } else {\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_val = __gpga_lhs_wide_val;\n";
+            out << "                  GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_val = __gpga_rhs_wide_val;\n";
+            out << "                  if (__gpga_signed) {\n";
+            out << "                    __gpga_lhs_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_lhs_val, __gpga_lhs_width, true);\n";
+            out << "                    __gpga_rhs_val = gpga_sched_vm_wide_extend(\n";
+            out << "                        __gpga_rhs_val, __gpga_rhs_width, true);\n";
+            out << "                  } else {\n";
+            out << "                    __gpga_lhs_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                        __gpga_lhs_val, __gpga_width);\n";
+            out << "                    __gpga_rhs_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                        __gpga_rhs_val, __gpga_width);\n";
+            out << "                  }\n";
+            out << "                  if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+            out << "                    __gpga_out_val = gpga_wide_add_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+            out << "                    __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+            out << "                    __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+            out << "                    __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+            out << "                    __gpga_out_val = gpga_wide_mul_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+            out << "                    __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                  } else {\n";
+            out << "                    bool __gpga_rhs_zero = !gpga_sched_vm_wide_any_masked(\n";
+            out << "                        __gpga_rhs_val, __gpga_width);\n";
+            out << "                    if (__gpga_rhs_zero) {\n";
+            out << "                      __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                      __gpga_out_xz = __gpga_mask;\n";
+            out << "                    } else if (!__gpga_signed) {\n";
+            out << "                      if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+            out << "                        __gpga_out_val = gpga_wide_div_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+            out << "                      } else {\n";
+            out << "                        __gpga_out_val = gpga_wide_mod_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+            out << "                      }\n";
+            out << "                      __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                    } else {\n";
+            out << "                      bool __gpga_lhs_neg = (__gpga_width > 0u) &&\n";
+            out << "                          (gpga_wide_get_bit_" << vm_expr_wide_bits
+                << "(__gpga_lhs_val, __gpga_width - 1u) != 0u);\n";
+            out << "                      bool __gpga_rhs_neg = (__gpga_width > 0u) &&\n";
+            out << "                          (gpga_wide_get_bit_" << vm_expr_wide_bits
+                << "(__gpga_rhs_val, __gpga_width - 1u) != 0u);\n";
+            out << "                      GpgaWide" << vm_expr_wide_bits
+                << " __gpga_lhs_mag = __gpga_lhs_val;\n";
+            out << "                      GpgaWide" << vm_expr_wide_bits
+                << " __gpga_rhs_mag = __gpga_rhs_val;\n";
+            out << "                      if (__gpga_lhs_neg) {\n";
+            out << "                        __gpga_lhs_mag = gpga_wide_sub_" << vm_expr_wide_bits
+                << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_lhs_val);\n";
+            out << "                      }\n";
+            out << "                      if (__gpga_rhs_neg) {\n";
+            out << "                        __gpga_rhs_mag = gpga_wide_sub_" << vm_expr_wide_bits
+                << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_rhs_val);\n";
+            out << "                      }\n";
+            out << "                      if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+            out << "                        __gpga_out_val = gpga_wide_div_" << vm_expr_wide_bits
+                << "(__gpga_lhs_mag, __gpga_rhs_mag);\n";
+            out << "                        if (__gpga_lhs_neg ^ __gpga_rhs_neg) {\n";
+            out << "                          __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+                << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_out_val);\n";
+            out << "                        }\n";
+            out << "                      } else {\n";
+            out << "                        __gpga_out_val = gpga_wide_mod_" << vm_expr_wide_bits
+                << "(__gpga_lhs_mag, __gpga_rhs_mag);\n";
+            out << "                        if (__gpga_lhs_neg) {\n";
+            out << "                          __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+                << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_out_val);\n";
+            out << "                        }\n";
+            out << "                      }\n";
+            out << "                      __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "                    }\n";
+            out << "                  }\n";
+            out << "                }\n";
+            out << "              } else {\n";
+            out << "                __gpga_expr_ok = false;\n";
+            out << "              }\n";
+            out << "              if (!__gpga_expr_ok) {\n";
+            out << "                break;\n";
+            out << "              }\n";
+            out << "              __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_out_val, __gpga_width);\n";
+            out << "              __gpga_out_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_out_xz, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_sp - 2u] = __gpga_out_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_sp - 2u] = __gpga_out_xz;\n";
+            out << "              __gpga_vals[__gpga_sp - 2u] = __gpga_out_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_sp - 2u] = __gpga_out_xz.w[0];\n";
+            out << "              __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+            out << "              __gpga_is_real[__gpga_sp - 2u] = false;\n";
+            out << "              __gpga_sp -= 1u;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
+          else {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              __gpga_expr_ok = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
+          out << "              __gpga_sp -= 1u;\n";
+          out << "              break;\n";
+          out << "            }\n";
           out << "            FourState64 __gpga_lhs_fs =\n";
           out << "                fs_make64(__gpga_lhs, __gpga_lhs_xz, __gpga_lhs_width);\n";
           out << "            FourState64 __gpga_rhs_fs =\n";
@@ -22110,8 +26200,238 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            uint __gpga_else_width = __gpga_widths[__gpga_sp - 1u];\n";
           out << "            uint __gpga_then_width = __gpga_widths[__gpga_sp - 2u];\n";
           out << "            uint __gpga_cond_width = __gpga_widths[__gpga_sp - 3u];\n";
-          out << "            FourState64 __gpga_cond_fs =\n";
-          out << "                fs_make64(__gpga_cond_val, __gpga_cond_xz, __gpga_cond_width);\n";
+          out << "            bool __gpga_else_real = __gpga_is_real[__gpga_sp - 1u];\n";
+          out << "            bool __gpga_then_real = __gpga_is_real[__gpga_sp - 2u];\n";
+          out << "            bool __gpga_cond_real = __gpga_is_real[__gpga_sp - 3u];\n";
+          out << "            bool __gpga_cond_unknown = false;\n";
+          out << "            bool __gpga_cond_true = false;\n";
+          out << "            if (__gpga_cond_real) {\n";
+          out << "              if (__gpga_cond_xz != 0ul) {\n";
+          out << "                __gpga_cond_unknown = true;\n";
+          out << "              } else {\n";
+          out << "                __gpga_cond_true = !gpga_double_is_zero(__gpga_cond_val);\n";
+          out << "              }\n";
+          out << "            } else {\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "              if (__gpga_cond_width > 64u) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_cond_wide_val = __gpga_wide_vals[__gpga_sp - 3u];\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_cond_wide_xz = __gpga_wide_xzs[__gpga_sp - 3u];\n";
+            out << "                __gpga_cond_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                    __gpga_cond_wide_val, __gpga_cond_width);\n";
+            out << "                __gpga_cond_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                    __gpga_cond_wide_xz, __gpga_cond_width);\n";
+            out << "                bool __gpga_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                    __gpga_cond_wide_xz, __gpga_cond_width);\n";
+            out << "                if (__gpga_any_xz) {\n";
+            out << "                  __gpga_cond_unknown = true;\n";
+            out << "                } else {\n";
+            out << "                  __gpga_cond_true = gpga_sched_vm_wide_any_masked(\n";
+            out << "                      __gpga_cond_wide_val, __gpga_cond_width);\n";
+            out << "                }\n";
+            out << "              } else {\n";
+          } else {
+            out << "              if (__gpga_cond_width > 64u) {\n";
+            out << "                __gpga_expr_ok = false;\n";
+            out << "                break;\n";
+            out << "              }\n";
+          }
+          out << "                ulong __gpga_cond_mask = (__gpga_cond_width >= 64u)\n";
+          out << "                    ? ~0ul\n";
+          out << "                    : ((__gpga_cond_width == 0u)\n";
+          out << "                           ? 0ul\n";
+          out << "                           : ((1ul << __gpga_cond_width) - 1ul));\n";
+          out << "                if ((__gpga_cond_xz & __gpga_cond_mask) != 0ul) {\n";
+          out << "                  __gpga_cond_unknown = true;\n";
+          out << "                } else {\n";
+          out << "                  __gpga_cond_true =\n";
+          out << "                      ((__gpga_cond_val & __gpga_cond_mask) != 0ul);\n";
+          out << "                }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "              }\n";
+          }
+          out << "            }\n";
+          out << "            bool __gpga_out_real = __gpga_then_real || __gpga_else_real;\n";
+          out << "            if (__gpga_out_real) {\n";
+          out << "              ulong __gpga_out_val = 0ul;\n";
+          out << "              ulong __gpga_out_xz = 0ul;\n";
+          out << "              if (__gpga_cond_unknown) {\n";
+          out << "                __gpga_out_val = 0ul;\n";
+          out << "                __gpga_out_xz = 1ul;\n";
+          out << "              } else {\n";
+          out << "                bool __gpga_take_then = __gpga_cond_true;\n";
+          out << "                bool __gpga_src_real = __gpga_take_then ? __gpga_then_real\n";
+          out << "                                                         : __gpga_else_real;\n";
+          out << "                ulong __gpga_src_val = __gpga_take_then ? __gpga_then_val\n";
+          out << "                                                         : __gpga_else_val;\n";
+          out << "                ulong __gpga_src_xz = __gpga_take_then ? __gpga_then_xz\n";
+          out << "                                                        : __gpga_else_xz;\n";
+          out << "                uint __gpga_src_width = __gpga_take_then\n";
+          out << "                    ? __gpga_then_width\n";
+          out << "                    : __gpga_else_width;\n";
+          out << "                if (__gpga_src_real) {\n";
+          out << "                  __gpga_out_val = __gpga_src_val;\n";
+          out << "                  __gpga_out_xz = __gpga_src_xz;\n";
+          out << "                } else {\n";
+          out << "                  bool __gpga_src_any_xz = false;\n";
+          out << "                  ulong __gpga_src_real_val = 0ul;\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                  if (__gpga_src_width > 64u) {\n";
+            out << "                    GpgaWide" << vm_expr_wide_bits
+                << " __gpga_src_wide_val = __gpga_take_then\n";
+            out << "                        ? __gpga_wide_vals[__gpga_sp - 2u]\n";
+            out << "                        : __gpga_wide_vals[__gpga_sp - 1u];\n";
+            out << "                    GpgaWide" << vm_expr_wide_bits
+                << " __gpga_src_wide_xz = __gpga_take_then\n";
+            out << "                        ? __gpga_wide_xzs[__gpga_sp - 2u]\n";
+            out << "                        : __gpga_wide_xzs[__gpga_sp - 1u];\n";
+            out << "                    __gpga_src_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                        __gpga_src_wide_val, __gpga_src_width);\n";
+            out << "                    __gpga_src_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                        __gpga_src_wide_xz, __gpga_src_width);\n";
+            out << "                    __gpga_src_any_xz = gpga_sched_vm_wide_any_masked(\n";
+            out << "                        __gpga_src_wide_xz, __gpga_src_width);\n";
+            out << "                    ulong __gpga_src_u64 = gpga_wide_to_u64_"
+                << vm_expr_wide_bits << "(__gpga_src_wide_val);\n";
+            out << "                    __gpga_src_real_val = gpga_double_from_u64(__gpga_src_u64);\n";
+            out << "                  } else {\n";
+          }
+          out << "                    ulong __gpga_src_mask = (__gpga_src_width >= 64u)\n";
+          out << "                        ? ~0ul\n";
+          out << "                        : ((__gpga_src_width == 0u)\n";
+          out << "                               ? 0ul\n";
+          out << "                               : ((1ul << __gpga_src_width) - 1ul));\n";
+          out << "                    __gpga_src_any_xz =\n";
+          out << "                        ((__gpga_src_xz & __gpga_src_mask) != 0ul);\n";
+          out << "                    ulong __gpga_src_val_masked =\n";
+          out << "                        __gpga_src_val & __gpga_src_mask;\n";
+          out << "                    __gpga_src_real_val =\n";
+          out << "                        gpga_double_from_u64(__gpga_src_val_masked);\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "                  }\n";
+          } else {
+            out << "                  if (__gpga_src_width > 64u) {\n";
+            out << "                    __gpga_expr_ok = false;\n";
+            out << "                    break;\n";
+            out << "                  }\n";
+            out << "                  ulong __gpga_src_mask = (__gpga_src_width >= 64u)\n";
+            out << "                      ? ~0ul\n";
+            out << "                      : ((__gpga_src_width == 0u)\n";
+            out << "                             ? 0ul\n";
+            out << "                             : ((1ul << __gpga_src_width) - 1ul));\n";
+            out << "                  __gpga_src_any_xz =\n";
+            out << "                      ((__gpga_src_xz & __gpga_src_mask) != 0ul);\n";
+            out << "                  ulong __gpga_src_val_masked =\n";
+            out << "                      __gpga_src_val & __gpga_src_mask;\n";
+            out << "                  __gpga_src_real_val =\n";
+            out << "                      gpga_double_from_u64(__gpga_src_val_masked);\n";
+          }
+          out << "                  if (__gpga_src_any_xz) {\n";
+          out << "                    __gpga_out_val = 0ul;\n";
+          out << "                    __gpga_out_xz = 1ul;\n";
+          out << "                  } else {\n";
+          out << "                    __gpga_out_val = __gpga_src_real_val;\n";
+          out << "                    __gpga_out_xz = 0ul;\n";
+          out << "                  }\n";
+          out << "                }\n";
+          out << "              }\n";
+          out << "              __gpga_vals[__gpga_sp - 3u] = __gpga_out_val;\n";
+          out << "              __gpga_xzs[__gpga_sp - 3u] = __gpga_out_xz;\n";
+          out << "              __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+          out << "              __gpga_is_real[__gpga_sp - 3u] = true;\n";
+          out << "              __gpga_sp -= 2u;\n";
+          out << "              break;\n";
+          out << "            }\n";
+          if (vm_expr_wide_bits > 64u) {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_then_wide_val = (__gpga_then_width > 64u)\n";
+            out << "                  ? __gpga_wide_vals[__gpga_sp - 2u]\n";
+            out << "                  : gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_then_val);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_then_wide_xz = (__gpga_then_width > 64u)\n";
+            out << "                  ? __gpga_wide_xzs[__gpga_sp - 2u]\n";
+            out << "                  : gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_then_xz);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_else_wide_val = (__gpga_else_width > 64u)\n";
+            out << "                  ? __gpga_wide_vals[__gpga_sp - 1u]\n";
+            out << "                  : gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_else_val);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_else_wide_xz = (__gpga_else_width > 64u)\n";
+            out << "                  ? __gpga_wide_xzs[__gpga_sp - 1u]\n";
+            out << "                  : gpga_wide_from_u64_" << vm_expr_wide_bits
+                << "(__gpga_else_xz);\n";
+            out << "              __gpga_then_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_then_wide_val, __gpga_then_width);\n";
+            out << "              __gpga_then_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_then_wide_xz, __gpga_then_width);\n";
+            out << "              __gpga_else_wide_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_else_wide_val, __gpga_else_width);\n";
+            out << "              __gpga_else_wide_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_else_wide_xz, __gpga_else_width);\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              GpgaWide" << vm_expr_wide_bits
+                << " __gpga_out_xz = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+            out << "              if (__gpga_cond_unknown) {\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_width);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_then_known = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_then_wide_xz), __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_else_known = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_else_wide_xz), __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_diff = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_xor_" << vm_expr_wide_bits
+                << "(__gpga_then_wide_val, __gpga_else_wide_val), __gpga_mask);\n";
+            out << "                GpgaWide" << vm_expr_wide_bits
+                << " __gpga_known_same = gpga_wide_and_" << vm_expr_wide_bits
+                << "(gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_then_known, __gpga_else_known), gpga_wide_not_"
+                << vm_expr_wide_bits << "(__gpga_diff));\n";
+            out << "                __gpga_out_val = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_then_wide_val, __gpga_known_same);\n";
+            out << "                __gpga_out_xz = gpga_wide_and_" << vm_expr_wide_bits
+                << "(__gpga_mask, gpga_wide_not_" << vm_expr_wide_bits
+                << "(__gpga_known_same));\n";
+            out << "              } else if (__gpga_cond_true) {\n";
+            out << "                __gpga_out_val = __gpga_then_wide_val;\n";
+            out << "                __gpga_out_xz = __gpga_then_wide_xz;\n";
+            out << "              } else {\n";
+            out << "                __gpga_out_val = __gpga_else_wide_val;\n";
+            out << "                __gpga_out_xz = __gpga_else_wide_xz;\n";
+            out << "              }\n";
+            out << "              __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_out_val, __gpga_width);\n";
+            out << "              __gpga_out_xz = gpga_sched_vm_wide_mask_value(\n";
+            out << "                  __gpga_out_xz, __gpga_width);\n";
+            out << "              __gpga_wide_vals[__gpga_sp - 3u] = __gpga_out_val;\n";
+            out << "              __gpga_wide_xzs[__gpga_sp - 3u] = __gpga_out_xz;\n";
+            out << "              __gpga_vals[__gpga_sp - 3u] = __gpga_out_val.w[0];\n";
+            out << "              __gpga_xzs[__gpga_sp - 3u] = __gpga_out_xz.w[0];\n";
+            out << "              __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+            out << "              __gpga_is_real[__gpga_sp - 3u] = false;\n";
+            out << "              __gpga_sp -= 2u;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          } else {
+            out << "            if (__gpga_width > 64u) {\n";
+            out << "              __gpga_expr_ok = false;\n";
+            out << "              break;\n";
+            out << "            }\n";
+          }
+          out << "            FourState64 __gpga_cond_fs = fs_make64(\n";
+          out << "                __gpga_cond_true ? 1ul : 0ul,\n";
+          out << "                __gpga_cond_unknown ? 1ul : 0ul,\n";
+          out << "                1u);\n";
           out << "            FourState64 __gpga_then_fs =\n";
           out << "                fs_make64(__gpga_then_val, __gpga_then_xz, __gpga_then_width);\n";
           out << "            FourState64 __gpga_else_fs =\n";
@@ -22124,6 +26444,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "            __gpga_vals[__gpga_sp - 3u] = __gpga_out.val;\n";
           out << "            __gpga_xzs[__gpga_sp - 3u] = __gpga_out.xz;\n";
           out << "            __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+          out << "            __gpga_is_real[__gpga_sp - 3u] = false;\n";
           out << "            __gpga_sp -= 2u;\n";
           out << "            break;\n";
           out << "          }\n";
@@ -22138,40 +26459,6 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      }\n";
           out << "    }\n";
           out << "  }\n";
-          out << "  if (!__gpga_cond_known) {\n";
-          out << "    switch (cond_id) {\n";
-          for (size_t i = 0; i < vm_cond_exprs.size(); ++i) {
-            const Expr* expr = vm_cond_exprs[i];
-            if (!expr) {
-              continue;
-            }
-            int width = ExprWidth(*expr, module);
-            out << "    case " << i << "u: {\n";
-            FsExpr cond =
-                emit_expr4_cached_ex(*expr, width, 6, nullptr, true);
-            std::string known_expr = "true";
-            if (!cond.is_real) {
-              if (cond.width > 64) {
-                known_expr = "!" + wide_any(cond.xz, cond.width);
-              } else {
-                known_expr = "(" + cond.xz + " == " +
-                             literal_for_width(0, cond.width) + ")";
-              }
-            }
-            out << "      __gpga_cond_val = (" << cond_bool(cond)
-                << ") ? 1u : 0u;\n";
-            out << "      __gpga_cond_xz = (" << known_expr
-                << ") ? 0u : 1u;\n";
-            out << "      break;\n";
-            out << "    }\n";
-          }
-          out << "    default: {\n";
-          out << "      __gpga_cond_val = 0u;\n";
-          out << "      __gpga_cond_xz = 1u;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          out << "  }\n";
-          out << "  }\n";
           out << "  if (out_val) {\n";
           out << "    *out_val = __gpga_cond_val;\n";
           out << "  }\n";
@@ -22181,25 +26468,424 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "}\n";
         }
         if (options.sched_vm) {
+          out << "static __attribute__((noinline)) bool gpga_"
+              << MslName(module.name) << "_sched_vm_eval_expr(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint expr_offset,\n"
+                 "  thread ulong* out_val,\n"
+                 "  thread ulong* out_xz,\n"
+                 "  thread uint* out_width) {\n";
+          out << "  ulong __gpga_val_out = 0ul;\n";
+          out << "  ulong __gpga_xz_out = 0ul;\n";
+          out << "  uint __gpga_width_out = 0u;\n";
+          out << "  bool __gpga_done = false;\n";
+          emit_packed_signal_setup("sched.count");
+          out << "  uint __gpga_ip = expr_offset;\n";
+          out << "  uint __gpga_sp = 0u;\n";
+          out << "  bool __gpga_expr_ok = true;\n";
+          out << "  thread ulong __gpga_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "  thread ulong __gpga_xzs[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "  thread uint __gpga_widths[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+          out << "  while (__gpga_expr_ok) {\n";
+          out << "    uint __gpga_instr = sched_vm_expr[__gpga_ip++];\n";
+          out << "    uint __gpga_op = (__gpga_instr & 0xFFu);\n";
+          out << "    uint __gpga_arg = (__gpga_instr >> 8u);\n";
+          out << "    if (__gpga_op == GPGA_SCHED_VM_EXPR_OP_DONE) {\n";
+          out << "      if (__gpga_sp == 0u) {\n";
+          out << "        __gpga_expr_ok = false;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      uint __gpga_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "      ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "          ? ~0ul\n";
+          out << "          : ((__gpga_width == 0u)\n";
+          out << "                 ? 0ul\n";
+          out << "                 : ((1ul << __gpga_width) - 1ul));\n";
+          out << "      __gpga_val_out = __gpga_vals[__gpga_sp - 1u] & __gpga_mask;\n";
+          out << "      __gpga_xz_out = __gpga_xzs[__gpga_sp - 1u] & __gpga_mask;\n";
+          out << "      __gpga_width_out = __gpga_width;\n";
+          out << "      __gpga_done = true;\n";
+          out << "      break;\n";
+          out << "    }\n";
+          out << "    switch (__gpga_op) {\n";
+          out << "      case GPGA_SCHED_VM_EXPR_OP_PUSH_CONST: {\n";
+          out << "        if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "        uint __gpga_imm = __gpga_arg;\n";
+          out << "        ulong __gpga_val =\n";
+          out << "            (ulong)(sched_vm_expr_imm[__gpga_imm]) |\n";
+          out << "            ((ulong)(sched_vm_expr_imm[__gpga_imm + 1u]) << 32u);\n";
+          out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+          out << "        __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+          out << "        __gpga_xzs[__gpga_sp] = 0ul;\n";
+          out << "        __gpga_widths[__gpga_sp] = __gpga_width;\n";
+          out << "        __gpga_sp += 1u;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      case GPGA_SCHED_VM_EXPR_OP_PUSH_SIGNAL: {\n";
+          out << "        if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "        const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "            sched_vm_signal_entry[__gpga_arg];\n";
+          out << "        if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "            __gpga_sig.array_size != 1u) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "            __gpga_base * __gpga_stride;\n";
+          out << "        ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "            __gpga_base * __gpga_stride;\n";
+          out << "        ulong __gpga_val = 0ul;\n";
+          out << "        ulong __gpga_xz = 0ul;\n";
+          out << "        if (__gpga_width > 32u) {\n";
+          out << "          __gpga_val = ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "          __gpga_xz = ((device const ulong*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "        } else {\n";
+          out << "          __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "          __gpga_xz = (ulong)((device const uint*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "        }\n";
+          out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+          out << "        __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+          out << "        __gpga_xzs[__gpga_sp] = __gpga_xz & __gpga_mask;\n";
+          out << "        __gpga_widths[__gpga_sp] = __gpga_width;\n";
+          out << "        __gpga_sp += 1u;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      case GPGA_SCHED_VM_EXPR_OP_INDEX: {\n";
+          out << "        if (__gpga_sp == 0u) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "        const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "            sched_vm_signal_entry[__gpga_arg];\n";
+          out << "        if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "            __gpga_sig.array_size <= 1u) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        ulong __gpga_idx_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_idx_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "        uint __gpga_idx_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+          out << "        if (__gpga_idx_xz != 0ul) {\n";
+          out << "          __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+          out << "          __gpga_xzs[__gpga_sp - 1u] = __gpga_mask;\n";
+          out << "          __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        ulong __gpga_idx_mask = (__gpga_idx_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_idx_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_idx_width) - 1ul));\n";
+          out << "        ulong __gpga_idx = __gpga_idx_val & __gpga_idx_mask;\n";
+          out << "        if (__gpga_idx >= (ulong)__gpga_sig.array_size) {\n";
+          out << "          __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+          out << "          __gpga_xzs[__gpga_sp - 1u] = 0ul;\n";
+          out << "          __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "            (__gpga_base + __gpga_idx) * __gpga_stride;\n";
+          out << "        ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "            (__gpga_base + __gpga_idx) * __gpga_stride;\n";
+          out << "        ulong __gpga_val = 0ul;\n";
+          out << "        ulong __gpga_xz = 0ul;\n";
+          out << "        if (__gpga_width > 32u) {\n";
+          out << "          __gpga_val = ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "          __gpga_xz = ((device const ulong*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "        } else {\n";
+          out << "          __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_val_addr))[0];\n";
+          out << "          __gpga_xz = (ulong)((device const uint*)(gpga_state + __gpga_xz_addr))[0];\n";
+          out << "        }\n";
+          out << "        __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_mask;\n";
+          out << "        __gpga_xzs[__gpga_sp - 1u] = __gpga_xz & __gpga_mask;\n";
+          out << "        __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      case GPGA_SCHED_VM_EXPR_OP_UNARY: {\n";
+          out << "        if (__gpga_sp == 0u) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "        uint __gpga_uop = __gpga_arg;\n";
+          out << "        ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "        uint __gpga_in_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "        FourState64 __gpga_in =\n";
+          out << "            fs_make64(__gpga_val, __gpga_xz, __gpga_in_width);\n";
+          out << "        FourState64 __gpga_out = __gpga_in;\n";
+          out << "        if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+          out << "          __gpga_out = fs_log_not64(__gpga_in, __gpga_in_width);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+          out << "          __gpga_out = fs_not64(__gpga_in, __gpga_in_width);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+          out << "          FourState64 __gpga_zero = fs_make64(0ul, 0ul, __gpga_in_width);\n";
+          out << "          __gpga_out = fs_sub64(__gpga_zero, __gpga_in, __gpga_in_width);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND) {\n";
+          out << "          __gpga_out = fs_red_and64(__gpga_in, __gpga_in_width);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+          out << "          __gpga_out = fs_log_not64(fs_red_and64(__gpga_in, __gpga_in_width), 1u);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR) {\n";
+          out << "          __gpga_out = fs_red_or64(__gpga_in, __gpga_in_width);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+          out << "          __gpga_out = fs_log_not64(fs_red_or64(__gpga_in, __gpga_in_width), 1u);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR) {\n";
+          out << "          __gpga_out = fs_red_xor64(__gpga_in, __gpga_in_width);\n";
+          out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+          out << "          __gpga_out = fs_log_not64(fs_red_xor64(__gpga_in, __gpga_in_width), 1u);\n";
+          out << "        }\n";
+          out << "        __gpga_out = fs_resize64(__gpga_out, __gpga_width);\n";
+          out << "        __gpga_vals[__gpga_sp - 1u] = __gpga_out.val;\n";
+          out << "        __gpga_xzs[__gpga_sp - 1u] = __gpga_out.xz;\n";
+          out << "        __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+                    out << "        break;\n";
+          out << "      }\n";
+          out << "      case GPGA_SCHED_VM_EXPR_OP_BINARY: {\n";
+          out << "        if (__gpga_sp < 2u) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "        uint __gpga_bop = (__gpga_arg & 0xFFu);\n";
+          out << "        bool __gpga_signed =\n";
+          out << "            ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+          out << "        ulong __gpga_rhs = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_lhs = __gpga_vals[__gpga_sp - 2u];\n";
+          out << "        ulong __gpga_rhs_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_lhs_xz = __gpga_xzs[__gpga_sp - 2u];\n";
+          out << "        uint __gpga_rhs_width = __gpga_widths[__gpga_sp - 1u];\n";
+          out << "        uint __gpga_lhs_width = __gpga_widths[__gpga_sp - 2u];\n";
+          out << "        uint __gpga_eval_width =\n";
+          out << "            (__gpga_lhs_width > __gpga_rhs_width)\n";
+          out << "                ? __gpga_lhs_width\n";
+          out << "                : __gpga_rhs_width;\n";
+          out << "        FourState64 __gpga_lhs_fs =\n";
+          out << "            fs_make64(__gpga_lhs, __gpga_lhs_xz, __gpga_lhs_width);\n";
+          out << "        FourState64 __gpga_rhs_fs =\n";
+          out << "            fs_make64(__gpga_rhs, __gpga_rhs_xz, __gpga_rhs_width);\n";
+          out << "        FourState64 __gpga_out = fs_make64(0ul, 0ul, __gpga_width);\n";
+          out << "        if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+          out << "            __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+          out << "          __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "          __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "          __gpga_out = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+          out << "              ? fs_log_and64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width)\n";
+          out << "              : fs_log_or64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ) {\n";
+          out << "          __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "          __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "          __gpga_out = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ)\n";
+          out << "              ? fs_eq64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width)\n";
+          out << "              : fs_ne64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+          out << "          __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "          __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "          bool __gpga_eq = fs_case_eq64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "          bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+          out << "              ? __gpga_eq\n";
+          out << "              : !__gpga_eq;\n";
+          out << "          __gpga_out = fs_make64(__gpga_true ? 1ul : 0ul, 0ul, 1u);\n";
+          out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+          out << "          if (__gpga_signed) {\n";
+          out << "            __gpga_lhs_fs = fs_sext64(__gpga_lhs_fs, __gpga_lhs_width, __gpga_eval_width);\n";
+          out << "            __gpga_rhs_fs = fs_sext64(__gpga_rhs_fs, __gpga_rhs_width, __gpga_eval_width);\n";
+          out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+          out << "              __gpga_out = fs_slt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+          out << "              __gpga_out = fs_sle64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+          out << "              __gpga_out = fs_sgt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else {\n";
+          out << "              __gpga_out = fs_sge64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            }\n";
+          out << "          } else {\n";
+          out << "            __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_eval_width);\n";
+          out << "            __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+          out << "              __gpga_out = fs_lt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+          out << "              __gpga_out = fs_le64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+          out << "              __gpga_out = fs_gt64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            } else {\n";
+          out << "              __gpga_out = fs_ge64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_eval_width);\n";
+          out << "            }\n";
+          out << "          }\n";
+          out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+          out << "          __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_width);\n";
+          out << "          if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+          out << "            __gpga_out = fs_shl64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR || !__gpga_signed) {\n";
+          out << "            __gpga_out = fs_shr64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else {\n";
+          out << "            __gpga_out = fs_sar64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          }\n";
+          out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+          out << "          __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_width);\n";
+          out << "          __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_width);\n";
+          out << "          if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+          out << "            __gpga_out = fs_and64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+          out << "            __gpga_out = fs_or64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR) {\n";
+          out << "            __gpga_out = fs_xor64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else {\n";
+          out << "            __gpga_out = fs_not64(fs_xor64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width), __gpga_width);\n";
+          out << "          }\n";
+          out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV ||\n";
+          out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+          out << "          __gpga_lhs_fs = fs_resize64(__gpga_lhs_fs, __gpga_width);\n";
+          out << "          __gpga_rhs_fs = fs_resize64(__gpga_rhs_fs, __gpga_width);\n";
+          out << "          if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+          out << "            __gpga_out = fs_add64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+          out << "            __gpga_out = fs_sub64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+          out << "            __gpga_out = fs_mul64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+          out << "            __gpga_out = fs_div64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          } else {\n";
+          out << "            __gpga_out = fs_mod64(__gpga_lhs_fs, __gpga_rhs_fs, __gpga_width);\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        __gpga_vals[__gpga_sp - 2u] = __gpga_out.val;\n";
+          out << "        __gpga_xzs[__gpga_sp - 2u] = __gpga_out.xz;\n";
+          out << "        __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+          out << "        __gpga_sp -= 1u;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      case GPGA_SCHED_VM_EXPR_OP_TERNARY: {\n";
+          out << "        if (__gpga_sp < 3u) {\n";
+          out << "          __gpga_expr_ok = false;\n";
+          out << "          break;\n";
+          out << "        }\n";
+          out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+          out << "        ulong __gpga_else_val = __gpga_vals[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_else_xz = __gpga_xzs[__gpga_sp - 1u];\n";
+          out << "        ulong __gpga_then_val = __gpga_vals[__gpga_sp - 2u];\n";
+          out << "        ulong __gpga_then_xz = __gpga_xzs[__gpga_sp - 2u];\n";
+          out << "        ulong __gpga_cond_val = __gpga_vals[__gpga_sp - 3u];\n";
+          out << "        ulong __gpga_cond_xz = __gpga_xzs[__gpga_sp - 3u];\n";
+          out << "        uint __gpga_cond_width = __gpga_widths[__gpga_sp - 3u];\n";
+          out << "        ulong __gpga_cond_mask = (__gpga_cond_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_cond_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_cond_width) - 1ul));\n";
+          out << "        bool __gpga_cond_true =\n";
+          out << "            ((__gpga_cond_xz & __gpga_cond_mask) == 0ul &&\n";
+          out << "             ((__gpga_cond_val & __gpga_cond_mask) != 0ul));\n";
+          out << "        __gpga_vals[__gpga_sp - 3u] =\n";
+          out << "            __gpga_cond_true ? __gpga_then_val : __gpga_else_val;\n";
+          out << "        __gpga_xzs[__gpga_sp - 3u] =\n";
+          out << "            __gpga_cond_true ? __gpga_then_xz : __gpga_else_xz;\n";
+          out << "        __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+          out << "        __gpga_sp -= 2u;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "      default: {\n";
+          out << "        __gpga_expr_ok = false;\n";
+          out << "        break;\n";
+          out << "      }\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "  if (out_val) {\n";
+          out << "    *out_val = __gpga_val_out;\n";
+          out << "  }\n";
+          out << "  if (out_xz) {\n";
+          out << "    *out_xz = __gpga_xz_out;\n";
+          out << "  }\n";
+          out << "  if (out_width) {\n";
+          out << "    *out_width = __gpga_width_out;\n";
+          out << "  }\n";
+          out << "  return __gpga_expr_ok && __gpga_done;\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
           const auto& vm_delay_exprs = vm_tables.delay_exprs;
           out << "static __attribute__((noinline)) ulong gpga_"
               << MslName(module.name) << "_sched_vm_eval_delay(";
           emit_sched_param_decls(2);
           out << ",\n  uint pid,\n  uint delay_id) {\n";
           out << "  ulong __gpga_delay = 0ul;\n";
-          emit_packed_signal_setup("sched.count");
           out << "  switch (delay_id) {\n";
+          const std::unordered_map<std::string, int64_t> empty_params;
           for (size_t i = 0; i < vm_delay_exprs.size(); ++i) {
             const Expr* expr = vm_delay_exprs[i];
             if (!expr) {
+              out << "    case " << i << "u: {\n";
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      __gpga_delay = 0ul;\n";
+              out << "      break;\n";
+              out << "    }\n";
               continue;
             }
+            FourStateValue delay_value;
+            bool delay_ok =
+                EvalConstExpr4State(*expr, empty_params, &delay_value,
+                                    nullptr) &&
+                !delay_value.HasXorZ() && delay_value.width > 0 &&
+                delay_value.width <= 64;
             out << "    case " << i << "u: {\n";
-            out << "      __gpga_delay = " << emit_delay_value4(*expr) << ";\n";
+            if (delay_ok) {
+              out << "      __gpga_delay = "
+                  << static_cast<uint64_t>(delay_value.value_bits) << "ul;\n";
+            } else {
+              out << "      sched_error[gid] = 1u;\n";
+              out << "      __gpga_delay = 0ul;\n";
+            }
             out << "      break;\n";
             out << "    }\n";
           }
           out << "    default: {\n";
+          out << "      sched_error[gid] = 1u;\n";
           out << "      __gpga_delay = 0ul;\n";
           out << "      break;\n";
           out << "    }\n";
@@ -22208,129 +26894,212 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "}\n";
         }
         if (options.sched_vm) {
-          const auto& vm_case_stmts = vm_tables.case_stmts;
+          out << "static __attribute__((noinline)) bool gpga_"
+              << MslName(module.name) << "_sched_vm_apply_delay_assign(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint delay_id,\n  ulong val,\n  ulong xz,\n"
+                 "  uint idx_val,\n  uint idx_xz,\n  bool use_nb) {\n";
+          out << "  if (delay_id >= GPGA_SCHED_VM_DELAY_COUNT) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmDelayAssignEntry __gpga_entry =\n";
+          out << "      sched_vm_delay_assign_entry[delay_id];\n";
+          out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "      sched_vm_signal_entry[__gpga_entry.signal_id];\n";
+          out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+          out << "  uint __gpga_storage_width = __gpga_sig.width;\n";
+          out << "  ulong __gpga_stride = (__gpga_storage_width > 32u) ? 8ul : 4ul;\n";
+          out << "  ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "  ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "      __gpga_base * __gpga_stride;\n";
+          out << "  ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "      __gpga_base * __gpga_stride;\n";
+          out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_ARRAY) != 0u) {\n";
+          out << "    if (idx_xz != 0u) {\n";
+          out << "      return true;\n";
+          out << "    }\n";
+          out << "    if (idx_val >= __gpga_entry.array_size) {\n";
+          out << "      return true;\n";
+          out << "    }\n";
+          out << "    ulong __gpga_elem = (ulong)gid * (ulong)__gpga_entry.array_size +\n";
+          out << "        (ulong)idx_val;\n";
+          out << "    ulong __gpga_elem_val = (ulong)__gpga_sig.val_offset +\n";
+          out << "        __gpga_elem * __gpga_stride;\n";
+          out << "    ulong __gpga_elem_xz = (ulong)__gpga_sig.xz_offset +\n";
+          out << "        __gpga_elem * __gpga_stride;\n";
+          out << "    if (__gpga_entry.width > 32u) {\n";
+          out << "      ((device ulong*)(__gpga_state + __gpga_elem_val))[0] = val;\n";
+          out << "      ((device ulong*)(__gpga_state + __gpga_elem_xz))[0] = xz;\n";
+          out << "    } else {\n";
+          out << "      ((device uint*)(__gpga_state + __gpga_elem_val))[0] = (uint)val;\n";
+          out << "      ((device uint*)(__gpga_state + __gpga_elem_xz))[0] = (uint)xz;\n";
+          out << "    }\n";
+          out << "    return true;\n";
+          out << "  }\n";
+          out << "  if (__gpga_sig.array_size != 1u) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_BIT_SELECT) != 0u) {\n";
+          out << "    if (idx_xz != 0u || idx_val >= __gpga_entry.base_width) {\n";
+          out << "      return true;\n";
+          out << "    }\n";
+          out << "    ulong __gpga_bit = 1ul << idx_val;\n";
+          out << "    ulong __gpga_cur_val = (__gpga_storage_width > 32u)\n";
+          out << "        ? ((device ulong*)(__gpga_state + __gpga_val_addr))[0]\n";
+          out << "        : (ulong)((device uint*)(__gpga_state + __gpga_val_addr))[0];\n";
+          out << "    ulong __gpga_cur_xz = (__gpga_storage_width > 32u)\n";
+          out << "        ? ((device ulong*)(__gpga_state + __gpga_xz_addr))[0]\n";
+          out << "        : (ulong)((device uint*)(__gpga_state + __gpga_xz_addr))[0];\n";
+          out << "    __gpga_cur_val = (__gpga_cur_val & ~__gpga_bit) |\n";
+          out << "        (((val & 1ul) != 0ul) ? __gpga_bit : 0ul);\n";
+          out << "    __gpga_cur_xz = (__gpga_cur_xz & ~__gpga_bit) |\n";
+          out << "        (((xz & 1ul) != 0ul) ? __gpga_bit : 0ul);\n";
+          out << "    if (__gpga_storage_width > 32u) {\n";
+          out << "      ((device ulong*)(__gpga_state + __gpga_val_addr))[0] = __gpga_cur_val;\n";
+          out << "      ((device ulong*)(__gpga_state + __gpga_xz_addr))[0] = __gpga_cur_xz;\n";
+          out << "    } else {\n";
+          out << "      ((device uint*)(__gpga_state + __gpga_val_addr))[0] = (uint)__gpga_cur_val;\n";
+          out << "      ((device uint*)(__gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_cur_xz;\n";
+          out << "    }\n";
+          out << "    return true;\n";
+          out << "  }\n";
+          out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_RANGE) != 0u) {\n";
+          out << "    if (__gpga_entry.width == 0u) {\n";
+          out << "      return true;\n";
+          out << "    }\n";
+          out << "    bool __gpga_indexed =\n";
+          out << "        ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_INDEXED_RANGE) != 0u);\n";
+          out << "    uint __gpga_start = __gpga_indexed ? idx_val : __gpga_entry.range_lsb;\n";
+          out << "    if (__gpga_indexed) {\n";
+          out << "      if (idx_xz != 0u) {\n";
+          out << "        return true;\n";
+          out << "      }\n";
+          out << "      if (__gpga_entry.base_width < __gpga_entry.width) {\n";
+          out << "        return true;\n";
+          out << "      }\n";
+          out << "      uint __gpga_limit = __gpga_entry.base_width - __gpga_entry.width;\n";
+          out << "      if (__gpga_start > __gpga_limit) {\n";
+          out << "        return true;\n";
+          out << "      }\n";
+          out << "    }\n";
+          out << "    if (__gpga_start >= 64u) {\n";
+          out << "      return true;\n";
+          out << "    }\n";
+          out << "    ulong __gpga_mask = (__gpga_entry.width >= 64u)\n";
+          out << "        ? ~0ul\n";
+          out << "        : ((1ul << __gpga_entry.width) - 1ul);\n";
+          out << "    if (__gpga_entry.width < 64u) {\n";
+          out << "      __gpga_mask <<= __gpga_start;\n";
+          out << "    } else if (__gpga_start != 0u) {\n";
+          out << "      return false;\n";
+          out << "    }\n";
+          out << "    ulong __gpga_cur_val = (__gpga_storage_width > 32u)\n";
+          out << "        ? ((device ulong*)(__gpga_state + __gpga_val_addr))[0]\n";
+          out << "        : (ulong)((device uint*)(__gpga_state + __gpga_val_addr))[0];\n";
+          out << "    ulong __gpga_cur_xz = (__gpga_storage_width > 32u)\n";
+          out << "        ? ((device ulong*)(__gpga_state + __gpga_xz_addr))[0]\n";
+          out << "        : (ulong)((device uint*)(__gpga_state + __gpga_xz_addr))[0];\n";
+          out << "    __gpga_cur_val = (__gpga_cur_val & ~__gpga_mask) |\n";
+          out << "        ((val << __gpga_start) & __gpga_mask);\n";
+          out << "    __gpga_cur_xz = (__gpga_cur_xz & ~__gpga_mask) |\n";
+          out << "        ((xz << __gpga_start) & __gpga_mask);\n";
+          out << "    if (__gpga_storage_width > 32u) {\n";
+          out << "      ((device ulong*)(__gpga_state + __gpga_val_addr))[0] = __gpga_cur_val;\n";
+          out << "      ((device ulong*)(__gpga_state + __gpga_xz_addr))[0] = __gpga_cur_xz;\n";
+          out << "    } else {\n";
+          out << "      ((device uint*)(__gpga_state + __gpga_val_addr))[0] = (uint)__gpga_cur_val;\n";
+          out << "      ((device uint*)(__gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_cur_xz;\n";
+          out << "    }\n";
+          out << "    return true;\n";
+          out << "  }\n";
+          out << "  if (__gpga_storage_width > 32u) {\n";
+          out << "    ((device ulong*)(__gpga_state + __gpga_val_addr))[0] = val;\n";
+          out << "    ((device ulong*)(__gpga_state + __gpga_xz_addr))[0] = xz;\n";
+          out << "  } else {\n";
+          out << "    ((device uint*)(__gpga_state + __gpga_val_addr))[0] = (uint)val;\n";
+          out << "    ((device uint*)(__gpga_state + __gpga_xz_addr))[0] = (uint)xz;\n";
+          out << "  }\n";
+          out << "  return true;\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
           out << "static __attribute__((noinline)) uint gpga_"
               << MslName(module.name) << "_sched_vm_eval_case(";
           emit_sched_param_decls(2);
           out << ",\n  uint pid,\n  uint case_id) {\n";
           out << "  uint __gpga_match = 0xFFFFFFFFu;\n";
-          emit_packed_signal_setup("sched.count");
-          out << "  switch (case_id) {\n";
-          ExprCache cache;
-          for (size_t i = 0; i < vm_case_stmts.size(); ++i) {
-            const Statement* stmt = vm_case_stmts[i];
-            out << "    case " << i << "u: {\n";
-            if (!stmt || !stmt->case_expr) {
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            int case_width = ExprWidth(*stmt->case_expr, module);
-            FsExpr case_expr = emit_expr4_cached_relaxed(
-                *stmt->case_expr, case_width, 6, &cache);
-            case_expr = hoist_full_for_use(case_expr, 6);
-            if (case_width > 0 && case_width <= 64) {
-              out << "      if (" << i
-                  << "u < GPGA_SCHED_VM_CASE_HEADER_COUNT) {\n";
-              out << "        const GpgaSchedVmCaseHeader __gpga_header = "
-                     "sched_vm_case_header["
-                  << i << "u];\n";
-              out << "        if (__gpga_header.entry_count > 0u && "
-                     "__gpga_header.width == "
-                  << case_width << "u) {\n";
-              out << "          ulong __gpga_case_val = (ulong)("
-                  << case_expr.val << ");\n";
-              out << "          ulong __gpga_case_xz = (ulong)("
-                  << case_expr.xz << ");\n";
-              out << "          const ulong __gpga_mask = "
-                  << std::to_string(MaskForWidth64(case_width)) << "ul;\n";
-              out << "          __gpga_case_val &= __gpga_mask;\n";
-              out << "          __gpga_case_xz &= __gpga_mask;\n";
-              out << "          for (uint __gpga_entry = 0u; "
-                     "__gpga_entry < __gpga_header.entry_count; "
-                     "++__gpga_entry) {\n";
-              out << "            const GpgaSchedVmCaseEntry __gpga_entry_rec "
-                     "= sched_vm_case_entry[__gpga_header.entry_offset + "
-                     "__gpga_entry];\n";
-              out << "            ulong __gpga_want = "
-                     "sched_vm_case_words[__gpga_entry_rec.want_offset];\n";
-              out << "            ulong __gpga_aux = "
-                     "sched_vm_case_words[__gpga_entry_rec.care_offset];\n";
-              out << "            bool __gpga_hit = false;\n";
-              out << "            if (__gpga_header.kind == "
-                     "GPGA_SCHED_VM_CASE_KIND_CASE) {\n";
-              out << "              ulong __gpga_diff = __gpga_case_xz ^ "
-                     "__gpga_aux;\n";
-              out << "              ulong __gpga_known = "
-                     "~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
-              out << "              ulong __gpga_val_diff = "
-                     "(__gpga_case_val ^ __gpga_want) & __gpga_known;\n";
-              out << "              __gpga_hit = "
-                     "((__gpga_diff | __gpga_val_diff) == 0ul);\n";
-              out << "            } else if (__gpga_header.kind == "
-                     "GPGA_SCHED_VM_CASE_KIND_CASEX) {\n";
-              out << "              ulong __gpga_cared = "
-                     "~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
-              out << "              ulong __gpga_val_diff = "
-                     "(__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
-              out << "              __gpga_hit = (__gpga_val_diff == 0ul);\n";
-              out << "            } else if (__gpga_header.kind == "
-                     "GPGA_SCHED_VM_CASE_KIND_CASEZ) {\n";
-              out << "              ulong __gpga_cared = (~__gpga_aux) & "
-                     "__gpga_mask;\n";
-              out << "              ulong __gpga_bad = __gpga_case_xz & "
-                     "__gpga_cared;\n";
-              out << "              ulong __gpga_val_diff = "
-                     "(__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
-              out << "              __gpga_hit = "
-                     "((__gpga_bad | __gpga_val_diff) == 0ul);\n";
-              out << "            }\n";
-              out << "            if (__gpga_hit) {\n";
-              out << "              __gpga_match = __gpga_entry_rec.target;\n";
-              out << "              break;\n";
-              out << "            }\n";
-              out << "          }\n";
-              out << "          break;\n";
-              out << "        }\n";
-              out << "      }\n";
-            }
-            std::unordered_map<int, FsExpr> case_width_cache;
-            for (size_t item_idx = 0; item_idx < stmt->case_items.size();
-                 ++item_idx) {
-              const auto& item = stmt->case_items[item_idx];
-              std::string cond;
-              for (const auto& label : item.labels) {
-                int label_width = ExprWidth(*label, module);
-                int width = std::max(case_expr.width, label_width);
-                FsExpr case_w;
-                auto cache_it = case_width_cache.find(width);
-                if (cache_it == case_width_cache.end()) {
-                  case_w = fs_resize_expr(case_expr, width);
-                  case_w = hoist_full_for_use(case_w, 6);
-                  case_width_cache.emplace(width, case_w);
-                } else {
-                  case_w = cache_it->second;
-                }
-                std::string piece = emit_case_cond4_prepared(
-                    stmt->case_kind, case_w, width, *label,
-                    stmt->case_expr.get());
-                if (!cond.empty()) {
-                  cond += " || ";
-                }
-                cond += piece;
-              }
-              if (cond.empty()) {
-                continue;
-              }
-              out << "      if (" << cond << ") {\n";
-              out << "        __gpga_match = " << item_idx << "u;\n";
-              out << "        break;\n";
-              out << "      }\n";
-            }
-            out << "      break;\n";
-            out << "    }\n";
-          }
-          out << "    default: {\n";
+          out << "  if (case_id >= GPGA_SCHED_VM_CASE_HEADER_COUNT) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    return __gpga_match;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmCaseHeader __gpga_header = "
+                 "sched_vm_case_header[case_id];\n";
+          out << "  if (__gpga_header.entry_count == 0u) {\n";
+          out << "    if (__gpga_header.width != 0u) {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "    }\n";
+          out << "    return __gpga_match;\n";
+          out << "  }\n";
+          out << "  if (__gpga_header.expr_offset == 0xFFFFFFFFu) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    return __gpga_match;\n";
+          out << "  }\n";
+          out << "  ulong __gpga_case_val = 0ul;\n";
+          out << "  ulong __gpga_case_xz = 0ul;\n";
+          out << "  uint __gpga_case_width = 0u;\n";
+          out << "  if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_header.expr_offset, &__gpga_case_val, "
+                 "&__gpga_case_xz, &__gpga_case_width)) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    return __gpga_match;\n";
+          out << "  }\n";
+          out << "  if (__gpga_case_width != __gpga_header.width) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    return __gpga_match;\n";
+          out << "  }\n";
+          out << "  ulong __gpga_mask = (__gpga_header.width >= 64u)\n";
+          out << "      ? ~0ul\n";
+          out << "      : ((__gpga_header.width == 0u)\n";
+          out << "             ? 0ul\n";
+          out << "             : ((1ul << __gpga_header.width) - 1ul));\n";
+          out << "  __gpga_case_val &= __gpga_mask;\n";
+          out << "  __gpga_case_xz &= __gpga_mask;\n";
+          out << "  for (uint __gpga_entry = 0u; __gpga_entry < __gpga_header.entry_count; ++__gpga_entry) {\n";
+          out << "    const GpgaSchedVmCaseEntry __gpga_entry_rec = "
+                 "sched_vm_case_entry[__gpga_header.entry_offset + __gpga_entry];\n";
+          out << "    ulong __gpga_want = "
+                 "sched_vm_case_words[__gpga_entry_rec.want_offset];\n";
+          out << "    ulong __gpga_aux = "
+                 "sched_vm_case_words[__gpga_entry_rec.care_offset];\n";
+          out << "    bool __gpga_hit = false;\n";
+          out << "    if (__gpga_header.kind == GPGA_SCHED_VM_CASE_KIND_CASE) {\n";
+          out << "      ulong __gpga_diff = __gpga_case_xz ^ __gpga_aux;\n";
+          out << "      ulong __gpga_known = ~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
+          out << "      ulong __gpga_val_diff = (__gpga_case_val ^ __gpga_want) & __gpga_known;\n";
+          out << "      __gpga_hit = ((__gpga_diff | __gpga_val_diff) == 0ul);\n";
+          out << "    } else if (__gpga_header.kind == GPGA_SCHED_VM_CASE_KIND_CASEX) {\n";
+          out << "      ulong __gpga_cared = ~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
+          out << "      ulong __gpga_val_diff = (__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
+          out << "      __gpga_hit = (__gpga_val_diff == 0ul);\n";
+          out << "    } else if (__gpga_header.kind == GPGA_SCHED_VM_CASE_KIND_CASEZ) {\n";
+          out << "      ulong __gpga_cared = (~__gpga_aux) & __gpga_mask;\n";
+          out << "      ulong __gpga_bad = __gpga_case_xz & __gpga_cared;\n";
+          out << "      ulong __gpga_val_diff = (__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
+          out << "      __gpga_hit = ((__gpga_bad | __gpga_val_diff) == 0ul);\n";
+          out << "    }\n";
+          out << "    if (__gpga_hit) {\n";
+          out << "      __gpga_match = __gpga_entry_rec.target;\n";
           out << "      break;\n";
           out << "    }\n";
           out << "  }\n";
@@ -22338,242 +27107,474 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "}\n";
         }
         if (options.sched_vm) {
-          const auto& vm_assigns = vm_tables.assign_stmts;
           out << "static __attribute__((noinline)) void gpga_"
-              << MslName(module.name) << "_sched_vm_exec_assign(";
+              << MslName(module.name) << "_sched_vm_exec_assign_blocking(";
           emit_sched_param_decls(2);
-          out << ",\n  uint pid,\n  uint idx,\n  uint assign_id,\n"
-                 "  bool nonblocking) {\n";
-          emit_packed_signal_setup("sched.count");
-          emit_packed_nb_setup("sched.count");
-          emit_packed_force_setup("sched.count");
-          out << "  switch (assign_id) {\n";
-          ExprCache cache;
-          for (size_t i = 0; i < vm_assigns.size(); ++i) {
-            const Statement* stmt = vm_assigns[i];
-            if (!stmt || stmt->kind != StatementKind::kAssign) {
-              continue;
-            }
-            SequentialAssign blocking = CloneSequentialAssign(stmt->assign);
-            blocking.nonblocking = false;
-            out << "    case " << i << "u: {\n";
-            if (stmt->assign.nonblocking) {
-              SequentialAssign nonblocking_assign =
-                  CloneSequentialAssign(stmt->assign);
-              nonblocking_assign.nonblocking = true;
-              out << "      if (nonblocking) {\n";
-              emit_inline_assign(nonblocking_assign, 6, sched_locals, &cache);
-              out << "      } else {\n";
-              emit_inline_assign(blocking, 6, sched_locals, &cache);
-              out << "      }\n";
-            } else {
-              out << "      if (nonblocking) {\n";
-              out << "        sched_error[gid] = 1u;\n";
-              out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      } else {\n";
-              emit_inline_assign(blocking, 6, sched_locals, &cache);
-              out << "      }\n";
-            }
-            out << "      break;\n";
-            out << "    }\n";
-          }
-          out << "    default: {\n";
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
+          out << ",\n  uint pid,\n  uint idx,\n  uint assign_id) {\n";
+          out << "  const GpgaSchedVmAssignEntry __gpga_assign_entry =\n";
+          out << "      sched_vm_assign_entry[assign_id];\n";
+          out << "  bool __gpga_ok =\n";
+          out << "      ((__gpga_assign_entry.flags & (GPGA_SCHED_VM_ASSIGN_FLAG_FALLBACK |\n";
+          out << "                                       GPGA_SCHED_VM_ASSIGN_FLAG_NONBLOCKING)) == 0u);\n";
+          out << "  if (__gpga_ok &&\n";
+          out << "      __gpga_assign_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "    __gpga_ok = false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_ok) {\n";
+          out << "    ulong __gpga_rhs_val = 0ul;\n";
+          out << "    ulong __gpga_rhs_xz = 0ul;\n";
+          out << "    uint __gpga_rhs_width = 0u;\n";
+          out << "    if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_assign_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+          out << "      __gpga_ok = false;\n";
+          out << "    } else {\n";
+          out << "      const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "          sched_vm_signal_entry[__gpga_assign_entry.signal_id];\n";
+          out << "      if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "          __gpga_sig.array_size != 1u) {\n";
+          out << "        __gpga_ok = false;\n";
+          out << "      } else {\n";
+          out << "        uint __gpga_width = __gpga_sig.width;\n";
+          out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+          out << "        __gpga_rhs_val &= __gpga_mask;\n";
+          out << "        __gpga_rhs_xz &= __gpga_mask;\n";
+          out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "            __gpga_base * __gpga_stride;\n";
+          out << "        ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "            __gpga_base * __gpga_stride;\n";
+          out << "        if (__gpga_width > 32u) {\n";
+          out << "          ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+          out << "          ((device ulong*)(gpga_state + __gpga_xz_addr))[0] = __gpga_rhs_xz;\n";
+          out << "        } else {\n";
+          out << "          ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+          out << "          ((device uint*)(gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_rhs_xz;\n";
+          out << "        }\n";
+          out << "      }\n";
           out << "    }\n";
+          out << "  }\n";
+          out << "  if (!__gpga_ok) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
           out << "  }\n";
           out << "}\n";
         }
         if (options.sched_vm) {
-          const auto& vm_force_stmts = vm_tables.force_stmts;
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_vm_exec_assign_nb(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  uint assign_id) {\n";
+          if (packed_nb_signals.empty()) {
+            out << "  sched_error[gid] = 1u;\n";
+            out << "  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "  return;\n";
+            out << "}\n";
+          } else {
+            out << "  const GpgaSchedVmAssignEntry __gpga_assign_entry =\n";
+            out << "      sched_vm_assign_entry[assign_id];\n";
+            out << "  bool __gpga_ok =\n";
+            out << "      ((__gpga_assign_entry.flags & GPGA_SCHED_VM_ASSIGN_FLAG_FALLBACK) == 0u);\n";
+            out << "  if (__gpga_ok &&\n";
+            out << "      ((__gpga_assign_entry.flags & GPGA_SCHED_VM_ASSIGN_FLAG_NONBLOCKING) == 0u)) {\n";
+            out << "    __gpga_ok = false;\n";
+            out << "  }\n";
+            out << "  if (__gpga_ok &&\n";
+            out << "      __gpga_assign_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+            out << "    __gpga_ok = false;\n";
+            out << "  }\n";
+            out << "  if (__gpga_ok) {\n";
+            out << "    ulong __gpga_rhs_val = 0ul;\n";
+            out << "    ulong __gpga_rhs_xz = 0ul;\n";
+            out << "    uint __gpga_rhs_width = 0u;\n";
+            out << "    if (!gpga_" << MslName(module.name)
+                << "_sched_vm_eval_expr(";
+            emit_sched_param_names();
+            out << ", pid, __gpga_assign_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+            out << "      __gpga_ok = false;\n";
+            out << "    } else {\n";
+            out << "      const GpgaSchedVmSignalEntry __gpga_sig =\n";
+            out << "          sched_vm_signal_entry[__gpga_assign_entry.signal_id];\n";
+            out << "      if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+            out << "          __gpga_sig.array_size != 1u) {\n";
+            out << "        __gpga_ok = false;\n";
+            out << "      } else {\n";
+            out << "        uint __gpga_width = __gpga_sig.width;\n";
+            out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+            out << "            ? ~0ul\n";
+            out << "            : ((__gpga_width == 0u)\n";
+            out << "                   ? 0ul\n";
+            out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+            out << "        __gpga_rhs_val &= __gpga_mask;\n";
+            out << "        __gpga_rhs_xz &= __gpga_mask;\n";
+            out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+            out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+            out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+            out << "            __gpga_base * __gpga_stride;\n";
+            out << "        ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+            out << "            __gpga_base * __gpga_stride;\n";
+            out << "        if (__gpga_width > 32u) {\n";
+            out << "          ((device ulong*)(nb_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+            out << "          ((device ulong*)(nb_state + __gpga_xz_addr))[0] = __gpga_rhs_xz;\n";
+            out << "        } else {\n";
+            out << "          ((device uint*)(nb_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+            out << "          ((device uint*)(nb_state + __gpga_xz_addr))[0] = (uint)__gpga_rhs_xz;\n";
+            out << "        }\n";
+            out << "      }\n";
+            out << "    }\n";
+            out << "  }\n";
+            out << "  if (!__gpga_ok) {\n";
+            out << "    sched_error[gid] = 1u;\n";
+            out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "    return;\n";
+            out << "  }\n";
+            out << "}\n";
+          }
+        }
+        if (options.sched_vm) {
           out << "static __attribute__((noinline)) void gpga_"
               << MslName(module.name) << "_sched_vm_exec_force(";
           emit_sched_param_decls(2);
           out << ",\n  uint pid,\n  uint idx,\n  uint force_id) {\n";
-          emit_packed_signal_setup("sched.count");
-          emit_packed_nb_setup("sched.count");
-          emit_packed_force_setup("sched.count");
-          out << "  switch (force_id) {\n";
-          for (size_t i = 0; i < vm_force_stmts.size(); ++i) {
-            const Statement* stmt = vm_force_stmts[i];
-            out << "    case " << i << "u: {\n";
-            if (!stmt) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            if (stmt->assign.delay) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            const bool is_proc = stmt->is_procedural;
-            const std::string& target = stmt->force_target;
-            auto target_it = is_proc ? passign_target_index.find(target)
-                                     : force_target_index.find(target);
-            if (target_it == (is_proc ? passign_target_index.end()
-                                      : force_target_index.end())) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            auto id_it = is_proc ? passign_stmt_ids.find(stmt)
-                                 : force_stmt_ids.find(stmt);
-            if (id_it == (is_proc ? passign_stmt_ids.end()
-                                  : force_stmt_ids.end())) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            Lvalue4 lhs = build_lvalue4(stmt->assign, sched_locals, sched_regs,
-                                        false, 6);
-            if (!lhs.ok) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            if (override_is_reg[target]) {
-              out << "      if (!(" << override_active_expr(target) << ")) {\n";
-              out << "        " << shadow_val_name(target) << "[gid] = "
-                  << lhs.val << ";\n";
-              out << "        " << shadow_xz_name(target) << "[gid] = "
-                  << lhs.xz << ";\n";
-              out << "      }\n";
-            }
-            std::string slot =
-                is_proc ? passign_slot_expr(target) : force_slot_expr(target);
-            if (is_proc) {
-              out << "      sched_passign_id[" << slot << "] = "
-                  << id_it->second << "u;\n";
-              std::string force_active = force_active_expr(target);
-              if (force_active != "false") {
-                out << "      if (!" << force_active << ") {\n";
-                emit_force_value_assign(*stmt, lhs.val, lhs.xz, 8);
-                out << "      }\n";
-              } else {
-                emit_force_value_assign(*stmt, lhs.val, lhs.xz, 6);
-              }
-            } else {
-              out << "      sched_force_id[" << slot << "] = " << id_it->second
-                  << "u;\n";
-              emit_force_value_assign(*stmt, lhs.val, lhs.xz, 6);
-            }
-            out << "      break;\n";
-            out << "    }\n";
+          out << "  const GpgaSchedVmForceEntry __gpga_force_entry =\n";
+          out << "      sched_vm_force_entry[force_id];\n";
+          out << "  bool __gpga_ok =\n";
+          out << "      ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_FALLBACK) == 0u);\n";
+          out << "  if (__gpga_ok &&\n";
+          out << "      __gpga_force_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "    __gpga_ok = false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_ok && __gpga_force_entry.rhs_expr == 0xFFFFFFFFu) {\n";
+          out << "    __gpga_ok = false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_ok) {\n";
+          out << "    ulong __gpga_rhs_val = 0ul;\n";
+          out << "    ulong __gpga_rhs_xz = 0ul;\n";
+          out << "    uint __gpga_rhs_width = 0u;\n";
+          out << "    if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_force_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+          out << "      __gpga_ok = false;\n";
+          out << "    } else {\n";
+          out << "      const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "          sched_vm_signal_entry[__gpga_force_entry.signal_id];\n";
+          out << "      if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "          __gpga_sig.array_size != 1u) {\n";
+          out << "        __gpga_ok = false;\n";
+          out << "      } else {\n";
+          out << "        uint __gpga_width = __gpga_sig.width;\n";
+          out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "            ? ~0ul\n";
+          out << "            : ((__gpga_width == 0u)\n";
+          out << "                   ? 0ul\n";
+          out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+          out << "        __gpga_rhs_val &= __gpga_mask;\n";
+          out << "        __gpga_rhs_xz &= __gpga_mask;\n";
+          out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "            __gpga_base * __gpga_stride;\n";
+          out << "        ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "            __gpga_base * __gpga_stride;\n";
+          out << "        uint __gpga_force_slot = __gpga_force_entry.force_slot;\n";
+          out << "        uint __gpga_passign_slot = __gpga_force_entry.passign_slot;\n";
+          out << "        bool __gpga_force_valid = (__gpga_force_slot != 0xFFFFFFFFu);\n";
+          out << "        bool __gpga_passign_valid = (__gpga_passign_slot != 0xFFFFFFFFu);\n";
+          if (!force_target_list.empty()) {
+            out << "        uint __gpga_force_idx = 0u;\n";
+            out << "        bool __gpga_force_active = false;\n";
+            out << "        if (__gpga_force_valid) {\n";
+            out << "          __gpga_force_idx = (gid * GPGA_SCHED_FORCE_COUNT) + __gpga_force_slot;\n";
+            out << "          __gpga_force_active = (sched_force_id[__gpga_force_idx] != 0xFFFFFFFFu);\n";
+            out << "        }\n";
+          } else {
+            out << "        uint __gpga_force_idx = 0u;\n";
+            out << "        bool __gpga_force_active = false;\n";
+            out << "        if (__gpga_force_valid) {\n";
+            out << "          __gpga_ok = false;\n";
+            out << "        }\n";
           }
-          out << "    default: {\n";
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
+          if (!passign_target_list.empty()) {
+            out << "        uint __gpga_passign_idx = 0u;\n";
+            out << "        bool __gpga_passign_active = false;\n";
+            out << "        if (__gpga_passign_valid) {\n";
+            out << "          __gpga_passign_idx = (gid * GPGA_SCHED_PCONT_COUNT) + __gpga_passign_slot;\n";
+            out << "          __gpga_passign_active = (sched_passign_id[__gpga_passign_idx] != 0xFFFFFFFFu);\n";
+            out << "        }\n";
+          } else {
+            out << "        uint __gpga_passign_idx = 0u;\n";
+            out << "        bool __gpga_passign_active = false;\n";
+            out << "        if (__gpga_passign_valid) {\n";
+            out << "          __gpga_ok = false;\n";
+            out << "        }\n";
+          }
+          if (needs_force_shadow) {
+            out << "        if ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG) != 0u) {\n";
+            out << "          if (!(__gpga_force_active || __gpga_passign_active)) {\n";
+            out << "            if (__gpga_width > 32u) {\n";
+            out << "              ((device ulong*)(sched_force_state + __gpga_val_addr))[0] =\n";
+            out << "                  ((device ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+            out << "              ((device ulong*)(sched_force_state + __gpga_xz_addr))[0] =\n";
+            out << "                  ((device ulong*)(gpga_state + __gpga_xz_addr))[0];\n";
+            out << "            } else {\n";
+            out << "              ((device uint*)(sched_force_state + __gpga_val_addr))[0] =\n";
+            out << "                  ((device uint*)(gpga_state + __gpga_val_addr))[0];\n";
+            out << "              ((device uint*)(sched_force_state + __gpga_xz_addr))[0] =\n";
+            out << "                  ((device uint*)(gpga_state + __gpga_xz_addr))[0];\n";
+            out << "            }\n";
+            out << "          }\n";
+            out << "        }\n";
+          }
+          out << "        if (__gpga_ok) {\n";
+          out << "          bool __gpga_is_proc =\n";
+          out << "              ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL) != 0u);\n";
+          out << "          if (__gpga_is_proc) {\n";
+          if (!passign_target_list.empty()) {
+            out << "            if (!__gpga_passign_valid) {\n";
+            out << "              __gpga_ok = false;\n";
+            out << "            } else {\n";
+            out << "              sched_passign_id[__gpga_passign_idx] = __gpga_force_entry.force_id;\n";
+            out << "              if (!__gpga_force_active) {\n";
+            out << "                if (__gpga_width > 32u) {\n";
+            out << "                  ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+            out << "                  ((device ulong*)(gpga_state + __gpga_xz_addr))[0] = __gpga_rhs_xz;\n";
+            out << "                } else {\n";
+            out << "                  ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+            out << "                  ((device uint*)(gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_rhs_xz;\n";
+            out << "                }\n";
+            out << "              }\n";
+            out << "            }\n";
+          } else {
+            out << "            __gpga_ok = false;\n";
+          }
+          out << "          } else {\n";
+          if (!force_target_list.empty()) {
+            out << "            if (!__gpga_force_valid) {\n";
+            out << "              __gpga_ok = false;\n";
+            out << "            } else {\n";
+            out << "              sched_force_id[__gpga_force_idx] = __gpga_force_entry.force_id;\n";
+            out << "              if (__gpga_width > 32u) {\n";
+            out << "                ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+            out << "                ((device ulong*)(gpga_state + __gpga_xz_addr))[0] = __gpga_rhs_xz;\n";
+            out << "              } else {\n";
+            out << "                ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+            out << "                ((device uint*)(gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_rhs_xz;\n";
+            out << "              }\n";
+            out << "            }\n";
+          } else {
+            out << "            __gpga_ok = false;\n";
+          }
+          out << "          }\n";
+          out << "        }\n";
+          out << "      }\n";
           out << "    }\n";
+          out << "  }\n";
+          out << "  if (!__gpga_ok) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
           out << "  }\n";
           out << "}\n";
         }
         if (options.sched_vm) {
-          const auto& vm_release_stmts = vm_tables.release_stmts;
           out << "static __attribute__((noinline)) void gpga_"
               << MslName(module.name) << "_sched_vm_exec_release(";
           emit_sched_param_decls(2);
           out << ",\n  uint pid,\n  uint idx,\n  uint release_id) {\n";
-          emit_packed_signal_setup("sched.count");
-          emit_packed_nb_setup("sched.count");
-          emit_packed_force_setup("sched.count");
-          out << "  switch (release_id) {\n";
-          for (size_t i = 0; i < vm_release_stmts.size(); ++i) {
-            const Statement* stmt = vm_release_stmts[i];
-            out << "    case " << i << "u: {\n";
-            if (!stmt) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            const bool is_proc = stmt->is_procedural;
-            const std::string& target = stmt->release_target;
-            auto target_it = is_proc ? passign_target_index.find(target)
-                                     : force_target_index.find(target);
-            if (target_it == (is_proc ? passign_target_index.end()
-                                      : force_target_index.end())) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            std::string slot =
-                is_proc ? passign_slot_expr(target) : force_slot_expr(target);
-            if (is_proc) {
-              out << "      sched_passign_id[" << slot
-                  << "] = 0xFFFFFFFFu;\n";
-              if (override_is_reg[target]) {
-                std::string force_active = force_active_expr(target);
-                if (force_active != "false") {
-                  out << "      if (!" << force_active << ") {\n";
-                  out << "        " << val_name(target) << "[gid] = "
-                      << shadow_val_name(target) << "[gid];\n";
-                  out << "        " << xz_name(target) << "[gid] = "
-                      << shadow_xz_name(target) << "[gid];\n";
-                  out << "      }\n";
-                } else {
-                  out << "      " << val_name(target) << "[gid] = "
-                      << shadow_val_name(target) << "[gid];\n";
-                  out << "      " << xz_name(target) << "[gid] = "
-                      << shadow_xz_name(target) << "[gid];\n";
-                }
-              }
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            out << "      sched_force_id[" << slot << "] = 0xFFFFFFFFu;\n";
-            Lvalue4 lhs = build_lvalue4(stmt->assign, sched_locals, sched_regs,
-                                        false, 6);
-            if (!lhs.ok) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
-            }
-            if (passign_target_index.count(target) > 0) {
-              std::string passign_active = passign_active_expr(target);
-              out << "      if (" << passign_active << ") {\n";
-              emit_passign_apply_target(target, lhs, 8);
-              out << "      } else {\n";
-              if (override_is_reg[target]) {
-                out << "        " << val_name(target) << "[gid] = "
-                    << shadow_val_name(target) << "[gid];\n";
-                out << "        " << xz_name(target) << "[gid] = "
-                    << shadow_xz_name(target) << "[gid];\n";
-              }
-              out << "      }\n";
-            } else if (override_is_reg[target]) {
-              out << "      " << val_name(target) << "[gid] = "
-                  << shadow_val_name(target) << "[gid];\n";
-              out << "      " << xz_name(target) << "[gid] = "
-                  << shadow_xz_name(target) << "[gid];\n";
-            }
-            out << "      break;\n";
-            out << "    }\n";
+          out << "  const GpgaSchedVmReleaseEntry __gpga_release_entry =\n";
+          out << "      sched_vm_release_entry[release_id];\n";
+          out << "  bool __gpga_ok =\n";
+          out << "      ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_FALLBACK) == 0u);\n";
+          out << "  if (__gpga_ok &&\n";
+          out << "      __gpga_release_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "    __gpga_ok = false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_ok) {\n";
+          out << "    const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "        sched_vm_signal_entry[__gpga_release_entry.signal_id];\n";
+          out << "    if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "        __gpga_sig.array_size != 1u) {\n";
+          out << "      __gpga_ok = false;\n";
+          out << "    } else {\n";
+          out << "      uint __gpga_width = __gpga_sig.width;\n";
+          out << "      ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "      ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "      ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "          __gpga_base * __gpga_stride;\n";
+          out << "      ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "          __gpga_base * __gpga_stride;\n";
+          out << "      uint __gpga_force_slot = __gpga_release_entry.force_slot;\n";
+          out << "      uint __gpga_passign_slot = __gpga_release_entry.passign_slot;\n";
+          out << "      bool __gpga_force_valid = (__gpga_force_slot != 0xFFFFFFFFu);\n";
+          out << "      bool __gpga_passign_valid = (__gpga_passign_slot != 0xFFFFFFFFu);\n";
+          if (!force_target_list.empty()) {
+            out << "      uint __gpga_force_idx = 0u;\n";
+            out << "      bool __gpga_force_active = false;\n";
+            out << "      if (__gpga_force_valid) {\n";
+            out << "        __gpga_force_idx = (gid * GPGA_SCHED_FORCE_COUNT) + __gpga_force_slot;\n";
+            out << "        __gpga_force_active = (sched_force_id[__gpga_force_idx] != 0xFFFFFFFFu);\n";
+            out << "      }\n";
+          } else {
+            out << "      uint __gpga_force_idx = 0u;\n";
+            out << "      bool __gpga_force_active = false;\n";
+            out << "      if (__gpga_force_valid) {\n";
+            out << "        __gpga_ok = false;\n";
+            out << "      }\n";
           }
-          out << "    default: {\n";
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
+          if (!passign_target_list.empty()) {
+            out << "      uint __gpga_passign_idx = 0u;\n";
+            out << "      if (__gpga_passign_valid) {\n";
+            out << "        __gpga_passign_idx = (gid * GPGA_SCHED_PCONT_COUNT) + __gpga_passign_slot;\n";
+            out << "      }\n";
+          } else {
+            out << "      uint __gpga_passign_idx = 0u;\n";
+            out << "      if (__gpga_passign_valid) {\n";
+            out << "        __gpga_ok = false;\n";
+            out << "      }\n";
+          }
+          out << "      if (__gpga_ok) {\n";
+          out << "        bool __gpga_is_proc =\n";
+          out << "            ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL) != 0u);\n";
+          out << "        if (__gpga_is_proc) {\n";
+          if (!passign_target_list.empty()) {
+            out << "          if (!__gpga_passign_valid) {\n";
+            out << "            __gpga_ok = false;\n";
+            out << "          } else {\n";
+            out << "            sched_passign_id[__gpga_passign_idx] = 0xFFFFFFFFu;\n";
+            if (needs_force_shadow) {
+              out << "            if ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG) != 0u) {\n";
+              out << "              if (!__gpga_force_active) {\n";
+              out << "                if (__gpga_width > 32u) {\n";
+              out << "                  ((device ulong*)(gpga_state + __gpga_val_addr))[0] =\n";
+              out << "                      ((device ulong*)(sched_force_state + __gpga_val_addr))[0];\n";
+              out << "                  ((device ulong*)(gpga_state + __gpga_xz_addr))[0] =\n";
+              out << "                      ((device ulong*)(sched_force_state + __gpga_xz_addr))[0];\n";
+              out << "                } else {\n";
+              out << "                  ((device uint*)(gpga_state + __gpga_val_addr))[0] =\n";
+              out << "                      ((device uint*)(sched_force_state + __gpga_val_addr))[0];\n";
+              out << "                  ((device uint*)(gpga_state + __gpga_xz_addr))[0] =\n";
+              out << "                      ((device uint*)(sched_force_state + __gpga_xz_addr))[0];\n";
+              out << "                }\n";
+              out << "              }\n";
+              out << "            }\n";
+            }
+            out << "          }\n";
+          } else {
+            out << "          __gpga_ok = false;\n";
+          }
+          out << "        } else {\n";
+          if (!force_target_list.empty()) {
+            out << "          if (!__gpga_force_valid) {\n";
+            out << "            __gpga_ok = false;\n";
+            out << "          } else if (__gpga_passign_valid) {\n";
+            out << "            __gpga_ok = false;\n";
+            out << "          } else {\n";
+            out << "            sched_force_id[__gpga_force_idx] = 0xFFFFFFFFu;\n";
+            if (needs_force_shadow) {
+              out << "            if ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG) != 0u) {\n";
+              out << "              if (__gpga_width > 32u) {\n";
+              out << "                ((device ulong*)(gpga_state + __gpga_val_addr))[0] =\n";
+              out << "                    ((device ulong*)(sched_force_state + __gpga_val_addr))[0];\n";
+              out << "                ((device ulong*)(gpga_state + __gpga_xz_addr))[0] =\n";
+              out << "                    ((device ulong*)(sched_force_state + __gpga_xz_addr))[0];\n";
+              out << "              } else {\n";
+              out << "                ((device uint*)(gpga_state + __gpga_val_addr))[0] =\n";
+              out << "                    ((device uint*)(sched_force_state + __gpga_val_addr))[0];\n";
+              out << "                ((device uint*)(gpga_state + __gpga_xz_addr))[0] =\n";
+              out << "                    ((device uint*)(sched_force_state + __gpga_xz_addr))[0];\n";
+              out << "              }\n";
+              out << "            }\n";
+            }
+            out << "          }\n";
+          } else {
+            out << "          __gpga_ok = false;\n";
+          }
+          out << "        }\n";
+          out << "      }\n";
           out << "    }\n";
           out << "  }\n";
+          out << "  if (!__gpga_ok) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "}\n";
+        }
+        if (options.sched_vm) {
+          out << "static __attribute__((noinline)) bool gpga_"
+              << MslName(module.name) << "_sched_vm_apply_force_entry(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint force_id,\n  uint slot,\n"
+                 "  bool is_passign) {\n";
+          out << "  if (force_id >= GPGA_SCHED_VM_FORCE_COUNT) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmForceEntry __gpga_force_entry =\n";
+          out << "      sched_vm_force_entry[force_id];\n";
+          out << "  if ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_FALLBACK) != 0u) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_force_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  if (__gpga_force_entry.rhs_expr == 0xFFFFFFFFu) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  bool __gpga_is_proc =\n";
+          out << "      ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL) != 0u);\n";
+          out << "  if (is_passign != __gpga_is_proc) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  uint __gpga_slot = is_passign ? __gpga_force_entry.passign_slot\n";
+          out << "      : __gpga_force_entry.force_slot;\n";
+          out << "  if (__gpga_slot == 0xFFFFFFFFu || __gpga_slot != slot) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmSignalEntry __gpga_sig =\n";
+          out << "      sched_vm_signal_entry[__gpga_force_entry.signal_id];\n";
+          out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "      __gpga_sig.array_size != 1u) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  ulong __gpga_rhs_val = 0ul;\n";
+          out << "  ulong __gpga_rhs_xz = 0ul;\n";
+          out << "  uint __gpga_rhs_width = 0u;\n";
+          out << "  if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_force_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+          out << "    return false;\n";
+          out << "  }\n";
+          out << "  uint __gpga_width = __gpga_sig.width;\n";
+          out << "  ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "      ? ~0ul\n";
+          out << "      : ((__gpga_width == 0u)\n";
+          out << "             ? 0ul\n";
+          out << "             : ((1ul << __gpga_width) - 1ul));\n";
+          out << "  __gpga_rhs_val &= __gpga_mask;\n";
+          out << "  __gpga_rhs_xz &= __gpga_mask;\n";
+          out << "  ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "  ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "  ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "      __gpga_base * __gpga_stride;\n";
+          out << "  ulong __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "      __gpga_base * __gpga_stride;\n";
+          out << "  if (__gpga_width > 32u) {\n";
+          out << "    ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+          out << "    ((device ulong*)(gpga_state + __gpga_xz_addr))[0] = __gpga_rhs_xz;\n";
+          out << "  } else {\n";
+          out << "    ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+          out << "    ((device uint*)(gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_rhs_xz;\n";
+          out << "  }\n";
+          out << "  return true;\n";
           out << "}\n";
         }
         auto emit_syscall_record = [&](const Expr& call, int indent) -> void {
@@ -22630,6 +27631,20 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         };
         if (options.sched_vm) {
           const auto& vm_service_calls = vm_tables.service_calls;
+          std::vector<size_t> vm_service_call_fallback;
+          if (vm_layout.service_entries.size() == vm_service_calls.size()) {
+            for (size_t i = 0; i < vm_layout.service_entries.size(); ++i) {
+              if ((vm_layout.service_entries[i].flags &
+                   kSchedulerVmServiceFlagFallback) != 0u) {
+                vm_service_call_fallback.push_back(i);
+              }
+            }
+          } else {
+            vm_service_call_fallback.reserve(vm_service_calls.size());
+            for (size_t i = 0; i < vm_service_calls.size(); ++i) {
+              vm_service_call_fallback.push_back(i);
+            }
+          }
           out << "static __attribute__((noinline)) void gpga_"
               << MslName(module.name) << "_sched_vm_exec_service_call(";
           emit_sched_param_decls(2);
@@ -22645,42 +27660,276 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           emit_packed_signal_setup("sched.count");
           emit_packed_nb_setup("sched.count");
           emit_packed_force_setup("sched.count");
-          out << "  switch (service_id) {\n";
-          for (size_t i = 0; i < vm_service_calls.size(); ++i) {
-            const auto& call = vm_service_calls[i];
-            out << "    case " << i << "u: {\n";
-            if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
-              if (!call.stmt) {
-                out << "      sched_error[gid] = 1u;\n";
-                out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-                out << "      break;\n";
-                out << "    }\n";
-                continue;
+          if (vm_service_calls.empty()) {
+            out << "  sched_error[gid] = 1u;\n";
+            out << "  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "  return;\n";
+          } else {
+          out << "  if (service_id >= GPGA_SCHED_VM_SERVICE_CALL_COUNT) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmServiceEntry __gpga_entry =\n";
+          out << "      sched_vm_service_entry[service_id];\n";
+          if (!vm_service_call_fallback.empty()) {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_FALLBACK) != 0u) {\n";
+            out << "    switch (service_id) {\n";
+            for (size_t idx : vm_service_call_fallback) {
+              const auto& call = vm_service_calls[idx];
+              out << "      case " << idx << "u: {\n";
+              if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
+                if (!call.stmt) {
+                  out << "        sched_error[gid] = 1u;\n";
+                  out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "        break;\n";
+                  out << "      }\n";
+                  continue;
+                }
+                emit_system_task(*call.stmt, 8);
+              } else {
+                if (!call.call) {
+                  out << "        sched_error[gid] = 1u;\n";
+                  out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                  out << "        break;\n";
+                  out << "      }\n";
+                  continue;
+                }
+                emit_syscall_record(*call.call, 8);
               }
-              emit_system_task(*call.stmt, 6);
-            } else {
-              if (!call.call) {
-                out << "      sched_error[gid] = 1u;\n";
-                out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-                out << "      break;\n";
-                out << "    }\n";
-                continue;
-              }
-              emit_syscall_record(*call.call, 6);
+              out << "        break;\n";
+              out << "      }\n";
             }
-            out << "      break;\n";
+            out << "      default: {\n";
+            out << "        sched_error[gid] = 1u;\n";
+            out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "        break;\n";
+            out << "      }\n";
             out << "    }\n";
+            out << "    return;\n";
+            out << "  }\n";
+          } else {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_FALLBACK) != 0u) {\n";
+            out << "    sched_error[gid] = 1u;\n";
+            out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "    return;\n";
+            out << "  }\n";
           }
-          out << "    default: {\n";
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          if (!system_task_info.monitor_stmts.empty()) {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_ON) != 0u) {\n";
+            out << "    sched_monitor_enable[gid] = 1u;\n";
+            out << "    return;\n";
+            out << "  }\n";
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_OFF) != 0u) {\n";
+            out << "    sched_monitor_enable[gid] = 0u;\n";
+            out << "    return;\n";
+            out << "  }\n";
+          } else {
+            out << "  if ((__gpga_entry.flags & (GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_ON |\n";
+            out << "                               GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_OFF)) != 0u) {\n";
+            out << "    return;\n";
+            out << "  }\n";
+          }
+          if (!system_task_info.strobe_stmts.empty()) {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_STROBE) != 0u) {\n";
+            out << "    if (__gpga_entry.aux >= GPGA_SCHED_STROBE_COUNT) {\n";
+            out << "      sched_error[gid] = 1u;\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      return;\n";
+            out << "    }\n";
+            out << "    sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + __gpga_entry.aux] += 1u;\n";
+            out << "    return;\n";
+            out << "  }\n";
+          } else {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_STROBE) != 0u) {\n";
+            out << "    return;\n";
+            out << "  }\n";
+          }
+          out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_GLOBAL_ONLY) != 0u && gid != 0u) {\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  if (__gpga_entry.arg_offset + __gpga_entry.arg_count >\n";
+          out << "      GPGA_SCHED_VM_SERVICE_ARG_COUNT) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  if (__gpga_entry.arg_count > GPGA_SCHED_SERVICE_MAX_ARGS) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  const uint __gpga_arg_count = __gpga_entry.arg_count;\n";
+          out << "  const uint __gpga_arg_base = __gpga_entry.arg_offset;\n";
+          out << "  constexpr uint __gpga_arg_capacity =\n";
+          out << "      (GPGA_SCHED_SERVICE_MAX_ARGS > 0u) ? GPGA_SCHED_SERVICE_MAX_ARGS : 1u;\n";
+          out << "  ulong __gpga_arg_val[__gpga_arg_capacity];\n";
+          out << "  ulong __gpga_arg_xz[__gpga_arg_capacity];\n";
+          out << "  uint __gpga_arg_width[__gpga_arg_capacity];\n";
+          out << "  uint __gpga_arg_kind[__gpga_arg_capacity];\n";
+          out << "  bool __gpga_ok = true;\n";
+          out << "  bool __gpga_guard_fd =\n";
+          out << "      ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_GUARD_FD) != 0u);\n";
+          out << "  bool __gpga_guard_ok = true;\n";
+          if (!system_task_info.monitor_stmts.empty()) {
+            out << "  bool __gpga_monitor =\n";
+            out << "      ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_MONITOR) != 0u);\n";
+            out << "  bool __gpga_changed = true;\n";
+            out << "  uint __gpga_mon_base = 0u;\n";
+            out << "  if (__gpga_monitor) {\n";
+            out << "    if (__gpga_entry.aux >= GPGA_SCHED_MONITOR_COUNT) {\n";
+            out << "      sched_error[gid] = 1u;\n";
+            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "      return;\n";
+            out << "    }\n";
+            out << "    sched_monitor_active[(gid * GPGA_SCHED_MONITOR_COUNT) +\n";
+            out << "        __gpga_entry.aux] = 1u;\n";
+            out << "    __gpga_mon_base = ((gid * GPGA_SCHED_MONITOR_COUNT) + __gpga_entry.aux) *\n";
+            out << "        GPGA_SCHED_MONITOR_MAX_ARGS;\n";
+            out << "  }\n";
+          } else {
+            out << "  bool __gpga_monitor = false;\n";
+            out << "  bool __gpga_changed = false;\n";
+            out << "  uint __gpga_mon_base = 0u;\n";
+          }
+          out << "  #pragma clang loop unroll(disable)\n";
+          out << "  for (uint __gpga_i = 0u; __gpga_i < __gpga_arg_count; ++__gpga_i) {\n";
+          out << "    if (!__gpga_ok) {\n";
           out << "      break;\n";
           out << "    }\n";
+          out << "    const GpgaSchedVmServiceArg __gpga_arg =\n";
+          out << "        sched_vm_service_arg[__gpga_arg_base + __gpga_i];\n";
+          out << "    uint __gpga_kind = __gpga_arg.kind;\n";
+          out << "    uint __gpga_width = __gpga_arg.width;\n";
+          out << "    uint __gpga_flags = __gpga_arg.flags;\n";
+          out << "    ulong __gpga_val = 0ul;\n";
+          out << "    ulong __gpga_xz = 0ul;\n";
+          out << "    uint __gpga_service_kind = GPGA_SERVICE_ARG_VALUE;\n";
+          out << "    if (__gpga_kind == GPGA_SCHED_VM_SERVICE_ARG_KIND_IDENT) {\n";
+          out << "      __gpga_service_kind = GPGA_SERVICE_ARG_IDENT;\n";
+          out << "      __gpga_val = (ulong)__gpga_arg.payload;\n";
+          out << "    } else if (__gpga_kind == GPGA_SCHED_VM_SERVICE_ARG_KIND_STRING) {\n";
+          out << "      __gpga_service_kind = GPGA_SERVICE_ARG_STRING;\n";
+          out << "      __gpga_val = (ulong)__gpga_arg.payload;\n";
+          out << "    } else {\n";
+          out << "      if ((__gpga_flags & GPGA_SCHED_VM_SERVICE_ARG_FLAG_TIME) != 0u) {\n";
+          out << "        __gpga_val = __gpga_time;\n";
+          out << "        __gpga_width = 64u;\n";
+          out << "      } else if ((__gpga_flags & GPGA_SCHED_VM_SERVICE_ARG_FLAG_STIME) != 0u) {\n";
+          out << "        __gpga_val = (ulong)(uint)__gpga_time;\n";
+          out << "        __gpga_width = 32u;\n";
+          out << "      } else if ((__gpga_flags & GPGA_SCHED_VM_SERVICE_ARG_FLAG_EXPR) != 0u) {\n";
+          out << "        ulong __gpga_expr_val = 0ul;\n";
+          out << "        ulong __gpga_expr_xz = 0ul;\n";
+          out << "        uint __gpga_expr_width = 0u;\n";
+          out << "        if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg.payload, &__gpga_expr_val,\n";
+          out << "            &__gpga_expr_xz, &__gpga_expr_width)) {\n";
+          out << "          __gpga_ok = false;\n";
+          out << "        } else {\n";
+          out << "          __gpga_val = __gpga_expr_val;\n";
+          out << "          __gpga_xz = __gpga_expr_xz;\n";
+          out << "        }\n";
+          out << "      } else {\n";
+          out << "        __gpga_val = (ulong)__gpga_arg.payload;\n";
+          out << "      }\n";
+          out << "      if (__gpga_width == 0u) {\n";
+          out << "        __gpga_width = 1u;\n";
+          out << "      }\n";
+          out << "      ulong __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "          ? ~0ul\n";
+          out << "          : ((1ul << __gpga_width) - 1ul);\n";
+          out << "      __gpga_val &= __gpga_mask;\n";
+          out << "      __gpga_xz &= __gpga_mask;\n";
+          out << "      if (__gpga_guard_fd && __gpga_i == 0u) {\n";
+          out << "        __gpga_guard_ok = (__gpga_xz == 0ul && __gpga_val != 0ul);\n";
+          out << "      }\n";
+          if (!system_task_info.monitor_stmts.empty()) {
+            out << "      if (__gpga_monitor &&\n";
+            out << "          __gpga_service_kind == GPGA_SERVICE_ARG_VALUE) {\n";
+            out << "        uint __gpga_slot = __gpga_mon_base + __gpga_i;\n";
+            out << "        if ((((sched_monitor_val[__gpga_slot] ^ __gpga_val) |\n";
+            out << "              (sched_monitor_xz[__gpga_slot] ^ __gpga_xz)) &\n";
+            out << "             __gpga_mask) != 0ul) {\n";
+            out << "          __gpga_changed = true;\n";
+            out << "        }\n";
+            out << "        sched_monitor_val[__gpga_slot] = __gpga_val;\n";
+            out << "        sched_monitor_xz[__gpga_slot] = __gpga_xz;\n";
+            out << "      }\n";
+          }
+          out << "    }\n";
+          out << "    __gpga_arg_val[__gpga_i] = __gpga_val;\n";
+          out << "    __gpga_arg_xz[__gpga_i] = __gpga_xz;\n";
+          out << "    __gpga_arg_width[__gpga_i] = __gpga_width;\n";
+          out << "    __gpga_arg_kind[__gpga_i] = __gpga_service_kind;\n";
           out << "  }\n";
+          out << "  if (!__gpga_ok) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  if (__gpga_guard_fd && !__gpga_guard_ok) {\n";
+          out << "    return;\n";
+          out << "  }\n";
+          if (!system_task_info.monitor_stmts.empty()) {
+            out << "  if (__gpga_monitor &&\n";
+            out << "      (sched_monitor_enable[gid] == 0u || !__gpga_changed)) {\n";
+            out << "    return;\n";
+            out << "  }\n";
+          }
+          out << "  uint __gpga_svc_index = sched_service_count[gid];\n";
+          out << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  uint __gpga_svc_offset = (gid * sched.service_capacity) +\n";
+          out << "      __gpga_svc_index;\n";
+          out << "  sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+          out << "  sched_service[__gpga_svc_offset].kind = __gpga_entry.kind;\n";
+          out << "  sched_service[__gpga_svc_offset].pid = pid;\n";
+          out << "  sched_service[__gpga_svc_offset].format_id = __gpga_entry.format_id;\n";
+          out << "  sched_service[__gpga_svc_offset].arg_count = __gpga_arg_count;\n";
+          out << "  #pragma clang loop unroll(disable)\n";
+          out << "  for (uint __gpga_i = 0u; __gpga_i < __gpga_arg_count; ++__gpga_i) {\n";
+          out << "    sched_service[__gpga_svc_offset].arg_kind[__gpga_i] =\n";
+          out << "        __gpga_arg_kind[__gpga_i];\n";
+          out << "    sched_service[__gpga_svc_offset].arg_width[__gpga_i] =\n";
+          out << "        __gpga_arg_width[__gpga_i];\n";
+          out << "    sched_service[__gpga_svc_offset].arg_val[__gpga_i] =\n";
+          out << "        __gpga_arg_val[__gpga_i];\n";
+          out << "    sched_service[__gpga_svc_offset].arg_xz[__gpga_i] =\n";
+          out << "        __gpga_arg_xz[__gpga_i];\n";
+          out << "  }\n";
+          out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_FINISH) != 0u) {\n";
+          out << "    finished = true;\n";
+          out << "    steps = 0u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "  } else if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_STOP) != 0u) {\n";
+          out << "    stopped = true;\n";
+          out << "    steps = 0u;\n";
+          out << "  }\n";
+          }
           out << "}\n";
         }
         if (options.sched_vm) {
           const auto& vm_service_assigns = vm_tables.service_assign_stmts;
+          std::vector<size_t> vm_service_ret_fallback;
+          if (vm_layout.service_ret_entries.size() == vm_service_assigns.size()) {
+            for (size_t i = 0; i < vm_layout.service_ret_entries.size(); ++i) {
+              if ((vm_layout.service_ret_entries[i].flags &
+                   kSchedulerVmServiceRetAssignFlagFallback) != 0u) {
+                vm_service_ret_fallback.push_back(i);
+              }
+            }
+          } else {
+            vm_service_ret_fallback.reserve(vm_service_assigns.size());
+            for (size_t i = 0; i < vm_service_assigns.size(); ++i) {
+              vm_service_ret_fallback.push_back(i);
+            }
+          }
           out << "static __attribute__((noinline)) void gpga_"
               << MslName(module.name) << "_sched_vm_exec_service_ret_assign(";
           emit_sched_param_decls(2);
@@ -22690,41 +27939,160 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           emit_packed_signal_setup("sched.count");
           emit_packed_nb_setup("sched.count");
           emit_packed_force_setup("sched.count");
-          out << "  switch (assign_id) {\n";
-          for (size_t i = 0; i < vm_service_assigns.size(); ++i) {
-            const Statement* stmt = vm_service_assigns[i];
-            out << "    case " << i << "u: {\n";
-            if (!stmt || stmt->kind != StatementKind::kAssign ||
-                !stmt->assign.rhs) {
-              out << "      sched_error[gid] = 1u;\n";
-              out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-              out << "      break;\n";
-              out << "    }\n";
-              continue;
+          out << "  if (assign_id >= GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
+          out << "  }\n";
+          out << "  const GpgaSchedVmServiceRetAssignEntry __gpga_entry =\n";
+          out << "      sched_vm_service_ret_assign_entry[assign_id];\n";
+          if (!vm_service_ret_fallback.empty()) {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_RET_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+            out << "    switch (assign_id) {\n";
+            for (size_t idx : vm_service_ret_fallback) {
+              const Statement* stmt = vm_service_assigns[idx];
+              out << "      case " << idx << "u: {\n";
+              if (!stmt || stmt->kind != StatementKind::kAssign ||
+                  !stmt->assign.rhs) {
+                out << "        sched_error[gid] = 1u;\n";
+                out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+                out << "        break;\n";
+                out << "      }\n";
+                continue;
+              }
+              int width = SignalWidth(module, stmt->assign.lhs);
+              if (width <= 0) {
+                width = ExprWidth(*stmt->assign.rhs, module);
+              }
+              if (width <= 0) {
+                width = 1;
+              }
+              std::string ret_val = "__gpga_ret";
+              std::string masked =
+                  (width > 32)
+                      ? MaskForWidthExpr(ret_val, width)
+                      : MaskForWidthExpr("uint(" + ret_val + ")", width);
+              FsExpr result{masked, literal_for_width(0, width),
+                            drive_full(width), width};
+              emit_lvalue_assign(stmt->assign, result, 8, sched_locals);
+              out << "        break;\n";
+              out << "      }\n";
             }
-            int width = SignalWidth(module, stmt->assign.lhs);
-            if (width <= 0) {
-              width = ExprWidth(*stmt->assign.rhs, module);
-            }
-            if (width <= 0) {
-              width = 1;
-            }
-            std::string ret_val = "__gpga_ret";
-            std::string masked =
-                (width > 32)
-                    ? MaskForWidthExpr(ret_val, width)
-                    : MaskForWidthExpr("uint(" + ret_val + ")", width);
-            FsExpr result{masked, literal_for_width(0, width),
-                          drive_full(width), width};
-            emit_lvalue_assign(stmt->assign, result, 6, sched_locals);
-            out << "      break;\n";
+            out << "      default: {\n";
+            out << "        sched_error[gid] = 1u;\n";
+            out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "        break;\n";
+            out << "      }\n";
+            out << "    }\n";
+            out << "    return;\n";
+            out << "  }\n";
+          } else {
+            out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_RET_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+            out << "    sched_error[gid] = 1u;\n";
+            out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "    return;\n";
+            out << "  }\n";
+          }
+          out << "  bool __gpga_ok = true;\n";
+          out << "  if (__gpga_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+          out << "    __gpga_ok = false;\n";
+          out << "  }\n";
+          out << "  uint __gpga_width = __gpga_entry.width;\n";
+          out << "  GpgaSchedVmSignalEntry __gpga_sig;\n";
+          out << "  if (__gpga_ok) {\n";
+          out << "    __gpga_sig = sched_vm_signal_entry[__gpga_entry.signal_id];\n";
+          out << "    if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+          out << "        __gpga_sig.array_size != 1u) {\n";
+          out << "      __gpga_ok = false;\n";
+          out << "    }\n";
+          out << "  }\n";
+          out << "  if (__gpga_ok && __gpga_width == 0u) {\n";
+          out << "    __gpga_width = __gpga_sig.width;\n";
+          out << "  }\n";
+          out << "  if (__gpga_ok && __gpga_width == 0u) {\n";
+          out << "    __gpga_width = 1u;\n";
+          out << "  }\n";
+          out << "  ulong __gpga_val = 0ul;\n";
+          out << "  ulong __gpga_xz = 0ul;\n";
+          out << "  ulong __gpga_mask = 0ul;\n";
+          out << "  ulong __gpga_stride = 0ul;\n";
+          out << "  ulong __gpga_val_addr = 0ul;\n";
+          out << "  ulong __gpga_xz_addr = 0ul;\n";
+          out << "  bool __gpga_force_active = false;\n";
+          out << "  bool __gpga_passign_active = false;\n";
+          if (!force_target_list.empty()) {
+            out << "  uint __gpga_force_slot = __gpga_entry.force_slot;\n";
+            out << "  if (__gpga_force_slot != 0xFFFFFFFFu) {\n";
+            out << "    uint __gpga_force_idx = (gid * GPGA_SCHED_FORCE_COUNT) + __gpga_force_slot;\n";
+            out << "    __gpga_force_active = (sched_force_id[__gpga_force_idx] != 0xFFFFFFFFu);\n";
+            out << "  }\n";
+          } else {
+            out << "  uint __gpga_force_slot = __gpga_entry.force_slot;\n";
+            out << "  if (__gpga_force_slot != 0xFFFFFFFFu) {\n";
+            out << "    __gpga_ok = false;\n";
+            out << "  }\n";
+          }
+          if (!passign_target_list.empty()) {
+            out << "  uint __gpga_passign_slot = __gpga_entry.passign_slot;\n";
+            out << "  if (__gpga_passign_slot != 0xFFFFFFFFu) {\n";
+            out << "    uint __gpga_passign_idx = (gid * GPGA_SCHED_PCONT_COUNT) + __gpga_passign_slot;\n";
+            out << "    __gpga_passign_active = (sched_passign_id[__gpga_passign_idx] != 0xFFFFFFFFu);\n";
+            out << "  }\n";
+          } else {
+            out << "  uint __gpga_passign_slot = __gpga_entry.passign_slot;\n";
+            out << "  if (__gpga_passign_slot != 0xFFFFFFFFu) {\n";
+            out << "    __gpga_ok = false;\n";
+            out << "  }\n";
+          }
+          out << "  if (__gpga_ok) {\n";
+          out << "    __gpga_mask = (__gpga_width >= 64u)\n";
+          out << "        ? ~0ul\n";
+          out << "        : ((1ul << __gpga_width) - 1ul);\n";
+          out << "    __gpga_val = __gpga_ret & __gpga_mask;\n";
+          out << "    __gpga_xz = 0ul;\n";
+          out << "    __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+          out << "    ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+          out << "    __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+          out << "        __gpga_base * __gpga_stride;\n";
+          out << "    __gpga_xz_addr = (ulong)__gpga_sig.xz_offset +\n";
+          out << "        __gpga_base * __gpga_stride;\n";
+          out << "    bool __gpga_override = __gpga_force_active || __gpga_passign_active;\n";
+          if (needs_force_shadow) {
+            out << "    if (__gpga_override) {\n";
+            out << "      if (__gpga_width > 32u) {\n";
+            out << "        ((device ulong*)(sched_force_state + __gpga_val_addr))[0] = __gpga_val;\n";
+            out << "        ((device ulong*)(sched_force_state + __gpga_xz_addr))[0] = __gpga_xz;\n";
+            out << "      } else {\n";
+            out << "        ((device uint*)(sched_force_state + __gpga_val_addr))[0] = (uint)__gpga_val;\n";
+            out << "        ((device uint*)(sched_force_state + __gpga_xz_addr))[0] = (uint)__gpga_xz;\n";
+            out << "      }\n";
+            out << "    } else {\n";
+            out << "      if (__gpga_width > 32u) {\n";
+            out << "        ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_val;\n";
+            out << "        ((device ulong*)(gpga_state + __gpga_xz_addr))[0] = __gpga_xz;\n";
+            out << "      } else {\n";
+            out << "        ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_val;\n";
+            out << "        ((device uint*)(gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_xz;\n";
+            out << "      }\n";
+            out << "    }\n";
+          } else {
+            out << "    if (__gpga_override) {\n";
+            out << "      __gpga_ok = false;\n";
+            out << "    } else {\n";
+            out << "      if (__gpga_width > 32u) {\n";
+            out << "        ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_val;\n";
+            out << "        ((device ulong*)(gpga_state + __gpga_xz_addr))[0] = __gpga_xz;\n";
+            out << "      } else {\n";
+            out << "        ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_val;\n";
+            out << "        ((device uint*)(gpga_state + __gpga_xz_addr))[0] = (uint)__gpga_xz;\n";
+            out << "      }\n";
             out << "    }\n";
           }
-          out << "    default: {\n";
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
+          out << "  }\n";
+          out << "  if (!__gpga_ok) {\n";
+          out << "    sched_error[gid] = 1u;\n";
+          out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "    return;\n";
           out << "  }\n";
           out << "}\n";
         }
@@ -22747,24 +28115,33 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           emit_packed_force_setup("sched.count");
           out << "  uint __gpga_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
           out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
-          out << "  if (__gpga_bc_len == 0u) {\n";
-          out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
-          out << "    switch (__gpga_group) {\n";
-          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-            out << "      case " << group << "u:\n";
-            out << "        gpga_" << MslName(module.name) << "_sched_group_"
-                << group << "(";
-            emit_sched_param_names();
-            out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+          if (vm_needs_call_group) {
+            out << "  if (__gpga_bc_len == 0u) {\n";
+            out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+            out << "    switch (__gpga_group) {\n";
+            for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+              out << "      case " << group << "u:\n";
+              out << "        gpga_" << MslName(module.name) << "_sched_group_"
+                  << group << "(";
+              emit_sched_param_names();
+              out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+              out << "        break;\n";
+            }
+            out << "      default: {\n";
+            out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             out << "        break;\n";
+            out << "      }\n";
+            out << "    }\n";
+            out << "    return;\n";
+            out << "  }\n";
+          } else {
+            out << "  if (__gpga_bc_len == 0u) {\n";
+            out << "    sched_error[gid] = 1u;\n";
+            out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+            out << "    return;\n";
+            out << "  }\n";
           }
-          out << "      default: {\n";
-          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "        break;\n";
-          out << "      }\n";
-          out << "    }\n";
-          out << "    return;\n";
-          out << "  }\n";
           out << "  uint __gpga_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
           out << "  uint __gpga_ip = sched_vm_ip[__gpga_vm_idx];\n";
           out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
@@ -22776,29 +28153,31 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
           out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
           out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
-          out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
-          out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
-          out << "      switch (__gpga_group) {\n";
-          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-            out << "        case " << group << "u:\n";
-            out << "          gpga_" << MslName(module.name) << "_sched_group_"
-                << group << "(";
-            emit_sched_param_names();
-            out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+          if (vm_needs_call_group) {
+            out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
+            out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+            out << "      switch (__gpga_group) {\n";
+            for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+              out << "        case " << group << "u:\n";
+              out << "          gpga_" << MslName(module.name) << "_sched_group_"
+                  << group << "(";
+              emit_sched_param_names();
+              out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+              out << "          break;\n";
+            }
+            out << "        default: {\n";
+            out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             out << "          break;\n";
+            out << "        }\n";
+            out << "      }\n";
+            out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
+            out << "        sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+            out << "        return;\n";
+            out << "      }\n";
+            out << "      __gpga_ip = __gpga_next_ip;\n";
+            out << "      continue;\n";
+            out << "    }\n";
           }
-          out << "        default: {\n";
-          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "          break;\n";
-          out << "        }\n";
-          out << "      }\n";
-          out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
-          out << "        sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
-          out << "        return;\n";
-          out << "      }\n";
-          out << "      __gpga_ip = __gpga_next_ip;\n";
-          out << "      continue;\n";
-          out << "    }\n";
           out << "    if (__gpga_op == GPGA_SCHED_VM_OP_NOOP) {\n";
           out << "      __gpga_ip = __gpga_next_ip;\n";
           out << "      continue;\n";
@@ -22810,9 +28189,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
           out << "        return;\n";
           out << "      }\n";
-          out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+          out << "      gpga_" << MslName(module.name)
+              << "_sched_vm_exec_assign_blocking(";
           emit_sched_param_names();
-          out << ", pid, idx, __gpga_arg, false);\n";
+          out << ", pid, idx, __gpga_arg);\n";
           out << "      __gpga_ip = __gpga_next_ip;\n";
           out << "      continue;\n";
           out << "    }\n";
@@ -22823,9 +28203,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
           out << "        return;\n";
           out << "      }\n";
-          out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+          out << "      gpga_" << MslName(module.name)
+              << "_sched_vm_exec_assign_nb(";
           emit_sched_param_names();
-          out << ", pid, idx, __gpga_arg, true);\n";
+          out << ", pid, idx, __gpga_arg);\n";
           out << "      __gpga_ip = __gpga_next_ip;\n";
           out << "      continue;\n";
           out << "    }\n";
@@ -22850,108 +28231,126 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "        ulong __gpga_dxz = sched_delay_xz[__gpga_delay_slot];\n";
           out << "        uint __gpga_didx_val = sched_delay_index_val[__gpga_delay_slot];\n";
           out << "        uint __gpga_didx_xz = sched_delay_index_xz[__gpga_delay_slot];\n";
-          emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_dxz",
-                                  "__gpga_didx_val", "__gpga_didx_xz", false, 8);
+          out << "        if (!gpga_" << MslName(module.name)
+              << "_sched_vm_apply_delay_assign(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg, __gpga_dval, __gpga_dxz, __gpga_didx_val,\n"
+                 "            __gpga_didx_xz, false)) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
           out << "        __gpga_ip = __gpga_next_ip;\n";
           out << "        continue;\n";
           out << "      }\n";
+          out << "      const GpgaSchedVmDelayAssignEntry __gpga_delay_entry =\n";
+          out << "          sched_vm_delay_assign_entry[__gpga_arg];\n";
           out << "      ulong __gpga_dval = 0ul;\n";
           out << "      ulong __gpga_dxz = 0ul;\n";
           out << "      uint __gpga_didx_val = 0u;\n";
           out << "      uint __gpga_didx_xz = 0u;\n";
           out << "      ulong __gpga_delay = 0ul;\n";
           out << "      ulong __gpga_mask = 0ul;\n";
-          out << "      bool __gpga_nb = false;\n";
-          out << "      bool __gpga_inertial = false;\n";
-          out << "      bool __gpga_showcancelled = false;\n";
-          out << "      bool __gpga_has_pulse = false;\n";
-          out << "      bool __gpga_has_pulse_error = false;\n";
+          out << "      bool __gpga_valid = true;\n";
+          out << "      bool __gpga_nb =\n";
+          out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_NONBLOCKING) != 0u);\n";
+          out << "      bool __gpga_inertial =\n";
+          out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_INERTIAL) != 0u);\n";
+          out << "      bool __gpga_showcancelled =\n";
+          out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_SHOWCANCELLED) != 0u);\n";
+          out << "      bool __gpga_has_pulse =\n";
+          out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_HAS_PULSE) != 0u);\n";
+          out << "      bool __gpga_has_pulse_error =\n";
+          out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_HAS_PULSE_ERROR) != 0u);\n";
           out << "      ulong __gpga_pulse_reject = 0ul;\n";
           out << "      ulong __gpga_pulse_error = 0ul;\n";
-          out << "      bool __gpga_valid = true;\n";
-          out << "      switch (__gpga_arg) {\n";
-          for (size_t i = 0; i < delay_assigns.size(); ++i) {
-            const DelayAssignInfo& info = delay_assigns[i];
-            const Statement* stmt = info.stmt;
-            out << "      case " << i << "u: {\n";
-            if (!stmt || !stmt->assign.rhs || !info.delay_expr) {
-              out << "        __gpga_valid = false;\n";
-              out << "        break;\n";
-              out << "      }\n";
-              continue;
-            }
-            FsExpr rhs = info.lhs_real
-                             ? emit_real_expr4(*stmt->assign.rhs)
-                             : emit_expr4_sized_with_cse(
-                                   *stmt->assign.rhs, info.width, 8);
-            rhs = maybe_hoist_full(rhs, 8, false, true);
-            std::string mask =
-                literal_for_width(MaskForWidth64(info.width), 64);
-            out << "        __gpga_dval = ((ulong)(" << rhs.val << ")) & "
-                << mask << ";\n";
-            out << "        __gpga_dxz = ((ulong)(" << rhs.xz << ")) & "
-                << mask << ";\n";
-            out << "        __gpga_mask = " << mask << ";\n";
-            std::string idx_val = "0u";
-            std::string idx_xz = "0u";
-            if (info.is_array || info.is_bit_select ||
-                info.is_indexed_range) {
-              const Expr* idx_expr = nullptr;
-              if (info.is_indexed_range) {
-                idx_expr = stmt->assign.lhs_lsb_expr.get();
-              } else {
-                idx_expr = stmt->assign.lhs_index.get();
-              }
-              if (!idx_expr) {
-                out << "        __gpga_valid = false;\n";
-                out << "        break;\n";
-                out << "      }\n";
-                continue;
-              }
-              FsExpr idx = emit_expr4(*idx_expr);
-              idx = maybe_hoist_full(idx, 8, false, false);
-              if (idx.width > 64) {
-                idx_val = to_u64(idx.val, idx.width);
-                idx_xz = "(" + wide_any(idx.xz, idx.width) + " ? 1u : 0u)";
-              } else {
-                idx_val = idx.val;
-                idx_xz = idx.xz;
-              }
-            }
-            out << "        __gpga_didx_val = uint(" << idx_val << ");\n";
-            out << "        __gpga_didx_xz = uint(" << idx_xz << ");\n";
-            out << "        __gpga_delay = " << emit_delay_value4(*info.delay_expr)
-                << ";\n";
-            out << "        __gpga_nb = "
-                << (info.nonblocking ? "true" : "false") << ";\n";
-            out << "        __gpga_inertial = "
-                << (info.inertial ? "true" : "false") << ";\n";
-            out << "        __gpga_showcancelled = "
-                << (info.showcancelled ? "true" : "false") << ";\n";
-            out << "        __gpga_has_pulse = "
-                << (info.has_pulse ? "true" : "false") << ";\n";
-            out << "        __gpga_has_pulse_error = "
-                << (info.has_pulse_error ? "true" : "false") << ";\n";
-            if (info.has_pulse) {
-              std::string pulse_reject_expr =
-                  info.pulse_reject ? emit_delay_limit4(*info.pulse_reject)
-                                    : "0ul";
-              std::string pulse_error_expr = pulse_reject_expr;
-              if (info.has_pulse_error && info.pulse_error) {
-                pulse_error_expr = emit_delay_limit4(*info.pulse_error);
-              }
-              out << "        __gpga_pulse_reject = " << pulse_reject_expr
-                  << ";\n";
-              out << "        __gpga_pulse_error = " << pulse_error_expr
-                  << ";\n";
-            }
-            out << "        break;\n";
-            out << "      }\n";
-          }
-          out << "      default: {\n";
-          out << "        __gpga_valid = false;\n";
-          out << "        break;\n";
+          out << "      if (__gpga_delay_entry.width >= 64u) {\n";
+          out << "        __gpga_mask = ~0ul;\n";
+          out << "      } else if (__gpga_delay_entry.width == 0u) {\n";
+          out << "        __gpga_mask = 0ul;\n";
+          out << "      } else {\n";
+          out << "        __gpga_mask = (1ul << __gpga_delay_entry.width) - 1ul;\n";
           out << "      }\n";
+          out << "      if ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+          out << "        __gpga_valid = false;\n";
+          out << "      } else {\n";
+          out << "        ulong __gpga_rhs_val = 0ul;\n";
+          out << "        ulong __gpga_rhs_xz = 0ul;\n";
+          out << "        uint __gpga_rhs_width = 0u;\n";
+          out << "        if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_delay_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+          out << "          __gpga_valid = false;\n";
+          out << "        } else {\n";
+          out << "          __gpga_dval = __gpga_rhs_val & __gpga_mask;\n";
+          out << "          __gpga_dxz = __gpga_rhs_xz & __gpga_mask;\n";
+          out << "        }\n";
+          out << "        if (__gpga_valid &&\n";
+          out << "            ((__gpga_delay_entry.flags & (GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_ARRAY |\n";
+          out << "                                         GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_BIT_SELECT |\n";
+          out << "                                         GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_INDEXED_RANGE)) != 0u)) {\n";
+          out << "          ulong __gpga_idx_val = 0ul;\n";
+          out << "          ulong __gpga_idx_xz = 0ul;\n";
+          out << "          uint __gpga_idx_width = 0u;\n";
+          out << "          if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_delay_entry.idx_expr, &__gpga_idx_val, &__gpga_idx_xz, &__gpga_idx_width)) {\n";
+          out << "            __gpga_valid = false;\n";
+          out << "          } else {\n";
+          out << "            __gpga_didx_val = uint(__gpga_idx_val);\n";
+          out << "            __gpga_didx_xz = (__gpga_idx_xz != 0ul) ? 1u : 0u;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        if (__gpga_valid) {\n";
+          out << "          ulong __gpga_delay_val = 0ul;\n";
+          out << "          ulong __gpga_delay_xz = 0ul;\n";
+          out << "          uint __gpga_delay_width = 0u;\n";
+          out << "          if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_delay_entry.delay_expr, &__gpga_delay_val, &__gpga_delay_xz, &__gpga_delay_width)) {\n";
+          out << "            __gpga_valid = false;\n";
+          out << "          } else {\n";
+          out << "            __gpga_delay = (__gpga_delay_xz == 0ul) ? __gpga_delay_val : 0ul;\n";
+          out << "          }\n";
+          out << "        }\n";
+          out << "        if (__gpga_valid && __gpga_has_pulse) {\n";
+          out << "          if (__gpga_delay_entry.pulse_reject_expr != 0xFFFFFFFFu) {\n";
+          out << "            ulong __gpga_pulse_val = 0ul;\n";
+          out << "            ulong __gpga_pulse_xz = 0ul;\n";
+          out << "            uint __gpga_pulse_width = 0u;\n";
+          out << "            if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_delay_entry.pulse_reject_expr, &__gpga_pulse_val, &__gpga_pulse_xz, &__gpga_pulse_width)) {\n";
+          out << "              __gpga_valid = false;\n";
+          out << "            } else {\n";
+          out << "              __gpga_pulse_reject = (__gpga_pulse_xz == 0ul) ? __gpga_pulse_val : 0ul;\n";
+          out << "            }\n";
+          out << "          }\n";
+          out << "          if (__gpga_valid && __gpga_has_pulse_error) {\n";
+          out << "            if (__gpga_delay_entry.pulse_error_expr != 0xFFFFFFFFu) {\n";
+          out << "              ulong __gpga_pulse_val = 0ul;\n";
+          out << "              ulong __gpga_pulse_xz = 0ul;\n";
+          out << "              uint __gpga_pulse_width = 0u;\n";
+          out << "              if (!gpga_" << MslName(module.name)
+              << "_sched_vm_eval_expr(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_delay_entry.pulse_error_expr, &__gpga_pulse_val, &__gpga_pulse_xz, &__gpga_pulse_width)) {\n";
+          out << "                __gpga_valid = false;\n";
+          out << "              } else {\n";
+          out << "                __gpga_pulse_error = (__gpga_pulse_xz == 0ul) ? __gpga_pulse_val : 0ul;\n";
+          out << "              }\n";
+          out << "            } else {\n";
+          out << "              __gpga_pulse_error = __gpga_pulse_reject;\n";
+          out << "            }\n";
+          out << "          } else if (__gpga_valid) {\n";
+          out << "            __gpga_pulse_error = __gpga_pulse_reject;\n";
+          out << "          }\n";
+          out << "        }\n";
           out << "      }\n";
           out << "      if (!__gpga_valid) {\n";
           out << "        sched_error[gid] = 1u;\n";
@@ -22962,8 +28361,16 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           if (has_delayed_nba) {
           out << "      if (__gpga_nb) {\n";
           out << "        if (__gpga_delay == 0ul) {\n";
-          emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_dxz",
-                                  "__gpga_didx_val", "__gpga_didx_xz", true, 10);
+          out << "          if (!gpga_" << MslName(module.name)
+              << "_sched_vm_apply_delay_assign(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg, __gpga_dval, __gpga_dxz, __gpga_didx_val,\n"
+                 "              __gpga_didx_xz, true)) {\n";
+          out << "            sched_error[gid] = 1u;\n";
+          out << "            sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "            sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "            return;\n";
+          out << "          }\n";
           out << "          __gpga_ip = __gpga_next_ip;\n";
           out << "          continue;\n";
           out << "        }\n";
@@ -23059,8 +28466,16 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      }\n";
           }
           out << "      if (__gpga_delay == 0ul) {\n";
-          emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_dxz",
-                                  "__gpga_didx_val", "__gpga_didx_xz", false, 8);
+          out << "        if (!gpga_" << MslName(module.name)
+              << "_sched_vm_apply_delay_assign(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_arg, __gpga_dval, __gpga_dxz, __gpga_didx_val,\n"
+                 "            __gpga_didx_xz, false)) {\n";
+          out << "          sched_error[gid] = 1u;\n";
+          out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "          return;\n";
+          out << "        }\n";
           out << "        __gpga_ip = __gpga_next_ip;\n";
           out << "        continue;\n";
           out << "      }\n";
@@ -23251,6 +28666,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               << "_sched_vm_eval_case(";
           emit_sched_param_names();
           out << ", pid, __gpga_arg);\n";
+          out << "      if (sched_error[gid] != 0u) {\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
           out << "      uint __gpga_target_index = __gpga_default_index;\n";
           out << "      if (__gpga_match != 0xFFFFFFFFu) {\n";
           out << "        if (__gpga_match >= __gpga_case_count) {\n";
@@ -23494,6 +28914,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               << "_sched_vm_eval_delay(";
           emit_sched_param_names();
           out << ", pid, __gpga_arg);\n";
+          out << "      if (sched_error[gid] != 0u) {\n";
+          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+          out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "        return;\n";
+          out << "      }\n";
           out << "      sched_wait_kind[idx] = (__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : GPGA_SCHED_WAIT_TIME;\n";
           out << "      sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
           out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";
@@ -23675,6 +29100,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      continue;\n";
           out << "    }\n";
           out << "    if (__gpga_op == GPGA_SCHED_VM_OP_DONE) {\n";
+          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           out << "      sched_vm_ip[__gpga_vm_idx] = 0u;\n";
           out << "      return;\n";
           out << "    }\n";
@@ -23683,7 +29109,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
           out << "    return;\n";
           out << "  }\n";
-          out << "  sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+          out << "  sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
           out << "}\n";
         }
       }
@@ -23838,6 +29264,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
   };
   std::vector<PackedSignal> packed_signals;
   std::vector<PackedSignal> packed_nb_signals;
+  std::unordered_set<std::string> nb_packed_names;
   bool needs_force_shadow = false;
   if (pack_signals) {
     packed_signals.reserve(module.ports.size() + reg_names.size() +
@@ -23906,11 +29333,14 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     }
     out << "  uint __gpga_nb_count = " << count_expr << ";\n";
     out << "  ulong __gpga_nb_offset = 0ul;\n";
-    for (const auto& sig : packed_nb_signals) {
+    for (const auto& sig : packed_signals) {
       int array_size = std::max(1, sig.array_size);
       out << "  __gpga_nb_offset = (__gpga_nb_offset + 7ul) & ~7ul;\n";
-      out << "  device " << sig.type << "* " << sig.name
-          << " = (device " << sig.type << "*)(nb_state + __gpga_nb_offset);\n";
+      if (nb_packed_names.count(sig.name) > 0u) {
+        out << "  device " << sig.type << "* nb_" << sig.name
+            << " = (device " << sig.type
+            << "*)(nb_state + __gpga_nb_offset);\n";
+      }
       out << "  __gpga_nb_offset += (ulong)__gpga_nb_count * " << array_size
           << "u * (ulong)sizeof(" << sig.type << ");\n";
     }
@@ -27063,6 +32493,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       std::vector<std::string> nb_targets_sorted(nb_targets.begin(),
                                                  nb_targets.end());
       std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+      nb_packed_names.clear();
+      for (const auto& target : nb_targets_sorted) {
+        nb_packed_names.insert(MslName(target));
+      }
       packed_nb_signals.clear();
       if (pack_nb && !nb_targets_sorted.empty()) {
         packed_nb_signals.reserve(nb_targets_sorted.size());
@@ -27131,6 +32565,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       std::sort(sched_reg_names.begin(), sched_reg_names.end());
 
       SchedulerVmTables vm_tables;
+      SchedulerVmLayout vm_layout;
       uint32_t vm_cond_count = 0u;
       uint32_t vm_assign_count = 0u;
       uint32_t vm_delay_count = 0u;
@@ -27142,10 +32577,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       uint32_t vm_release_count = 0u;
       uint32_t vm_service_call_count = 0u;
       uint32_t vm_service_assign_count = 0u;
+      uint32_t vm_service_arg_count = 0u;
       uint32_t vm_words_per_proc = kSchedulerVmWordsPerProc;
       uint32_t vm_expr_word_count = 0u;
       uint32_t vm_expr_imm_word_count = 0u;
       uint32_t vm_signal_count = 0u;
+      bool vm_needs_call_group = false;
       if (options.sched_vm) {
         for_each_proc_stmt(
             [&](const Statement& stmt) { CollectSchedulerVmTables(stmt, &vm_tables); });
@@ -27167,7 +32604,6 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             static_cast<uint32_t>(vm_tables.service_calls.size());
         vm_service_assign_count =
             static_cast<uint32_t>(vm_tables.service_assign_stmts.size());
-        SchedulerVmLayout vm_layout;
         if (BuildSchedulerVmLayoutFromModule(
                 module, &vm_layout, nullptr, options.four_state)) {
           vm_words_per_proc = vm_layout.words_per_proc;
@@ -27181,9 +32617,14 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             static_cast<uint32_t>(vm_layout.expr_table.words.size());
         vm_expr_imm_word_count =
             static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
-        vm_signal_count =
-            static_cast<uint32_t>(vm_layout.signal_entries.size());
-      }
+          vm_signal_count =
+              static_cast<uint32_t>(vm_layout.signal_entries.size());
+          vm_service_arg_count =
+              static_cast<uint32_t>(vm_layout.service_args.size());
+          vm_needs_call_group = VmLayoutNeedsCallGroup(vm_layout);
+        } else {
+          vm_needs_call_group = true;
+        }
       } else {
         vm_cond_count = 0u;
         vm_assign_count = 0u;
@@ -27196,6 +32637,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         vm_release_count = 0u;
         vm_service_call_count = 0u;
         vm_service_assign_count = 0u;
+        vm_service_arg_count = 0u;
         vm_words_per_proc = kSchedulerVmWordsPerProc;
         vm_expr_word_count = 0u;
         vm_expr_imm_word_count = 0u;
@@ -27214,6 +32656,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
         nb_targets_sorted.assign(nb_targets.begin(), nb_targets.end());
         std::sort(nb_targets_sorted.begin(), nb_targets_sorted.end());
+        nb_packed_names.clear();
+        for (const auto& target : nb_targets_sorted) {
+          nb_packed_names.insert(MslName(target));
+        }
         packed_nb_signals.clear();
         if (pack_nb && !nb_targets_sorted.empty()) {
           packed_nb_signals.reserve(nb_targets_sorted.size());
@@ -27377,6 +32823,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       const uint32_t sched_proc_group_count =
           (static_cast<uint32_t>(procs.size()) + sched_proc_group_size - 1u) /
           sched_proc_group_size;
+      const bool emit_proc_helpers = (!options.sched_vm || vm_needs_call_group);
       if (!options.sched_vm) {
         vm_cond_count = 0u;
         vm_assign_count = 0u;
@@ -27387,6 +32834,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         vm_case_word_count = 0u;
         vm_force_count = 0u;
         vm_release_count = 0u;
+        vm_service_call_count = 0u;
+        vm_service_assign_count = 0u;
+        vm_service_arg_count = 0u;
         vm_expr_word_count = 0u;
         vm_expr_imm_word_count = 0u;
         vm_signal_count = 0u;
@@ -27435,6 +32885,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             << vm_service_call_count << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT = "
             << vm_service_assign_count << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_COUNT = "
+            << vm_service_arg_count << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WORD_COUNT = "
             << vm_expr_word_count << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT = "
@@ -27453,6 +32905,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             << static_cast<uint32_t>(SchedulerVmCondKind::kExpr) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_STACK_MAX = "
             << kSchedulerVmExprStackMax << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WIDE_WORDS = "
+            << vm_expr_wide_words << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_WIDE_BITS = "
+            << vm_expr_wide_bits << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_ARG_SIGNED = "
             << kSchedulerVmExprSignedFlag << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_DONE = "
@@ -27467,6 +32923,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             << static_cast<uint32_t>(SchedulerVmExprOp::kBinary) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_TERNARY = "
             << static_cast<uint32_t>(SchedulerVmExprOp::kTernary) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_INDEX = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kIndex) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_OP_CALL = "
+            << static_cast<uint32_t>(SchedulerVmExprOp::kCall) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_PLUS = "
             << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kPlus) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_MINUS = "
@@ -27475,6 +32935,76 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kBitNot) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT = "
             << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kLogNot) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_AND = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedAnd) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_NAND = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedNand) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_OR = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedOr) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_NOR = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedNor) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_XOR = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedXor) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR = "
+            << static_cast<uint32_t>(SchedulerVmExprUnaryOp::kRedXnor) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_TIME = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kTime) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_STIME = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kStime) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_REALTIME = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kRealtime) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ITOR = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kIToR) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_BITSTOREAL = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kBitsToReal)
+            << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_REALTOBITS = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kRealToBits)
+            << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_RTOI = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kRToI) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_LOG10 = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kLog10) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_LN = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kLn) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_EXP = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kExp) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_SQRT = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kSqrt) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_FLOOR = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kFloor) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_CEIL = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kCeil) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_SIN = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kSin) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_COS = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kCos) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_TAN = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kTan) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ASIN = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAsin) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ACOS = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAcos) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ATAN = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAtan) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_SINH = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kSinh) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_COSH = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kCosh) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_TANH = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kTanh) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ASINH = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAsinh) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ACOSH = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAcosh) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ATANH = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAtanh) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_POW = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kPow) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_ATAN2 = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kAtan2) << "u;\n";
+        out << "constant constexpr uint GPGA_SCHED_VM_EXPR_CALL_HYPOT = "
+            << static_cast<uint32_t>(SchedulerVmExprCallOp::kHypot) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_ADD = "
             << static_cast<uint32_t>(SchedulerVmExprBinaryOp::kAdd) << "u;\n";
         out << "constant constexpr uint GPGA_SCHED_VM_EXPR_BINARY_SUB = "
@@ -27653,6 +33183,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  device const ulong* sched_vm_case_words [[id(12)]];\n";
         out << "  device const uint* sched_vm_expr [[id(13)]];\n";
         out << "  device const uint* sched_vm_expr_imm [[id(14)]];\n";
+        out << "  device const GpgaSchedVmDelayAssignEntry* sched_vm_delay_assign_entry [[id(15)]];\n";
+        out << "  device const GpgaSchedVmAssignEntry* sched_vm_assign_entry [[id(16)]];\n";
+        out << "  device const GpgaSchedVmForceEntry* sched_vm_force_entry [[id(17)]];\n";
+        out << "  device const GpgaSchedVmReleaseEntry* sched_vm_release_entry [[id(18)]];\n";
+        out << "  device const GpgaSchedVmServiceEntry* sched_vm_service_entry [[id(19)]];\n";
+        out << "  device const GpgaSchedVmServiceArg* sched_vm_service_arg [[id(20)]];\n";
+        out << "  device const GpgaSchedVmServiceRetAssignEntry* sched_vm_service_ret_assign_entry [[id(21)]];\n";
         out << "};\n";
         out << "#define sched_vm_bytecode (sched_vm_args.sched_vm_bytecode)\n";
         out << "#define sched_vm_proc_bytecode_offset (sched_vm_args.sched_vm_proc_bytecode_offset)\n";
@@ -27669,6 +33206,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "#define sched_vm_case_words (sched_vm_args.sched_vm_case_words)\n";
         out << "#define sched_vm_expr (sched_vm_args.sched_vm_expr)\n";
         out << "#define sched_vm_expr_imm (sched_vm_args.sched_vm_expr_imm)\n";
+        out << "#define sched_vm_delay_assign_entry (sched_vm_args.sched_vm_delay_assign_entry)\n";
+        out << "#define sched_vm_assign_entry (sched_vm_args.sched_vm_assign_entry)\n";
+        out << "#define sched_vm_force_entry (sched_vm_args.sched_vm_force_entry)\n";
+        out << "#define sched_vm_release_entry (sched_vm_args.sched_vm_release_entry)\n";
+        out << "#define sched_vm_service_entry (sched_vm_args.sched_vm_service_entry)\n";
+        out << "#define sched_vm_service_arg (sched_vm_args.sched_vm_service_arg)\n";
+        out << "#define sched_vm_service_ret_assign_entry (sched_vm_args.sched_vm_service_ret_assign_entry)\n";
       }
       const uint32_t edge_wait_table_size =
           edge_waits.empty() ? 1u : static_cast<uint32_t>(edge_waits.size());
@@ -28043,26 +33587,28 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
       };
 
-      for (const auto& proc : procs) {
-        out << "static __attribute__((noinline)) void gpga_"
-            << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
-        emit_sched_param_decls(2);
-        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
-               "  thread bool* did_work_ptr,\n"
-               "  thread bool* finished_ptr,\n"
-               "  thread bool* stopped_ptr,\n"
-               "  thread ulong* __gpga_time_ptr);\n";
-      }
+      if (emit_proc_helpers) {
+        for (const auto& proc : procs) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_proc_" << proc.pid << "(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr);\n";
+        }
 
-      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-        out << "static __attribute__((noinline)) void gpga_"
-            << MslName(module.name) << "_sched_group_" << group << "(";
-        emit_sched_param_decls(2);
-        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
-               "  thread bool* did_work_ptr,\n"
-               "  thread bool* finished_ptr,\n"
-               "  thread bool* stopped_ptr,\n"
-               "  thread ulong* __gpga_time_ptr);\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "static __attribute__((noinline)) void gpga_"
+              << MslName(module.name) << "_sched_group_" << group << "(";
+          emit_sched_param_decls(2);
+          out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+                 "  thread bool* did_work_ptr,\n"
+                 "  thread bool* finished_ptr,\n"
+                 "  thread bool* stopped_ptr,\n"
+                 "  thread ulong* __gpga_time_ptr);\n";
+        }
       }
       if (options.sched_vm) {
         out << "static __attribute__((noinline)) void gpga_"
@@ -28073,6 +33619,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                "  thread bool* finished_ptr,\n"
                "  thread bool* stopped_ptr,\n"
                "  thread ulong* __gpga_time_ptr);\n";
+        out << "static __attribute__((noinline)) bool gpga_"
+            << MslName(module.name) << "_sched_vm_eval_expr(";
+        emit_sched_param_decls(2);
+        out << ",\n  uint pid,\n  uint expr_offset,\n"
+               "  thread ulong* out_val,\n"
+               "  thread ulong* out_xz,\n"
+               "  thread uint* out_width);\n";
       }
 
       out << "kernel void gpga_" << MslName(module.name) << "_sched_step(";
@@ -28408,60 +33961,133 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << pad << target_expr << " = " << rhs << ";\n";
           };
 
-      emit_force_overrides = [&](int indent) -> void {
-        if (override_target_list.empty()) {
-          return;
-        }
-        std::string pad(indent, ' ');
-        out << pad << "{\n";
-        for (const auto& target : override_target_list) {
-          auto force_it = force_target_index.find(target);
-          auto passign_it = passign_target_index.find(target);
-          if (force_it == force_target_index.end() &&
-              passign_it == passign_target_index.end()) {
-            continue;
+      if (options.sched_vm) {
+        emit_force_overrides = [&](int indent) -> void {
+          if (override_target_list.empty()) {
+            return;
           }
-          SequentialAssign temp;
-          temp.lhs = target;
-          temp.nonblocking = false;
-          LvalueInfo lhs = BuildLvalue(temp, module, sched_locals, sched_regs,
-                                       false);
-          if (!lhs.ok) {
-            continue;
-          }
-          std::string suffix = MslName(target);
-          if (force_it != force_target_index.end()) {
-            std::string force_slot = force_slot_expr(target);
-            out << pad << "  uint __gpga_force_id_" << suffix
-                << " = sched_force_id[" << force_slot << "];\n";
-            out << pad << "  if (__gpga_force_id_" << suffix
-                << " != 0xFFFFFFFFu) {\n";
-            out << pad << "    switch (__gpga_force_id_" << suffix << ") {\n";
-            auto list_it = force_stmts_by_target.find(target);
-            if (list_it != force_stmts_by_target.end()) {
-              for (const auto* stmt : list_it->second) {
-                auto id_it = force_stmt_ids.find(stmt);
-                if (id_it == force_stmt_ids.end()) {
-                  continue;
-                }
-                out << pad << "      case " << id_it->second << "u: {\n";
-                emit_force_value_assign(*stmt, lhs.expr, indent + 8);
-                out << pad << "        break;\n";
-                out << pad << "      }\n";
-              }
-            }
-            out << pad << "      default:\n";
-            out << pad << "        break;\n";
+          std::string pad(indent, ' ');
+          out << pad << "{\n";
+          if (!passign_target_list.empty()) {
+            out << pad
+                << "  uint __gpga_passign_base = gid * GPGA_SCHED_PCONT_COUNT;\n";
+            out << pad << "  for (uint __gpga_passign_slot = 0u; __gpga_passign_slot < GPGA_SCHED_PCONT_COUNT; ++__gpga_passign_slot) {\n";
+            out << pad
+                << "    uint __gpga_passign_id = sched_passign_id[__gpga_passign_base + __gpga_passign_slot];\n";
+            out << pad << "    if (__gpga_passign_id != 0xFFFFFFFFu) {\n";
+            out << pad << "      if (!gpga_" << MslName(module.name)
+                << "_sched_vm_apply_force_entry(";
+            emit_sched_param_names();
+            out << ", 0u, __gpga_passign_id, __gpga_passign_slot, true)) {\n";
+            out << pad << "        sched_error[gid] = 1u;\n";
+            out << pad << "      }\n";
             out << pad << "    }\n";
-            out << pad << "  }";
-            if (passign_it != passign_target_index.end()) {
-              out << " else {\n";
-              std::string passign_slot = passign_slot_expr(target);
-              out << pad << "    uint __gpga_passign_id_" << suffix
-                  << " = sched_passign_id[" << passign_slot << "];\n";
-              out << pad << "    if (__gpga_passign_id_" << suffix
+            out << pad << "  }\n";
+          }
+          if (!force_target_list.empty()) {
+            out << pad
+                << "  uint __gpga_force_base = gid * GPGA_SCHED_FORCE_COUNT;\n";
+            out << pad << "  for (uint __gpga_force_slot = 0u; __gpga_force_slot < GPGA_SCHED_FORCE_COUNT; ++__gpga_force_slot) {\n";
+            out << pad
+                << "    uint __gpga_force_id = sched_force_id[__gpga_force_base + __gpga_force_slot];\n";
+            out << pad << "    if (__gpga_force_id != 0xFFFFFFFFu) {\n";
+            out << pad << "      if (!gpga_" << MslName(module.name)
+                << "_sched_vm_apply_force_entry(";
+            emit_sched_param_names();
+            out << ", 0u, __gpga_force_id, __gpga_force_slot, false)) {\n";
+            out << pad << "        sched_error[gid] = 1u;\n";
+            out << pad << "      }\n";
+            out << pad << "    }\n";
+            out << pad << "  }\n";
+          }
+          out << pad << "}\n";
+        };
+      } else {
+        emit_force_overrides = [&](int indent) -> void {
+          if (override_target_list.empty()) {
+            return;
+          }
+          std::string pad(indent, ' ');
+          out << pad << "{\n";
+          for (const auto& target : override_target_list) {
+            auto force_it = force_target_index.find(target);
+            auto passign_it = passign_target_index.find(target);
+            if (force_it == force_target_index.end() &&
+                passign_it == passign_target_index.end()) {
+              continue;
+            }
+            SequentialAssign temp;
+            temp.lhs = target;
+            temp.nonblocking = false;
+            LvalueInfo lhs = BuildLvalue(temp, module, sched_locals, sched_regs,
+                                         false);
+            if (!lhs.ok) {
+              continue;
+            }
+            std::string suffix = MslName(target);
+            if (force_it != force_target_index.end()) {
+              std::string force_slot = force_slot_expr(target);
+              out << pad << "  uint __gpga_force_id_" << suffix
+                  << " = sched_force_id[" << force_slot << "];\n";
+              out << pad << "  if (__gpga_force_id_" << suffix
                   << " != 0xFFFFFFFFu) {\n";
-              out << pad << "      switch (__gpga_passign_id_" << suffix
+              out << pad << "    switch (__gpga_force_id_" << suffix << ") {\n";
+              auto list_it = force_stmts_by_target.find(target);
+              if (list_it != force_stmts_by_target.end()) {
+                for (const auto* stmt : list_it->second) {
+                  auto id_it = force_stmt_ids.find(stmt);
+                  if (id_it == force_stmt_ids.end()) {
+                    continue;
+                  }
+                  out << pad << "      case " << id_it->second << "u: {\n";
+                  emit_force_value_assign(*stmt, lhs.expr, indent + 8);
+                  out << pad << "        break;\n";
+                  out << pad << "      }\n";
+                }
+              }
+              out << pad << "      default:\n";
+              out << pad << "        break;\n";
+              out << pad << "    }\n";
+              out << pad << "  }";
+              if (passign_it != passign_target_index.end()) {
+                out << " else {\n";
+                std::string passign_slot = passign_slot_expr(target);
+                out << pad << "    uint __gpga_passign_id_" << suffix
+                    << " = sched_passign_id[" << passign_slot << "];\n";
+                out << pad << "    if (__gpga_passign_id_" << suffix
+                    << " != 0xFFFFFFFFu) {\n";
+                out << pad << "      switch (__gpga_passign_id_" << suffix
+                    << ") {\n";
+                auto plist_it = passign_stmts_by_target.find(target);
+                if (plist_it != passign_stmts_by_target.end()) {
+                  for (const auto* stmt : plist_it->second) {
+                    auto id_it = passign_stmt_ids.find(stmt);
+                    if (id_it == passign_stmt_ids.end()) {
+                      continue;
+                    }
+                    out << pad << "        case " << id_it->second << "u: {\n";
+                    emit_force_value_assign(*stmt, lhs.expr, indent + 10);
+                    out << pad << "          break;\n";
+                    out << pad << "        }\n";
+                  }
+                }
+                out << pad << "        default:\n";
+                out << pad << "          break;\n";
+                out << pad << "      }\n";
+                out << pad << "    }\n";
+                out << pad << "  }\n";
+              } else {
+                out << "\n";
+              }
+              continue;
+            }
+            if (passign_it != passign_target_index.end()) {
+              std::string passign_slot = passign_slot_expr(target);
+              out << pad << "  uint __gpga_passign_id_" << suffix
+                  << " = sched_passign_id[" << passign_slot << "];\n";
+              out << pad << "  if (__gpga_passign_id_" << suffix
+                  << " != 0xFFFFFFFFu) {\n";
+              out << pad << "    switch (__gpga_passign_id_" << suffix
                   << ") {\n";
               auto plist_it = passign_stmts_by_target.find(target);
               if (plist_it != passign_stmts_by_target.end()) {
@@ -28470,50 +34096,21 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                   if (id_it == passign_stmt_ids.end()) {
                     continue;
                   }
-                  out << pad << "        case " << id_it->second << "u: {\n";
-                  emit_force_value_assign(*stmt, lhs.expr, indent + 10);
-                  out << pad << "          break;\n";
-                  out << pad << "        }\n";
+                  out << pad << "      case " << id_it->second << "u: {\n";
+                  emit_force_value_assign(*stmt, lhs.expr, indent + 8);
+                  out << pad << "        break;\n";
+                  out << pad << "      }\n";
                 }
               }
-              out << pad << "        default:\n";
-              out << pad << "          break;\n";
-              out << pad << "      }\n";
+              out << pad << "      default:\n";
+              out << pad << "        break;\n";
               out << pad << "    }\n";
               out << pad << "  }\n";
-            } else {
-              out << "\n";
             }
-            continue;
           }
-          if (passign_it != passign_target_index.end()) {
-            std::string passign_slot = passign_slot_expr(target);
-            out << pad << "  uint __gpga_passign_id_" << suffix
-                << " = sched_passign_id[" << passign_slot << "];\n";
-            out << pad << "  if (__gpga_passign_id_" << suffix
-                << " != 0xFFFFFFFFu) {\n";
-            out << pad << "    switch (__gpga_passign_id_" << suffix << ") {\n";
-            auto plist_it = passign_stmts_by_target.find(target);
-            if (plist_it != passign_stmts_by_target.end()) {
-              for (const auto* stmt : plist_it->second) {
-                auto id_it = passign_stmt_ids.find(stmt);
-                if (id_it == passign_stmt_ids.end()) {
-                  continue;
-                }
-                out << pad << "      case " << id_it->second << "u: {\n";
-                emit_force_value_assign(*stmt, lhs.expr, indent + 8);
-                out << pad << "        break;\n";
-                out << pad << "      }\n";
-              }
-            }
-            out << pad << "      default:\n";
-            out << pad << "        break;\n";
-            out << pad << "    }\n";
-            out << pad << "  }\n";
-          }
-        }
-        out << pad << "}\n";
-      };
+          out << pad << "}\n";
+        };
+      }
 
       auto emit_passign_apply_target =
           [&](const std::string& target, const LvalueInfo& lhs,
@@ -32537,34 +38134,159 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     out << "    sched_status[gid] = GPGA_SCHED_STATUS_IDLE;\n";
     out << "  }\n";
     out << "}\n";
-    for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-      emit_proc_group_helpers(group);
-    }
-    for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-      out << "static __attribute__((noinline)) void gpga_"
-          << MslName(module.name) << "_sched_group_" << group << "(";
-      emit_sched_param_decls(2);
-      out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
-             "  thread bool* did_work_ptr,\n"
-             "  thread bool* finished_ptr,\n"
-             "  thread bool* stopped_ptr,\n"
-             "  thread ulong* __gpga_time_ptr) {\n";
-      out << "  thread uint& steps = *steps_ptr;\n";
-      out << "  thread bool& did_work = *did_work_ptr;\n";
-      out << "  thread bool& finished = *finished_ptr;\n";
-      out << "  thread bool& stopped = *stopped_ptr;\n";
-      out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
-      out << "  switch (pid) {\n";
-      emit_proc_group_cases(group);
-      out << "    default: {\n";
-      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "      break;\n";
-      out << "    }\n";
-      out << "  }\n";
-      out << "}\n";
+    if (emit_proc_helpers) {
+      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+        emit_proc_group_helpers(group);
+      }
+      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+        out << "static __attribute__((noinline)) void gpga_"
+            << MslName(module.name) << "_sched_group_" << group << "(";
+        emit_sched_param_decls(2);
+        out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+               "  thread bool* did_work_ptr,\n"
+               "  thread bool* finished_ptr,\n"
+               "  thread bool* stopped_ptr,\n"
+               "  thread ulong* __gpga_time_ptr) {\n";
+        out << "  thread uint& steps = *steps_ptr;\n";
+        out << "  thread bool& did_work = *did_work_ptr;\n";
+        out << "  thread bool& finished = *finished_ptr;\n";
+        out << "  thread bool& stopped = *stopped_ptr;\n";
+        out << "  thread ulong& __gpga_time = *__gpga_time_ptr;\n";
+        out << "  switch (pid) {\n";
+        emit_proc_group_cases(group);
+        out << "    default: {\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      break;\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "}\n";
+      }
     }
     if (options.sched_vm) {
-      const auto& vm_cond_exprs = vm_tables.cond_exprs;
+      if (vm_expr_wide_bits > 64u) {
+        const std::string wide_bits = std::to_string(vm_expr_wide_bits);
+        const std::string wide_type = "GpgaWide" + wide_bits;
+        out << "static inline " << wide_type
+            << " gpga_sched_vm_wide_mask_bits(uint width) {\n";
+        out << "  if (width == 0u) {\n";
+        out << "    return gpga_wide_zero_" << wide_bits << "();\n";
+        out << "  }\n";
+        out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+        out << "    return gpga_wide_mask_const_" << wide_bits << "();\n";
+        out << "  }\n";
+        out << "  " << wide_type << " out = gpga_wide_zero_" << wide_bits
+            << "();\n";
+        out << "  uint word = width >> 6u;\n";
+        out << "  uint bit = width & 63u;\n";
+        out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
+        out << "    if (i < word) {\n";
+        out << "      out.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
+        out << "    } else if (i == word) {\n";
+        out << "      out.w[i] = (bit == 0u) ? 0ul : ((1ul << bit) - 1ul);\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "  return out;\n";
+        out << "}\n";
+        out << "static inline " << wide_type
+            << " gpga_sched_vm_wide_mask_value(" << wide_type
+            << " v, uint width) {\n";
+        out << "  if (width == 0u) {\n";
+        out << "    return gpga_wide_zero_" << wide_bits << "();\n";
+        out << "  }\n";
+        out << "  v = gpga_wide_mask_" << wide_bits << "(v);\n";
+        out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+        out << "    return v;\n";
+        out << "  }\n";
+        out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
+        out << "  return gpga_wide_and_" << wide_bits << "(v, mask);\n";
+        out << "}\n";
+        out << "static inline bool gpga_sched_vm_wide_any_masked(" << wide_type
+            << " v, uint width) {\n";
+        out << "  if (width == 0u) {\n";
+        out << "    return false;\n";
+        out << "  }\n";
+        out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+        out << "    return gpga_wide_any_" << wide_bits << "(v);\n";
+        out << "  }\n";
+        out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
+        out << "  " << wide_type << " masked = gpga_wide_and_" << wide_bits
+            << "(v, mask);\n";
+        out << "  return gpga_wide_any_" << wide_bits << "(masked);\n";
+        out << "}\n";
+        out << "static inline bool gpga_sched_vm_wide_eq_masked(" << wide_type
+            << " a, " << wide_type << " b, uint width) {\n";
+        out << "  if (width == 0u) {\n";
+        out << "    return true;\n";
+        out << "  }\n";
+        out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+        out << "    return gpga_wide_eq_" << wide_bits << "(a, b);\n";
+        out << "  }\n";
+        out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
+        out << "  " << wide_type << " diff = gpga_wide_xor_" << wide_bits << "(a, b);\n";
+        out << "  diff = gpga_wide_and_" << wide_bits << "(diff, mask);\n";
+        out << "  return !gpga_wide_any_" << wide_bits << "(diff);\n";
+        out << "}\n";
+        out << "static inline uint gpga_sched_vm_wide_red_xor(" << wide_type
+            << " v, uint width) {\n";
+        out << "  if (width == 0u) {\n";
+        out << "    return 0u;\n";
+        out << "  }\n";
+        out << "  if (width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+        out << "    return gpga_wide_red_xor_" << wide_bits
+            << "(gpga_wide_mask_" << wide_bits << "(v));\n";
+        out << "  }\n";
+        out << "  uint parity = 0u;\n";
+        out << "  uint word = width >> 6u;\n";
+        out << "  uint bit = width & 63u;\n";
+        out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
+        out << "    ulong word_val = v.w[i];\n";
+        out << "    if (i > word) {\n";
+        out << "      word_val = 0ul;\n";
+        out << "    } else if (i == word) {\n";
+        out << "      word_val = (bit == 0u) ? 0ul : (word_val & ((1ul << bit) - 1ul));\n";
+        out << "    }\n";
+        out << "    uint lo = uint(word_val);\n";
+        out << "    uint hi = uint(word_val >> 32u);\n";
+        out << "    parity ^= (popcount(lo) + popcount(hi)) & 1u;\n";
+        out << "  }\n";
+        out << "  return parity & 1u;\n";
+        out << "}\n";
+        out << "static inline " << wide_type
+            << " gpga_sched_vm_wide_extend(" << wide_type
+            << " v, uint width, bool sign_extend) {\n";
+        out << "  v = gpga_sched_vm_wide_mask_value(v, width);\n";
+        out << "  if (!sign_extend || width == 0u ||\n";
+        out << "      width >= GPGA_SCHED_VM_EXPR_WIDE_BITS) {\n";
+        out << "    return v;\n";
+        out << "  }\n";
+        out << "  uint sign = gpga_wide_get_bit_" << wide_bits << "(v, width - 1u);\n";
+        out << "  if (sign == 0u) {\n";
+        out << "    return v;\n";
+        out << "  }\n";
+        out << "  uint word = width >> 6u;\n";
+        out << "  uint bit = width & 63u;\n";
+        out << "  for (uint i = word; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
+        out << "    if (i == word) {\n";
+        out << "      ulong mask = (bit == 0u) ? 0xFFFFFFFFFFFFFFFFul\n";
+        out << "                               : (0xFFFFFFFFFFFFFFFFul << bit);\n";
+        out << "      v.w[i] |= mask;\n";
+        out << "    } else {\n";
+        out << "      v.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "  return gpga_wide_mask_" << wide_bits << "(v);\n";
+        out << "}\n";
+      }
+      out << "static inline long gpga_sched_vm_sign64(ulong val, uint width) {\n";
+      out << "  if (width == 0u) {\n";
+      out << "    return 0l;\n";
+      out << "  }\n";
+      out << "  if (width >= 64u) {\n";
+      out << "    return long(val);\n";
+      out << "  }\n";
+      out << "  uint shift = 64u - width;\n";
+      out << "  return long(val << shift) >> shift;\n";
+      out << "}\n";
       out << "static __attribute__((noinline)) void gpga_"
           << MslName(module.name) << "_sched_vm_eval_cond(";
       emit_sched_param_decls(2);
@@ -32574,7 +38296,6 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  uint __gpga_cond_val = 0u;\n";
       out << "  uint __gpga_cond_xz = 0u;\n";
       out << "  bool __gpga_cond_known = false;\n";
-      emit_packed_signal_setup("sched.count");
       out << "  if (cond_id < GPGA_SCHED_VM_COND_COUNT) {\n";
       out << "    const GpgaSchedVmCondEntry __gpga_entry = "
              "sched_vm_cond_entry[cond_id];\n";
@@ -32590,6 +38311,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      bool __gpga_expr_ok = true;\n";
       out << "      thread ulong __gpga_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
       out << "      thread uint __gpga_widths[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      out << "      thread bool __gpga_is_real[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "      thread GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      }
       out << "      while (__gpga_expr_ok) {\n";
       out << "        uint __gpga_instr = sched_vm_expr[__gpga_ip++];\n";
       out << "        uint __gpga_op = (__gpga_instr & 0xFFu);\n";
@@ -32600,14 +38326,41 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "            break;\n";
       out << "          }\n";
       out << "          uint __gpga_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "          bool __gpga_real = __gpga_is_real[__gpga_sp - 1u];\n";
+      out << "          if (__gpga_real) {\n";
+      out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "            __gpga_cond_val = gpga_double_is_zero(__gpga_val) ? 0u : 1u;\n";
+      out << "            __gpga_cond_xz = 0u;\n";
+      out << "            __gpga_cond_known = true;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "          if (__gpga_width > 64u) {\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "            __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_wide_val, __gpga_width);\n";
+        out << "            __gpga_cond_val = gpga_sched_vm_wide_any_masked(\n";
+        out << "                __gpga_wide_val, __gpga_width)\n";
+        out << "                ? 1u\n";
+        out << "                : 0u;\n";
+        out << "            __gpga_cond_xz = 0u;\n";
+        out << "            __gpga_cond_known = true;\n";
+        out << "            break;\n";
+        out << "          }\n";
+      } else {
+        out << "          if (__gpga_width > 64u) {\n";
+        out << "            __gpga_expr_ok = false;\n";
+        out << "            break;\n";
+        out << "          }\n";
+      }
       out << "          ulong __gpga_mask = (__gpga_width >= 64u)\n";
       out << "              ? ~0ul\n";
       out << "              : ((__gpga_width == 0u)\n";
       out << "                     ? 0ul\n";
       out << "                     : ((1ul << __gpga_width) - 1ul));\n";
-      out << "          ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
-      out << "          __gpga_cond_val = (((__gpga_val & __gpga_mask) != 0ul) "
-             "? 1u : 0u);\n";
+      out << "          ulong __gpga_val = __gpga_vals[__gpga_sp - 1u] & __gpga_mask;\n";
+      out << "          __gpga_cond_val = (__gpga_val != 0ul) ? 1u : 0u;\n";
       out << "          __gpga_cond_xz = 0u;\n";
       out << "          __gpga_cond_known = true;\n";
       out << "          break;\n";
@@ -32628,7 +38381,22 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "                : ((__gpga_width == 0u)\n";
       out << "                       ? 0ul\n";
       out << "                       : ((1ul << __gpga_width) - 1ul));\n";
-      out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+      out << "            __gpga_is_real[__gpga_sp] = false;\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = gpga_wide_from_u64_"
+            << vm_expr_wide_bits << "(__gpga_val);\n";
+        out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_wide_val, __gpga_width);\n";
+        out << "              __gpga_wide_vals[__gpga_sp] = __gpga_wide_val;\n";
+        out << "              __gpga_vals[__gpga_sp] = __gpga_wide_val.w[0];\n";
+        out << "            } else {\n";
+        out << "              __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+        out << "            }\n";
+      } else {
+        out << "            __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+      }
       out << "            __gpga_widths[__gpga_sp] = __gpga_width;\n";
       out << "            __gpga_sp += 1u;\n";
       out << "            break;\n";
@@ -32645,11 +38413,55 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
       out << "            const GpgaSchedVmSignalEntry __gpga_sig =\n";
       out << "                sched_vm_signal_entry[__gpga_arg];\n";
-      out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
-      out << "                __gpga_sig.array_size != 1u) {\n";
+      out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
+      out << "              if (__gpga_sig.array_size != 1u) {\n";
+      out << "                __gpga_expr_ok = false;\n";
+      out << "                break;\n";
+      out << "              }\n";
+      out << "              ulong __gpga_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "                  ((ulong)gid * (ulong)__gpga_sig.array_size) * 8ul;\n";
+      out << "              ulong __gpga_val =\n";
+      out << "                  ((device const ulong*)(gpga_state + __gpga_addr))[0];\n";
+      out << "              __gpga_vals[__gpga_sp] = __gpga_val;\n";
+      out << "              __gpga_widths[__gpga_sp] = 64u;\n";
+      out << "              __gpga_is_real[__gpga_sp] = true;\n";
+      out << "              __gpga_sp += 1u;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            if (__gpga_sig.array_size != 1u) {\n";
       out << "              __gpga_expr_ok = false;\n";
       out << "              break;\n";
       out << "            }\n";
+      out << "            __gpga_is_real[__gpga_sp] = false;\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_width > 64u) {\n";
+        out << "              uint __gpga_words = (__gpga_width + 63u) >> 6u;\n";
+        out << "              ulong __gpga_stride = (ulong)__gpga_words * 8ul;\n";
+        out << "              ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+        out << "              ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+        out << "                  __gpga_base * __gpga_stride;\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = gpga_wide_zero_" << vm_expr_wide_bits
+            << "();\n";
+        out << "              #pragma clang loop unroll(disable)\n";
+        out << "              for (uint __gpga_w = 0u; __gpga_w < __gpga_words; ++__gpga_w) {\n";
+        out << "                __gpga_wide_val.w[__gpga_w] =\n";
+        out << "                    ((device const ulong*)(gpga_state + __gpga_val_addr))[__gpga_w];\n";
+        out << "              }\n";
+        out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_wide_val, __gpga_width);\n";
+        out << "              __gpga_wide_vals[__gpga_sp] = __gpga_wide_val;\n";
+        out << "              __gpga_vals[__gpga_sp] = __gpga_wide_val.w[0];\n";
+        out << "              __gpga_widths[__gpga_sp] = __gpga_width;\n";
+        out << "              __gpga_sp += 1u;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
       out << "            ulong __gpga_addr = (ulong)__gpga_sig.val_offset +\n";
       out << "                ((ulong)gid * (ulong)__gpga_sig.array_size) *\n";
       out << "                    ((__gpga_width > 32u) ? 8ul : 4ul);\n";
@@ -32669,6 +38481,366 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "            __gpga_sp += 1u;\n";
       out << "            break;\n";
       out << "          }\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_INDEX: {\n";
+      out << "            if (__gpga_sp == 0u) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "                sched_vm_signal_entry[__gpga_arg];\n";
+      out << "            if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "                __gpga_sig.array_size <= 1u) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            if (__gpga_is_real[__gpga_sp - 1u]) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_idx_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "            ulong __gpga_idx_val = __gpga_vals[__gpga_sp - 1u];\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_idx_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_idx_wide = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "              __gpga_idx_wide = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_idx_wide, __gpga_idx_width);\n";
+        out << "              __gpga_idx_val = gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_idx_wide);\n";
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_idx_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "            if (__gpga_idx_val >= (ulong)__gpga_sig.array_size) {\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "              if (__gpga_width > 64u) {\n";
+        out << "                __gpga_wide_vals[__gpga_sp - 1u] =\n";
+        out << "                    gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "                __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+        out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "                break;\n";
+        out << "              }\n";
+      }
+      out << "              __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+      out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "              __gpga_is_real[__gpga_sp - 1u] = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_width > 64u) {\n";
+        out << "              uint __gpga_words = (__gpga_width + 63u) >> 6u;\n";
+        out << "              ulong __gpga_stride = (ulong)__gpga_words * 8ul;\n";
+        out << "              ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+        out << "              ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+        out << "                  (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = gpga_wide_zero_" << vm_expr_wide_bits
+            << "();\n";
+        out << "              #pragma clang loop unroll(disable)\n";
+        out << "              for (uint __gpga_w = 0u; __gpga_w < __gpga_words; ++__gpga_w) {\n";
+        out << "                __gpga_wide_val.w[__gpga_w] =\n";
+        out << "                    ((device const ulong*)(gpga_state + __gpga_val_addr))[__gpga_w];\n";
+        out << "              }\n";
+        out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_wide_val, __gpga_width);\n";
+        out << "              __gpga_wide_vals[__gpga_sp - 1u] = __gpga_wide_val;\n";
+        out << "              __gpga_vals[__gpga_sp - 1u] = __gpga_wide_val.w[0];\n";
+        out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "            ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "            ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "            ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "                (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+      out << "            ulong __gpga_val = 0ul;\n";
+      out << "            if (__gpga_width > 32u) {\n";
+      out << "              __gpga_val = ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+      out << "            } else {\n";
+      out << "              __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_val_addr))[0];\n";
+      out << "            }\n";
+      out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+      out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_mask;\n";
+      out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          case GPGA_SCHED_VM_EXPR_OP_CALL: {\n";
+      out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "            uint __gpga_call = (__gpga_arg & 0xFFu);\n";
+      out << "            bool __gpga_signed =\n";
+      out << "                ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+      out << "            uint __gpga_argc = 1u;\n";
+      out << "            if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TIME ||\n";
+      out << "                __gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME ||\n";
+      out << "                __gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTIME) {\n";
+      out << "              __gpga_argc = 0u;\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_POW ||\n";
+      out << "                       __gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN2 ||\n";
+      out << "                       __gpga_call == GPGA_SCHED_VM_EXPR_CALL_HYPOT) {\n";
+      out << "              __gpga_argc = 2u;\n";
+      out << "            }\n";
+      out << "            if (__gpga_sp < __gpga_argc) {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            uint __gpga_base = __gpga_sp - __gpga_argc;\n";
+      out << "            ulong __gpga_out_val = 0ul;\n";
+      out << "            bool __gpga_out_real = false;\n";
+      out << "            if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TIME ||\n";
+      out << "                __gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME) {\n";
+      out << "              __gpga_out_val = (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME)\n";
+      out << "                  ? (ulong)((uint)__gpga_time)\n";
+      out << "                  : __gpga_time;\n";
+      out << "              __gpga_out_real = false;\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTIME) {\n";
+      out << "              __gpga_out_val = gpga_double_from_u64(__gpga_time);\n";
+      out << "              __gpga_out_real = true;\n";
+      out << "            } else if (__gpga_argc == 1u) {\n";
+      out << "              bool __gpga_arg_real = __gpga_is_real[__gpga_base];\n";
+      out << "              uint __gpga_arg_width = __gpga_widths[__gpga_base];\n";
+      out << "              ulong __gpga_arg_val = __gpga_vals[__gpga_base];\n";
+      out << "              ulong __gpga_arg_real_val = 0ul;\n";
+      out << "              if (__gpga_arg_real) {\n";
+      out << "                __gpga_arg_real_val = __gpga_arg_val;\n";
+      out << "              } else {\n";
+      out << "                ulong __gpga_arg_mask = (__gpga_arg_width >= 64u)\n";
+      out << "                    ? ~0ul\n";
+      out << "                    : ((__gpga_arg_width == 0u)\n";
+      out << "                           ? 0ul\n";
+      out << "                           : ((1ul << __gpga_arg_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                if (__gpga_arg_width > 64u) {\n";
+        out << "                  GpgaWide" << vm_expr_wide_bits
+            << " __gpga_arg_wide_val = __gpga_wide_vals[__gpga_base];\n";
+        out << "                  __gpga_arg_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_arg_wide_val, __gpga_arg_width);\n";
+        out << "                  if (__gpga_signed) {\n";
+        out << "                    __gpga_arg_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                        __gpga_arg_wide_val, __gpga_arg_width, true);\n";
+        out << "                  }\n";
+        out << "                  ulong __gpga_arg_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_arg_wide_val);\n";
+        out << "                  __gpga_arg_real_val = __gpga_signed\n";
+        out << "                      ? gpga_double_from_s64((long)__gpga_arg_u64)\n";
+        out << "                      : gpga_double_from_u64(__gpga_arg_u64);\n";
+        out << "                } else {\n";
+      }
+      out << "                  ulong __gpga_val_masked = __gpga_arg_val & __gpga_arg_mask;\n";
+      out << "                  if (__gpga_signed && __gpga_arg_width > 0u) {\n";
+      out << "                    long __gpga_arg_s = gpga_sched_vm_sign64(__gpga_val_masked, __gpga_arg_width);\n";
+      out << "                    __gpga_arg_real_val = gpga_double_from_s64(__gpga_arg_s);\n";
+      out << "                  } else {\n";
+      out << "                    __gpga_arg_real_val = gpga_double_from_u64(__gpga_val_masked);\n";
+      out << "                  }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                }\n";
+      } else {
+        out << "                if (__gpga_arg_width > 64u) {\n";
+        out << "                  __gpga_expr_ok = false;\n";
+        out << "                  break;\n";
+        out << "                }\n";
+      }
+      out << "              }\n";
+      out << "              if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ITOR) {\n";
+      out << "                __gpga_out_real = true;\n";
+      out << "                __gpga_out_val = __gpga_arg_real ? __gpga_arg_val\n";
+      out << "                    : __gpga_arg_real_val;\n";
+      out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_BITSTOREAL) {\n";
+      out << "                __gpga_out_real = true;\n";
+      out << "                __gpga_out_val = __gpga_arg_real\n";
+      out << "                    ? __gpga_arg_val\n";
+      out << "                    : gpga_bits_to_real(__gpga_arg_val);\n";
+      out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTOBITS) {\n";
+      out << "                __gpga_out_real = false;\n";
+      out << "                ulong __gpga_real_bits = __gpga_arg_real\n";
+      out << "                    ? gpga_real_to_bits(__gpga_arg_val)\n";
+      out << "                    : gpga_real_to_bits(__gpga_arg_real_val);\n";
+      out << "                __gpga_out_val = __gpga_real_bits;\n";
+      out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_RTOI) {\n";
+      out << "                __gpga_out_real = false;\n";
+      out << "                if (__gpga_arg_real) {\n";
+      out << "                  long __gpga_real_i = gpga_double_to_s64(__gpga_arg_val);\n";
+      out << "                  __gpga_out_val = __gpga_signed\n";
+      out << "                      ? (ulong)__gpga_real_i\n";
+      out << "                      : (ulong)((ulong)__gpga_real_i);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_out_val = __gpga_arg_val;\n";
+      out << "                }\n";
+      out << "              } else {\n";
+      out << "                __gpga_out_real = true;\n";
+      out << "                if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_LOG10) {\n";
+      out << "                  __gpga_out_val = gpga_double_log10(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_LN) {\n";
+      out << "                  __gpga_out_val = gpga_double_ln(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_EXP) {\n";
+      out << "                  __gpga_out_val = gpga_double_exp_real(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SQRT) {\n";
+      out << "                  __gpga_out_val = gpga_double_sqrt(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_FLOOR) {\n";
+      out << "                  __gpga_out_val = gpga_double_floor(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_CEIL) {\n";
+      out << "                  __gpga_out_val = gpga_double_ceil(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SIN) {\n";
+      out << "                  __gpga_out_val = gpga_double_sin(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_COS) {\n";
+      out << "                  __gpga_out_val = gpga_double_cos(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TAN) {\n";
+      out << "                  __gpga_out_val = gpga_double_tan(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ASIN) {\n";
+      out << "                  __gpga_out_val = gpga_double_asin(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ACOS) {\n";
+      out << "                  __gpga_out_val = gpga_double_acos(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN) {\n";
+      out << "                  __gpga_out_val = gpga_double_atan(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SINH) {\n";
+      out << "                  __gpga_out_val = gpga_double_sinh(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_COSH) {\n";
+      out << "                  __gpga_out_val = gpga_double_cosh(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TANH) {\n";
+      out << "                  __gpga_out_val = gpga_double_tanh(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ASINH) {\n";
+      out << "                  __gpga_out_val = gpga_double_asinh(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ACOSH) {\n";
+      out << "                  __gpga_out_val = gpga_double_acosh(__gpga_arg_real_val);\n";
+      out << "                } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATANH) {\n";
+      out << "                  __gpga_out_val = gpga_double_atanh(__gpga_arg_real_val);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_expr_ok = false;\n";
+      out << "                }\n";
+      out << "              }\n";
+      out << "            } else {\n";
+      out << "              bool __gpga_lhs_real = __gpga_is_real[__gpga_base];\n";
+      out << "              bool __gpga_rhs_real = __gpga_is_real[__gpga_base + 1u];\n";
+      out << "              uint __gpga_lhs_width = __gpga_widths[__gpga_base];\n";
+      out << "              uint __gpga_rhs_width = __gpga_widths[__gpga_base + 1u];\n";
+      out << "              ulong __gpga_lhs_val = __gpga_vals[__gpga_base];\n";
+      out << "              ulong __gpga_rhs_val = __gpga_vals[__gpga_base + 1u];\n";
+      out << "              ulong __gpga_lhs_real_val = 0ul;\n";
+      out << "              ulong __gpga_rhs_real_val = 0ul;\n";
+      out << "              if (__gpga_lhs_real) {\n";
+      out << "                __gpga_lhs_real_val = __gpga_lhs_val;\n";
+      out << "              } else {\n";
+      out << "                ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+      out << "                    ? ~0ul\n";
+      out << "                    : ((__gpga_lhs_width == 0u)\n";
+      out << "                           ? 0ul\n";
+      out << "                           : ((1ul << __gpga_lhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                if (__gpga_lhs_width > 64u) {\n";
+        out << "                  GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_base];\n";
+        out << "                  __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "                  if (__gpga_signed) {\n";
+        out << "                    __gpga_lhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                        __gpga_lhs_wide_val, __gpga_lhs_width, true);\n";
+        out << "                  }\n";
+        out << "                  ulong __gpga_lhs_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_lhs_wide_val);\n";
+        out << "                  __gpga_lhs_real_val = __gpga_signed\n";
+        out << "                      ? gpga_double_from_s64((long)__gpga_lhs_u64)\n";
+        out << "                      : gpga_double_from_u64(__gpga_lhs_u64);\n";
+        out << "                } else {\n";
+      }
+      out << "                  ulong __gpga_val = __gpga_lhs_val & __gpga_lhs_mask;\n";
+      out << "                  if (__gpga_signed && __gpga_lhs_width > 0u) {\n";
+      out << "                    long __gpga_lhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_lhs_width);\n";
+      out << "                    __gpga_lhs_real_val = gpga_double_from_s64(__gpga_lhs_s);\n";
+      out << "                  } else {\n";
+      out << "                    __gpga_lhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "                  }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                }\n";
+      } else {
+        out << "                if (__gpga_lhs_width > 64u) {\n";
+        out << "                  __gpga_expr_ok = false;\n";
+        out << "                  break;\n";
+        out << "                }\n";
+      }
+      out << "              }\n";
+      out << "              if (__gpga_rhs_real) {\n";
+      out << "                __gpga_rhs_real_val = __gpga_rhs_val;\n";
+      out << "              } else {\n";
+      out << "                ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+      out << "                    ? ~0ul\n";
+      out << "                    : ((__gpga_rhs_width == 0u)\n";
+      out << "                           ? 0ul\n";
+      out << "                           : ((1ul << __gpga_rhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                if (__gpga_rhs_width > 64u) {\n";
+        out << "                  GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_base + 1u];\n";
+        out << "                  __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "                  if (__gpga_signed) {\n";
+        out << "                    __gpga_rhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                        __gpga_rhs_wide_val, __gpga_rhs_width, true);\n";
+        out << "                  }\n";
+        out << "                  ulong __gpga_rhs_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_rhs_wide_val);\n";
+        out << "                  __gpga_rhs_real_val = __gpga_signed\n";
+        out << "                      ? gpga_double_from_s64((long)__gpga_rhs_u64)\n";
+        out << "                      : gpga_double_from_u64(__gpga_rhs_u64);\n";
+        out << "                } else {\n";
+      }
+      out << "                  ulong __gpga_val = __gpga_rhs_val & __gpga_rhs_mask;\n";
+      out << "                  if (__gpga_signed && __gpga_rhs_width > 0u) {\n";
+      out << "                    long __gpga_rhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_rhs_width);\n";
+      out << "                    __gpga_rhs_real_val = gpga_double_from_s64(__gpga_rhs_s);\n";
+      out << "                  } else {\n";
+      out << "                    __gpga_rhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "                  }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                }\n";
+      } else {
+        out << "                if (__gpga_rhs_width > 64u) {\n";
+        out << "                  __gpga_expr_ok = false;\n";
+        out << "                  break;\n";
+        out << "                }\n";
+      }
+      out << "              }\n";
+      out << "              if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_POW) {\n";
+      out << "                __gpga_out_val = gpga_double_pow(\n";
+      out << "                    __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN2) {\n";
+      out << "                __gpga_out_val = gpga_double_atan2(\n";
+      out << "                    __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "              } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_HYPOT) {\n";
+      out << "                __gpga_out_val = gpga_double_hypot(\n";
+      out << "                    __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "              } else {\n";
+      out << "                __gpga_expr_ok = false;\n";
+      out << "              }\n";
+      out << "              __gpga_out_real = true;\n";
+      out << "            }\n";
+      out << "            if (!__gpga_expr_ok) {\n";
+      out << "              break;\n";
+      out << "            }\n";
+      out << "            __gpga_sp = __gpga_base + 1u;\n";
+      out << "            __gpga_vals[__gpga_base] = __gpga_out_val;\n";
+      out << "            __gpga_widths[__gpga_base] = __gpga_width;\n";
+      out << "            __gpga_is_real[__gpga_base] = __gpga_out_real;\n";
+      out << "            break;\n";
+      out << "          }\n";
       out << "          case GPGA_SCHED_VM_EXPR_OP_UNARY: {\n";
       out << "            if (__gpga_sp == 0u) {\n";
       out << "              __gpga_expr_ok = false;\n";
@@ -32676,8 +38848,119 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "            }\n";
       out << "            uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
       out << "            uint __gpga_uop = __gpga_arg;\n";
-      out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
       out << "            uint __gpga_in_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "            bool __gpga_real = __gpga_is_real[__gpga_sp - 1u];\n";
+      out << "            if (__gpga_real) {\n";
+      out << "              ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "              ulong __gpga_out_val = __gpga_val;\n";
+      out << "              bool __gpga_out_real = true;\n";
+      out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+      out << "                __gpga_out_val = gpga_double_is_zero(__gpga_val) ? 1ul : 0ul;\n";
+      out << "                __gpga_out_real = false;\n";
+      out << "              } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+      out << "                __gpga_out_val = gpga_double_neg(__gpga_val);\n";
+      out << "              } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_PLUS) {\n";
+      out << "                __gpga_out_val = __gpga_val;\n";
+      out << "              } else {\n";
+      out << "                __gpga_expr_ok = false;\n";
+      out << "              }\n";
+      out << "              if (!__gpga_expr_ok) {\n";
+      out << "                break;\n";
+      out << "              }\n";
+      out << "              __gpga_vals[__gpga_sp - 1u] = __gpga_out_val;\n";
+      out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "              __gpga_is_real[__gpga_sp - 1u] = __gpga_out_real;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_in_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "              __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_wide_val, __gpga_in_width);\n";
+        out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+        out << "                bool __gpga_any = gpga_sched_vm_wide_any_masked(\n";
+        out << "                    __gpga_wide_val, __gpga_in_width);\n";
+        out << "                __gpga_vals[__gpga_sp - 1u] = __gpga_any ? 0ul : 1ul;\n";
+        out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "                break;\n";
+        out << "              }\n";
+        out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND ||\n";
+        out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND ||\n";
+        out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR ||\n";
+        out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR ||\n";
+        out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR ||\n";
+        out << "                  __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_in_width);\n";
+        out << "                bool __gpga_all_ones = gpga_sched_vm_wide_eq_masked(\n";
+        out << "                    __gpga_wide_val, __gpga_mask, __gpga_in_width);\n";
+        out << "                bool __gpga_any = gpga_sched_vm_wide_any_masked(\n";
+        out << "                    __gpga_wide_val, __gpga_in_width);\n";
+        out << "                ulong __gpga_red = 0ul;\n";
+        out << "                if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND ||\n";
+        out << "                    __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+        out << "                  __gpga_red = __gpga_all_ones ? 1ul : 0ul;\n";
+        out << "                  if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+        out << "                    __gpga_red = (__gpga_red == 0ul) ? 1ul : 0ul;\n";
+        out << "                  }\n";
+        out << "                } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR ||\n";
+        out << "                           __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+        out << "                  __gpga_red = __gpga_any ? 1ul : 0ul;\n";
+        out << "                  if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+        out << "                    __gpga_red = (__gpga_red == 0ul) ? 1ul : 0ul;\n";
+        out << "                  }\n";
+        out << "                } else {\n";
+        out << "                  __gpga_red = (ulong)gpga_sched_vm_wide_red_xor(\n";
+        out << "                      __gpga_wide_val, __gpga_in_width);\n";
+        out << "                  if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+        out << "                    __gpga_red = (__gpga_red == 0ul) ? 1ul : 0ul;\n";
+        out << "                  }\n";
+        out << "                }\n";
+        out << "                __gpga_vals[__gpga_sp - 1u] = __gpga_red;\n";
+        out << "                __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "                __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "                break;\n";
+        out << "              }\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_out_val = __gpga_wide_val;\n";
+        out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+        out << "                __gpga_out_val = gpga_wide_not_" << vm_expr_wide_bits
+            << "(__gpga_wide_val);\n";
+        out << "              } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+        out << "                __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_wide_val);\n";
+        out << "              } else if (__gpga_uop != GPGA_SCHED_VM_EXPR_UNARY_PLUS) {\n";
+        out << "                __gpga_expr_ok = false;\n";
+        out << "              }\n";
+        out << "              if (!__gpga_expr_ok) {\n";
+        out << "                break;\n";
+        out << "              }\n";
+        out << "              __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_out_val, __gpga_width);\n";
+        out << "              if (__gpga_width > 64u) {\n";
+        out << "                __gpga_wide_vals[__gpga_sp - 1u] = __gpga_out_val;\n";
+        out << "                __gpga_vals[__gpga_sp - 1u] = __gpga_out_val.w[0];\n";
+        out << "              } else {\n";
+        out << "                ulong __gpga_mask = (__gpga_width >= 64u)\n";
+        out << "                    ? ~0ul\n";
+        out << "                    : ((__gpga_width == 0u)\n";
+        out << "                           ? 0ul\n";
+        out << "                           : ((1ul << __gpga_width) - 1ul));\n";
+        out << "                __gpga_vals[__gpga_sp - 1u] = __gpga_out_val.w[0] & __gpga_mask;\n";
+        out << "              }\n";
+        out << "              __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "              __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_in_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "            ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
       out << "            ulong __gpga_mask = (__gpga_in_width >= 64u)\n";
       out << "                ? ~0ul\n";
       out << "                : ((__gpga_in_width == 0u)\n";
@@ -32690,6 +38973,32 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "              __gpga_val = ~__gpga_val;\n";
       out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
       out << "              __gpga_val = 0ul - __gpga_val;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND) {\n";
+      out << "              __gpga_val = ((__gpga_val & __gpga_mask) == __gpga_mask) ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+      out << "              __gpga_val = ((__gpga_val & __gpga_mask) == __gpga_mask) ? 0ul : 1ul;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR) {\n";
+      out << "              __gpga_val = ((__gpga_val & __gpga_mask) != 0ul) ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+      out << "              __gpga_val = ((__gpga_val & __gpga_mask) == 0ul) ? 1ul : 0ul;\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR) {\n";
+      out << "              ulong __gpga_masked = __gpga_val & __gpga_mask;\n";
+      out << "              if (__gpga_in_width > 32u) {\n";
+      out << "                uint __gpga_lo = uint(__gpga_masked & 0xFFFFFFFFul);\n";
+      out << "                uint __gpga_hi = uint((__gpga_masked >> 32u) & 0xFFFFFFFFul);\n";
+      out << "                __gpga_val = ulong((popcount(__gpga_lo) + popcount(__gpga_hi)) & 1u);\n";
+      out << "              } else {\n";
+      out << "                __gpga_val = ulong(popcount(uint(__gpga_masked)) & 1u);\n";
+      out << "              }\n";
+      out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+      out << "              ulong __gpga_masked = __gpga_val & __gpga_mask;\n";
+      out << "              if (__gpga_in_width > 32u) {\n";
+      out << "                uint __gpga_lo = uint(__gpga_masked & 0xFFFFFFFFul);\n";
+      out << "                uint __gpga_hi = uint((__gpga_masked >> 32u) & 0xFFFFFFFFul);\n";
+      out << "                __gpga_val = ulong(((popcount(__gpga_lo) + popcount(__gpga_hi)) & 1u) == 0u);\n";
+      out << "              } else {\n";
+      out << "                __gpga_val = ulong((popcount(uint(__gpga_masked)) & 1u) == 0u);\n";
+      out << "              }\n";
       out << "            }\n";
       out << "            ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
       out << "                ? ~0ul\n";
@@ -32698,6 +39007,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "                       : ((1ul << __gpga_width) - 1ul));\n";
       out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_out_mask;\n";
       out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
       out << "            break;\n";
       out << "          }\n";
       out << "          case GPGA_SCHED_VM_EXPR_OP_BINARY: {\n";
@@ -32713,6 +39023,416 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "            ulong __gpga_lhs = __gpga_vals[__gpga_sp - 2u];\n";
       out << "            uint __gpga_rhs_width = __gpga_widths[__gpga_sp - 1u];\n";
       out << "            uint __gpga_lhs_width = __gpga_widths[__gpga_sp - 2u];\n";
+      out << "            bool __gpga_lhs_real = __gpga_is_real[__gpga_sp - 2u];\n";
+      out << "            bool __gpga_rhs_real = __gpga_is_real[__gpga_sp - 1u];\n";
+      out << "            if (__gpga_lhs_real || __gpga_rhs_real) {\n";
+      out << "              ulong __gpga_lhs_real_val = 0ul;\n";
+      out << "              ulong __gpga_rhs_real_val = 0ul;\n";
+      out << "              if (__gpga_lhs_real) {\n";
+      out << "                __gpga_lhs_real_val = __gpga_lhs;\n";
+      out << "              } else {\n";
+      out << "                ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+      out << "                    ? ~0ul\n";
+      out << "                    : ((__gpga_lhs_width == 0u)\n";
+      out << "                           ? 0ul\n";
+      out << "                           : ((1ul << __gpga_lhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                if (__gpga_lhs_width > 64u) {\n";
+        out << "                  GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_sp - 2u];\n";
+        out << "                  __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "                  if (__gpga_signed) {\n";
+        out << "                    __gpga_lhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                        __gpga_lhs_wide_val, __gpga_lhs_width, true);\n";
+        out << "                  }\n";
+        out << "                  ulong __gpga_lhs_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_lhs_wide_val);\n";
+        out << "                  __gpga_lhs_real_val = __gpga_signed\n";
+        out << "                      ? gpga_double_from_s64((long)__gpga_lhs_u64)\n";
+        out << "                      : gpga_double_from_u64(__gpga_lhs_u64);\n";
+        out << "                } else {\n";
+      }
+      out << "                  ulong __gpga_val = __gpga_lhs & __gpga_lhs_mask;\n";
+      out << "                  if (__gpga_signed && __gpga_lhs_width > 0u) {\n";
+      out << "                    long __gpga_lhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_lhs_width);\n";
+      out << "                    __gpga_lhs_real_val = gpga_double_from_s64(__gpga_lhs_s);\n";
+      out << "                  } else {\n";
+      out << "                    __gpga_lhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "                  }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                }\n";
+      } else {
+        out << "                if (__gpga_lhs_width > 64u) {\n";
+        out << "                  __gpga_expr_ok = false;\n";
+        out << "                  break;\n";
+        out << "                }\n";
+      }
+      out << "              }\n";
+      out << "              if (__gpga_rhs_real) {\n";
+      out << "                __gpga_rhs_real_val = __gpga_rhs;\n";
+      out << "              } else {\n";
+      out << "                ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+      out << "                    ? ~0ul\n";
+      out << "                    : ((__gpga_rhs_width == 0u)\n";
+      out << "                           ? 0ul\n";
+      out << "                           : ((1ul << __gpga_rhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                if (__gpga_rhs_width > 64u) {\n";
+        out << "                  GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "                  __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "                  if (__gpga_signed) {\n";
+        out << "                    __gpga_rhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                        __gpga_rhs_wide_val, __gpga_rhs_width, true);\n";
+        out << "                  }\n";
+        out << "                  ulong __gpga_rhs_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_rhs_wide_val);\n";
+        out << "                  __gpga_rhs_real_val = __gpga_signed\n";
+        out << "                      ? gpga_double_from_s64((long)__gpga_rhs_u64)\n";
+        out << "                      : gpga_double_from_u64(__gpga_rhs_u64);\n";
+        out << "                } else {\n";
+      }
+      out << "                  ulong __gpga_val = __gpga_rhs & __gpga_rhs_mask;\n";
+      out << "                  if (__gpga_signed && __gpga_rhs_width > 0u) {\n";
+      out << "                    long __gpga_rhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_rhs_width);\n";
+      out << "                    __gpga_rhs_real_val = gpga_double_from_s64(__gpga_rhs_s);\n";
+      out << "                  } else {\n";
+      out << "                    __gpga_rhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "                  }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "                }\n";
+      } else {
+        out << "                if (__gpga_rhs_width > 64u) {\n";
+        out << "                  __gpga_expr_ok = false;\n";
+        out << "                  break;\n";
+        out << "                }\n";
+      }
+      out << "              }\n";
+      out << "              bool __gpga_real_arith =\n";
+      out << "                  (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV);\n";
+      out << "              bool __gpga_real_pred =\n";
+      out << "                  (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE);\n";
+      out << "              if (!__gpga_real_arith && !__gpga_real_pred) {\n";
+      out << "                __gpga_expr_ok = false;\n";
+      out << "                break;\n";
+      out << "              }\n";
+      out << "              bool __gpga_out_real = __gpga_real_arith;\n";
+      out << "              ulong __gpga_out_val = 0ul;\n";
+      out << "              if (__gpga_real_arith) {\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+      out << "                  __gpga_out_val = gpga_double_add(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+      out << "                  __gpga_out_val = gpga_double_sub(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+      out << "                  __gpga_out_val = gpga_double_mul(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_out_val = gpga_double_div(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                }\n";
+      out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+      out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+      out << "                bool __gpga_lhs_true =\n";
+      out << "                    !gpga_double_is_zero(__gpga_lhs_real_val);\n";
+      out << "                bool __gpga_rhs_true =\n";
+      out << "                    !gpga_double_is_zero(__gpga_rhs_real_val);\n";
+      out << "                bool __gpga_true =\n";
+      out << "                    (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+      out << "                        ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+      out << "                        : (__gpga_lhs_true || __gpga_rhs_true);\n";
+      out << "                __gpga_out_val = __gpga_true ? 1ul : 0ul;\n";
+      out << "              } else {\n";
+      out << "                bool __gpga_true = false;\n";
+      out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+      out << "                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+      out << "                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+      out << "                  bool __gpga_eq = gpga_double_eq(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                  __gpga_true =\n";
+      out << "                      (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                       __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+      out << "                          ? __gpga_eq\n";
+      out << "                          : !__gpga_eq;\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+      out << "                  __gpga_true = gpga_double_lt(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+      out << "                  __gpga_true = gpga_double_le(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+      out << "                  __gpga_true = gpga_double_gt(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                } else {\n";
+      out << "                  __gpga_true = gpga_double_ge(\n";
+      out << "                      __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "                }\n";
+      out << "                __gpga_out_val = __gpga_true ? 1ul : 0ul;\n";
+      out << "              }\n";
+      out << "              __gpga_vals[__gpga_sp - 2u] = __gpga_out_val;\n";
+      out << "              __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+      out << "              __gpga_is_real[__gpga_sp - 2u] = __gpga_out_real;\n";
+      out << "              __gpga_sp -= 1u;\n";
+      out << "              break;\n";
+      out << "            }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_width > 64u || __gpga_lhs_width > 64u || __gpga_rhs_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_wide_val = (__gpga_lhs_width > 64u)\n";
+        out << "                  ? __gpga_wide_vals[__gpga_sp - 2u]\n";
+        out << "                  : gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_lhs);\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_wide_val = (__gpga_rhs_width > 64u)\n";
+        out << "                  ? __gpga_wide_vals[__gpga_sp - 1u]\n";
+        out << "                  : gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_rhs);\n";
+        out << "              __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "              __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "              uint __gpga_eval_width = (__gpga_lhs_width > __gpga_rhs_width)\n";
+        out << "                  ? __gpga_lhs_width\n";
+        out << "                  : __gpga_rhs_width;\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+        out << "                  __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+        out << "                bool __gpga_lhs_true = gpga_sched_vm_wide_any_masked(\n";
+        out << "                    __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "                bool __gpga_rhs_true = gpga_sched_vm_wide_any_masked(\n";
+        out << "                    __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "                bool __gpga_true =\n";
+        out << "                    (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+        out << "                        ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+        out << "                        : (__gpga_lhs_true || __gpga_rhs_true);\n";
+        out << "                __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_true ? 1ul : 0ul);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_cmp = __gpga_lhs_wide_val;\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_cmp = __gpga_rhs_wide_val;\n";
+        out << "                if (__gpga_signed) {\n";
+        out << "                  __gpga_lhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                      __gpga_lhs_cmp, __gpga_lhs_width, true);\n";
+        out << "                  __gpga_rhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                      __gpga_rhs_cmp, __gpga_rhs_width, true);\n";
+        out << "                }\n";
+        out << "                __gpga_lhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                    __gpga_lhs_cmp, __gpga_eval_width);\n";
+        out << "                __gpga_rhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                    __gpga_rhs_cmp, __gpga_eval_width);\n";
+        out << "                bool __gpga_eq = gpga_sched_vm_wide_eq_masked(\n";
+        out << "                    __gpga_lhs_cmp, __gpga_rhs_cmp, __gpga_eval_width);\n";
+        out << "                bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+        out << "                                    __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+        out << "                                       ? __gpga_eq\n";
+        out << "                                       : !__gpga_eq;\n";
+        out << "                __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_true ? 1ul : 0ul);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_cmp = __gpga_lhs_wide_val;\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_cmp = __gpga_rhs_wide_val;\n";
+        out << "                if (__gpga_signed) {\n";
+        out << "                  __gpga_lhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                      __gpga_lhs_cmp, __gpga_lhs_width, true);\n";
+        out << "                  __gpga_rhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                      __gpga_rhs_cmp, __gpga_rhs_width, true);\n";
+        out << "                }\n";
+        out << "                __gpga_lhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                    __gpga_lhs_cmp, __gpga_eval_width);\n";
+        out << "                __gpga_rhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                    __gpga_rhs_cmp, __gpga_eval_width);\n";
+        out << "                bool __gpga_true = false;\n";
+        out << "                if (__gpga_signed) {\n";
+        out << "                  if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+        out << "                    __gpga_true = gpga_wide_lt_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+        out << "                    __gpga_true = gpga_wide_le_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+        out << "                    __gpga_true = gpga_wide_gt_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  } else {\n";
+        out << "                    __gpga_true = gpga_wide_ge_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  }\n";
+        out << "                } else {\n";
+        out << "                  if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+        out << "                    __gpga_true = gpga_wide_lt_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+        out << "                    __gpga_true = gpga_wide_le_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+        out << "                    __gpga_true = gpga_wide_gt_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  } else {\n";
+        out << "                    __gpga_true = gpga_wide_ge_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "                  }\n";
+        out << "                }\n";
+        out << "                __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_true ? 1ul : 0ul);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+        out << "                uint __gpga_shift = 0u;\n";
+        out << "                if (__gpga_rhs_width > 64u) {\n";
+        out << "                  GpgaWide" << vm_expr_wide_bits
+            << " __gpga_shift_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "                  __gpga_shift = (uint)gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_shift_val);\n";
+        out << "                } else {\n";
+        out << "                  ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+        out << "                      ? ~0ul\n";
+        out << "                      : ((__gpga_rhs_width == 0u)\n";
+        out << "                             ? 0ul\n";
+        out << "                             : ((1ul << __gpga_rhs_width) - 1ul));\n";
+        out << "                  __gpga_shift = (uint)(__gpga_rhs & __gpga_rhs_mask);\n";
+        out << "                }\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                    __gpga_lhs_wide_val, __gpga_width);\n";
+        out << "                if (__gpga_shift >= __gpga_width) {\n";
+        out << "                  __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+        out << "                  __gpga_out_val = gpga_wide_shl_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_shift);\n";
+        out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR || !__gpga_signed) {\n";
+        out << "                  __gpga_out_val = gpga_wide_shr_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_shift);\n";
+        out << "                } else {\n";
+        out << "                  __gpga_out_val = gpga_wide_sar_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_shift);\n";
+        out << "                }\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+        out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+        out << "                  __gpga_out_val = gpga_wide_and_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+        out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+        out << "                  __gpga_out_val = gpga_wide_or_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+        out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR) {\n";
+        out << "                  __gpga_out_val = gpga_wide_xor_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+        out << "                } else {\n";
+        out << "                  __gpga_out_val = gpga_wide_not_" << vm_expr_wide_bits
+            << "(gpga_wide_xor_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val));\n";
+        out << "                }\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV ||\n";
+        out << "                         __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_val = __gpga_lhs_wide_val;\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_val = __gpga_rhs_wide_val;\n";
+        out << "                if (__gpga_signed) {\n";
+        out << "                  __gpga_lhs_val = gpga_sched_vm_wide_extend(\n";
+        out << "                      __gpga_lhs_val, __gpga_lhs_width, true);\n";
+        out << "                  __gpga_rhs_val = gpga_sched_vm_wide_extend(\n";
+        out << "                      __gpga_rhs_val, __gpga_rhs_width, true);\n";
+        out << "                } else {\n";
+        out << "                  __gpga_lhs_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_lhs_val, __gpga_width);\n";
+        out << "                  __gpga_rhs_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                      __gpga_rhs_val, __gpga_width);\n";
+        out << "                }\n";
+        out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+        out << "                  __gpga_out_val = gpga_wide_add_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+        out << "                  __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+        out << "                  __gpga_out_val = gpga_wide_mul_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                } else {\n";
+        out << "                  bool __gpga_rhs_zero = !gpga_sched_vm_wide_any_masked(\n";
+        out << "                      __gpga_rhs_val, __gpga_width);\n";
+        out << "                  if (__gpga_rhs_zero) {\n";
+        out << "                    __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "                  } else if (!__gpga_signed) {\n";
+        out << "                    if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+        out << "                      __gpga_out_val = gpga_wide_div_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                    } else {\n";
+        out << "                      __gpga_out_val = gpga_wide_mod_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                    }\n";
+        out << "                  } else {\n";
+        out << "                    if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+        out << "                      __gpga_out_val = gpga_wide_div_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                    } else {\n";
+        out << "                      __gpga_out_val = gpga_wide_mod_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                    }\n";
+        out << "                  }\n";
+        out << "                }\n";
+        out << "              } else {\n";
+        out << "                __gpga_expr_ok = false;\n";
+        out << "              }\n";
+        out << "              if (!__gpga_expr_ok) {\n";
+        out << "                break;\n";
+        out << "              }\n";
+        out << "              __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_out_val, __gpga_width);\n";
+        out << "              if (__gpga_width > 64u) {\n";
+        out << "                __gpga_wide_vals[__gpga_sp - 2u] = __gpga_out_val;\n";
+        out << "                __gpga_vals[__gpga_sp - 2u] = __gpga_out_val.w[0];\n";
+        out << "              } else {\n";
+        out << "                ulong __gpga_mask = (__gpga_width >= 64u)\n";
+        out << "                    ? ~0ul\n";
+        out << "                    : ((__gpga_width == 0u)\n";
+        out << "                           ? 0ul\n";
+        out << "                           : ((1ul << __gpga_width) - 1ul));\n";
+        out << "                __gpga_vals[__gpga_sp - 2u] = __gpga_out_val.w[0] & __gpga_mask;\n";
+        out << "              }\n";
+        out << "              __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+        out << "              __gpga_is_real[__gpga_sp - 2u] = false;\n";
+        out << "              __gpga_sp -= 1u;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_width > 64u || __gpga_lhs_width > 64u || __gpga_rhs_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
       out << "            ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
       out << "                ? ~0ul\n";
       out << "                : ((__gpga_lhs_width == 0u)\n";
@@ -32877,6 +39597,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "                       : ((1ul << __gpga_width) - 1ul));\n";
       out << "            __gpga_vals[__gpga_sp - 2u] = __gpga_result & __gpga_out_mask;\n";
       out << "            __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+      out << "            __gpga_is_real[__gpga_sp - 2u] = false;\n";
       out << "            __gpga_sp -= 1u;\n";
       out << "            break;\n";
       out << "          }\n";
@@ -32918,33 +39639,1420 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      }\n";
       out << "    }\n";
       out << "  }\n";
-      out << "  if (!__gpga_cond_known) {\n";
-      out << "    switch (cond_id) {\n";
-      for (size_t i = 0; i < vm_cond_exprs.size(); ++i) {
-        const Expr* expr = vm_cond_exprs[i];
-        if (!expr) {
-          continue;
-        }
-        std::string cond = EmitCondExpr(*expr, module, sched_locals, sched_regs);
-        out << "    case " << i << "u: {\n";
-        out << "      __gpga_cond_val = (" << cond << ") ? 1u : 0u;\n";
-        out << "      __gpga_cond_xz = 0u;\n";
-        out << "      break;\n";
-        out << "    }\n";
-      }
-      out << "    default: {\n";
-      out << "      __gpga_cond_val = 0u;\n";
-      out << "      __gpga_cond_xz = 0u;\n";
-      out << "      break;\n";
-      out << "    }\n";
-      out << "  }\n";
-      out << "  }\n";
       out << "  if (out_val) {\n";
       out << "    *out_val = __gpga_cond_val;\n";
       out << "  }\n";
       out << "  if (out_xz) {\n";
       out << "    *out_xz = __gpga_cond_xz;\n";
       out << "  }\n";
+      out << "}\n";
+    }
+
+    if (options.sched_vm) {
+      out << "static __attribute__((noinline)) bool gpga_"
+          << MslName(module.name) << "_sched_vm_eval_expr(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint expr_offset,\n"
+             "  thread ulong* out_val,\n"
+             "  thread ulong* out_xz,\n"
+             "  thread uint* out_width) {\n";
+      out << "  ulong __gpga_val_out = 0ul;\n";
+      out << "  uint __gpga_width_out = 0u;\n";
+      out << "  bool __gpga_done = false;\n";
+      emit_packed_signal_setup("sched.count");
+      out << "  uint __gpga_ip = expr_offset;\n";
+      out << "  uint __gpga_sp = 0u;\n";
+      out << "  bool __gpga_expr_ok = true;\n";
+      out << "  thread ulong __gpga_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      out << "  thread uint __gpga_widths[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      out << "  thread bool __gpga_is_real[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "  thread GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_vals[GPGA_SCHED_VM_EXPR_STACK_MAX];\n";
+      }
+      out << "  while (__gpga_expr_ok) {\n";
+      out << "    uint __gpga_instr = sched_vm_expr[__gpga_ip++];\n";
+      out << "    uint __gpga_op = (__gpga_instr & 0xFFu);\n";
+      out << "    uint __gpga_arg = (__gpga_instr >> 8u);\n";
+      out << "    if (__gpga_op == GPGA_SCHED_VM_EXPR_OP_DONE) {\n";
+      out << "      if (__gpga_sp == 0u) {\n";
+      out << "        __gpga_expr_ok = false;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      uint __gpga_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "      ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "          ? ~0ul\n";
+      out << "          : ((__gpga_width == 0u)\n";
+      out << "                 ? 0ul\n";
+      out << "                 : ((1ul << __gpga_width) - 1ul));\n";
+      out << "      __gpga_val_out = __gpga_vals[__gpga_sp - 1u] & __gpga_mask;\n";
+      out << "      __gpga_width_out = __gpga_width;\n";
+      out << "      __gpga_done = true;\n";
+      out << "      break;\n";
+      out << "    }\n";
+      out << "    switch (__gpga_op) {\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_PUSH_CONST: {\n";
+      out << "        if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        uint __gpga_imm = __gpga_arg;\n";
+      out << "        ulong __gpga_val =\n";
+      out << "            (ulong)(sched_vm_expr_imm[__gpga_imm]) |\n";
+      out << "            ((ulong)(sched_vm_expr_imm[__gpga_imm + 1u]) << 32u);\n";
+      out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_is_real[__gpga_sp] = false;\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_val);\n";
+        out << "          __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_wide_val, __gpga_width);\n";
+        out << "          __gpga_wide_vals[__gpga_sp] = __gpga_wide_val;\n";
+        out << "          __gpga_vals[__gpga_sp] = __gpga_wide_val.w[0];\n";
+        out << "        } else {\n";
+        out << "          __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+        out << "        }\n";
+      } else {
+        out << "        __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+      }
+      out << "        __gpga_widths[__gpga_sp] = __gpga_width;\n";
+      out << "        __gpga_sp += 1u;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_PUSH_SIGNAL: {\n";
+      out << "        if (__gpga_sp >= GPGA_SCHED_VM_EXPR_STACK_MAX) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "            sched_vm_signal_entry[__gpga_arg];\n";
+      out << "        if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
+      out << "          if (__gpga_sig.array_size != 1u) {\n";
+      out << "            __gpga_expr_ok = false;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          ulong __gpga_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "              ((ulong)gid * (ulong)__gpga_sig.array_size) * 8ul;\n";
+      out << "          ulong __gpga_val =\n";
+      out << "              ((device const ulong*)(gpga_state + __gpga_addr))[0];\n";
+      out << "          __gpga_vals[__gpga_sp] = __gpga_val;\n";
+      out << "          __gpga_widths[__gpga_sp] = 64u;\n";
+      out << "          __gpga_is_real[__gpga_sp] = true;\n";
+      out << "          __gpga_sp += 1u;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        if (__gpga_sig.array_size != 1u) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        __gpga_is_real[__gpga_sp] = false;\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          uint __gpga_words = (__gpga_width + 63u) >> 6u;\n";
+        out << "          ulong __gpga_stride = (ulong)__gpga_words * 8ul;\n";
+        out << "          ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+        out << "          ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+        out << "              __gpga_base * __gpga_stride;\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = gpga_wide_zero_" << vm_expr_wide_bits
+            << "();\n";
+        out << "          #pragma clang loop unroll(disable)\n";
+        out << "          for (uint __gpga_w = 0u; __gpga_w < __gpga_words; ++__gpga_w) {\n";
+        out << "            __gpga_wide_val.w[__gpga_w] =\n";
+        out << "                ((device const ulong*)(gpga_state + __gpga_val_addr))[__gpga_w];\n";
+        out << "          }\n";
+        out << "          __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_wide_val, __gpga_width);\n";
+        out << "          __gpga_wide_vals[__gpga_sp] = __gpga_wide_val;\n";
+        out << "          __gpga_vals[__gpga_sp] = __gpga_wide_val.w[0];\n";
+        out << "          __gpga_widths[__gpga_sp] = __gpga_width;\n";
+        out << "          __gpga_sp += 1u;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      } else {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          __gpga_expr_ok = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      }
+      out << "        ulong __gpga_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "            ((ulong)gid * (ulong)__gpga_sig.array_size) *\n";
+      out << "                ((__gpga_width > 32u) ? 8ul : 4ul);\n";
+      out << "        ulong __gpga_val = 0ul;\n";
+      out << "        if (__gpga_width > 32u) {\n";
+      out << "          __gpga_val = ((device const ulong*)(gpga_state + __gpga_addr))[0];\n";
+      out << "        } else {\n";
+      out << "          __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_addr))[0];\n";
+      out << "        }\n";
+      out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_vals[__gpga_sp] = __gpga_val & __gpga_mask;\n";
+      out << "        __gpga_widths[__gpga_sp] = __gpga_width;\n";
+      out << "        __gpga_sp += 1u;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_INDEX: {\n";
+      out << "        if (__gpga_sp == 0u) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        if (__gpga_arg >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "            sched_vm_signal_entry[__gpga_arg];\n";
+      out << "        if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "            __gpga_sig.array_size <= 1u) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        if (__gpga_is_real[__gpga_sp - 1u]) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_idx_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "        ulong __gpga_idx_val = __gpga_vals[__gpga_sp - 1u];\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_idx_width > 64u) {\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_idx_wide = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "          __gpga_idx_wide = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_idx_wide, __gpga_idx_width);\n";
+        out << "          __gpga_idx_val = gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_idx_wide);\n";
+        out << "        }\n";
+      } else {
+        out << "        if (__gpga_idx_width > 64u) {\n";
+        out << "          __gpga_expr_ok = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      }
+      out << "        if (__gpga_idx_val >= (ulong)__gpga_sig.array_size) {\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "          if (__gpga_width > 64u) {\n";
+        out << "            __gpga_wide_vals[__gpga_sp - 1u] =\n";
+        out << "                gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "            __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+        out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "            break;\n";
+        out << "          }\n";
+      }
+      out << "          __gpga_vals[__gpga_sp - 1u] = 0ul;\n";
+      out << "          __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "          __gpga_is_real[__gpga_sp - 1u] = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        __gpga_is_real[__gpga_sp - 1u] = false;\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          uint __gpga_words = (__gpga_width + 63u) >> 6u;\n";
+        out << "          ulong __gpga_stride = (ulong)__gpga_words * 8ul;\n";
+        out << "          ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+        out << "          ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+        out << "              (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = gpga_wide_zero_" << vm_expr_wide_bits
+            << "();\n";
+        out << "          #pragma clang loop unroll(disable)\n";
+        out << "          for (uint __gpga_w = 0u; __gpga_w < __gpga_words; ++__gpga_w) {\n";
+        out << "            __gpga_wide_val.w[__gpga_w] =\n";
+        out << "                ((device const ulong*)(gpga_state + __gpga_val_addr))[__gpga_w];\n";
+        out << "          }\n";
+        out << "          __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_wide_val, __gpga_width);\n";
+        out << "          __gpga_wide_vals[__gpga_sp - 1u] = __gpga_wide_val;\n";
+        out << "          __gpga_vals[__gpga_sp - 1u] = __gpga_wide_val.w[0];\n";
+        out << "          __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      } else {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          __gpga_expr_ok = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      }
+      out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "            (__gpga_base + __gpga_idx_val) * __gpga_stride;\n";
+      out << "        ulong __gpga_val = 0ul;\n";
+      out << "        if (__gpga_width > 32u) {\n";
+      out << "          __gpga_val = ((device const ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+      out << "        } else {\n";
+      out << "          __gpga_val = (ulong)((device const uint*)(gpga_state + __gpga_val_addr))[0];\n";
+      out << "        }\n";
+      out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_mask;\n";
+      out << "        __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_CALL: {\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        uint __gpga_call = (__gpga_arg & 0xFFu);\n";
+      out << "        bool __gpga_signed =\n";
+      out << "            ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+      out << "        uint __gpga_argc = 1u;\n";
+      out << "        if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TIME ||\n";
+      out << "            __gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME ||\n";
+      out << "            __gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTIME) {\n";
+      out << "          __gpga_argc = 0u;\n";
+      out << "        } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_POW ||\n";
+      out << "                   __gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN2 ||\n";
+      out << "                   __gpga_call == GPGA_SCHED_VM_EXPR_CALL_HYPOT) {\n";
+      out << "          __gpga_argc = 2u;\n";
+      out << "        }\n";
+      out << "        if (__gpga_sp < __gpga_argc) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_base = __gpga_sp - __gpga_argc;\n";
+      out << "        ulong __gpga_out_val = 0ul;\n";
+      out << "        bool __gpga_out_real = false;\n";
+      out << "        if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TIME ||\n";
+      out << "            __gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME) {\n";
+      out << "          __gpga_out_val = (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_STIME)\n";
+      out << "              ? (ulong)((uint)__gpga_time)\n";
+      out << "              : __gpga_time;\n";
+      out << "          __gpga_out_real = false;\n";
+      out << "        } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTIME) {\n";
+      out << "          __gpga_out_val = gpga_double_from_u64(__gpga_time);\n";
+      out << "          __gpga_out_real = true;\n";
+      out << "        } else if (__gpga_argc == 1u) {\n";
+      out << "          bool __gpga_arg_real = __gpga_is_real[__gpga_base];\n";
+      out << "          uint __gpga_arg_width = __gpga_widths[__gpga_base];\n";
+      out << "          ulong __gpga_arg_val = __gpga_vals[__gpga_base];\n";
+      out << "          ulong __gpga_arg_real_val = 0ul;\n";
+      out << "          if (__gpga_arg_real) {\n";
+      out << "            __gpga_arg_real_val = __gpga_arg_val;\n";
+      out << "          } else {\n";
+      out << "            ulong __gpga_arg_mask = (__gpga_arg_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_arg_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_arg_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_arg_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_arg_wide_val = __gpga_wide_vals[__gpga_base];\n";
+        out << "              __gpga_arg_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_arg_wide_val, __gpga_arg_width);\n";
+        out << "              if (__gpga_signed) {\n";
+        out << "                __gpga_arg_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                    __gpga_arg_wide_val, __gpga_arg_width, true);\n";
+        out << "              }\n";
+        out << "              ulong __gpga_arg_u64 = gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_arg_wide_val);\n";
+        out << "              __gpga_arg_real_val = __gpga_signed\n";
+        out << "                  ? gpga_double_from_s64((long)__gpga_arg_u64)\n";
+        out << "                  : gpga_double_from_u64(__gpga_arg_u64);\n";
+        out << "            } else {\n";
+      }
+      out << "              ulong __gpga_val_masked = __gpga_arg_val & __gpga_arg_mask;\n";
+      out << "              if (__gpga_signed && __gpga_arg_width > 0u) {\n";
+      out << "                long __gpga_arg_s = gpga_sched_vm_sign64(__gpga_val_masked, __gpga_arg_width);\n";
+      out << "                __gpga_arg_real_val = gpga_double_from_s64(__gpga_arg_s);\n";
+      out << "              } else {\n";
+      out << "                __gpga_arg_real_val = gpga_double_from_u64(__gpga_val_masked);\n";
+      out << "              }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_arg_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "          }\n";
+      out << "          if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ITOR) {\n";
+      out << "            __gpga_out_real = true;\n";
+      out << "            __gpga_out_val = __gpga_arg_real ? __gpga_arg_val\n";
+      out << "                : __gpga_arg_real_val;\n";
+      out << "          } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_BITSTOREAL) {\n";
+      out << "            __gpga_out_real = true;\n";
+      out << "            __gpga_out_val = __gpga_arg_real\n";
+      out << "                ? __gpga_arg_val\n";
+      out << "                : gpga_bits_to_real(__gpga_arg_val);\n";
+      out << "          } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_REALTOBITS) {\n";
+      out << "            __gpga_out_real = false;\n";
+      out << "            ulong __gpga_real_bits = __gpga_arg_real\n";
+      out << "                ? gpga_real_to_bits(__gpga_arg_val)\n";
+      out << "                : gpga_real_to_bits(__gpga_arg_real_val);\n";
+      out << "            __gpga_out_val = __gpga_real_bits;\n";
+      out << "          } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_RTOI) {\n";
+      out << "            __gpga_out_real = false;\n";
+      out << "            if (__gpga_arg_real) {\n";
+      out << "              long __gpga_real_i = gpga_double_to_s64(__gpga_arg_val);\n";
+      out << "              __gpga_out_val = __gpga_signed\n";
+      out << "                  ? (ulong)__gpga_real_i\n";
+      out << "                  : (ulong)((ulong)__gpga_real_i);\n";
+      out << "            } else {\n";
+      out << "              __gpga_out_val = __gpga_arg_val;\n";
+      out << "            }\n";
+      out << "          } else {\n";
+      out << "            __gpga_out_real = true;\n";
+      out << "            if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_LOG10) {\n";
+      out << "              __gpga_out_val = gpga_double_log10(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_LN) {\n";
+      out << "              __gpga_out_val = gpga_double_ln(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_EXP) {\n";
+      out << "              __gpga_out_val = gpga_double_exp_real(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SQRT) {\n";
+      out << "              __gpga_out_val = gpga_double_sqrt(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_FLOOR) {\n";
+      out << "              __gpga_out_val = gpga_double_floor(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_CEIL) {\n";
+      out << "              __gpga_out_val = gpga_double_ceil(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SIN) {\n";
+      out << "              __gpga_out_val = gpga_double_sin(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_COS) {\n";
+      out << "              __gpga_out_val = gpga_double_cos(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TAN) {\n";
+      out << "              __gpga_out_val = gpga_double_tan(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ASIN) {\n";
+      out << "              __gpga_out_val = gpga_double_asin(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ACOS) {\n";
+      out << "              __gpga_out_val = gpga_double_acos(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN) {\n";
+      out << "              __gpga_out_val = gpga_double_atan(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_SINH) {\n";
+      out << "              __gpga_out_val = gpga_double_sinh(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_COSH) {\n";
+      out << "              __gpga_out_val = gpga_double_cosh(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_TANH) {\n";
+      out << "              __gpga_out_val = gpga_double_tanh(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ASINH) {\n";
+      out << "              __gpga_out_val = gpga_double_asinh(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ACOSH) {\n";
+      out << "              __gpga_out_val = gpga_double_acosh(__gpga_arg_real_val);\n";
+      out << "            } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATANH) {\n";
+      out << "              __gpga_out_val = gpga_double_atanh(__gpga_arg_real_val);\n";
+      out << "            } else {\n";
+      out << "              __gpga_expr_ok = false;\n";
+      out << "            }\n";
+      out << "          }\n";
+      out << "        } else {\n";
+      out << "          bool __gpga_lhs_real = __gpga_is_real[__gpga_base];\n";
+      out << "          bool __gpga_rhs_real = __gpga_is_real[__gpga_base + 1u];\n";
+      out << "          uint __gpga_lhs_width = __gpga_widths[__gpga_base];\n";
+      out << "          uint __gpga_rhs_width = __gpga_widths[__gpga_base + 1u];\n";
+      out << "          ulong __gpga_lhs_val = __gpga_vals[__gpga_base];\n";
+      out << "          ulong __gpga_rhs_val = __gpga_vals[__gpga_base + 1u];\n";
+      out << "          ulong __gpga_lhs_real_val = 0ul;\n";
+      out << "          ulong __gpga_rhs_real_val = 0ul;\n";
+      out << "          if (__gpga_lhs_real) {\n";
+      out << "            __gpga_lhs_real_val = __gpga_lhs_val;\n";
+      out << "          } else {\n";
+      out << "            ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_lhs_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_lhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_lhs_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_base];\n";
+        out << "              __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "              if (__gpga_signed) {\n";
+        out << "                __gpga_lhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                    __gpga_lhs_wide_val, __gpga_lhs_width, true);\n";
+        out << "              }\n";
+        out << "              ulong __gpga_lhs_u64 = gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val);\n";
+        out << "              __gpga_lhs_real_val = __gpga_signed\n";
+        out << "                  ? gpga_double_from_s64((long)__gpga_lhs_u64)\n";
+        out << "                  : gpga_double_from_u64(__gpga_lhs_u64);\n";
+        out << "            } else {\n";
+      }
+      out << "              ulong __gpga_val = __gpga_lhs_val & __gpga_lhs_mask;\n";
+      out << "              if (__gpga_signed && __gpga_lhs_width > 0u) {\n";
+      out << "                long __gpga_lhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_lhs_width);\n";
+      out << "                __gpga_lhs_real_val = gpga_double_from_s64(__gpga_lhs_s);\n";
+      out << "              } else {\n";
+      out << "                __gpga_lhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "              }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_lhs_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "          }\n";
+      out << "          if (__gpga_rhs_real) {\n";
+      out << "            __gpga_rhs_real_val = __gpga_rhs_val;\n";
+      out << "          } else {\n";
+      out << "            ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_rhs_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_rhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_rhs_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_base + 1u];\n";
+        out << "              __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "              if (__gpga_signed) {\n";
+        out << "                __gpga_rhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                    __gpga_rhs_wide_val, __gpga_rhs_width, true);\n";
+        out << "              }\n";
+        out << "              ulong __gpga_rhs_u64 = gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_rhs_wide_val);\n";
+        out << "              __gpga_rhs_real_val = __gpga_signed\n";
+        out << "                  ? gpga_double_from_s64((long)__gpga_rhs_u64)\n";
+        out << "                  : gpga_double_from_u64(__gpga_rhs_u64);\n";
+        out << "            } else {\n";
+      }
+      out << "              ulong __gpga_val = __gpga_rhs_val & __gpga_rhs_mask;\n";
+      out << "              if (__gpga_signed && __gpga_rhs_width > 0u) {\n";
+      out << "                long __gpga_rhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_rhs_width);\n";
+      out << "                __gpga_rhs_real_val = gpga_double_from_s64(__gpga_rhs_s);\n";
+      out << "              } else {\n";
+      out << "                __gpga_rhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "              }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_rhs_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "          }\n";
+      out << "          if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_POW) {\n";
+      out << "            __gpga_out_real = true;\n";
+      out << "            __gpga_out_val = gpga_double_pow(\n";
+      out << "                __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "          } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_ATAN2) {\n";
+      out << "            __gpga_out_real = true;\n";
+      out << "            __gpga_out_val = gpga_double_atan2(\n";
+      out << "                __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "          } else if (__gpga_call == GPGA_SCHED_VM_EXPR_CALL_HYPOT) {\n";
+      out << "            __gpga_out_real = true;\n";
+      out << "            __gpga_out_val = gpga_double_hypot(\n";
+      out << "                __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "          } else {\n";
+      out << "            __gpga_expr_ok = false;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (!__gpga_expr_ok) {\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        __gpga_vals[__gpga_base] = __gpga_out_val;\n";
+      out << "        __gpga_widths[__gpga_base] = __gpga_width;\n";
+      out << "        __gpga_is_real[__gpga_base] = __gpga_out_real;\n";
+      out << "        __gpga_sp = __gpga_base + 1u;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_UNARY: {\n";
+      out << "        if (__gpga_sp == 0u) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        uint __gpga_uop = __gpga_arg;\n";
+      out << "        uint __gpga_in_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "        bool __gpga_real = __gpga_is_real[__gpga_sp - 1u];\n";
+      out << "        if (__gpga_real) {\n";
+      out << "          ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "          ulong __gpga_out_val = __gpga_val;\n";
+      out << "          bool __gpga_out_real = true;\n";
+      out << "          if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+      out << "            __gpga_out_val = gpga_double_is_zero(__gpga_val) ? 1ul : 0ul;\n";
+      out << "            __gpga_out_real = false;\n";
+      out << "          } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+      out << "            __gpga_out_val = gpga_double_neg(__gpga_val);\n";
+      out << "          } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_PLUS) {\n";
+      out << "            __gpga_out_val = __gpga_val;\n";
+      out << "          } else {\n";
+      out << "            __gpga_expr_ok = false;\n";
+      out << "          }\n";
+      out << "          if (!__gpga_expr_ok) {\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          __gpga_vals[__gpga_sp - 1u] = __gpga_out_val;\n";
+      out << "          __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "          __gpga_is_real[__gpga_sp - 1u] = __gpga_out_real;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_in_width > 64u) {\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "          __gpga_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_wide_val, __gpga_in_width);\n";
+        out << "          if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+        out << "            bool __gpga_any = gpga_sched_vm_wide_any_masked(\n";
+        out << "                __gpga_wide_val, __gpga_in_width);\n";
+        out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_any ? 0ul : 1ul;\n";
+        out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "            break;\n";
+        out << "          }\n";
+        out << "          if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND ||\n";
+        out << "              __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND ||\n";
+        out << "              __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR ||\n";
+        out << "              __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR ||\n";
+        out << "              __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR ||\n";
+        out << "              __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_mask = gpga_sched_vm_wide_mask_bits(__gpga_in_width);\n";
+        out << "            bool __gpga_all_ones = gpga_sched_vm_wide_eq_masked(\n";
+        out << "                __gpga_wide_val, __gpga_mask, __gpga_in_width);\n";
+        out << "            bool __gpga_any = gpga_sched_vm_wide_any_masked(\n";
+        out << "                __gpga_wide_val, __gpga_in_width);\n";
+        out << "            ulong __gpga_red = 0ul;\n";
+        out << "            if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND ||\n";
+        out << "                __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+        out << "              __gpga_red = __gpga_all_ones ? 1ul : 0ul;\n";
+        out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+        out << "                __gpga_red = (__gpga_red == 0ul) ? 1ul : 0ul;\n";
+        out << "              }\n";
+        out << "            } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR ||\n";
+        out << "                       __gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+        out << "              __gpga_red = __gpga_any ? 1ul : 0ul;\n";
+        out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+        out << "                __gpga_red = (__gpga_red == 0ul) ? 1ul : 0ul;\n";
+        out << "              }\n";
+        out << "            } else {\n";
+        out << "              __gpga_red = (ulong)gpga_sched_vm_wide_red_xor(\n";
+        out << "                  __gpga_wide_val, __gpga_in_width);\n";
+        out << "              if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+        out << "                __gpga_red = (__gpga_red == 0ul) ? 1ul : 0ul;\n";
+        out << "              }\n";
+        out << "            }\n";
+        out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_red;\n";
+        out << "            __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "            __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "            break;\n";
+        out << "          }\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_out_val = __gpga_wide_val;\n";
+        out << "          if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+        out << "            __gpga_out_val = gpga_wide_not_" << vm_expr_wide_bits
+            << "(__gpga_wide_val);\n";
+        out << "          } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+        out << "            __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_wide_val);\n";
+        out << "          } else if (__gpga_uop != GPGA_SCHED_VM_EXPR_UNARY_PLUS) {\n";
+        out << "            __gpga_expr_ok = false;\n";
+        out << "          }\n";
+        out << "          if (!__gpga_expr_ok) {\n";
+        out << "            break;\n";
+        out << "          }\n";
+        out << "          __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_out_val, __gpga_width);\n";
+        out << "          if (__gpga_width > 64u) {\n";
+        out << "            __gpga_wide_vals[__gpga_sp - 1u] = __gpga_out_val;\n";
+        out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_out_val.w[0];\n";
+        out << "          } else {\n";
+        out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+        out << "                ? ~0ul\n";
+        out << "                : ((__gpga_width == 0u)\n";
+        out << "                       ? 0ul\n";
+        out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+        out << "            __gpga_vals[__gpga_sp - 1u] = __gpga_out_val.w[0] & __gpga_mask;\n";
+        out << "          }\n";
+        out << "          __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+        out << "          __gpga_is_real[__gpga_sp - 1u] = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      } else {
+        out << "        if (__gpga_in_width > 64u) {\n";
+        out << "          __gpga_expr_ok = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      }
+      out << "        ulong __gpga_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "        ulong __gpga_mask = (__gpga_in_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_in_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_in_width) - 1ul));\n";
+      out << "        __gpga_val &= __gpga_mask;\n";
+      out << "        if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_LOG_NOT) {\n";
+      out << "          __gpga_val = (__gpga_val == 0ul) ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_BIT_NOT) {\n";
+      out << "          __gpga_val = ~__gpga_val;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_MINUS) {\n";
+      out << "          __gpga_val = 0ul - __gpga_val;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_AND) {\n";
+      out << "          __gpga_val = ((__gpga_val & __gpga_mask) == __gpga_mask) ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NAND) {\n";
+      out << "          __gpga_val = ((__gpga_val & __gpga_mask) == __gpga_mask) ? 0ul : 1ul;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_OR) {\n";
+      out << "          __gpga_val = ((__gpga_val & __gpga_mask) != 0ul) ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_NOR) {\n";
+      out << "          __gpga_val = ((__gpga_val & __gpga_mask) == 0ul) ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XOR) {\n";
+      out << "          ulong __gpga_masked = __gpga_val & __gpga_mask;\n";
+      out << "          if (__gpga_in_width > 32u) {\n";
+      out << "            uint __gpga_lo = uint(__gpga_masked & 0xFFFFFFFFul);\n";
+      out << "            uint __gpga_hi = uint((__gpga_masked >> 32u) & 0xFFFFFFFFul);\n";
+      out << "            __gpga_val = ulong((popcount(__gpga_lo) + popcount(__gpga_hi)) & 1u);\n";
+      out << "          } else {\n";
+      out << "            __gpga_val = ulong(popcount(uint(__gpga_masked)) & 1u);\n";
+      out << "          }\n";
+      out << "        } else if (__gpga_uop == GPGA_SCHED_VM_EXPR_UNARY_RED_XNOR) {\n";
+      out << "          ulong __gpga_masked = __gpga_val & __gpga_mask;\n";
+      out << "          if (__gpga_in_width > 32u) {\n";
+      out << "            uint __gpga_lo = uint(__gpga_masked & 0xFFFFFFFFul);\n";
+      out << "            uint __gpga_hi = uint((__gpga_masked >> 32u) & 0xFFFFFFFFul);\n";
+      out << "            __gpga_val = ulong(((popcount(__gpga_lo) + popcount(__gpga_hi)) & 1u) == 0u);\n";
+      out << "          } else {\n";
+      out << "            __gpga_val = ulong((popcount(uint(__gpga_masked)) & 1u) == 0u);\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_vals[__gpga_sp - 1u] = __gpga_val & __gpga_out_mask;\n";
+      out << "        __gpga_widths[__gpga_sp - 1u] = __gpga_width;\n";
+      out << "        __gpga_is_real[__gpga_sp - 1u] = false;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_BINARY: {\n";
+      out << "        if (__gpga_sp < 2u) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        uint __gpga_bop = (__gpga_arg & 0xFFu);\n";
+      out << "        bool __gpga_signed =\n";
+      out << "            ((__gpga_arg & GPGA_SCHED_VM_EXPR_ARG_SIGNED) != 0u);\n";
+      out << "        ulong __gpga_rhs = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "        ulong __gpga_lhs = __gpga_vals[__gpga_sp - 2u];\n";
+      out << "        uint __gpga_rhs_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "        uint __gpga_lhs_width = __gpga_widths[__gpga_sp - 2u];\n";
+      out << "        bool __gpga_lhs_real = __gpga_is_real[__gpga_sp - 2u];\n";
+      out << "        bool __gpga_rhs_real = __gpga_is_real[__gpga_sp - 1u];\n";
+      out << "        if (__gpga_lhs_real || __gpga_rhs_real) {\n";
+      out << "          ulong __gpga_lhs_real_val = 0ul;\n";
+      out << "          ulong __gpga_rhs_real_val = 0ul;\n";
+      out << "          if (__gpga_lhs_real) {\n";
+      out << "            __gpga_lhs_real_val = __gpga_lhs;\n";
+      out << "          } else {\n";
+      out << "            ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_lhs_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_lhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_lhs_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_wide_val = __gpga_wide_vals[__gpga_sp - 2u];\n";
+        out << "              __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "              if (__gpga_signed) {\n";
+        out << "                __gpga_lhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                    __gpga_lhs_wide_val, __gpga_lhs_width, true);\n";
+        out << "              }\n";
+        out << "              ulong __gpga_lhs_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_lhs_wide_val);\n";
+        out << "              __gpga_lhs_real_val = __gpga_signed\n";
+        out << "                  ? gpga_double_from_s64((long)__gpga_lhs_u64)\n";
+        out << "                  : gpga_double_from_u64(__gpga_lhs_u64);\n";
+        out << "            } else {\n";
+      }
+      out << "              ulong __gpga_val = __gpga_lhs & __gpga_lhs_mask;\n";
+      out << "              if (__gpga_signed && __gpga_lhs_width > 0u) {\n";
+      out << "                long __gpga_lhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_lhs_width);\n";
+      out << "                __gpga_lhs_real_val = gpga_double_from_s64(__gpga_lhs_s);\n";
+      out << "              } else {\n";
+      out << "                __gpga_lhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "              }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_lhs_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "          }\n";
+      out << "          if (__gpga_rhs_real) {\n";
+      out << "            __gpga_rhs_real_val = __gpga_rhs;\n";
+      out << "          } else {\n";
+      out << "            ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_rhs_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_rhs_width) - 1ul));\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_rhs_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_wide_val = __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "              __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "              if (__gpga_signed) {\n";
+        out << "                __gpga_rhs_wide_val = gpga_sched_vm_wide_extend(\n";
+        out << "                    __gpga_rhs_wide_val, __gpga_rhs_width, true);\n";
+        out << "              }\n";
+        out << "              ulong __gpga_rhs_u64 = gpga_wide_to_u64_"
+            << vm_expr_wide_bits << "(__gpga_rhs_wide_val);\n";
+        out << "              __gpga_rhs_real_val = __gpga_signed\n";
+        out << "                  ? gpga_double_from_s64((long)__gpga_rhs_u64)\n";
+        out << "                  : gpga_double_from_u64(__gpga_rhs_u64);\n";
+        out << "            } else {\n";
+      }
+      out << "              ulong __gpga_val = __gpga_rhs & __gpga_rhs_mask;\n";
+      out << "              if (__gpga_signed && __gpga_rhs_width > 0u) {\n";
+      out << "                long __gpga_rhs_s = gpga_sched_vm_sign64(__gpga_val, __gpga_rhs_width);\n";
+      out << "                __gpga_rhs_real_val = gpga_double_from_s64(__gpga_rhs_s);\n";
+      out << "              } else {\n";
+      out << "                __gpga_rhs_real_val = gpga_double_from_u64(__gpga_val);\n";
+      out << "              }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_rhs_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "          }\n";
+      out << "          bool __gpga_real_arith =\n";
+      out << "              (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV);\n";
+      out << "          bool __gpga_real_pred =\n";
+      out << "              (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+      out << "               __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE);\n";
+      out << "          if (!__gpga_real_arith && !__gpga_real_pred) {\n";
+      out << "            __gpga_expr_ok = false;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "          bool __gpga_out_real = __gpga_real_arith;\n";
+      out << "          ulong __gpga_out_val = 0ul;\n";
+      out << "          if (__gpga_real_arith) {\n";
+      out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+      out << "              __gpga_out_val = gpga_double_add(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+      out << "              __gpga_out_val = gpga_double_sub(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+      out << "              __gpga_out_val = gpga_double_mul(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            } else {\n";
+      out << "              __gpga_out_val = gpga_double_div(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            }\n";
+      out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+      out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+      out << "            bool __gpga_lhs_true =\n";
+      out << "                !gpga_double_is_zero(__gpga_lhs_real_val);\n";
+      out << "            bool __gpga_rhs_true =\n";
+      out << "                !gpga_double_is_zero(__gpga_rhs_real_val);\n";
+      out << "            bool __gpga_true =\n";
+      out << "                (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+      out << "                    ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+      out << "                    : (__gpga_lhs_true || __gpga_rhs_true);\n";
+      out << "            __gpga_out_val = __gpga_true ? 1ul : 0ul;\n";
+      out << "          } else {\n";
+      out << "            bool __gpga_true = false;\n";
+      out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+      out << "                __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+      out << "                __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+      out << "              bool __gpga_eq = gpga_double_eq(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "              __gpga_true =\n";
+      out << "                  (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+      out << "                      ? __gpga_eq\n";
+      out << "                      : !__gpga_eq;\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+      out << "              __gpga_true = gpga_double_lt(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+      out << "              __gpga_true = gpga_double_le(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+      out << "              __gpga_true = gpga_double_gt(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            } else {\n";
+      out << "              __gpga_true = gpga_double_ge(\n";
+      out << "                  __gpga_lhs_real_val, __gpga_rhs_real_val);\n";
+      out << "            }\n";
+      out << "            __gpga_out_val = __gpga_true ? 1ul : 0ul;\n";
+      out << "          }\n";
+      out << "          __gpga_vals[__gpga_sp - 2u] = __gpga_out_val;\n";
+      out << "          __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+      out << "          __gpga_is_real[__gpga_sp - 2u] = __gpga_out_real;\n";
+      out << "          __gpga_sp -= 1u;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_width > 64u || __gpga_lhs_width > 64u || __gpga_rhs_width > 64u) {\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_wide_val = (__gpga_lhs_width > 64u)\n";
+        out << "              ? __gpga_wide_vals[__gpga_sp - 2u]\n";
+        out << "              : gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_lhs);\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_wide_val = (__gpga_rhs_width > 64u)\n";
+        out << "              ? __gpga_wide_vals[__gpga_sp - 1u]\n";
+        out << "              : gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_rhs);\n";
+        out << "          __gpga_lhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "          __gpga_rhs_wide_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "          uint __gpga_eval_width = (__gpga_lhs_width > __gpga_rhs_width)\n";
+        out << "              ? __gpga_lhs_width\n";
+        out << "              : __gpga_rhs_width;\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "          if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+        out << "              __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+        out << "            bool __gpga_lhs_true = gpga_sched_vm_wide_any_masked(\n";
+        out << "                __gpga_lhs_wide_val, __gpga_lhs_width);\n";
+        out << "            bool __gpga_rhs_true = gpga_sched_vm_wide_any_masked(\n";
+        out << "                __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "            bool __gpga_true =\n";
+        out << "                (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+        out << "                    ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+        out << "                    : (__gpga_lhs_true || __gpga_rhs_true);\n";
+        out << "            __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_true ? 1ul : 0ul);\n";
+        out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_cmp = __gpga_lhs_wide_val;\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_cmp = __gpga_rhs_wide_val;\n";
+        out << "            if (__gpga_signed) {\n";
+        out << "              __gpga_lhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                  __gpga_lhs_cmp, __gpga_lhs_width, true);\n";
+        out << "              __gpga_rhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                  __gpga_rhs_cmp, __gpga_rhs_width, true);\n";
+        out << "            }\n";
+        out << "            __gpga_lhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_lhs_cmp, __gpga_eval_width);\n";
+        out << "            __gpga_rhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_rhs_cmp, __gpga_eval_width);\n";
+        out << "            bool __gpga_eq = gpga_sched_vm_wide_eq_masked(\n";
+        out << "                __gpga_lhs_cmp, __gpga_rhs_cmp, __gpga_eval_width);\n";
+        out << "            bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+        out << "                                __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+        out << "                                   ? __gpga_eq\n";
+        out << "                                   : !__gpga_eq;\n";
+        out << "            __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_true ? 1ul : 0ul);\n";
+        out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_cmp = __gpga_lhs_wide_val;\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_cmp = __gpga_rhs_wide_val;\n";
+        out << "            if (__gpga_signed) {\n";
+        out << "              __gpga_lhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                  __gpga_lhs_cmp, __gpga_lhs_width, true);\n";
+        out << "              __gpga_rhs_cmp = gpga_sched_vm_wide_extend(\n";
+        out << "                  __gpga_rhs_cmp, __gpga_rhs_width, true);\n";
+        out << "            }\n";
+        out << "            __gpga_lhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_lhs_cmp, __gpga_eval_width);\n";
+        out << "            __gpga_rhs_cmp = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_rhs_cmp, __gpga_eval_width);\n";
+        out << "            bool __gpga_true = false;\n";
+        out << "            if (__gpga_signed) {\n";
+        out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+        out << "                __gpga_true = gpga_wide_lt_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+        out << "                __gpga_true = gpga_wide_le_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+        out << "                __gpga_true = gpga_wide_gt_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              } else {\n";
+        out << "                __gpga_true = gpga_wide_ge_s_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              }\n";
+        out << "            } else {\n";
+        out << "              if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+        out << "                __gpga_true = gpga_wide_lt_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+        out << "                __gpga_true = gpga_wide_le_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+        out << "                __gpga_true = gpga_wide_gt_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              } else {\n";
+        out << "                __gpga_true = gpga_wide_ge_u_" << vm_expr_wide_bits
+            << "(__gpga_lhs_cmp, __gpga_rhs_cmp);\n";
+        out << "              }\n";
+        out << "            }\n";
+        out << "            __gpga_out_val = gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_true ? 1ul : 0ul);\n";
+        out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+        out << "            uint __gpga_shift = 0u;\n";
+        out << "            if (__gpga_rhs_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_shift_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_rhs_wide_val, __gpga_rhs_width);\n";
+        out << "              __gpga_shift = (uint)gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_shift_val);\n";
+        out << "            } else {\n";
+        out << "              ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+        out << "                  ? ~0ul\n";
+        out << "                  : ((__gpga_rhs_width == 0u)\n";
+        out << "                         ? 0ul\n";
+        out << "                         : ((1ul << __gpga_rhs_width) - 1ul));\n";
+        out << "              __gpga_shift = (uint)(__gpga_rhs & __gpga_rhs_mask);\n";
+        out << "            }\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_lhs_wide_val, __gpga_width);\n";
+        out << "            if (__gpga_shift >= __gpga_width) {\n";
+        out << "              __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+        out << "              __gpga_out_val = gpga_wide_shl_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_shift);\n";
+        out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR || !__gpga_signed) {\n";
+        out << "              __gpga_out_val = gpga_wide_shr_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_shift);\n";
+        out << "            } else {\n";
+        out << "              __gpga_out_val = gpga_wide_sar_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_shift);\n";
+        out << "            }\n";
+        out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+        out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+        out << "              __gpga_out_val = gpga_wide_and_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+        out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+        out << "              __gpga_out_val = gpga_wide_or_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+        out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR) {\n";
+        out << "              __gpga_out_val = gpga_wide_xor_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val);\n";
+        out << "            } else {\n";
+        out << "              __gpga_out_val = gpga_wide_not_" << vm_expr_wide_bits
+            << "(gpga_wide_xor_" << vm_expr_wide_bits
+            << "(__gpga_lhs_wide_val, __gpga_rhs_wide_val));\n";
+        out << "            }\n";
+        out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV ||\n";
+        out << "                     __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_val = __gpga_lhs_wide_val;\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_val = __gpga_rhs_wide_val;\n";
+        out << "            if (__gpga_signed) {\n";
+        out << "              __gpga_lhs_val = gpga_sched_vm_wide_extend(\n";
+        out << "                  __gpga_lhs_val, __gpga_lhs_width, true);\n";
+        out << "              __gpga_rhs_val = gpga_sched_vm_wide_extend(\n";
+        out << "                  __gpga_rhs_val, __gpga_rhs_width, true);\n";
+        out << "            } else {\n";
+        out << "              __gpga_lhs_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_lhs_val, __gpga_width);\n";
+        out << "              __gpga_rhs_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_rhs_val, __gpga_width);\n";
+        out << "            }\n";
+        out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+        out << "              __gpga_out_val = gpga_wide_add_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+        out << "              __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+        out << "              __gpga_out_val = gpga_wide_mul_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "            } else {\n";
+        out << "              bool __gpga_rhs_zero = !gpga_sched_vm_wide_any_masked(\n";
+        out << "                  __gpga_rhs_val, __gpga_width);\n";
+        out << "              if (__gpga_rhs_zero) {\n";
+        out << "                __gpga_out_val = gpga_wide_zero_" << vm_expr_wide_bits << "();\n";
+        out << "              } else if (!__gpga_signed) {\n";
+        out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+        out << "                  __gpga_out_val = gpga_wide_div_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                } else {\n";
+        out << "                  __gpga_out_val = gpga_wide_mod_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_rhs_val);\n";
+        out << "                }\n";
+        out << "              } else {\n";
+        out << "                bool __gpga_lhs_neg = (__gpga_width > 0u) &&\n";
+        out << "                    (gpga_wide_get_bit_" << vm_expr_wide_bits
+            << "(__gpga_lhs_val, __gpga_width - 1u) != 0u);\n";
+        out << "                bool __gpga_rhs_neg = (__gpga_width > 0u) &&\n";
+        out << "                    (gpga_wide_get_bit_" << vm_expr_wide_bits
+            << "(__gpga_rhs_val, __gpga_width - 1u) != 0u);\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_lhs_mag = __gpga_lhs_val;\n";
+        out << "                GpgaWide" << vm_expr_wide_bits
+            << " __gpga_rhs_mag = __gpga_rhs_val;\n";
+        out << "                if (__gpga_lhs_neg) {\n";
+        out << "                  __gpga_lhs_mag = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_lhs_val);\n";
+        out << "                }\n";
+        out << "                if (__gpga_rhs_neg) {\n";
+        out << "                  __gpga_rhs_mag = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_rhs_val);\n";
+        out << "                }\n";
+        out << "                if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+        out << "                  __gpga_out_val = gpga_wide_div_" << vm_expr_wide_bits
+            << "(__gpga_lhs_mag, __gpga_rhs_mag);\n";
+        out << "                  if (__gpga_lhs_neg ^ __gpga_rhs_neg) {\n";
+        out << "                    __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_out_val);\n";
+        out << "                  }\n";
+        out << "                } else {\n";
+        out << "                  __gpga_out_val = gpga_wide_mod_" << vm_expr_wide_bits
+            << "(__gpga_lhs_mag, __gpga_rhs_mag);\n";
+        out << "                  if (__gpga_lhs_neg) {\n";
+        out << "                    __gpga_out_val = gpga_wide_sub_" << vm_expr_wide_bits
+            << "(gpga_wide_zero_" << vm_expr_wide_bits << "(), __gpga_out_val);\n";
+        out << "                  }\n";
+        out << "                }\n";
+        out << "              }\n";
+        out << "            }\n";
+        out << "          } else {\n";
+        out << "            __gpga_expr_ok = false;\n";
+        out << "          }\n";
+        out << "          if (!__gpga_expr_ok) {\n";
+        out << "            break;\n";
+        out << "          }\n";
+        out << "          __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_out_val, __gpga_width);\n";
+        out << "          if (__gpga_width > 64u) {\n";
+        out << "            __gpga_wide_vals[__gpga_sp - 2u] = __gpga_out_val;\n";
+        out << "            __gpga_vals[__gpga_sp - 2u] = __gpga_out_val.w[0];\n";
+        out << "          } else {\n";
+        out << "            ulong __gpga_mask = (__gpga_width >= 64u)\n";
+        out << "                ? ~0ul\n";
+        out << "                : ((__gpga_width == 0u)\n";
+        out << "                       ? 0ul\n";
+        out << "                       : ((1ul << __gpga_width) - 1ul));\n";
+        out << "            __gpga_vals[__gpga_sp - 2u] = __gpga_out_val.w[0] & __gpga_mask;\n";
+        out << "          }\n";
+        out << "          __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+        out << "          __gpga_is_real[__gpga_sp - 2u] = false;\n";
+        out << "          __gpga_sp -= 1u;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      } else {
+        out << "        if (__gpga_width > 64u || __gpga_lhs_width > 64u || __gpga_rhs_width > 64u) {\n";
+        out << "          __gpga_expr_ok = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      }
+      out << "        ulong __gpga_lhs_mask = (__gpga_lhs_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_lhs_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_lhs_width) - 1ul));\n";
+      out << "        ulong __gpga_rhs_mask = (__gpga_rhs_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_rhs_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_rhs_width) - 1ul));\n";
+      out << "        __gpga_lhs &= __gpga_lhs_mask;\n";
+      out << "        __gpga_rhs &= __gpga_rhs_mask;\n";
+      out << "        ulong __gpga_result = 0ul;\n";
+      out << "        if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND ||\n";
+      out << "            __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_OR) {\n";
+      out << "          bool __gpga_lhs_true = (__gpga_lhs != 0ul);\n";
+      out << "          bool __gpga_rhs_true = (__gpga_rhs != 0ul);\n";
+      out << "          bool __gpga_true =\n";
+      out << "              (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LOG_AND)\n";
+      out << "                  ? (__gpga_lhs_true && __gpga_rhs_true)\n";
+      out << "                  : (__gpga_lhs_true || __gpga_rhs_true);\n";
+      out << "          __gpga_result = __gpga_true ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_NEQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_NEQ) {\n";
+      out << "          bool __gpga_eq = (__gpga_lhs == __gpga_rhs);\n";
+      out << "          bool __gpga_ne = !__gpga_eq;\n";
+      out << "          bool __gpga_true = (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_EQ ||\n";
+      out << "                              __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_CASE_EQ)\n";
+      out << "                                 ? __gpga_eq\n";
+      out << "                                 : __gpga_ne;\n";
+      out << "          __gpga_result = __gpga_true ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GE) {\n";
+      out << "          bool __gpga_true = false;\n";
+      out << "          if (__gpga_signed) {\n";
+      out << "            long __gpga_lhs_s = (long)__gpga_lhs;\n";
+      out << "            long __gpga_rhs_s = (long)__gpga_rhs;\n";
+      out << "            if (__gpga_lhs_width < 64u && __gpga_lhs_width > 0u) {\n";
+      out << "              ulong __gpga_sign = 1ul << (__gpga_lhs_width - 1u);\n";
+      out << "              if ((__gpga_lhs & __gpga_sign) != 0ul) {\n";
+      out << "                __gpga_lhs_s |= (long)(~__gpga_lhs_mask);\n";
+      out << "              }\n";
+      out << "            }\n";
+      out << "            if (__gpga_rhs_width < 64u && __gpga_rhs_width > 0u) {\n";
+      out << "              ulong __gpga_sign = 1ul << (__gpga_rhs_width - 1u);\n";
+      out << "              if ((__gpga_rhs & __gpga_sign) != 0ul) {\n";
+      out << "                __gpga_rhs_s |= (long)(~__gpga_rhs_mask);\n";
+      out << "              }\n";
+      out << "            }\n";
+      out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+      out << "              __gpga_true = (__gpga_lhs_s < __gpga_rhs_s);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+      out << "              __gpga_true = (__gpga_lhs_s <= __gpga_rhs_s);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+      out << "              __gpga_true = (__gpga_lhs_s > __gpga_rhs_s);\n";
+      out << "            } else {\n";
+      out << "              __gpga_true = (__gpga_lhs_s >= __gpga_rhs_s);\n";
+      out << "            }\n";
+      out << "          } else {\n";
+      out << "            if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LT) {\n";
+      out << "              __gpga_true = (__gpga_lhs < __gpga_rhs);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_LE) {\n";
+      out << "              __gpga_true = (__gpga_lhs <= __gpga_rhs);\n";
+      out << "            } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_GT) {\n";
+      out << "              __gpga_true = (__gpga_lhs > __gpga_rhs);\n";
+      out << "            } else {\n";
+      out << "              __gpga_true = (__gpga_lhs >= __gpga_rhs);\n";
+      out << "            }\n";
+      out << "          }\n";
+      out << "          __gpga_result = __gpga_true ? 1ul : 0ul;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR ||\n";
+      out << "                   __gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ASHR) {\n";
+      out << "          ulong __gpga_shift = __gpga_rhs;\n";
+      out << "          if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHL) {\n";
+      out << "            __gpga_result = (__gpga_shift >= 64u) ? 0ul : (__gpga_lhs << __gpga_shift);\n";
+      out << "          } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SHR) {\n";
+      out << "            __gpga_result = (__gpga_shift >= 64u) ? 0ul : (__gpga_lhs >> __gpga_shift);\n";
+      out << "          } else if (__gpga_signed) {\n";
+      out << "            long __gpga_lhs_s = (long)__gpga_lhs;\n";
+      out << "            __gpga_result = (__gpga_shift >= 64u) ? 0ul : (ulong)(__gpga_lhs_s >> __gpga_shift);\n";
+      out << "          } else {\n";
+      out << "            __gpga_result = (__gpga_shift >= 64u) ? 0ul : (__gpga_lhs >> __gpga_shift);\n";
+      out << "          }\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_AND) {\n";
+      out << "          __gpga_result = __gpga_lhs & __gpga_rhs;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_OR) {\n";
+      out << "          __gpga_result = __gpga_lhs | __gpga_rhs;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XOR) {\n";
+      out << "          __gpga_result = __gpga_lhs ^ __gpga_rhs;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_XNOR) {\n";
+      out << "          __gpga_result = ~(__gpga_lhs ^ __gpga_rhs);\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_ADD) {\n";
+      out << "          __gpga_result = __gpga_lhs + __gpga_rhs;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_SUB) {\n";
+      out << "          __gpga_result = __gpga_lhs - __gpga_rhs;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MUL) {\n";
+      out << "          __gpga_result = __gpga_lhs * __gpga_rhs;\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_DIV) {\n";
+      out << "          __gpga_result = (__gpga_rhs == 0ul) ? 0ul : (__gpga_lhs / __gpga_rhs);\n";
+      out << "        } else if (__gpga_bop == GPGA_SCHED_VM_EXPR_BINARY_MOD) {\n";
+      out << "          __gpga_result = (__gpga_rhs == 0ul) ? 0ul : (__gpga_lhs % __gpga_rhs);\n";
+      out << "        }\n";
+      out << "        ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_vals[__gpga_sp - 2u] = __gpga_result & __gpga_out_mask;\n";
+      out << "        __gpga_widths[__gpga_sp - 2u] = __gpga_width;\n";
+      out << "        __gpga_is_real[__gpga_sp - 2u] = false;\n";
+      out << "        __gpga_sp -= 1u;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      case GPGA_SCHED_VM_EXPR_OP_TERNARY: {\n";
+      out << "        if (__gpga_sp < 3u) {\n";
+      out << "          __gpga_expr_ok = false;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      out << "        uint __gpga_width = sched_vm_expr[__gpga_ip++];\n";
+      out << "        ulong __gpga_else_val = __gpga_vals[__gpga_sp - 1u];\n";
+      out << "        ulong __gpga_then_val = __gpga_vals[__gpga_sp - 2u];\n";
+      out << "        ulong __gpga_cond_val = __gpga_vals[__gpga_sp - 3u];\n";
+      out << "        uint __gpga_else_width = __gpga_widths[__gpga_sp - 1u];\n";
+      out << "        uint __gpga_then_width = __gpga_widths[__gpga_sp - 2u];\n";
+      out << "        uint __gpga_cond_width = __gpga_widths[__gpga_sp - 3u];\n";
+      out << "        bool __gpga_else_real = __gpga_is_real[__gpga_sp - 1u];\n";
+      out << "        bool __gpga_then_real = __gpga_is_real[__gpga_sp - 2u];\n";
+      out << "        bool __gpga_cond_real = __gpga_is_real[__gpga_sp - 3u];\n";
+      out << "        bool __gpga_cond_true = false;\n";
+      out << "        if (__gpga_cond_real) {\n";
+      out << "          __gpga_cond_true = !gpga_double_is_zero(__gpga_cond_val);\n";
+      out << "        } else {\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "          if (__gpga_cond_width > 64u) {\n";
+        out << "            GpgaWide" << vm_expr_wide_bits
+            << " __gpga_cond_wide = __gpga_wide_vals[__gpga_sp - 3u];\n";
+        out << "            __gpga_cond_wide = gpga_sched_vm_wide_mask_value(\n";
+        out << "                __gpga_cond_wide, __gpga_cond_width);\n";
+        out << "            __gpga_cond_true = gpga_sched_vm_wide_any_masked(\n";
+        out << "                __gpga_cond_wide, __gpga_cond_width);\n";
+        out << "          } else {\n";
+      } else {
+        out << "          if (__gpga_cond_width > 64u) {\n";
+        out << "            __gpga_expr_ok = false;\n";
+        out << "            break;\n";
+        out << "          }\n";
+      }
+      out << "            ulong __gpga_cond_mask = (__gpga_cond_width >= 64u)\n";
+      out << "                ? ~0ul\n";
+      out << "                : ((__gpga_cond_width == 0u)\n";
+      out << "                       ? 0ul\n";
+      out << "                       : ((1ul << __gpga_cond_width) - 1ul));\n";
+      out << "            __gpga_cond_true =\n";
+      out << "                ((__gpga_cond_val & __gpga_cond_mask) != 0ul);\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "          }\n";
+      }
+      out << "        }\n";
+      out << "        bool __gpga_out_real = __gpga_then_real || __gpga_else_real;\n";
+      out << "        if (__gpga_out_real) {\n";
+      out << "          bool __gpga_take_then = __gpga_cond_true;\n";
+      out << "          bool __gpga_src_real = __gpga_take_then ? __gpga_then_real\n";
+      out << "                                                   : __gpga_else_real;\n";
+      out << "          ulong __gpga_src_val = __gpga_take_then ? __gpga_then_val\n";
+      out << "                                                   : __gpga_else_val;\n";
+      out << "          uint __gpga_src_width = __gpga_take_then\n";
+      out << "              ? __gpga_then_width\n";
+      out << "              : __gpga_else_width;\n";
+      out << "          if (__gpga_src_real) {\n";
+      out << "            __gpga_vals[__gpga_sp - 3u] = __gpga_src_val;\n";
+      out << "          } else {\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            if (__gpga_src_width > 64u) {\n";
+        out << "              GpgaWide" << vm_expr_wide_bits
+            << " __gpga_src_wide = __gpga_take_then\n";
+        out << "                  ? __gpga_wide_vals[__gpga_sp - 2u]\n";
+        out << "                  : __gpga_wide_vals[__gpga_sp - 1u];\n";
+        out << "              __gpga_src_wide = gpga_sched_vm_wide_mask_value(\n";
+        out << "                  __gpga_src_wide, __gpga_src_width);\n";
+        out << "              ulong __gpga_src_u64 = gpga_wide_to_u64_" << vm_expr_wide_bits
+            << "(__gpga_src_wide);\n";
+        out << "              __gpga_vals[__gpga_sp - 3u] = gpga_double_from_u64(__gpga_src_u64);\n";
+        out << "            } else {\n";
+      }
+      out << "              ulong __gpga_src_mask = (__gpga_src_width >= 64u)\n";
+      out << "                  ? ~0ul\n";
+      out << "                  : ((__gpga_src_width == 0u)\n";
+      out << "                         ? 0ul\n";
+      out << "                         : ((1ul << __gpga_src_width) - 1ul));\n";
+      out << "              ulong __gpga_src_val_masked = __gpga_src_val & __gpga_src_mask;\n";
+      out << "              __gpga_vals[__gpga_sp - 3u] = gpga_double_from_u64(__gpga_src_val_masked);\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "            }\n";
+      } else {
+        out << "            if (__gpga_src_width > 64u) {\n";
+        out << "              __gpga_expr_ok = false;\n";
+        out << "              break;\n";
+        out << "            }\n";
+      }
+      out << "          }\n";
+      out << "          __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+      out << "          __gpga_is_real[__gpga_sp - 3u] = true;\n";
+      out << "          __gpga_sp -= 2u;\n";
+      out << "          break;\n";
+      out << "        }\n";
+      if (vm_expr_wide_bits > 64u) {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_then_wide = (__gpga_then_width > 64u)\n";
+        out << "              ? __gpga_wide_vals[__gpga_sp - 2u]\n";
+        out << "              : gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_then_val);\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_else_wide = (__gpga_else_width > 64u)\n";
+        out << "              ? __gpga_wide_vals[__gpga_sp - 1u]\n";
+        out << "              : gpga_wide_from_u64_" << vm_expr_wide_bits
+            << "(__gpga_else_val);\n";
+        out << "          GpgaWide" << vm_expr_wide_bits
+            << " __gpga_out_val = __gpga_cond_true ? __gpga_then_wide : __gpga_else_wide;\n";
+        out << "          __gpga_out_val = gpga_sched_vm_wide_mask_value(\n";
+        out << "              __gpga_out_val, __gpga_width);\n";
+        out << "          __gpga_wide_vals[__gpga_sp - 3u] = __gpga_out_val;\n";
+        out << "          __gpga_vals[__gpga_sp - 3u] = __gpga_out_val.w[0];\n";
+        out << "          __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+        out << "          __gpga_is_real[__gpga_sp - 3u] = false;\n";
+        out << "          __gpga_sp -= 2u;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      } else {
+        out << "        if (__gpga_width > 64u) {\n";
+        out << "          __gpga_expr_ok = false;\n";
+        out << "          break;\n";
+        out << "        }\n";
+      }
+      out << "        ulong __gpga_val = __gpga_cond_true ? __gpga_then_val : __gpga_else_val;\n";
+      out << "        ulong __gpga_out_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_vals[__gpga_sp - 3u] = __gpga_val & __gpga_out_mask;\n";
+      out << "        __gpga_widths[__gpga_sp - 3u] = __gpga_width;\n";
+      out << "        __gpga_is_real[__gpga_sp - 3u] = false;\n";
+      out << "        __gpga_sp -= 2u;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "      default: {\n";
+      out << "        __gpga_expr_ok = false;\n";
+      out << "        break;\n";
+      out << "      }\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  if (out_val) {\n";
+      out << "    *out_val = __gpga_val_out;\n";
+      out << "  }\n";
+      out << "  if (out_xz) {\n";
+      out << "    *out_xz = 0ul;\n";
+      out << "  }\n";
+      out << "  if (out_width) {\n";
+      out << "    *out_width = __gpga_width_out;\n";
+      out << "  }\n";
+      out << "  return __gpga_expr_ok && __gpga_done;\n";
       out << "}\n";
     }
     if (options.sched_vm) {
@@ -32954,19 +41062,36 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       emit_sched_param_decls(2);
       out << ",\n  uint pid,\n  uint delay_id) {\n";
       out << "  ulong __gpga_delay = 0ul;\n";
-      emit_packed_signal_setup("sched.count");
       out << "  switch (delay_id) {\n";
+      const std::unordered_map<std::string, int64_t> empty_params;
       for (size_t i = 0; i < vm_delay_exprs.size(); ++i) {
         const Expr* expr = vm_delay_exprs[i];
         if (!expr) {
+          out << "    case " << i << "u: {\n";
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      __gpga_delay = 0ul;\n";
+          out << "      break;\n";
+          out << "    }\n";
           continue;
         }
+        FourStateValue delay_value;
+        bool delay_ok =
+            EvalConstExpr4State(*expr, empty_params, &delay_value, nullptr) &&
+            !delay_value.HasXorZ() && delay_value.width > 0 &&
+            delay_value.width <= 64;
         out << "    case " << i << "u: {\n";
-        out << "      __gpga_delay = " << emit_delay_value2(*expr) << ";\n";
+        if (delay_ok) {
+          out << "      __gpga_delay = "
+              << static_cast<uint64_t>(delay_value.value_bits) << "ul;\n";
+        } else {
+          out << "      sched_error[gid] = 1u;\n";
+          out << "      __gpga_delay = 0ul;\n";
+        }
         out << "      break;\n";
         out << "    }\n";
       }
       out << "    default: {\n";
+      out << "      sched_error[gid] = 1u;\n";
       out << "      __gpga_delay = 0ul;\n";
       out << "      break;\n";
       out << "    }\n";
@@ -32975,92 +41100,184 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "}\n";
     }
     if (options.sched_vm) {
-      const auto& vm_case_stmts = vm_tables.case_stmts;
+      out << "static __attribute__((noinline)) bool gpga_"
+          << MslName(module.name) << "_sched_vm_apply_delay_assign(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint delay_id,\n  ulong val,\n"
+             "  uint idx_val,\n  bool use_nb) {\n";
+      out << "  if (delay_id >= GPGA_SCHED_VM_DELAY_COUNT) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmDelayAssignEntry __gpga_entry =\n";
+      out << "      sched_vm_delay_assign_entry[delay_id];\n";
+      out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "      sched_vm_signal_entry[__gpga_entry.signal_id];\n";
+      out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+      out << "  uint __gpga_storage_width = __gpga_sig.width;\n";
+      out << "  ulong __gpga_stride = (__gpga_storage_width > 32u) ? 8ul : 4ul;\n";
+      out << "  ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "  ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "      __gpga_base * __gpga_stride;\n";
+      out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_ARRAY) != 0u) {\n";
+      out << "    if (idx_val >= __gpga_entry.array_size) {\n";
+      out << "      return true;\n";
+      out << "    }\n";
+      out << "    ulong __gpga_elem = (ulong)gid * (ulong)__gpga_entry.array_size +\n";
+      out << "        (ulong)idx_val;\n";
+      out << "    ulong __gpga_elem_val = (ulong)__gpga_sig.val_offset +\n";
+      out << "        __gpga_elem * __gpga_stride;\n";
+      out << "    if (__gpga_entry.width > 32u) {\n";
+      out << "      ((device ulong*)(__gpga_state + __gpga_elem_val))[0] = val;\n";
+      out << "    } else {\n";
+      out << "      ((device uint*)(__gpga_state + __gpga_elem_val))[0] = (uint)val;\n";
+      out << "    }\n";
+      out << "    return true;\n";
+      out << "  }\n";
+      out << "  if (__gpga_sig.array_size != 1u) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_BIT_SELECT) != 0u) {\n";
+      out << "    if (idx_val >= __gpga_entry.base_width) {\n";
+      out << "      return true;\n";
+      out << "    }\n";
+      out << "    ulong __gpga_bit = 1ul << idx_val;\n";
+      out << "    ulong __gpga_cur_val = (__gpga_storage_width > 32u)\n";
+      out << "        ? ((device ulong*)(__gpga_state + __gpga_val_addr))[0]\n";
+      out << "        : (ulong)((device uint*)(__gpga_state + __gpga_val_addr))[0];\n";
+      out << "    __gpga_cur_val = (__gpga_cur_val & ~__gpga_bit) |\n";
+      out << "        (((val & 1ul) != 0ul) ? __gpga_bit : 0ul);\n";
+      out << "    if (__gpga_storage_width > 32u) {\n";
+      out << "      ((device ulong*)(__gpga_state + __gpga_val_addr))[0] = __gpga_cur_val;\n";
+      out << "    } else {\n";
+      out << "      ((device uint*)(__gpga_state + __gpga_val_addr))[0] = (uint)__gpga_cur_val;\n";
+      out << "    }\n";
+      out << "    return true;\n";
+      out << "  }\n";
+      out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_RANGE) != 0u) {\n";
+      out << "    if (__gpga_entry.width == 0u) {\n";
+      out << "      return true;\n";
+      out << "    }\n";
+      out << "    bool __gpga_indexed =\n";
+      out << "        ((__gpga_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_INDEXED_RANGE) != 0u);\n";
+      out << "    uint __gpga_start = __gpga_indexed ? idx_val : __gpga_entry.range_lsb;\n";
+      out << "    if (__gpga_indexed) {\n";
+      out << "      if (__gpga_entry.base_width < __gpga_entry.width) {\n";
+      out << "        return true;\n";
+      out << "      }\n";
+      out << "      uint __gpga_limit = __gpga_entry.base_width - __gpga_entry.width;\n";
+      out << "      if (__gpga_start > __gpga_limit) {\n";
+      out << "        return true;\n";
+      out << "      }\n";
+      out << "    }\n";
+      out << "    if (__gpga_start >= 64u) {\n";
+      out << "      return true;\n";
+      out << "    }\n";
+      out << "    ulong __gpga_mask = (__gpga_entry.width >= 64u)\n";
+      out << "        ? ~0ul\n";
+      out << "        : ((1ul << __gpga_entry.width) - 1ul);\n";
+      out << "    if (__gpga_entry.width < 64u) {\n";
+      out << "      __gpga_mask <<= __gpga_start;\n";
+      out << "    } else if (__gpga_start != 0u) {\n";
+      out << "      return false;\n";
+      out << "    }\n";
+      out << "    ulong __gpga_cur_val = (__gpga_storage_width > 32u)\n";
+      out << "        ? ((device ulong*)(__gpga_state + __gpga_val_addr))[0]\n";
+      out << "        : (ulong)((device uint*)(__gpga_state + __gpga_val_addr))[0];\n";
+      out << "    __gpga_cur_val = (__gpga_cur_val & ~__gpga_mask) |\n";
+      out << "        ((val << __gpga_start) & __gpga_mask);\n";
+      out << "    if (__gpga_storage_width > 32u) {\n";
+      out << "      ((device ulong*)(__gpga_state + __gpga_val_addr))[0] = __gpga_cur_val;\n";
+      out << "    } else {\n";
+      out << "      ((device uint*)(__gpga_state + __gpga_val_addr))[0] = (uint)__gpga_cur_val;\n";
+      out << "    }\n";
+      out << "    return true;\n";
+      out << "  }\n";
+      out << "  if (__gpga_storage_width > 32u) {\n";
+      out << "    ((device ulong*)(__gpga_state + __gpga_val_addr))[0] = val;\n";
+      out << "  } else {\n";
+      out << "    ((device uint*)(__gpga_state + __gpga_val_addr))[0] = (uint)val;\n";
+      out << "  }\n";
+      out << "  return true;\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
       out << "static __attribute__((noinline)) uint gpga_"
           << MslName(module.name) << "_sched_vm_eval_case(";
       emit_sched_param_decls(2);
       out << ",\n  uint pid,\n  uint case_id) {\n";
       out << "  uint __gpga_match = 0xFFFFFFFFu;\n";
-      emit_packed_signal_setup("sched.count");
-      out << "  switch (case_id) {\n";
-      for (size_t i = 0; i < vm_case_stmts.size(); ++i) {
-        const Statement* stmt = vm_case_stmts[i];
-        out << "    case " << i << "u: {\n";
-        if (!stmt || !stmt->case_expr) {
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        int case_width = ExprWidth(*stmt->case_expr, module);
-        std::string case_value =
-            EmitExpr(*stmt->case_expr, module, sched_locals, sched_regs);
-        std::string case_expr = case_value;
-        if (!IsSimpleValueExpr(case_value)) {
-          out << "      " << TypeForWidth(case_width) << " __gpga_case_val = "
-              << case_value << ";\n";
-          case_expr = "__gpga_case_val";
-        }
-        if (case_width > 0 && case_width <= 64) {
-          out << "      if (" << i
-              << "u < GPGA_SCHED_VM_CASE_HEADER_COUNT) {\n";
-          out << "        const GpgaSchedVmCaseHeader __gpga_header = "
-                 "sched_vm_case_header["
-              << i << "u];\n";
-          out << "        if (__gpga_header.entry_count > 0u && "
-                 "__gpga_header.width == "
-              << case_width << "u) {\n";
-          out << "          ulong __gpga_case_val = (ulong)(" << case_expr
-              << ");\n";
-          out << "          const ulong __gpga_mask = "
-              << std::to_string(MaskForWidth64(case_width)) << "ul;\n";
-          out << "          __gpga_case_val &= __gpga_mask;\n";
-          out << "          for (uint __gpga_entry = 0u; "
-                 "__gpga_entry < __gpga_header.entry_count; "
-                 "++__gpga_entry) {\n";
-          out << "            const GpgaSchedVmCaseEntry __gpga_entry_rec = "
-                 "sched_vm_case_entry[__gpga_header.entry_offset + "
-                 "__gpga_entry];\n";
-          out << "            ulong __gpga_want = "
-                 "sched_vm_case_words[__gpga_entry_rec.want_offset];\n";
-          out << "            __gpga_want &= __gpga_mask;\n";
-          out << "            if ((__gpga_case_val ^ __gpga_want) == 0ul) {\n";
-          out << "              __gpga_match = __gpga_entry_rec.target;\n";
-          out << "              break;\n";
-          out << "            }\n";
-          out << "          }\n";
-          out << "          break;\n";
-          out << "        }\n";
-          out << "      }\n";
-        }
-        for (size_t item_idx = 0; item_idx < stmt->case_items.size();
-             ++item_idx) {
-          const auto& item = stmt->case_items[item_idx];
-          std::string cond;
-          for (const auto& label : item.labels) {
-            int label_width = ExprWidth(*label, module);
-            int target = std::max(case_width, label_width);
-            std::string lhs = ExtendExpr(case_expr, case_width, target);
-            std::string rhs =
-                EmitExpr(*label, module, sched_locals, sched_regs);
-            std::string rhs_ext = ExtendExpr(rhs, label_width, target);
-            std::string piece = "(" + lhs + " == " + rhs_ext + ")";
-            if (!cond.empty()) {
-              cond += " || ";
-            }
-            cond += piece;
-          }
-          if (cond.empty()) {
-            continue;
-          }
-          out << "      if (" << cond << ") {\n";
-          out << "        __gpga_match = " << item_idx << "u;\n";
-          out << "        break;\n";
-          out << "      }\n";
-        }
-        out << "      break;\n";
-        out << "    }\n";
-      }
-      out << "    default: {\n";
+      out << "  if (case_id >= GPGA_SCHED_VM_CASE_HEADER_COUNT) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    return __gpga_match;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmCaseHeader __gpga_header = "
+             "sched_vm_case_header[case_id];\n";
+      out << "  if (__gpga_header.entry_count == 0u) {\n";
+      out << "    if (__gpga_header.width != 0u) {\n";
+      out << "      sched_error[gid] = 1u;\n";
+      out << "    }\n";
+      out << "    return __gpga_match;\n";
+      out << "  }\n";
+      out << "  if (__gpga_header.expr_offset == 0xFFFFFFFFu) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    return __gpga_match;\n";
+      out << "  }\n";
+      out << "  ulong __gpga_case_val = 0ul;\n";
+      out << "  ulong __gpga_case_xz = 0ul;\n";
+      out << "  uint __gpga_case_width = 0u;\n";
+      out << "  if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_header.expr_offset, &__gpga_case_val, "
+             "&__gpga_case_xz, &__gpga_case_width)) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    return __gpga_match;\n";
+      out << "  }\n";
+      out << "  if (__gpga_case_width != __gpga_header.width) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    return __gpga_match;\n";
+      out << "  }\n";
+      out << "  ulong __gpga_mask = (__gpga_header.width >= 64u)\n";
+      out << "      ? ~0ul\n";
+      out << "      : ((__gpga_header.width == 0u)\n";
+      out << "             ? 0ul\n";
+      out << "             : ((1ul << __gpga_header.width) - 1ul));\n";
+      out << "  __gpga_case_val &= __gpga_mask;\n";
+      out << "  __gpga_case_xz &= __gpga_mask;\n";
+      out << "  for (uint __gpga_entry = 0u; __gpga_entry < __gpga_header.entry_count; ++__gpga_entry) {\n";
+      out << "    const GpgaSchedVmCaseEntry __gpga_entry_rec = "
+             "sched_vm_case_entry[__gpga_header.entry_offset + __gpga_entry];\n";
+      out << "    ulong __gpga_want = "
+             "sched_vm_case_words[__gpga_entry_rec.want_offset];\n";
+      out << "    ulong __gpga_aux = "
+             "sched_vm_case_words[__gpga_entry_rec.care_offset];\n";
+      out << "    bool __gpga_hit = false;\n";
+      out << "    if (__gpga_header.kind == GPGA_SCHED_VM_CASE_KIND_CASE) {\n";
+      out << "      ulong __gpga_diff = __gpga_case_xz ^ __gpga_aux;\n";
+      out << "      ulong __gpga_known = ~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
+      out << "      ulong __gpga_val_diff = (__gpga_case_val ^ __gpga_want) & __gpga_known;\n";
+      out << "      __gpga_hit = ((__gpga_diff | __gpga_val_diff) == 0ul);\n";
+      out << "    } else if (__gpga_header.kind == GPGA_SCHED_VM_CASE_KIND_CASEX) {\n";
+      out << "      ulong __gpga_cared = ~(__gpga_case_xz | __gpga_aux) & __gpga_mask;\n";
+      out << "      ulong __gpga_val_diff = (__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
+      out << "      __gpga_hit = (__gpga_val_diff == 0ul);\n";
+      out << "    } else if (__gpga_header.kind == GPGA_SCHED_VM_CASE_KIND_CASEZ) {\n";
+      out << "      ulong __gpga_cared = (~__gpga_aux) & __gpga_mask;\n";
+      out << "      ulong __gpga_bad = __gpga_case_xz & __gpga_cared;\n";
+      out << "      ulong __gpga_val_diff = (__gpga_case_val ^ __gpga_want) & __gpga_cared;\n";
+      out << "      __gpga_hit = ((__gpga_bad | __gpga_val_diff) == 0ul);\n";
+      out << "    }\n";
+      out << "    if (__gpga_hit) {\n";
+      out << "      __gpga_match = __gpga_entry_rec.target;\n";
       out << "      break;\n";
       out << "    }\n";
       out << "  }\n";
@@ -33068,231 +41285,438 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "}\n";
     }
     if (options.sched_vm) {
-      const auto& vm_assigns = vm_tables.assign_stmts;
       out << "static __attribute__((noinline)) void gpga_"
-          << MslName(module.name) << "_sched_vm_exec_assign(";
+          << MslName(module.name) << "_sched_vm_exec_assign_blocking(";
       emit_sched_param_decls(2);
-      out << ",\n  uint pid,\n  uint idx,\n  uint assign_id,\n"
-             "  bool nonblocking) {\n";
-      emit_packed_signal_setup("sched.count");
-      emit_packed_nb_setup("sched.count");
-      emit_packed_force_setup("sched.count");
-      out << "  switch (assign_id) {\n";
-      for (size_t i = 0; i < vm_assigns.size(); ++i) {
-        const Statement* stmt = vm_assigns[i];
-        if (!stmt || stmt->kind != StatementKind::kAssign) {
-          continue;
-        }
-        SequentialAssign blocking = CloneSequentialAssign(stmt->assign);
-        blocking.nonblocking = false;
-        out << "    case " << i << "u: {\n";
-        if (stmt->assign.nonblocking) {
-          SequentialAssign nonblocking_assign =
-              CloneSequentialAssign(stmt->assign);
-          nonblocking_assign.nonblocking = true;
-          out << "      if (nonblocking) {\n";
-          emit_inline_assign(nonblocking_assign, 6, sched_locals);
-          out << "      } else {\n";
-          emit_inline_assign(blocking, 6, sched_locals);
-          out << "      }\n";
-        } else {
-          out << "      if (nonblocking) {\n";
-          out << "        sched_error[gid] = 1u;\n";
-          out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      } else {\n";
-          emit_inline_assign(blocking, 6, sched_locals);
-          out << "      }\n";
-        }
-        out << "      break;\n";
-        out << "    }\n";
-      }
-      out << "    default: {\n";
-      out << "      sched_error[gid] = 1u;\n";
-      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "      break;\n";
+      out << ",\n  uint pid,\n  uint idx,\n  uint assign_id) {\n";
+      out << "  const GpgaSchedVmAssignEntry __gpga_assign_entry =\n";
+      out << "      sched_vm_assign_entry[assign_id];\n";
+      out << "  bool __gpga_ok =\n";
+      out << "      ((__gpga_assign_entry.flags & (GPGA_SCHED_VM_ASSIGN_FLAG_FALLBACK |\n";
+      out << "                                       GPGA_SCHED_VM_ASSIGN_FLAG_NONBLOCKING)) == 0u);\n";
+      out << "  if (__gpga_ok &&\n";
+      out << "      __gpga_assign_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "    __gpga_ok = false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_ok) {\n";
+      out << "    ulong __gpga_rhs_val = 0ul;\n";
+      out << "    ulong __gpga_rhs_xz = 0ul;\n";
+      out << "    uint __gpga_rhs_width = 0u;\n";
+      out << "    if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_assign_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+      out << "      __gpga_ok = false;\n";
+      out << "    } else {\n";
+      out << "      const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "          sched_vm_signal_entry[__gpga_assign_entry.signal_id];\n";
+      out << "      if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "          __gpga_sig.array_size != 1u) {\n";
+      out << "        __gpga_ok = false;\n";
+      out << "      } else {\n";
+      out << "        uint __gpga_width = __gpga_sig.width;\n";
+      out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_rhs_val &= __gpga_mask;\n";
+      out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "            __gpga_base * __gpga_stride;\n";
+      out << "        if (__gpga_width > 32u) {\n";
+      out << "          ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+      out << "        } else {\n";
+      out << "          ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+      out << "        }\n";
+      out << "      }\n";
       out << "    }\n";
+      out << "  }\n";
+      out << "  if (!__gpga_ok) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
       out << "  }\n";
       out << "}\n";
     }
     if (options.sched_vm) {
-      const auto& vm_force_stmts = vm_tables.force_stmts;
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_vm_exec_assign_nb(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  uint assign_id) {\n";
+      if (packed_nb_signals.empty()) {
+        out << "  sched_error[gid] = 1u;\n";
+        out << "  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "  return;\n";
+        out << "}\n";
+      } else {
+        out << "  const GpgaSchedVmAssignEntry __gpga_assign_entry =\n";
+        out << "      sched_vm_assign_entry[assign_id];\n";
+        out << "  bool __gpga_ok =\n";
+        out << "      ((__gpga_assign_entry.flags & GPGA_SCHED_VM_ASSIGN_FLAG_FALLBACK) == 0u);\n";
+        out << "  if (__gpga_ok &&\n";
+        out << "      ((__gpga_assign_entry.flags & GPGA_SCHED_VM_ASSIGN_FLAG_NONBLOCKING) == 0u)) {\n";
+        out << "    __gpga_ok = false;\n";
+        out << "  }\n";
+        out << "  if (__gpga_ok &&\n";
+        out << "      __gpga_assign_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+        out << "    __gpga_ok = false;\n";
+        out << "  }\n";
+        out << "  if (__gpga_ok) {\n";
+        out << "    ulong __gpga_rhs_val = 0ul;\n";
+        out << "    ulong __gpga_rhs_xz = 0ul;\n";
+        out << "    uint __gpga_rhs_width = 0u;\n";
+        out << "    if (!gpga_" << MslName(module.name)
+            << "_sched_vm_eval_expr(";
+        emit_sched_param_names();
+        out << ", pid, __gpga_assign_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+        out << "      __gpga_ok = false;\n";
+        out << "    } else {\n";
+        out << "      const GpgaSchedVmSignalEntry __gpga_sig =\n";
+        out << "          sched_vm_signal_entry[__gpga_assign_entry.signal_id];\n";
+        out << "      if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+        out << "          __gpga_sig.array_size != 1u) {\n";
+        out << "        __gpga_ok = false;\n";
+        out << "      } else {\n";
+        out << "        uint __gpga_width = __gpga_sig.width;\n";
+        out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+        out << "            ? ~0ul\n";
+        out << "            : ((__gpga_width == 0u)\n";
+        out << "                   ? 0ul\n";
+        out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+        out << "        __gpga_rhs_val &= __gpga_mask;\n";
+        out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+        out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+        out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+        out << "            __gpga_base * __gpga_stride;\n";
+        out << "        if (__gpga_width > 32u) {\n";
+        out << "          ((device ulong*)(nb_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+        out << "        } else {\n";
+        out << "          ((device uint*)(nb_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "  if (!__gpga_ok) {\n";
+        out << "    sched_error[gid] = 1u;\n";
+        out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "}\n";
+      }
+    }
+    if (options.sched_vm) {
       out << "static __attribute__((noinline)) void gpga_"
           << MslName(module.name) << "_sched_vm_exec_force(";
       emit_sched_param_decls(2);
       out << ",\n  uint pid,\n  uint idx,\n  uint force_id) {\n";
-      emit_packed_signal_setup("sched.count");
-      emit_packed_nb_setup("sched.count");
-      emit_packed_force_setup("sched.count");
-      out << "  switch (force_id) {\n";
-      for (size_t i = 0; i < vm_force_stmts.size(); ++i) {
-        const Statement* stmt = vm_force_stmts[i];
-        out << "    case " << i << "u: {\n";
-        if (!stmt) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        if (stmt->assign.delay) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        const bool is_proc = stmt->is_procedural;
-        const std::string& target = stmt->force_target;
-        auto target_it = is_proc ? passign_target_index.find(target)
-                                 : force_target_index.find(target);
-        if (target_it == (is_proc ? passign_target_index.end()
-                                  : force_target_index.end())) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        auto id_it = is_proc ? passign_stmt_ids.find(stmt)
-                             : force_stmt_ids.find(stmt);
-        if (id_it == (is_proc ? passign_stmt_ids.end()
-                              : force_stmt_ids.end())) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        LvalueInfo lhs =
-            BuildLvalue(stmt->assign, module, sched_locals, sched_regs, false);
-        if (!lhs.ok) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        if (override_is_reg[target]) {
-          out << "      if (!(" << override_active_expr(target) << ")) {\n";
-          out << "        " << shadow_name(target) << "[gid] = " << lhs.expr
-              << ";\n";
-          out << "      }\n";
-        }
-        std::string slot =
-            is_proc ? passign_slot_expr(target) : force_slot_expr(target);
-        if (is_proc) {
-          out << "      sched_passign_id[" << slot << "] = " << id_it->second
-              << "u;\n";
-          std::string force_active = force_active_expr(target);
-          if (force_active != "false") {
-            out << "      if (!" << force_active << ") {\n";
-            emit_force_value_assign(*stmt, lhs.expr, 8);
-            out << "      }\n";
-          } else {
-            emit_force_value_assign(*stmt, lhs.expr, 6);
-          }
-        } else {
-          out << "      sched_force_id[" << slot << "] = " << id_it->second
-              << "u;\n";
-          emit_force_value_assign(*stmt, lhs.expr, 6);
-        }
-        out << "      break;\n";
-        out << "    }\n";
+      out << "  const GpgaSchedVmForceEntry __gpga_force_entry =\n";
+      out << "      sched_vm_force_entry[force_id];\n";
+      out << "  bool __gpga_ok =\n";
+      out << "      ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_FALLBACK) == 0u);\n";
+      out << "  if (__gpga_ok &&\n";
+      out << "      __gpga_force_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "    __gpga_ok = false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_ok && __gpga_force_entry.rhs_expr == 0xFFFFFFFFu) {\n";
+      out << "    __gpga_ok = false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_ok) {\n";
+      out << "    ulong __gpga_rhs_val = 0ul;\n";
+      out << "    ulong __gpga_rhs_xz = 0ul;\n";
+      out << "    uint __gpga_rhs_width = 0u;\n";
+      out << "    if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_force_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+      out << "      __gpga_ok = false;\n";
+      out << "    } else {\n";
+      out << "      const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "          sched_vm_signal_entry[__gpga_force_entry.signal_id];\n";
+      out << "      if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "          __gpga_sig.array_size != 1u) {\n";
+      out << "        __gpga_ok = false;\n";
+      out << "      } else {\n";
+      out << "        uint __gpga_width = __gpga_sig.width;\n";
+      out << "        ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "            ? ~0ul\n";
+      out << "            : ((__gpga_width == 0u)\n";
+      out << "                   ? 0ul\n";
+      out << "                   : ((1ul << __gpga_width) - 1ul));\n";
+      out << "        __gpga_rhs_val &= __gpga_mask;\n";
+      out << "        ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "        ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "        ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "            __gpga_base * __gpga_stride;\n";
+      out << "        uint __gpga_force_slot = __gpga_force_entry.force_slot;\n";
+      out << "        uint __gpga_passign_slot = __gpga_force_entry.passign_slot;\n";
+      out << "        bool __gpga_force_valid = (__gpga_force_slot != 0xFFFFFFFFu);\n";
+      out << "        bool __gpga_passign_valid = (__gpga_passign_slot != 0xFFFFFFFFu);\n";
+      if (!force_target_list.empty()) {
+        out << "        uint __gpga_force_idx = 0u;\n";
+        out << "        bool __gpga_force_active = false;\n";
+        out << "        if (__gpga_force_valid) {\n";
+        out << "          __gpga_force_idx = (gid * GPGA_SCHED_FORCE_COUNT) + __gpga_force_slot;\n";
+        out << "          __gpga_force_active = (sched_force_id[__gpga_force_idx] != 0xFFFFFFFFu);\n";
+        out << "        }\n";
+      } else {
+        out << "        uint __gpga_force_idx = 0u;\n";
+        out << "        bool __gpga_force_active = false;\n";
+        out << "        if (__gpga_force_valid) {\n";
+        out << "          __gpga_ok = false;\n";
+        out << "        }\n";
       }
-      out << "    default: {\n";
-      out << "      sched_error[gid] = 1u;\n";
-      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "      break;\n";
+      if (!passign_target_list.empty()) {
+        out << "        uint __gpga_passign_idx = 0u;\n";
+        out << "        bool __gpga_passign_active = false;\n";
+        out << "        if (__gpga_passign_valid) {\n";
+        out << "          __gpga_passign_idx = (gid * GPGA_SCHED_PCONT_COUNT) + __gpga_passign_slot;\n";
+        out << "          __gpga_passign_active = (sched_passign_id[__gpga_passign_idx] != 0xFFFFFFFFu);\n";
+        out << "        }\n";
+      } else {
+        out << "        uint __gpga_passign_idx = 0u;\n";
+        out << "        bool __gpga_passign_active = false;\n";
+        out << "        if (__gpga_passign_valid) {\n";
+        out << "          __gpga_ok = false;\n";
+        out << "        }\n";
+      }
+      if (needs_force_shadow) {
+        out << "        if ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG) != 0u) {\n";
+        out << "          if (!(__gpga_force_active || __gpga_passign_active)) {\n";
+        out << "            if (__gpga_width > 32u) {\n";
+        out << "              ((device ulong*)(sched_force_state + __gpga_val_addr))[0] =\n";
+        out << "                  ((device ulong*)(gpga_state + __gpga_val_addr))[0];\n";
+        out << "            } else {\n";
+        out << "              ((device uint*)(sched_force_state + __gpga_val_addr))[0] =\n";
+        out << "                  ((device uint*)(gpga_state + __gpga_val_addr))[0];\n";
+        out << "            }\n";
+        out << "          }\n";
+        out << "        }\n";
+      }
+      out << "        if (__gpga_ok) {\n";
+      out << "          bool __gpga_is_proc =\n";
+      out << "              ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL) != 0u);\n";
+      out << "          if (__gpga_is_proc) {\n";
+      if (!passign_target_list.empty()) {
+        out << "            if (!__gpga_passign_valid) {\n";
+        out << "              __gpga_ok = false;\n";
+        out << "            } else {\n";
+        out << "              sched_passign_id[__gpga_passign_idx] = __gpga_force_entry.force_id;\n";
+        out << "              if (!__gpga_force_active) {\n";
+        out << "                if (__gpga_width > 32u) {\n";
+        out << "                  ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+        out << "                } else {\n";
+        out << "                  ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+        out << "                }\n";
+        out << "              }\n";
+        out << "            }\n";
+      } else {
+        out << "            __gpga_ok = false;\n";
+      }
+      out << "          } else {\n";
+      if (!force_target_list.empty()) {
+        out << "            if (!__gpga_force_valid) {\n";
+        out << "              __gpga_ok = false;\n";
+        out << "            } else {\n";
+        out << "              sched_force_id[__gpga_force_idx] = __gpga_force_entry.force_id;\n";
+        out << "              if (__gpga_width > 32u) {\n";
+        out << "                ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+        out << "              } else {\n";
+        out << "                ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+        out << "              }\n";
+        out << "            }\n";
+      } else {
+        out << "            __gpga_ok = false;\n";
+      }
+      out << "          }\n";
+      out << "        }\n";
+      out << "      }\n";
       out << "    }\n";
+      out << "  }\n";
+      out << "  if (!__gpga_ok) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
       out << "  }\n";
       out << "}\n";
     }
     if (options.sched_vm) {
-      const auto& vm_release_stmts = vm_tables.release_stmts;
       out << "static __attribute__((noinline)) void gpga_"
           << MslName(module.name) << "_sched_vm_exec_release(";
       emit_sched_param_decls(2);
       out << ",\n  uint pid,\n  uint idx,\n  uint release_id) {\n";
-      emit_packed_signal_setup("sched.count");
-      emit_packed_nb_setup("sched.count");
-      emit_packed_force_setup("sched.count");
-      out << "  switch (release_id) {\n";
-      for (size_t i = 0; i < vm_release_stmts.size(); ++i) {
-        const Statement* stmt = vm_release_stmts[i];
-        out << "    case " << i << "u: {\n";
-        if (!stmt) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        const bool is_proc = stmt->is_procedural;
-        const std::string& target = stmt->release_target;
-        auto target_it = is_proc ? passign_target_index.find(target)
-                                 : force_target_index.find(target);
-        if (target_it == (is_proc ? passign_target_index.end()
-                                  : force_target_index.end())) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        std::string slot =
-            is_proc ? passign_slot_expr(target) : force_slot_expr(target);
-        if (is_proc) {
-          out << "      sched_passign_id[" << slot
-              << "] = 0xFFFFFFFFu;\n";
-          if (override_is_reg[target]) {
-            std::string force_active = force_active_expr(target);
-            if (force_active != "false") {
-              out << "      if (!" << force_active << ") {\n";
-              out << "        " << MslName(target) << "[gid] = "
-                  << shadow_name(target) << "[gid];\n";
-              out << "      }\n";
-            } else {
-              out << "      " << MslName(target) << "[gid] = "
-                  << shadow_name(target) << "[gid];\n";
-            }
-          }
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        out << "      sched_force_id[" << slot << "] = 0xFFFFFFFFu;\n";
-        LvalueInfo lhs =
-            BuildLvalue(stmt->assign, module, sched_locals, sched_regs, false);
-        if (!lhs.ok) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
-        }
-        if (passign_target_index.count(target) > 0) {
-          std::string passign_active = passign_active_expr(target);
-          out << "      if (" << passign_active << ") {\n";
-          emit_passign_apply_target(target, lhs, 8);
-          out << "      } else {\n";
-          if (override_is_reg[target]) {
-            out << "        " << MslName(target) << "[gid] = "
-                << shadow_name(target) << "[gid];\n";
-          }
-          out << "      }\n";
-        } else if (override_is_reg[target]) {
-          out << "      " << MslName(target) << "[gid] = "
-              << shadow_name(target) << "[gid];\n";
-        }
-        out << "      break;\n";
-        out << "    }\n";
+      out << "  const GpgaSchedVmReleaseEntry __gpga_release_entry =\n";
+      out << "      sched_vm_release_entry[release_id];\n";
+      out << "  bool __gpga_ok =\n";
+      out << "      ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_FALLBACK) == 0u);\n";
+      out << "  if (__gpga_ok &&\n";
+      out << "      __gpga_release_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "    __gpga_ok = false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_ok) {\n";
+      out << "    const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "        sched_vm_signal_entry[__gpga_release_entry.signal_id];\n";
+      out << "    if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "        __gpga_sig.array_size != 1u) {\n";
+      out << "      __gpga_ok = false;\n";
+      out << "    } else {\n";
+      out << "      uint __gpga_width = __gpga_sig.width;\n";
+      out << "      ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "      ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "      ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "          __gpga_base * __gpga_stride;\n";
+      out << "      uint __gpga_force_slot = __gpga_release_entry.force_slot;\n";
+      out << "      uint __gpga_passign_slot = __gpga_release_entry.passign_slot;\n";
+      out << "      bool __gpga_force_valid = (__gpga_force_slot != 0xFFFFFFFFu);\n";
+      out << "      bool __gpga_passign_valid = (__gpga_passign_slot != 0xFFFFFFFFu);\n";
+      if (!force_target_list.empty()) {
+        out << "      uint __gpga_force_idx = 0u;\n";
+        out << "      bool __gpga_force_active = false;\n";
+        out << "      if (__gpga_force_valid) {\n";
+        out << "        __gpga_force_idx = (gid * GPGA_SCHED_FORCE_COUNT) + __gpga_force_slot;\n";
+        out << "        __gpga_force_active = (sched_force_id[__gpga_force_idx] != 0xFFFFFFFFu);\n";
+        out << "      }\n";
+      } else {
+        out << "      uint __gpga_force_idx = 0u;\n";
+        out << "      bool __gpga_force_active = false;\n";
+        out << "      if (__gpga_force_valid) {\n";
+        out << "        __gpga_ok = false;\n";
+        out << "      }\n";
       }
-      out << "    default: {\n";
-      out << "      sched_error[gid] = 1u;\n";
-      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "      break;\n";
+      if (!passign_target_list.empty()) {
+        out << "      uint __gpga_passign_idx = 0u;\n";
+        out << "      if (__gpga_passign_valid) {\n";
+        out << "        __gpga_passign_idx = (gid * GPGA_SCHED_PCONT_COUNT) + __gpga_passign_slot;\n";
+        out << "      }\n";
+      } else {
+        out << "      uint __gpga_passign_idx = 0u;\n";
+        out << "      if (__gpga_passign_valid) {\n";
+        out << "        __gpga_ok = false;\n";
+        out << "      }\n";
+      }
+      out << "      if (__gpga_ok) {\n";
+      out << "        bool __gpga_is_proc =\n";
+      out << "            ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL) != 0u);\n";
+      out << "        if (__gpga_is_proc) {\n";
+      if (!passign_target_list.empty()) {
+        out << "          if (!__gpga_passign_valid) {\n";
+        out << "            __gpga_ok = false;\n";
+        out << "          } else {\n";
+        out << "            sched_passign_id[__gpga_passign_idx] = 0xFFFFFFFFu;\n";
+        if (needs_force_shadow) {
+          out << "            if ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG) != 0u) {\n";
+          out << "              if (!__gpga_force_active) {\n";
+          out << "                if (__gpga_width > 32u) {\n";
+          out << "                  ((device ulong*)(gpga_state + __gpga_val_addr))[0] =\n";
+          out << "                      ((device ulong*)(sched_force_state + __gpga_val_addr))[0];\n";
+          out << "                } else {\n";
+          out << "                  ((device uint*)(gpga_state + __gpga_val_addr))[0] =\n";
+          out << "                      ((device uint*)(sched_force_state + __gpga_val_addr))[0];\n";
+          out << "                }\n";
+          out << "              }\n";
+          out << "            }\n";
+        }
+        out << "          }\n";
+      } else {
+        out << "          __gpga_ok = false;\n";
+      }
+      out << "        } else {\n";
+      if (!force_target_list.empty()) {
+        out << "          if (!__gpga_force_valid) {\n";
+        out << "            __gpga_ok = false;\n";
+        out << "          } else if (__gpga_passign_valid) {\n";
+        out << "            __gpga_ok = false;\n";
+        out << "          } else {\n";
+        out << "            sched_force_id[__gpga_force_idx] = 0xFFFFFFFFu;\n";
+        if (needs_force_shadow) {
+          out << "            if ((__gpga_release_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG) != 0u) {\n";
+          out << "              if (__gpga_width > 32u) {\n";
+          out << "                ((device ulong*)(gpga_state + __gpga_val_addr))[0] =\n";
+          out << "                    ((device ulong*)(sched_force_state + __gpga_val_addr))[0];\n";
+          out << "              } else {\n";
+          out << "                ((device uint*)(gpga_state + __gpga_val_addr))[0] =\n";
+          out << "                    ((device uint*)(sched_force_state + __gpga_val_addr))[0];\n";
+          out << "              }\n";
+          out << "            }\n";
+        }
+        out << "          }\n";
+      } else {
+        out << "          __gpga_ok = false;\n";
+      }
+      out << "        }\n";
+      out << "      }\n";
       out << "    }\n";
       out << "  }\n";
+      out << "  if (!__gpga_ok) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "}\n";
+    }
+    if (options.sched_vm) {
+      out << "static __attribute__((noinline)) bool gpga_"
+          << MslName(module.name) << "_sched_vm_apply_force_entry(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint force_id,\n  uint slot,\n"
+             "  bool is_passign) {\n";
+      out << "  if (force_id >= GPGA_SCHED_VM_FORCE_COUNT) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmForceEntry __gpga_force_entry =\n";
+      out << "      sched_vm_force_entry[force_id];\n";
+      out << "  if ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_FALLBACK) != 0u) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_force_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  if (__gpga_force_entry.rhs_expr == 0xFFFFFFFFu) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  bool __gpga_is_proc =\n";
+      out << "      ((__gpga_force_entry.flags & GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL) != 0u);\n";
+      out << "  if (is_passign != __gpga_is_proc) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  uint __gpga_slot = is_passign ? __gpga_force_entry.passign_slot\n";
+      out << "      : __gpga_force_entry.force_slot;\n";
+      out << "  if (__gpga_slot == 0xFFFFFFFFu || __gpga_slot != slot) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmSignalEntry __gpga_sig =\n";
+      out << "      sched_vm_signal_entry[__gpga_force_entry.signal_id];\n";
+      out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "      __gpga_sig.array_size != 1u) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  ulong __gpga_rhs_val = 0ul;\n";
+      out << "  ulong __gpga_rhs_xz = 0ul;\n";
+      out << "  uint __gpga_rhs_width = 0u;\n";
+      out << "  if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_force_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+      out << "    return false;\n";
+      out << "  }\n";
+      out << "  uint __gpga_width = __gpga_sig.width;\n";
+      out << "  ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "      ? ~0ul\n";
+      out << "      : ((__gpga_width == 0u)\n";
+      out << "             ? 0ul\n";
+      out << "             : ((1ul << __gpga_width) - 1ul));\n";
+      out << "  __gpga_rhs_val &= __gpga_mask;\n";
+      out << "  ulong __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "  ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "  ulong __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "      __gpga_base * __gpga_stride;\n";
+      out << "  if (__gpga_width > 32u) {\n";
+      out << "    ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_rhs_val;\n";
+      out << "  } else {\n";
+      out << "    ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_rhs_val;\n";
+      out << "  }\n";
+      out << "  return true;\n";
       out << "}\n";
     }
     auto emit_syscall_record = [&](const Expr& call, int indent) -> void {
@@ -33349,6 +41773,20 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     };
     if (options.sched_vm) {
       const auto& vm_service_calls = vm_tables.service_calls;
+      std::vector<size_t> vm_service_call_fallback;
+      if (vm_layout.service_entries.size() == vm_service_calls.size()) {
+        for (size_t i = 0; i < vm_layout.service_entries.size(); ++i) {
+          if ((vm_layout.service_entries[i].flags &
+               kSchedulerVmServiceFlagFallback) != 0u) {
+            vm_service_call_fallback.push_back(i);
+          }
+        }
+      } else {
+        vm_service_call_fallback.reserve(vm_service_calls.size());
+        for (size_t i = 0; i < vm_service_calls.size(); ++i) {
+          vm_service_call_fallback.push_back(i);
+        }
+      }
       out << "static __attribute__((noinline)) void gpga_"
           << MslName(module.name) << "_sched_vm_exec_service_call(";
       emit_sched_param_decls(2);
@@ -33364,42 +41802,272 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       emit_packed_signal_setup("sched.count");
       emit_packed_nb_setup("sched.count");
       emit_packed_force_setup("sched.count");
-      out << "  switch (service_id) {\n";
-      for (size_t i = 0; i < vm_service_calls.size(); ++i) {
-        const auto& call = vm_service_calls[i];
-        out << "    case " << i << "u: {\n";
-        if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
-          if (!call.stmt) {
-            out << "      sched_error[gid] = 1u;\n";
-            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-            out << "      break;\n";
-            out << "    }\n";
-            continue;
+      if (vm_service_calls.empty()) {
+        out << "  sched_error[gid] = 1u;\n";
+        out << "  sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "  return;\n";
+      } else {
+      out << "  if (service_id >= GPGA_SCHED_VM_SERVICE_CALL_COUNT) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmServiceEntry __gpga_entry =\n";
+      out << "      sched_vm_service_entry[service_id];\n";
+      if (!vm_service_call_fallback.empty()) {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_FALLBACK) != 0u) {\n";
+        out << "    switch (service_id) {\n";
+        for (size_t idx : vm_service_call_fallback) {
+          const auto& call = vm_service_calls[idx];
+          out << "      case " << idx << "u: {\n";
+          if (call.kind == SchedulerVmServiceCallKind::kSystemTask) {
+            if (!call.stmt) {
+              out << "        sched_error[gid] = 1u;\n";
+              out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "        break;\n";
+              out << "      }\n";
+              continue;
+            }
+            emit_system_task(*call.stmt, 8);
+          } else {
+            if (!call.call) {
+              out << "        sched_error[gid] = 1u;\n";
+              out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+              out << "        break;\n";
+              out << "      }\n";
+              continue;
+            }
+            emit_syscall_record(*call.call, 8);
           }
-          emit_system_task(*call.stmt, 6);
-        } else {
-          if (!call.call) {
-            out << "      sched_error[gid] = 1u;\n";
-            out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-            out << "      break;\n";
-            out << "    }\n";
-            continue;
-          }
-          emit_syscall_record(*call.call, 6);
+          out << "        break;\n";
+          out << "      }\n";
         }
-        out << "      break;\n";
+        out << "      default: {\n";
+        out << "        sched_error[gid] = 1u;\n";
+        out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "        break;\n";
+        out << "      }\n";
         out << "    }\n";
+        out << "    return;\n";
+        out << "  }\n";
+      } else {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_FALLBACK) != 0u) {\n";
+        out << "    sched_error[gid] = 1u;\n";
+        out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "    return;\n";
+        out << "  }\n";
       }
-      out << "    default: {\n";
-      out << "      sched_error[gid] = 1u;\n";
-      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      if (!system_task_info.monitor_stmts.empty()) {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_ON) != 0u) {\n";
+        out << "    sched_monitor_enable[gid] = 1u;\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_OFF) != 0u) {\n";
+        out << "    sched_monitor_enable[gid] = 0u;\n";
+        out << "    return;\n";
+        out << "  }\n";
+      } else {
+        out << "  if ((__gpga_entry.flags & (GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_ON |\n";
+        out << "                               GPGA_SCHED_VM_SERVICE_FLAG_MONITOR_OFF)) != 0u) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+      }
+      if (!system_task_info.strobe_stmts.empty()) {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_STROBE) != 0u) {\n";
+        out << "    if (__gpga_entry.aux >= GPGA_SCHED_STROBE_COUNT) {\n";
+        out << "      sched_error[gid] = 1u;\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      return;\n";
+        out << "    }\n";
+        out << "    sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + __gpga_entry.aux] += 1u;\n";
+        out << "    return;\n";
+        out << "  }\n";
+      } else {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_STROBE) != 0u) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+      }
+      out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_GLOBAL_ONLY) != 0u && gid != 0u) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  if (__gpga_entry.arg_offset + __gpga_entry.arg_count >\n";
+      out << "      GPGA_SCHED_VM_SERVICE_ARG_COUNT) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  if (__gpga_entry.arg_count > GPGA_SCHED_SERVICE_MAX_ARGS) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  const uint __gpga_arg_count = __gpga_entry.arg_count;\n";
+      out << "  const uint __gpga_arg_base = __gpga_entry.arg_offset;\n";
+      out << "  constexpr uint __gpga_arg_capacity =\n";
+      out << "      (GPGA_SCHED_SERVICE_MAX_ARGS > 0u) ? GPGA_SCHED_SERVICE_MAX_ARGS : 1u;\n";
+      out << "  ulong __gpga_arg_val[__gpga_arg_capacity];\n";
+      out << "  uint __gpga_arg_width[__gpga_arg_capacity];\n";
+      out << "  uint __gpga_arg_kind[__gpga_arg_capacity];\n";
+      out << "  bool __gpga_ok = true;\n";
+      out << "  bool __gpga_guard_fd =\n";
+      out << "      ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_GUARD_FD) != 0u);\n";
+      out << "  bool __gpga_guard_ok = true;\n";
+      if (!system_task_info.monitor_stmts.empty()) {
+        out << "  bool __gpga_monitor =\n";
+        out << "      ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_MONITOR) != 0u);\n";
+        out << "  bool __gpga_changed = true;\n";
+        out << "  uint __gpga_mon_base = 0u;\n";
+        out << "  if (__gpga_monitor) {\n";
+        out << "    if (__gpga_entry.aux >= GPGA_SCHED_MONITOR_COUNT) {\n";
+        out << "      sched_error[gid] = 1u;\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      return;\n";
+        out << "    }\n";
+        out << "    sched_monitor_active[(gid * GPGA_SCHED_MONITOR_COUNT) +\n";
+        out << "        __gpga_entry.aux] = 1u;\n";
+        out << "    __gpga_mon_base = ((gid * GPGA_SCHED_MONITOR_COUNT) + __gpga_entry.aux) *\n";
+        out << "        GPGA_SCHED_MONITOR_MAX_ARGS;\n";
+        out << "  }\n";
+      } else {
+        out << "  bool __gpga_monitor = false;\n";
+        out << "  bool __gpga_changed = false;\n";
+        out << "  uint __gpga_mon_base = 0u;\n";
+      }
+      out << "  #pragma clang loop unroll(disable)\n";
+      out << "  for (uint __gpga_i = 0u; __gpga_i < __gpga_arg_count; ++__gpga_i) {\n";
+      out << "    if (!__gpga_ok) {\n";
       out << "      break;\n";
       out << "    }\n";
+      out << "    const GpgaSchedVmServiceArg __gpga_arg =\n";
+      out << "        sched_vm_service_arg[__gpga_arg_base + __gpga_i];\n";
+      out << "    uint __gpga_kind = __gpga_arg.kind;\n";
+      out << "    uint __gpga_width = __gpga_arg.width;\n";
+      out << "    uint __gpga_flags = __gpga_arg.flags;\n";
+      out << "    ulong __gpga_val = 0ul;\n";
+      out << "    ulong __gpga_xz = 0ul;\n";
+      out << "    uint __gpga_service_kind = GPGA_SERVICE_ARG_VALUE;\n";
+      out << "    if (__gpga_kind == GPGA_SCHED_VM_SERVICE_ARG_KIND_IDENT) {\n";
+      out << "      __gpga_service_kind = GPGA_SERVICE_ARG_IDENT;\n";
+      out << "      __gpga_val = (ulong)__gpga_arg.payload;\n";
+      out << "    } else if (__gpga_kind == GPGA_SCHED_VM_SERVICE_ARG_KIND_STRING) {\n";
+      out << "      __gpga_service_kind = GPGA_SERVICE_ARG_STRING;\n";
+      out << "      __gpga_val = (ulong)__gpga_arg.payload;\n";
+      out << "    } else {\n";
+      out << "      if ((__gpga_flags & GPGA_SCHED_VM_SERVICE_ARG_FLAG_TIME) != 0u) {\n";
+      out << "        __gpga_val = __gpga_time;\n";
+      out << "        __gpga_width = 64u;\n";
+      out << "      } else if ((__gpga_flags & GPGA_SCHED_VM_SERVICE_ARG_FLAG_STIME) != 0u) {\n";
+      out << "        __gpga_val = (ulong)(uint)__gpga_time;\n";
+      out << "        __gpga_width = 32u;\n";
+      out << "      } else if ((__gpga_flags & GPGA_SCHED_VM_SERVICE_ARG_FLAG_EXPR) != 0u) {\n";
+      out << "        ulong __gpga_expr_val = 0ul;\n";
+      out << "        ulong __gpga_expr_xz = 0ul;\n";
+      out << "        uint __gpga_expr_width = 0u;\n";
+      out << "        if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg.payload, &__gpga_expr_val,\n";
+      out << "            &__gpga_expr_xz, &__gpga_expr_width)) {\n";
+      out << "          __gpga_ok = false;\n";
+      out << "        } else {\n";
+      out << "          __gpga_val = __gpga_expr_val;\n";
+      out << "          __gpga_xz = __gpga_expr_xz;\n";
+      out << "        }\n";
+      out << "      } else {\n";
+      out << "        __gpga_val = (ulong)__gpga_arg.payload;\n";
+      out << "      }\n";
+      out << "      if (__gpga_width == 0u) {\n";
+      out << "        __gpga_width = 1u;\n";
+      out << "      }\n";
+      out << "      ulong __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "          ? ~0ul\n";
+      out << "          : ((1ul << __gpga_width) - 1ul);\n";
+      out << "      __gpga_val &= __gpga_mask;\n";
+      out << "      __gpga_xz &= __gpga_mask;\n";
+      out << "      if (__gpga_guard_fd && __gpga_i == 0u) {\n";
+      out << "        __gpga_guard_ok = (__gpga_xz == 0ul && __gpga_val != 0ul);\n";
+      out << "      }\n";
+      if (!system_task_info.monitor_stmts.empty()) {
+        out << "      if (__gpga_monitor &&\n";
+        out << "          __gpga_service_kind == GPGA_SERVICE_ARG_VALUE) {\n";
+        out << "        uint __gpga_slot = __gpga_mon_base + __gpga_i;\n";
+        out << "        if ((((sched_monitor_val[__gpga_slot] ^ __gpga_val) |\n";
+        out << "              (sched_monitor_xz[__gpga_slot] ^ __gpga_xz)) &\n";
+        out << "             __gpga_mask) != 0ul) {\n";
+        out << "          __gpga_changed = true;\n";
+        out << "        }\n";
+        out << "        sched_monitor_val[__gpga_slot] = __gpga_val;\n";
+        out << "        sched_monitor_xz[__gpga_slot] = __gpga_xz;\n";
+        out << "      }\n";
+      }
+      out << "    }\n";
+      out << "    __gpga_arg_val[__gpga_i] = __gpga_val;\n";
+      out << "    __gpga_arg_width[__gpga_i] = __gpga_width;\n";
+      out << "    __gpga_arg_kind[__gpga_i] = __gpga_service_kind;\n";
       out << "  }\n";
+      out << "  if (!__gpga_ok) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  if (__gpga_guard_fd && !__gpga_guard_ok) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      if (!system_task_info.monitor_stmts.empty()) {
+        out << "  if (__gpga_monitor &&\n";
+        out << "      (sched_monitor_enable[gid] == 0u || !__gpga_changed)) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+      }
+      out << "  uint __gpga_svc_index = sched_service_count[gid];\n";
+      out << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  uint __gpga_svc_offset = (gid * sched.service_capacity) +\n";
+      out << "      __gpga_svc_index;\n";
+      out << "  sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+      out << "  sched_service[__gpga_svc_offset].kind = __gpga_entry.kind;\n";
+      out << "  sched_service[__gpga_svc_offset].pid = pid;\n";
+      out << "  sched_service[__gpga_svc_offset].format_id = __gpga_entry.format_id;\n";
+      out << "  sched_service[__gpga_svc_offset].arg_count = __gpga_arg_count;\n";
+      out << "  #pragma clang loop unroll(disable)\n";
+      out << "  for (uint __gpga_i = 0u; __gpga_i < __gpga_arg_count; ++__gpga_i) {\n";
+      out << "    sched_service[__gpga_svc_offset].arg_kind[__gpga_i] =\n";
+      out << "        __gpga_arg_kind[__gpga_i];\n";
+      out << "    sched_service[__gpga_svc_offset].arg_width[__gpga_i] =\n";
+      out << "        __gpga_arg_width[__gpga_i];\n";
+      out << "    sched_service[__gpga_svc_offset].arg_val[__gpga_i] =\n";
+      out << "        __gpga_arg_val[__gpga_i];\n";
+      out << "  }\n";
+      out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_FINISH) != 0u) {\n";
+      out << "    finished = true;\n";
+      out << "    steps = 0u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "  } else if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_FLAG_STOP) != 0u) {\n";
+      out << "    stopped = true;\n";
+      out << "    steps = 0u;\n";
+      out << "  }\n";
+      }
       out << "}\n";
     }
     if (options.sched_vm) {
       const auto& vm_service_assigns = vm_tables.service_assign_stmts;
+      std::vector<size_t> vm_service_ret_fallback;
+      if (vm_layout.service_ret_entries.size() == vm_service_assigns.size()) {
+        for (size_t i = 0; i < vm_layout.service_ret_entries.size(); ++i) {
+          if ((vm_layout.service_ret_entries[i].flags &
+               kSchedulerVmServiceRetAssignFlagFallback) != 0u) {
+            vm_service_ret_fallback.push_back(i);
+          }
+        }
+      } else {
+        vm_service_ret_fallback.reserve(vm_service_assigns.size());
+        for (size_t i = 0; i < vm_service_assigns.size(); ++i) {
+          vm_service_ret_fallback.push_back(i);
+        }
+      }
       out << "static __attribute__((noinline)) void gpga_"
           << MslName(module.name) << "_sched_vm_exec_service_ret_assign(";
       emit_sched_param_decls(2);
@@ -33409,34 +42077,142 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       emit_packed_signal_setup("sched.count");
       emit_packed_nb_setup("sched.count");
       emit_packed_force_setup("sched.count");
-      out << "  switch (assign_id) {\n";
-      for (size_t i = 0; i < vm_service_assigns.size(); ++i) {
-        const Statement* stmt = vm_service_assigns[i];
-        out << "    case " << i << "u: {\n";
-        if (!stmt || stmt->kind != StatementKind::kAssign ||
-            !stmt->assign.rhs) {
-          out << "      sched_error[gid] = 1u;\n";
-          out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "      break;\n";
-          out << "    }\n";
-          continue;
+      out << "  if (assign_id >= GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  const GpgaSchedVmServiceRetAssignEntry __gpga_entry =\n";
+      out << "      sched_vm_service_ret_assign_entry[assign_id];\n";
+      if (!vm_service_ret_fallback.empty()) {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_RET_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+        out << "    switch (assign_id) {\n";
+        for (size_t idx : vm_service_ret_fallback) {
+          const Statement* stmt = vm_service_assigns[idx];
+          out << "      case " << idx << "u: {\n";
+          if (!stmt || stmt->kind != StatementKind::kAssign ||
+              !stmt->assign.rhs) {
+            out << "        sched_error[gid] = 1u;\n";
+            out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+            out << "        break;\n";
+            out << "      }\n";
+            continue;
+          }
+          int width = SignalWidth(module, stmt->assign.lhs);
+          if (width <= 0) {
+            width = ExprWidth(*stmt->assign.rhs, module);
+          }
+          if (width <= 0) {
+            width = 1;
+          }
+          emit_lvalue_value(stmt->assign, "__gpga_ret", width, 8, sched_locals);
+          out << "        break;\n";
+          out << "      }\n";
         }
-        int width = SignalWidth(module, stmt->assign.lhs);
-        if (width <= 0) {
-          width = ExprWidth(*stmt->assign.rhs, module);
-        }
-        if (width <= 0) {
-          width = 1;
-        }
-        emit_lvalue_value(stmt->assign, "__gpga_ret", width, 6, sched_locals);
-        out << "      break;\n";
+        out << "      default: {\n";
+        out << "        sched_error[gid] = 1u;\n";
+        out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "        break;\n";
+        out << "      }\n";
+        out << "    }\n";
+        out << "    return;\n";
+        out << "  }\n";
+      } else {
+        out << "  if ((__gpga_entry.flags & GPGA_SCHED_VM_SERVICE_RET_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+        out << "    sched_error[gid] = 1u;\n";
+        out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "    return;\n";
+        out << "  }\n";
+      }
+      out << "  bool __gpga_ok = true;\n";
+      out << "  if (__gpga_entry.signal_id >= GPGA_SCHED_VM_SIGNAL_COUNT) {\n";
+      out << "    __gpga_ok = false;\n";
+      out << "  }\n";
+      out << "  uint __gpga_width = __gpga_entry.width;\n";
+      out << "  GpgaSchedVmSignalEntry __gpga_sig;\n";
+      out << "  if (__gpga_ok) {\n";
+      out << "    __gpga_sig = sched_vm_signal_entry[__gpga_entry.signal_id];\n";
+      out << "    if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u ||\n";
+      out << "        __gpga_sig.array_size != 1u) {\n";
+      out << "      __gpga_ok = false;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "  if (__gpga_ok && __gpga_width == 0u) {\n";
+      out << "    __gpga_width = __gpga_sig.width;\n";
+      out << "  }\n";
+      out << "  if (__gpga_ok && __gpga_width == 0u) {\n";
+      out << "    __gpga_width = 1u;\n";
+      out << "  }\n";
+      out << "  ulong __gpga_val = 0ul;\n";
+      out << "  ulong __gpga_mask = 0ul;\n";
+      out << "  ulong __gpga_stride = 0ul;\n";
+      out << "  ulong __gpga_val_addr = 0ul;\n";
+      out << "  bool __gpga_force_active = false;\n";
+      out << "  bool __gpga_passign_active = false;\n";
+      if (!force_target_list.empty()) {
+        out << "  uint __gpga_force_slot = __gpga_entry.force_slot;\n";
+        out << "  if (__gpga_force_slot != 0xFFFFFFFFu) {\n";
+        out << "    uint __gpga_force_idx = (gid * GPGA_SCHED_FORCE_COUNT) + __gpga_force_slot;\n";
+        out << "    __gpga_force_active = (sched_force_id[__gpga_force_idx] != 0xFFFFFFFFu);\n";
+        out << "  }\n";
+      } else {
+        out << "  uint __gpga_force_slot = __gpga_entry.force_slot;\n";
+        out << "  if (__gpga_force_slot != 0xFFFFFFFFu) {\n";
+        out << "    __gpga_ok = false;\n";
+        out << "  }\n";
+      }
+      if (!passign_target_list.empty()) {
+        out << "  uint __gpga_passign_slot = __gpga_entry.passign_slot;\n";
+        out << "  if (__gpga_passign_slot != 0xFFFFFFFFu) {\n";
+        out << "    uint __gpga_passign_idx = (gid * GPGA_SCHED_PCONT_COUNT) + __gpga_passign_slot;\n";
+        out << "    __gpga_passign_active = (sched_passign_id[__gpga_passign_idx] != 0xFFFFFFFFu);\n";
+        out << "  }\n";
+      } else {
+        out << "  uint __gpga_passign_slot = __gpga_entry.passign_slot;\n";
+        out << "  if (__gpga_passign_slot != 0xFFFFFFFFu) {\n";
+        out << "    __gpga_ok = false;\n";
+        out << "  }\n";
+      }
+      out << "  if (__gpga_ok) {\n";
+      out << "    __gpga_mask = (__gpga_width >= 64u)\n";
+      out << "        ? ~0ul\n";
+      out << "        : ((1ul << __gpga_width) - 1ul);\n";
+      out << "    __gpga_val = __gpga_ret & __gpga_mask;\n";
+      out << "    __gpga_stride = (__gpga_width > 32u) ? 8ul : 4ul;\n";
+      out << "    ulong __gpga_base = (ulong)gid * (ulong)__gpga_sig.array_size;\n";
+      out << "    __gpga_val_addr = (ulong)__gpga_sig.val_offset +\n";
+      out << "        __gpga_base * __gpga_stride;\n";
+      out << "    bool __gpga_override = __gpga_force_active || __gpga_passign_active;\n";
+      if (needs_force_shadow) {
+        out << "    if (__gpga_override) {\n";
+        out << "      if (__gpga_width > 32u) {\n";
+        out << "        ((device ulong*)(sched_force_state + __gpga_val_addr))[0] = __gpga_val;\n";
+        out << "      } else {\n";
+        out << "        ((device uint*)(sched_force_state + __gpga_val_addr))[0] = (uint)__gpga_val;\n";
+        out << "      }\n";
+        out << "    } else {\n";
+        out << "      if (__gpga_width > 32u) {\n";
+        out << "        ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_val;\n";
+        out << "      } else {\n";
+        out << "        ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_val;\n";
+        out << "      }\n";
+        out << "    }\n";
+      } else {
+        out << "    if (__gpga_override) {\n";
+        out << "      __gpga_ok = false;\n";
+        out << "    } else {\n";
+        out << "      if (__gpga_width > 32u) {\n";
+        out << "        ((device ulong*)(gpga_state + __gpga_val_addr))[0] = __gpga_val;\n";
+        out << "      } else {\n";
+        out << "        ((device uint*)(gpga_state + __gpga_val_addr))[0] = (uint)__gpga_val;\n";
+        out << "      }\n";
         out << "    }\n";
       }
-      out << "    default: {\n";
-      out << "      sched_error[gid] = 1u;\n";
-      out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "      break;\n";
-      out << "    }\n";
+      out << "  }\n";
+      out << "  if (!__gpga_ok) {\n";
+      out << "    sched_error[gid] = 1u;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "    return;\n";
       out << "  }\n";
       out << "}\n";
     }
@@ -33459,24 +42235,33 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       emit_packed_force_setup("sched.count");
       out << "  uint __gpga_vm_idx = (gid * GPGA_SCHED_PROC_COUNT) + pid;\n";
       out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
-      out << "  if (__gpga_bc_len == 0u) {\n";
-      out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
-      out << "    switch (__gpga_group) {\n";
-      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-        out << "      case " << group << "u:\n";
-        out << "        gpga_" << MslName(module.name) << "_sched_group_"
-            << group << "(";
-        emit_sched_param_names();
-        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+      if (vm_needs_call_group) {
+        out << "  if (__gpga_bc_len == 0u) {\n";
+        out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+        out << "    switch (__gpga_group) {\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "      case " << group << "u:\n";
+          out << "        gpga_" << MslName(module.name) << "_sched_group_"
+              << group << "(";
+          emit_sched_param_names();
+          out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+          out << "        break;\n";
+        }
+        out << "      default: {\n";
+        out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
         out << "        break;\n";
+        out << "      }\n";
+        out << "    }\n";
+        out << "    return;\n";
+        out << "  }\n";
+      } else {
+        out << "  if (__gpga_bc_len == 0u) {\n";
+        out << "    sched_error[gid] = 1u;\n";
+        out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+        out << "    return;\n";
+        out << "  }\n";
       }
-      out << "      default: {\n";
-      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "        break;\n";
-      out << "      }\n";
-      out << "    }\n";
-      out << "    return;\n";
-      out << "  }\n";
       out << "  uint __gpga_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
       out << "  uint __gpga_ip = sched_vm_ip[__gpga_vm_idx];\n";
       out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
@@ -33488,29 +42273,31 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
       out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
       out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
-      out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
-      out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
-      out << "      switch (__gpga_group) {\n";
-      for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-        out << "        case " << group << "u:\n";
-        out << "          gpga_" << MslName(module.name) << "_sched_group_"
-            << group << "(";
-        emit_sched_param_names();
-        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+      if (vm_needs_call_group) {
+        out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
+        out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+        out << "      switch (__gpga_group) {\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "        case " << group << "u:\n";
+          out << "          gpga_" << MslName(module.name) << "_sched_group_"
+              << group << "(";
+          emit_sched_param_names();
+          out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+          out << "          break;\n";
+        }
+        out << "        default: {\n";
+        out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
         out << "          break;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
+        out << "        sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
+        out << "        return;\n";
+        out << "      }\n";
+        out << "      __gpga_ip = __gpga_next_ip;\n";
+        out << "      continue;\n";
+        out << "    }\n";
       }
-      out << "        default: {\n";
-      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-      out << "          break;\n";
-      out << "        }\n";
-      out << "      }\n";
-      out << "      if (sched_state[idx] != GPGA_SCHED_PROC_READY || steps == 0u) {\n";
-      out << "        sched_vm_ip[__gpga_vm_idx] = __gpga_ip;\n";
-      out << "        return;\n";
-      out << "      }\n";
-      out << "      __gpga_ip = __gpga_next_ip;\n";
-      out << "      continue;\n";
-      out << "    }\n";
       out << "    if (__gpga_op == GPGA_SCHED_VM_OP_NOOP) {\n";
       out << "      __gpga_ip = __gpga_next_ip;\n";
       out << "      continue;\n";
@@ -33522,9 +42309,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
       out << "        return;\n";
       out << "      }\n";
-      out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+      out << "      gpga_" << MslName(module.name)
+          << "_sched_vm_exec_assign_blocking(";
       emit_sched_param_names();
-      out << ", pid, idx, __gpga_arg, false);\n";
+      out << ", pid, idx, __gpga_arg);\n";
       out << "      __gpga_ip = __gpga_next_ip;\n";
       out << "      continue;\n";
       out << "    }\n";
@@ -33535,9 +42323,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
       out << "        return;\n";
       out << "      }\n";
-      out << "      gpga_" << MslName(module.name) << "_sched_vm_exec_assign(";
+      out << "      gpga_" << MslName(module.name)
+          << "_sched_vm_exec_assign_nb(";
       emit_sched_param_names();
-      out << ", pid, idx, __gpga_arg, true);\n";
+      out << ", pid, idx, __gpga_arg);\n";
       out << "      __gpga_ip = __gpga_next_ip;\n";
       out << "      continue;\n";
       out << "    }\n";
@@ -33560,90 +42349,121 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        uint __gpga_delay_slot = (gid * GPGA_SCHED_DELAY_COUNT) + __gpga_arg;\n";
       out << "        ulong __gpga_dval = sched_delay_val[__gpga_delay_slot];\n";
       out << "        uint __gpga_didx_val = sched_delay_index_val[__gpga_delay_slot];\n";
-      emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_didx_val",
-                              false, 8);
+      out << "        if (!gpga_" << MslName(module.name)
+          << "_sched_vm_apply_delay_assign(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg, __gpga_dval, __gpga_didx_val, false)) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
       out << "        __gpga_ip = __gpga_next_ip;\n";
       out << "        continue;\n";
       out << "      }\n";
+      out << "      const GpgaSchedVmDelayAssignEntry __gpga_delay_entry =\n";
+      out << "          sched_vm_delay_assign_entry[__gpga_arg];\n";
       out << "      ulong __gpga_dval = 0ul;\n";
       out << "      uint __gpga_didx_val = 0u;\n";
       out << "      ulong __gpga_delay = 0ul;\n";
-      out << "      bool __gpga_nb = false;\n";
-      out << "      bool __gpga_inertial = false;\n";
-      out << "      bool __gpga_showcancelled = false;\n";
-      out << "      bool __gpga_has_pulse = false;\n";
-      out << "      bool __gpga_has_pulse_error = false;\n";
+      out << "      ulong __gpga_mask = 0ul;\n";
+      out << "      bool __gpga_valid = true;\n";
+      out << "      bool __gpga_nb =\n";
+      out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_NONBLOCKING) != 0u);\n";
+      out << "      bool __gpga_inertial =\n";
+      out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_INERTIAL) != 0u);\n";
+      out << "      bool __gpga_showcancelled =\n";
+      out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_SHOWCANCELLED) != 0u);\n";
+      out << "      bool __gpga_has_pulse =\n";
+      out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_HAS_PULSE) != 0u);\n";
+      out << "      bool __gpga_has_pulse_error =\n";
+      out << "          ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_HAS_PULSE_ERROR) != 0u);\n";
       out << "      ulong __gpga_pulse_reject = 0ul;\n";
       out << "      ulong __gpga_pulse_error = 0ul;\n";
-      out << "      bool __gpga_valid = true;\n";
-      out << "      switch (__gpga_arg) {\n";
-      for (size_t i = 0; i < delay_assigns.size(); ++i) {
-        const DelayAssignInfo& info = delay_assigns[i];
-        const Statement* stmt = info.stmt;
-        out << "      case " << i << "u: {\n";
-        if (!stmt || !stmt->assign.rhs || !info.delay_expr) {
-          out << "        __gpga_valid = false;\n";
-          out << "        break;\n";
-          out << "      }\n";
-          continue;
-        }
-        std::string rhs =
-            info.lhs_real
-                ? EmitRealBitsExpr(*stmt->assign.rhs, module, sched_locals,
-                                   sched_regs)
-                : EmitExprSized(*stmt->assign.rhs, info.width, module,
-                                sched_locals, sched_regs);
-        std::string mask = std::to_string(MaskForWidth64(info.width)) + "ul";
-        out << "        __gpga_dval = ((ulong)(" << rhs << ")) & " << mask
-            << ";\n";
-        std::string idx_val = "0u";
-        if (info.is_array || info.is_bit_select || info.is_indexed_range) {
-          const Expr* idx_expr = nullptr;
-          if (info.is_indexed_range) {
-            idx_expr = stmt->assign.lhs_lsb_expr.get();
-          } else {
-            idx_expr = stmt->assign.lhs_index.get();
-          }
-          if (!idx_expr) {
-            out << "        __gpga_valid = false;\n";
-            out << "        break;\n";
-            out << "      }\n";
-            continue;
-          }
-          idx_val = EmitExpr(*idx_expr, module, sched_locals, sched_regs);
-        }
-        out << "        __gpga_didx_val = uint(" << idx_val << ");\n";
-        out << "        __gpga_delay = " << emit_delay_value2(*info.delay_expr)
-            << ";\n";
-        out << "        __gpga_nb = " << (info.nonblocking ? "true" : "false")
-            << ";\n";
-        out << "        __gpga_inertial = "
-            << (info.inertial ? "true" : "false") << ";\n";
-        out << "        __gpga_showcancelled = "
-            << (info.showcancelled ? "true" : "false") << ";\n";
-        out << "        __gpga_has_pulse = "
-            << (info.has_pulse ? "true" : "false") << ";\n";
-        out << "        __gpga_has_pulse_error = "
-            << (info.has_pulse_error ? "true" : "false") << ";\n";
-        if (info.has_pulse) {
-          std::string pulse_reject_expr =
-              info.pulse_reject ? emit_delay_limit2(*info.pulse_reject)
-                                : "0ul";
-          std::string pulse_error_expr = pulse_reject_expr;
-          if (info.has_pulse_error && info.pulse_error) {
-            pulse_error_expr = emit_delay_limit2(*info.pulse_error);
-          }
-          out << "        __gpga_pulse_reject = " << pulse_reject_expr
-              << ";\n";
-          out << "        __gpga_pulse_error = " << pulse_error_expr << ";\n";
-        }
-        out << "        break;\n";
-        out << "      }\n";
-      }
-      out << "      default: {\n";
-      out << "        __gpga_valid = false;\n";
-      out << "        break;\n";
+      out << "      if (__gpga_delay_entry.width >= 64u) {\n";
+      out << "        __gpga_mask = ~0ul;\n";
+      out << "      } else if (__gpga_delay_entry.width == 0u) {\n";
+      out << "        __gpga_mask = 0ul;\n";
+      out << "      } else {\n";
+      out << "        __gpga_mask = (1ul << __gpga_delay_entry.width) - 1ul;\n";
       out << "      }\n";
+      out << "      if ((__gpga_delay_entry.flags & GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_FALLBACK) != 0u) {\n";
+      out << "        __gpga_valid = false;\n";
+      out << "      } else {\n";
+      out << "        ulong __gpga_rhs_val = 0ul;\n";
+      out << "        ulong __gpga_rhs_xz = 0ul;\n";
+      out << "        uint __gpga_rhs_width = 0u;\n";
+      out << "        if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_delay_entry.rhs_expr, &__gpga_rhs_val, &__gpga_rhs_xz, &__gpga_rhs_width)) {\n";
+      out << "          __gpga_valid = false;\n";
+      out << "        } else {\n";
+      out << "          __gpga_dval = __gpga_rhs_val & __gpga_mask;\n";
+      out << "        }\n";
+      out << "        if (__gpga_valid &&\n";
+      out << "            ((__gpga_delay_entry.flags & (GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_ARRAY |\n";
+      out << "                                         GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_BIT_SELECT |\n";
+      out << "                                         GPGA_SCHED_VM_DELAY_ASSIGN_FLAG_IS_INDEXED_RANGE)) != 0u)) {\n";
+      out << "          ulong __gpga_idx_val = 0ul;\n";
+      out << "          ulong __gpga_idx_xz = 0ul;\n";
+      out << "          uint __gpga_idx_width = 0u;\n";
+      out << "          if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_delay_entry.idx_expr, &__gpga_idx_val, &__gpga_idx_xz, &__gpga_idx_width)) {\n";
+      out << "            __gpga_valid = false;\n";
+      out << "          } else {\n";
+      out << "            __gpga_didx_val = uint(__gpga_idx_val);\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (__gpga_valid) {\n";
+      out << "          ulong __gpga_delay_val = 0ul;\n";
+      out << "          ulong __gpga_delay_xz = 0ul;\n";
+      out << "          uint __gpga_delay_width = 0u;\n";
+      out << "          if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_delay_entry.delay_expr, &__gpga_delay_val, &__gpga_delay_xz, &__gpga_delay_width)) {\n";
+      out << "            __gpga_valid = false;\n";
+      out << "          } else {\n";
+      out << "            __gpga_delay = (__gpga_delay_xz == 0ul) ? __gpga_delay_val : 0ul;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (__gpga_valid && __gpga_has_pulse) {\n";
+      out << "          if (__gpga_delay_entry.pulse_reject_expr != 0xFFFFFFFFu) {\n";
+      out << "            ulong __gpga_pulse_val = 0ul;\n";
+      out << "            ulong __gpga_pulse_xz = 0ul;\n";
+      out << "            uint __gpga_pulse_width = 0u;\n";
+      out << "            if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_delay_entry.pulse_reject_expr, &__gpga_pulse_val, &__gpga_pulse_xz, &__gpga_pulse_width)) {\n";
+      out << "              __gpga_valid = false;\n";
+      out << "            } else {\n";
+      out << "              __gpga_pulse_reject = (__gpga_pulse_xz == 0ul) ? __gpga_pulse_val : 0ul;\n";
+      out << "            }\n";
+      out << "          }\n";
+      out << "          if (__gpga_valid && __gpga_has_pulse_error) {\n";
+      out << "            if (__gpga_delay_entry.pulse_error_expr != 0xFFFFFFFFu) {\n";
+      out << "              ulong __gpga_pulse_val = 0ul;\n";
+      out << "              ulong __gpga_pulse_xz = 0ul;\n";
+      out << "              uint __gpga_pulse_width = 0u;\n";
+      out << "              if (!gpga_" << MslName(module.name)
+          << "_sched_vm_eval_expr(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_delay_entry.pulse_error_expr, &__gpga_pulse_val, &__gpga_pulse_xz, &__gpga_pulse_width)) {\n";
+      out << "                __gpga_valid = false;\n";
+      out << "              } else {\n";
+      out << "                __gpga_pulse_error = (__gpga_pulse_xz == 0ul) ? __gpga_pulse_val : 0ul;\n";
+      out << "              }\n";
+      out << "            } else {\n";
+      out << "              __gpga_pulse_error = __gpga_pulse_reject;\n";
+      out << "            }\n";
+      out << "          } else if (__gpga_valid) {\n";
+      out << "            __gpga_pulse_error = __gpga_pulse_reject;\n";
+      out << "          }\n";
+      out << "        }\n";
       out << "      }\n";
       out << "      if (!__gpga_valid) {\n";
       out << "        sched_error[gid] = 1u;\n";
@@ -33654,8 +42474,15 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       if (has_delayed_nba) {
       out << "      if (__gpga_nb) {\n";
       out << "        if (__gpga_delay == 0ul) {\n";
-      emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_didx_val",
-                              true, 10);
+      out << "          if (!gpga_" << MslName(module.name)
+          << "_sched_vm_apply_delay_assign(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg, __gpga_dval, __gpga_didx_val, true)) {\n";
+      out << "            sched_error[gid] = 1u;\n";
+      out << "            sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "            sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "            return;\n";
+      out << "          }\n";
       out << "          __gpga_ip = __gpga_next_ip;\n";
       out << "          continue;\n";
       out << "        }\n";
@@ -33744,8 +42571,15 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      }\n";
       }
       out << "      if (__gpga_delay == 0ul) {\n";
-      emit_delay_assign_apply("__gpga_arg", "__gpga_dval", "__gpga_didx_val",
-                              false, 8);
+      out << "        if (!gpga_" << MslName(module.name)
+          << "_sched_vm_apply_delay_assign(";
+      emit_sched_param_names();
+      out << ", pid, __gpga_arg, __gpga_dval, __gpga_didx_val, false)) {\n";
+      out << "          sched_error[gid] = 1u;\n";
+      out << "          sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "          sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "          return;\n";
+      out << "        }\n";
       out << "        __gpga_ip = __gpga_next_ip;\n";
       out << "        continue;\n";
       out << "      }\n";
@@ -33934,6 +42768,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           << "_sched_vm_eval_case(";
       emit_sched_param_names();
       out << ", pid, __gpga_arg);\n";
+      out << "      if (sched_error[gid] != 0u) {\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
       out << "      uint __gpga_target_index = __gpga_default_index;\n";
       out << "      if (__gpga_match != 0xFFFFFFFFu) {\n";
       out << "        if (__gpga_match >= __gpga_case_count) {\n";
@@ -34177,6 +43016,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           << "_sched_vm_eval_delay(";
       emit_sched_param_names();
       out << ", pid, __gpga_arg);\n";
+      out << "      if (sched_error[gid] != 0u) {\n";
+      out << "        sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+      out << "        sched_vm_ip[__gpga_vm_idx] = 0u;\n";
+      out << "        return;\n";
+      out << "      }\n";
       out << "      sched_wait_kind[idx] = (__gpga_delay == 0ul) ? GPGA_SCHED_WAIT_DELTA : GPGA_SCHED_WAIT_TIME;\n";
       out << "      sched_wait_time[idx] = __gpga_time + __gpga_delay;\n";
       out << "      sched_vm_ip[__gpga_vm_idx] = __gpga_next_ip;\n";

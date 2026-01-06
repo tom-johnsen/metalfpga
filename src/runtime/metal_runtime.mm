@@ -35,6 +35,12 @@
 #import <Metal/MTL4Archive.h>
 #import <Metal/MTLResidencySet.h>
 
+#include "gpga_sched.h"
+
+#ifdef constant
+#undef constant
+#endif
+
 namespace gpga {
 
 std::string FormatNSError(NSError* error);
@@ -1046,6 +1052,26 @@ bool ParseKernelBindingsFromSource(
     return false;
   }
   return true;
+}
+
+std::string SchedulerConstSliceString(const std::string& source) {
+  constexpr size_t kConstSpan = 128u * 1024u;
+  const std::string token = "GPGA_SCHED_DEFINE_CONSTANTS";
+  size_t token_pos = source.find(token);
+  if (token_pos != std::string::npos) {
+    size_t end = std::min(source.size(), token_pos + kConstSpan);
+    return source.substr(token_pos, end - token_pos);
+  }
+  size_t limit = source.size();
+  size_t kernel_pos = source.find("kernel void gpga_");
+  if (kernel_pos != std::string::npos) {
+    limit = std::min(limit, kernel_pos);
+  }
+  constexpr size_t kMaxPrefix = 2u * 1024u * 1024u;
+  if (limit > kMaxPrefix) {
+    limit = kMaxPrefix;
+  }
+  return source.substr(0, limit);
 }
 
 bool ParseUintConst(const std::string& source, const std::string& name,
@@ -2566,52 +2592,65 @@ bool ParseSchedulerConstants(const std::string& source,
     return false;
   }
   SchedulerConstants info;
-  const bool parsed_define = ParseSchedDefineConstants(source, &info);
+  std::string sliced = SchedulerConstSliceString(source);
+  const bool parsed_define = ParseSchedDefineConstants(sliced, &info);
   if (!parsed_define) {
-    ParseUintConst(source, "GPGA_SCHED_PROC_COUNT", &info.proc_count);
-    ParseUintConst(source, "GPGA_SCHED_EVENT_COUNT", &info.event_count);
-    ParseUintConst(source, "GPGA_SCHED_EDGE_COUNT", &info.edge_count);
-    ParseUintConst(source, "GPGA_SCHED_EDGE_STAR_COUNT", &info.edge_star_count);
-    ParseUintConst(source, "GPGA_SCHED_REPEAT_COUNT", &info.repeat_count);
-    ParseUintConst(source, "GPGA_SCHED_DELAY_COUNT", &info.delay_count);
-    ParseUintConst(source, "GPGA_SCHED_MAX_DNBA", &info.max_dnba);
-    ParseUintConst(source, "GPGA_SCHED_MONITOR_COUNT", &info.monitor_count);
-    ParseUintConst(source, "GPGA_SCHED_MONITOR_MAX_ARGS",
+    ParseUintConst(sliced, "GPGA_SCHED_PROC_COUNT", &info.proc_count);
+    ParseUintConst(sliced, "GPGA_SCHED_EVENT_COUNT", &info.event_count);
+    ParseUintConst(sliced, "GPGA_SCHED_EDGE_COUNT", &info.edge_count);
+    ParseUintConst(sliced, "GPGA_SCHED_EDGE_STAR_COUNT",
+                   &info.edge_star_count);
+    ParseUintConst(sliced, "GPGA_SCHED_REPEAT_COUNT", &info.repeat_count);
+    ParseUintConst(sliced, "GPGA_SCHED_DELAY_COUNT", &info.delay_count);
+    ParseUintConst(sliced, "GPGA_SCHED_MAX_DNBA", &info.max_dnba);
+    ParseUintConst(sliced, "GPGA_SCHED_MONITOR_COUNT", &info.monitor_count);
+    ParseUintConst(sliced, "GPGA_SCHED_MONITOR_MAX_ARGS",
                    &info.monitor_max_args);
-    ParseUintConst(source, "GPGA_SCHED_STROBE_COUNT", &info.strobe_count);
-    ParseUintConst(source, "GPGA_SCHED_SERVICE_MAX_ARGS",
+    ParseUintConst(sliced, "GPGA_SCHED_STROBE_COUNT", &info.strobe_count);
+    ParseUintConst(sliced, "GPGA_SCHED_SERVICE_MAX_ARGS",
                    &info.service_max_args);
-    ParseUintConst(source, "GPGA_SCHED_SERVICE_WIDE_WORDS",
+    ParseUintConst(sliced, "GPGA_SCHED_SERVICE_WIDE_WORDS",
                    &info.service_wide_words);
-    ParseUintConst(source, "GPGA_SCHED_STRING_COUNT", &info.string_count);
-    ParseUintConst(source, "GPGA_SCHED_FORCE_COUNT", &info.force_count);
-    ParseUintConst(source, "GPGA_SCHED_PCONT_COUNT", &info.pcont_count);
+    ParseUintConst(sliced, "GPGA_SCHED_STRING_COUNT", &info.string_count);
+    ParseUintConst(sliced, "GPGA_SCHED_FORCE_COUNT", &info.force_count);
+    ParseUintConst(sliced, "GPGA_SCHED_PCONT_COUNT", &info.pcont_count);
   }
-  ParseUintConst(source, "GPGA_SCHED_TIMING_CHECK_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_TIMING_CHECK_COUNT",
                  &info.timing_check_count);
   uint32_t vm_enabled = 0u;
-  if (ParseUintConst(source, "GPGA_SCHED_VM_ENABLED", &vm_enabled)) {
+  if (ParseUintConst(sliced, "GPGA_SCHED_VM_ENABLED", &vm_enabled)) {
     info.vm_enabled = (vm_enabled != 0u);
   }
-  ParseUintConst(source, "GPGA_SCHED_VM_BYTECODE_WORDS",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_BYTECODE_WORDS",
                  &info.vm_bytecode_words);
-  ParseUintConst(source, "GPGA_SCHED_VM_COND_COUNT",
-                 &info.vm_cond_count);
-  ParseUintConst(source, "GPGA_SCHED_VM_CALL_FRAME_WORDS",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_COND_COUNT", &info.vm_cond_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_ASSIGN_COUNT",
+                 &info.vm_assign_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_FORCE_COUNT",
+                 &info.vm_force_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_RELEASE_COUNT",
+                 &info.vm_release_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_SERVICE_CALL_COUNT",
+                 &info.vm_service_call_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_SERVICE_ASSIGN_COUNT",
+                 &info.vm_service_assign_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_SERVICE_ARG_COUNT",
+                 &info.vm_service_arg_count);
+  ParseUintConst(sliced, "GPGA_SCHED_VM_CALL_FRAME_WORDS",
                  &info.vm_call_frame_words);
-  ParseUintConst(source, "GPGA_SCHED_VM_CALL_FRAME_DEPTH",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_CALL_FRAME_DEPTH",
                  &info.vm_call_frame_depth);
-  ParseUintConst(source, "GPGA_SCHED_VM_CASE_HEADER_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_CASE_HEADER_COUNT",
                  &info.vm_case_header_count);
-  ParseUintConst(source, "GPGA_SCHED_VM_CASE_ENTRY_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_CASE_ENTRY_COUNT",
                  &info.vm_case_entry_count);
-  ParseUintConst(source, "GPGA_SCHED_VM_CASE_WORD_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_CASE_WORD_COUNT",
                  &info.vm_case_word_count);
-  ParseUintConst(source, "GPGA_SCHED_VM_EXPR_WORD_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_EXPR_WORD_COUNT",
                  &info.vm_expr_word_count);
-  ParseUintConst(source, "GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_EXPR_IMM_WORD_COUNT",
                  &info.vm_expr_imm_word_count);
-  ParseUintConst(source, "GPGA_SCHED_VM_SIGNAL_COUNT",
+  ParseUintConst(sliced, "GPGA_SCHED_VM_SIGNAL_COUNT",
                  &info.vm_signal_count);
   info.has_scheduler = info.proc_count > 0u;
   info.has_services = info.service_max_args > 0u;
@@ -2863,6 +2902,37 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
                                  ? sched.vm_expr_imm_word_count
                                  : 1u;
         spec.length = sizeof(uint32_t) * count;
+      } else if (name == "sched_vm_assign_entry") {
+        const size_t count =
+            (sched.vm_assign_count > 0u) ? sched.vm_assign_count : 1u;
+        spec.length = sizeof(uint32_t) * 3u * count;
+      } else if (name == "sched_vm_force_entry") {
+        const size_t count =
+            (sched.vm_force_count > 0u) ? sched.vm_force_count : 1u;
+        spec.length = sizeof(uint32_t) * 6u * count;
+      } else if (name == "sched_vm_release_entry") {
+        const size_t count =
+            (sched.vm_release_count > 0u) ? sched.vm_release_count : 1u;
+        spec.length = sizeof(uint32_t) * 4u * count;
+      } else if (name == "sched_vm_service_entry") {
+        const size_t count = (sched.vm_service_call_count > 0u)
+                                 ? sched.vm_service_call_count
+                                 : 1u;
+        spec.length = sizeof(GpgaSchedVmServiceEntry) * count;
+      } else if (name == "sched_vm_service_arg") {
+        const size_t count = (sched.vm_service_arg_count > 0u)
+                                 ? sched.vm_service_arg_count
+                                 : 1u;
+        spec.length = sizeof(GpgaSchedVmServiceArg) * count;
+      } else if (name == "sched_vm_service_ret_assign_entry") {
+        const size_t count = (sched.vm_service_assign_count > 0u)
+                                 ? sched.vm_service_assign_count
+                                 : 1u;
+        spec.length = sizeof(GpgaSchedVmServiceRetAssignEntry) * count;
+      } else if (name == "sched_vm_delay_assign_entry") {
+        const size_t count =
+            (sched.delay_count > 0u) ? sched.delay_count : 1u;
+        spec.length = sizeof(uint32_t) * 11u * count;
       } else {
         if (error) {
           *error = "unknown scheduler buffer: " + name;
@@ -2975,6 +3045,46 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
                                ? sched.vm_expr_imm_word_count
                                : 1u;
       push_vm("sched_vm_expr_imm", sizeof(uint32_t) * count);
+    }
+    {
+      const size_t count =
+          (sched.vm_assign_count > 0u) ? sched.vm_assign_count : 1u;
+      push_vm("sched_vm_assign_entry", sizeof(uint32_t) * 3u * count);
+    }
+    {
+      const size_t count =
+          (sched.vm_force_count > 0u) ? sched.vm_force_count : 1u;
+      push_vm("sched_vm_force_entry", sizeof(uint32_t) * 6u * count);
+    }
+    {
+      const size_t count =
+          (sched.vm_release_count > 0u) ? sched.vm_release_count : 1u;
+      push_vm("sched_vm_release_entry", sizeof(uint32_t) * 4u * count);
+    }
+    {
+      const size_t count = (sched.vm_service_call_count > 0u)
+                               ? sched.vm_service_call_count
+                               : 1u;
+      push_vm("sched_vm_service_entry",
+              sizeof(GpgaSchedVmServiceEntry) * count);
+    }
+    {
+      const size_t count = (sched.vm_service_arg_count > 0u)
+                               ? sched.vm_service_arg_count
+                               : 1u;
+      push_vm("sched_vm_service_arg",
+              sizeof(GpgaSchedVmServiceArg) * count);
+    }
+    {
+      const size_t count = (sched.vm_service_assign_count > 0u)
+                               ? sched.vm_service_assign_count
+                               : 1u;
+      push_vm("sched_vm_service_ret_assign_entry",
+              sizeof(GpgaSchedVmServiceRetAssignEntry) * count);
+    }
+    {
+      const size_t count = (sched.delay_count > 0u) ? sched.delay_count : 1u;
+      push_vm("sched_vm_delay_assign_entry", sizeof(uint32_t) * 11u * count);
     }
   }
   return true;

@@ -371,6 +371,9 @@ loop. Suggested thresholds:
 ### Step 5: Replace Dispatch in Scheduler
 - Group helpers call VM for each proc instead of `switch(pc)`.
 - Keep A-full path behind a flag for bisecting.
+- Table-drive assign/force/release entries with fallback for complex cases.
+- Table-drive service call/return entries with fallback for complex cases.
+- Apply force/passign overrides via VM tables (passign first, force wins).
 
 ### Step 6: Validate Semantics
 - Run VCD diffs against gold:
@@ -438,8 +441,13 @@ loop. Suggested thresholds:
 - [x] VM tables bound via argument buffer (MTLArgumentEncoder + MTL4ArgumentTable) to stay within Metal 4 buffer index limits
 - [x] VM helpers add packed signal/nb/force setup; guard optional buffers in VM ops (delay/dnba/repeat/event/edge)
 - [x] VM signal layout matches 2-state packed slots (val-only, no xz slots) to keep VM signal offsets aligned
+- [x] VM delay-assign entries data-driven (entry table + expr-bytecode eval with fallback for complex cases)
+- [x] VM assign entries table added (blocking + nonblocking full-signal path via expr bytecode; fallback switch for complex cases)
 - [ ] 2-bit 4-state storage migration (deferred from Step 1)
 - [x] Step 4: Complex ops handled
 - [x] Step 5: Scheduler dispatch updated
+- [x] Step 5a: Table-driven assign/force/release entries (fallback on complex cases)
+- [x] Step 5b: Table-driven force/passign overrides in scheduler comb update
+- [x] Step 5c: Table-driven service call/return entries (fallback on complex cases)
 - [ ] Step 6: VCD regressions pass
 - [ ] Step 7: picorv32 compile improved

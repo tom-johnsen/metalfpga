@@ -49,6 +49,14 @@ gpga_double gpga_double_tan(gpga_double value);
 gpga_double gpga_double_asin(gpga_double value);
 gpga_double gpga_double_acos(gpga_double value);
 gpga_double gpga_double_atan(gpga_double value);
+gpga_double gpga_double_sinh(gpga_double value);
+gpga_double gpga_double_cosh(gpga_double value);
+gpga_double gpga_double_tanh(gpga_double value);
+gpga_double gpga_double_asinh(gpga_double value);
+gpga_double gpga_double_acosh(gpga_double value);
+gpga_double gpga_double_atanh(gpga_double value);
+gpga_double gpga_double_atan2(gpga_double y, gpga_double x);
+gpga_double gpga_double_hypot(gpga_double x, gpga_double y);
 
 bool gpga_double_eq(gpga_double a, gpga_double b);
 bool gpga_double_lt(gpga_double a, gpga_double b);
