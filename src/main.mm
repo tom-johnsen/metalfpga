@@ -2096,6 +2096,11 @@ bool InitSchedulerVmBuffers(
         entries[i].flags = src.flags;
         entries[i].signal_id = src.signal_id;
         entries[i].rhs_expr = src.rhs_expr;
+        entries[i].idx_expr = src.idx_expr;
+        entries[i].width = src.width;
+        entries[i].base_width = src.base_width;
+        entries[i].range_lsb = src.range_lsb;
+        entries[i].array_size = src.array_size;
       }
     }
     if (!layout->delay_assign_entries.empty()) {

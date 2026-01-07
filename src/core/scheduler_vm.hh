@@ -67,6 +67,7 @@ enum class SchedulerVmExprOp : uint32_t {
   kIndex = 8u,
   kConcat = 9u,
   kCall = 10u,
+  kPushConstXz = 11u,
 };
 
 enum class SchedulerVmExprUnaryOp : uint32_t {
@@ -162,6 +163,11 @@ constexpr uint32_t kSchedulerVmExprNoExtra = 0xFFFFFFFFu;
 constexpr uint32_t kSchedulerVmExprSignedFlag = 1u << 8u;
 constexpr uint32_t kSchedulerVmAssignFlagNonblocking = 1u << 0u;
 constexpr uint32_t kSchedulerVmAssignFlagFallback = 1u << 1u;
+constexpr uint32_t kSchedulerVmAssignFlagIsArray = 1u << 2u;
+constexpr uint32_t kSchedulerVmAssignFlagIsBitSelect = 1u << 3u;
+constexpr uint32_t kSchedulerVmAssignFlagIsRange = 1u << 4u;
+constexpr uint32_t kSchedulerVmAssignFlagIsIndexedRange = 1u << 5u;
+constexpr uint32_t kSchedulerVmAssignFlagWideConst = 1u << 6u;
 constexpr uint32_t kSchedulerVmForceFlagProcedural = 1u << 0u;
 constexpr uint32_t kSchedulerVmForceFlagFallback = 1u << 1u;
 constexpr uint32_t kSchedulerVmForceFlagOverrideReg = 1u << 2u;
@@ -273,6 +279,11 @@ struct SchedulerVmAssignEntry {
   uint32_t flags = 0u;
   uint32_t signal_id = 0u;
   uint32_t rhs_expr = kSchedulerVmExprNoExtra;
+  uint32_t idx_expr = kSchedulerVmExprNoExtra;
+  uint32_t width = 0u;
+  uint32_t base_width = 0u;
+  uint32_t range_lsb = 0u;
+  uint32_t array_size = 0u;
 };
 
 struct SchedulerVmDelayAssignEntry {

@@ -2905,7 +2905,7 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       } else if (name == "sched_vm_assign_entry") {
         const size_t count =
             (sched.vm_assign_count > 0u) ? sched.vm_assign_count : 1u;
-        spec.length = sizeof(uint32_t) * 3u * count;
+        spec.length = sizeof(GpgaSchedVmAssignEntry) * count;
       } else if (name == "sched_vm_force_entry") {
         const size_t count =
             (sched.vm_force_count > 0u) ? sched.vm_force_count : 1u;
@@ -3049,7 +3049,7 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
     {
       const size_t count =
           (sched.vm_assign_count > 0u) ? sched.vm_assign_count : 1u;
-      push_vm("sched_vm_assign_entry", sizeof(uint32_t) * 3u * count);
+      push_vm("sched_vm_assign_entry", sizeof(GpgaSchedVmAssignEntry) * count);
     }
     {
       const size_t count =

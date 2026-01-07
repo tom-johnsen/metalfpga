@@ -96,6 +96,8 @@ Blocking procedural assignment.
 **Flags:**
 - `kSchedulerVmAssignFlagNonblocking` (1 << 0) - Should be 0 for blocking
 - `kSchedulerVmAssignFlagFallback` (1 << 1) - Use fallback execution path
+- `kSchedulerVmAssignFlagWideConst` (1 << 6) - RHS is a wide literal stored in
+  the expr imm table (skip expr eval, copy words directly)
 
 **Related Structure:** `SchedulerVmAssignEntry`
 - `flags` - Assignment flags
@@ -391,6 +393,13 @@ End of expression bytecode.
 Push a constant value onto the expression stack.
 
 **Argument:** Index into constant/literal pool
+
+---
+
+#### `kPushConstXz` (11)
+Push a constant value with explicit X/Z bits onto the expression stack.
+
+**Argument:** Index into constant/literal pool (4 words: val_lo, val_hi, xz_lo, xz_hi)
 
 ---
 

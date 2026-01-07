@@ -179,6 +179,11 @@ struct GpgaSchedVmAssignEntry {
   uint flags;
   uint signal_id;
   uint rhs_expr;
+  uint idx_expr;
+  uint width;
+  uint base_width;
+  uint range_lsb;
+  uint array_size;
 };
 struct GpgaSchedVmDelayAssignEntry {
   uint flags;
@@ -232,6 +237,11 @@ struct GpgaSchedVmServiceRetAssignEntry {
 
 constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_NONBLOCKING = 1u << 0u;
 constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_FALLBACK = 1u << 1u;
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_IS_ARRAY = 1u << 2u;
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_IS_BIT_SELECT = 1u << 3u;
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_IS_RANGE = 1u << 4u;
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_IS_INDEXED_RANGE = 1u << 5u;
+constant constexpr uint GPGA_SCHED_VM_ASSIGN_FLAG_WIDE_CONST = 1u << 6u;
 constant constexpr uint GPGA_SCHED_VM_FORCE_FLAG_PROCEDURAL = 1u << 0u;
 constant constexpr uint GPGA_SCHED_VM_FORCE_FLAG_FALLBACK = 1u << 1u;
 constant constexpr uint GPGA_SCHED_VM_FORCE_FLAG_OVERRIDE_REG = 1u << 2u;
