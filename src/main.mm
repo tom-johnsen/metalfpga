@@ -45,7 +45,7 @@ void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
             << " <input.v> [<more.v> ...] [--emit-msl <path>] [--emit-host <path>]"
             << " [--emit-flat <path>] [--dump-flat] [--top <module>]"
-            << " [--4state] [--sched-vm] [--auto] [--strict-1364]"
+            << " [--4state] [--sched-vm] [--fallback-diag] [--auto] [--strict-1364]"
             << " [--sdf <path>] [--version]"
             << " [--verbose]"
             << " [--run] [--count N] [--service-capacity N]"
@@ -6073,8 +6073,15 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           static_cast<uint32_t>(vm_layout.case_entries.size());
       sched.vm_case_word_count =
           static_cast<uint32_t>(vm_layout.case_words.size());
+      sched.vm_cond_count =
+          static_cast<uint32_t>(vm_layout.cond_entries.size());
+      if (sched.vm_cond_count == 0u) {
+        sched.vm_cond_count = 1u;
+      }
       sched.vm_assign_count =
           static_cast<uint32_t>(vm_layout.assign_entries.size());
+      sched.vm_signal_count =
+          static_cast<uint32_t>(vm_layout.signal_entries.size());
       sched.vm_service_call_count =
           static_cast<uint32_t>(vm_layout.service_entries.size());
       sched.vm_service_assign_count =
@@ -6897,7 +6904,11 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
         if (i > 0) {
           out += ", ";
         }
-        out += ExprToString(*expr.call_args[i], module);
+        if (expr.call_args[i]) {
+          out += ExprToString(*expr.call_args[i], module);
+        } else {
+          out += "<null>";
+        }
       }
       out += ")";
       return out;
@@ -6908,7 +6919,11 @@ std::string ExprToString(const gpga::Expr& expr, const gpga::Module& module) {
         if (i > 0) {
           inner += ", ";
         }
-        inner += ExprToString(*expr.elements[i], module);
+        if (expr.elements[i]) {
+          inner += ExprToString(*expr.elements[i], module);
+        } else {
+          inner += "<null>";
+        }
       }
       if (expr.repeat > 1) {
         return "{" + std::to_string(expr.repeat) + "{" + inner + "}}";
@@ -7120,7 +7135,11 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
       if (i > 0) {
         os << ", ";
       }
-      os << ExprToString(*stmt.task_args[i], module);
+      if (stmt.task_args[i]) {
+        os << ExprToString(*stmt.task_args[i], module);
+      } else {
+        os << "<null>";
+      }
     }
     os << ");\n";
     return;
@@ -7155,6 +7174,22 @@ void DumpStatement(const gpga::Statement& stmt, const gpga::Module& module,
     }
     return;
   }
+}
+
+std::string FormatExprFeaturesForDiag(
+    const gpga::SchedulerVmExprFeatures& feat) {
+  std::ostringstream os;
+  os << "width=" << feat.width
+     << " real=" << (feat.is_real ? "true" : "false")
+     << " call=" << (feat.has_call ? "true" : "false")
+     << " select=" << (feat.has_select ? "true" : "false")
+     << " index=" << (feat.has_index ? "true" : "false")
+     << " concat=" << (feat.has_concat ? "true" : "false")
+     << " repeat=" << (feat.has_repeat ? "true" : "false")
+     << " ternary=" << (feat.has_ternary ? "true" : "false")
+     << " xz=" << (feat.has_xz ? "true" : "false")
+     << " real_lit=" << (feat.has_real_literal ? "true" : "false");
+  return os.str();
 }
 
 void DumpFlat(const gpga::ElaboratedDesign& design, std::ostream& os) {
@@ -7539,6 +7574,7 @@ int main(int argc, char** argv) {
   bool dump_flat = false;
   bool enable_4state = false;
   bool sched_vm = false;
+  bool fallback_diag = false;
   bool auto_discover = false;
   bool strict_1364 = false;
   bool verbose_warnings = false;
@@ -7592,6 +7628,8 @@ int main(int argc, char** argv) {
       enable_4state = true;
     } else if (arg == "--sched-vm") {
       sched_vm = true;
+    } else if (arg == "--fallback-diag") {
+      fallback_diag = true;
     } else if (arg == "--auto") {
       auto_discover = true;
     } else if (arg == "--strict-1364") {
@@ -7918,6 +7956,290 @@ int main(int argc, char** argv) {
   }
   if (!diagnostics.Items().empty()) {
     diagnostics.RenderTo(std::cerr);
+  }
+
+  if (fallback_diag) {
+    std::ostringstream report;
+    report << "Scheduler VM fallback diagnostics\n";
+    report << "module: " << design.top.name << "\n";
+    report << "four_state: " << (enable_4state ? "true" : "false") << "\n";
+    report << "sched_vm_flag: " << (sched_vm ? "true" : "false") << "\n";
+    gpga::SchedulerVmLayout diag_layout;
+    gpga::SchedulerVmFallbackDiagnostics fallback_diag_info;
+    std::string diag_error;
+    const bool diag_ok = gpga::BuildSchedulerVmLayoutFromModuleWithDiag(
+        design.top, &diag_layout, &diag_error, enable_4state,
+        &fallback_diag_info);
+    report << "layout: " << (diag_ok ? "ok" : "failed") << "\n";
+    if (!diag_ok) {
+      report << "error: " << diag_error << "\n";
+    } else {
+      report << "layout_summary:\n";
+      report << "  proc_count: " << diag_layout.proc_count << "\n";
+      report << "  words_per_proc: " << diag_layout.words_per_proc << "\n";
+      report << "  bytecode_words: " << diag_layout.bytecode.size() << "\n";
+      report << "  cond_entries: " << diag_layout.cond_entries.size() << "\n";
+      report << "  signal_entries: " << diag_layout.signal_entries.size()
+             << "\n";
+      report << "  case_headers: " << diag_layout.case_headers.size() << "\n";
+      report << "  case_entries: " << diag_layout.case_entries.size() << "\n";
+      report << "  case_words: " << diag_layout.case_words.size() << "\n";
+      report << "  assign_entries: " << diag_layout.assign_entries.size()
+             << "\n";
+      report << "  delay_assign_entries: "
+             << diag_layout.delay_assign_entries.size() << "\n";
+      report << "  force_entries: " << diag_layout.force_entries.size()
+             << "\n";
+      report << "  release_entries: " << diag_layout.release_entries.size()
+             << "\n";
+      report << "  service_entries: " << diag_layout.service_entries.size()
+             << "\n";
+      report << "  service_args: " << diag_layout.service_args.size() << "\n";
+      report << "  service_ret_entries: "
+             << diag_layout.service_ret_entries.size() << "\n";
+      report << "  expr_words: " << diag_layout.expr_table.words.size()
+             << "\n";
+      report << "  expr_imm_words: " << diag_layout.expr_table.imm_words.size()
+             << "\n";
+      report << "  edge_item_expr_offsets: "
+             << diag_layout.edge_item_expr_offsets.size() << "\n";
+      report << "  edge_star_expr_offsets: "
+             << diag_layout.edge_star_expr_offsets.size() << "\n";
+      report << "  repeat_expr_offsets: "
+             << diag_layout.repeat_expr_offsets.size() << "\n";
+
+      size_t callgroup_procs = 0u;
+      size_t empty_procs = 0u;
+      std::vector<uint32_t> callgroup_pids;
+      const size_t proc_count =
+          std::min(diag_layout.proc_offsets.size(),
+                   diag_layout.proc_lengths.size());
+      for (size_t pid = 0; pid < proc_count; ++pid) {
+        const uint32_t len = diag_layout.proc_lengths[pid];
+        if (len == 0u) {
+          empty_procs += 1u;
+          continue;
+        }
+        const size_t offset = diag_layout.proc_offsets[pid];
+        if (offset >= diag_layout.bytecode.size()) {
+          callgroup_procs += 1u;
+          callgroup_pids.push_back(static_cast<uint32_t>(pid));
+          continue;
+        }
+        if (gpga::DecodeSchedulerVmOp(diag_layout.bytecode[offset]) ==
+            gpga::SchedulerVmOp::kCallGroup) {
+          callgroup_procs += 1u;
+          callgroup_pids.push_back(static_cast<uint32_t>(pid));
+        }
+      }
+      report << "callgroup_fallbacks:\n";
+      report << "  count: " << callgroup_procs << "\n";
+      report << "  empty_procs: " << empty_procs << "\n";
+      if (callgroup_pids.empty()) {
+        report << "  pids: none\n";
+      } else {
+        report << "  pids:";
+        for (uint32_t pid : callgroup_pids) {
+          report << " " << pid;
+        }
+        report << "\n";
+      }
+
+      std::unordered_map<std::string, size_t> reason_counts;
+      auto bump_reason = [&](const std::string& reason) {
+        if (!reason.empty()) {
+          reason_counts[reason] += 1u;
+        }
+      };
+      auto append_indented_lines = [&](const std::string& text,
+                                       const std::string& indent) {
+        std::istringstream in(text);
+        std::string line;
+        bool wrote = false;
+        while (std::getline(in, line)) {
+          report << indent << line << "\n";
+          wrote = true;
+        }
+        if (!wrote) {
+          report << indent << "<empty>\n";
+        }
+      };
+      auto dump_assign_fallbacks = [&]() {
+        report << "assign_fallbacks:\n";
+        if (fallback_diag_info.assign_fallbacks.empty()) {
+          report << "  none\n";
+          return;
+        }
+        for (const auto& info : fallback_diag_info.assign_fallbacks) {
+          report << "  assign[" << info.index << "]:\n";
+          report << "    stmt:\n";
+          append_indented_lines(
+              info.stmt_text.empty() ? "<missing>" : info.stmt_text, "      ");
+          if (!info.lhs_text.empty()) {
+            report << "    lhs: " << info.lhs_text << "\n";
+          }
+          if (!info.rhs_text.empty()) {
+            report << "    rhs: " << info.rhs_text << "\n";
+          }
+          report << "    nonblocking: "
+                 << (info.nonblocking ? "true" : "false") << "\n";
+          report << "    lhs_index: " << (info.lhs_has_index ? "true" : "false")
+                 << " lhs_range: " << (info.lhs_has_range ? "true" : "false")
+                 << " lhs_indices: " << info.lhs_index_count << "\n";
+          report << "    override_target: "
+                 << (info.override_target ? "true" : "false")
+                 << " lhs_real: " << (info.lhs_real ? "true" : "false")
+                 << " lhs_width: " << info.lhs_width << "\n";
+          report << "    missing_signal: "
+                 << (info.missing_signal ? "true" : "false")
+                 << " rhs_missing: " << (info.rhs_missing ? "true" : "false")
+                 << " rhs_unencodable: "
+                 << (info.rhs_unencodable ? "true" : "false") << "\n";
+          if (!info.rhs_text.empty()) {
+            report << "    rhs_features: "
+                   << FormatExprFeaturesForDiag(info.rhs_features) << "\n";
+          }
+          if (!info.reasons.empty()) {
+            report << "    reasons:\n";
+            for (const auto& reason : info.reasons) {
+              report << "      - " << reason << "\n";
+              bump_reason(reason);
+            }
+          }
+        }
+      };
+      auto dump_delay_fallbacks = [&]() {
+        size_t count = 0u;
+        report << "delay_assign_fallbacks:\n";
+        for (size_t i = 0; i < diag_layout.delay_assign_entries.size(); ++i) {
+          const auto& entry = diag_layout.delay_assign_entries[i];
+          if ((entry.flags & gpga::kSchedulerVmDelayAssignFlagFallback) == 0u) {
+            continue;
+          }
+          report << "  delay[" << i << "]: signal_id=" << entry.signal_id
+                 << " width=" << entry.width
+                 << " base_width=" << entry.base_width
+                 << " range_lsb=" << entry.range_lsb
+                 << " array_size=" << entry.array_size
+                 << " rhs_expr=" << entry.rhs_expr
+                 << " delay_expr=" << entry.delay_expr
+                 << " idx_expr=" << entry.idx_expr
+                 << " flags=0x" << std::hex << entry.flags << std::dec << "\n";
+          count += 1u;
+        }
+        if (count == 0u) {
+          report << "  none\n";
+        }
+      };
+      auto dump_force_fallbacks = [&]() {
+        size_t count = 0u;
+        report << "force_fallbacks:\n";
+        for (size_t i = 0; i < diag_layout.force_entries.size(); ++i) {
+          const auto& entry = diag_layout.force_entries[i];
+          if ((entry.flags & gpga::kSchedulerVmForceFlagFallback) == 0u) {
+            continue;
+          }
+          report << "  force[" << i << "]: signal_id=" << entry.signal_id
+                 << " rhs_expr=" << entry.rhs_expr
+                 << " force_id=" << entry.force_id
+                 << " force_slot=" << entry.force_slot
+                 << " passign_slot=" << entry.passign_slot
+                 << " flags=0x" << std::hex << entry.flags << std::dec << "\n";
+          count += 1u;
+        }
+        if (count == 0u) {
+          report << "  none\n";
+        }
+      };
+      auto dump_release_fallbacks = [&]() {
+        size_t count = 0u;
+        report << "release_fallbacks:\n";
+        for (size_t i = 0; i < diag_layout.release_entries.size(); ++i) {
+          const auto& entry = diag_layout.release_entries[i];
+          if ((entry.flags & gpga::kSchedulerVmForceFlagFallback) == 0u) {
+            continue;
+          }
+          report << "  release[" << i << "]: signal_id=" << entry.signal_id
+                 << " force_slot=" << entry.force_slot
+                 << " passign_slot=" << entry.passign_slot
+                 << " flags=0x" << std::hex << entry.flags << std::dec << "\n";
+          count += 1u;
+        }
+        if (count == 0u) {
+          report << "  none\n";
+        }
+      };
+      auto dump_service_fallbacks = [&]() {
+        report << "service_fallbacks:\n";
+        if (fallback_diag_info.service_fallbacks.empty()) {
+          report << "  none\n";
+          return;
+        }
+        for (const auto& info : fallback_diag_info.service_fallbacks) {
+          report << "  service[" << info.index << "]: name=" << info.name
+                 << " kind=" << (info.is_syscall ? "syscall" : "task") << "\n";
+          report << "    call: " << info.call_text << "\n";
+          report << "    arg_count: " << info.arg_count << "\n";
+          if (!info.reasons.empty()) {
+            report << "    reasons:\n";
+            for (const auto& reason : info.reasons) {
+              report << "      - " << reason << "\n";
+              bump_reason(reason);
+            }
+          }
+        }
+      };
+      auto dump_service_ret_fallbacks = [&]() {
+        size_t count = 0u;
+        report << "service_ret_assign_fallbacks:\n";
+        for (size_t i = 0; i < diag_layout.service_ret_entries.size(); ++i) {
+          const auto& entry = diag_layout.service_ret_entries[i];
+          if ((entry.flags & gpga::kSchedulerVmServiceRetAssignFlagFallback) ==
+              0u) {
+            continue;
+          }
+          report << "  service_ret[" << i
+                 << "]: signal_id=" << entry.signal_id
+                 << " width=" << entry.width
+                 << " force_slot=" << entry.force_slot
+                 << " passign_slot=" << entry.passign_slot
+                 << " flags=0x" << std::hex << entry.flags << std::dec << "\n";
+          count += 1u;
+        }
+        if (count == 0u) {
+          report << "  none\n";
+        }
+      };
+      dump_assign_fallbacks();
+      dump_delay_fallbacks();
+      dump_force_fallbacks();
+      dump_release_fallbacks();
+      dump_service_fallbacks();
+      dump_service_ret_fallbacks();
+      if (!reason_counts.empty()) {
+        report << "fallback_reason_counts:\n";
+        std::vector<std::pair<std::string, size_t>> sorted_reasons(
+            reason_counts.begin(), reason_counts.end());
+        std::sort(sorted_reasons.begin(), sorted_reasons.end(),
+                  [](const auto& a, const auto& b) {
+                    if (a.second != b.second) {
+                      return a.second > b.second;
+                    }
+                    return a.first < b.first;
+                  });
+        for (const auto& entry : sorted_reasons) {
+          report << "  " << entry.first << ": " << entry.second << "\n";
+        }
+      }
+    }
+
+    std::filesystem::path diag_path =
+        std::filesystem::current_path() / "sched_vm_fallback_diag.txt";
+    if (!WriteFile(diag_path.string(), report.str(), &diagnostics)) {
+      diagnostics.RenderTo(std::cerr);
+      return 1;
+    }
+    std::cerr << "wrote fallback diag to " << diag_path.string() << "\n";
   }
 
   std::string msl;

@@ -262,6 +262,8 @@ constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_FLAG_STIME = 1u << 2u;
 constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_VALUE = 0u;
 constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_IDENT = 1u;
 constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_STRING = 2u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_REAL = 3u;
+constant constexpr uint GPGA_SCHED_VM_SERVICE_ARG_KIND_WIDE = 4u;
 constant constexpr uint GPGA_SCHED_VM_SERVICE_RET_ASSIGN_FLAG_FALLBACK = 1u << 0u;
 
 #define GPGA_SCHED_DEFINE_PROC_PARENT(...) \

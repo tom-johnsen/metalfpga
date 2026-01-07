@@ -350,6 +350,9 @@ struct SchedulerVmLayout {
   std::vector<SchedulerVmServiceArg> service_args;
   std::vector<SchedulerVmServiceRetAssignEntry> service_ret_entries;
   SchedulerVmExprTable expr_table;
+  std::vector<uint32_t> edge_item_expr_offsets;
+  std::vector<uint32_t> edge_star_expr_offsets;
+  std::vector<uint32_t> repeat_expr_offsets;
 };
 
 class SchedulerVmBuilder {
@@ -426,6 +429,8 @@ inline bool BuildSchedulerVmLayout(
   out->service_ret_entries.clear();
   out->expr_table.words.clear();
   out->expr_table.imm_words.clear();
+  out->edge_item_expr_offsets.clear();
+  out->edge_star_expr_offsets.clear();
   const uint32_t proc_count = static_cast<uint32_t>(procs.size());
   if (proc_count == 0u) {
     if (error) {
