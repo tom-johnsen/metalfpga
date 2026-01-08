@@ -59,6 +59,97 @@ void PrintUsage(const char* argv0) {
 
 void PrintVersion() { std::cout << "metalfpga " << kMetalFpgaVersion << "\n"; }
 
+std::string TrimAscii(const std::string& input) {
+  size_t start = 0;
+  while (start < input.size() &&
+         std::isspace(static_cast<unsigned char>(input[start]))) {
+    ++start;
+  }
+  size_t end = input.size();
+  while (end > start &&
+         std::isspace(static_cast<unsigned char>(input[end - 1]))) {
+    --end;
+  }
+  return input.substr(start, end - start);
+}
+
+std::string StripInlineComment(const std::string& value) {
+  for (size_t i = 0; i < value.size(); ++i) {
+    if (value[i] != '#') {
+      continue;
+    }
+    if (i == 0 || std::isspace(static_cast<unsigned char>(value[i - 1]))) {
+      return TrimAscii(value.substr(0, i));
+    }
+  }
+  return TrimAscii(value);
+}
+
+bool ParseDotEnvLine(const std::string& line, std::string* key,
+                     std::string* value) {
+  if (!key || !value) {
+    return false;
+  }
+  std::string trimmed = TrimAscii(line);
+  if (trimmed.empty() || trimmed[0] == '#') {
+    return false;
+  }
+  constexpr const char* kExportPrefix = "export ";
+  if (trimmed.rfind(kExportPrefix, 0) == 0u) {
+    trimmed = TrimAscii(trimmed.substr(std::strlen(kExportPrefix)));
+  }
+  size_t eq = trimmed.find('=');
+  if (eq == std::string::npos) {
+    return false;
+  }
+  *key = TrimAscii(trimmed.substr(0, eq));
+  if (key->empty()) {
+    return false;
+  }
+  std::string raw_value = TrimAscii(trimmed.substr(eq + 1));
+  if (raw_value.size() >= 2u) {
+    char quote = raw_value.front();
+    if ((quote == '"' || quote == '\'') && raw_value.back() == quote) {
+      *value = raw_value.substr(1, raw_value.size() - 2);
+      return true;
+    }
+  }
+  *value = StripInlineComment(raw_value);
+  return true;
+}
+
+void LoadDotEnvIfDebug() {
+#ifdef NDEBUG
+  return;
+#else
+  std::error_code ec;
+  std::filesystem::path cwd = std::filesystem::current_path(ec);
+  if (ec || cwd.empty()) {
+    return;
+  }
+  std::filesystem::path env_path = cwd / ".env";
+  std::ifstream in(env_path);
+  if (!in) {
+    return;
+  }
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    std::string key;
+    std::string value;
+    if (!ParseDotEnvLine(line, &key, &value)) {
+      continue;
+    }
+    if (std::getenv(key.c_str()) != nullptr) {
+      continue;
+    }
+    setenv(key.c_str(), value.c_str(), 0);
+  }
+#endif
+}
+
 bool WriteFile(const std::string& path, const std::string& content,
                gpga::Diagnostics* diagnostics) {
   std::ofstream out(path, std::ios::binary);
@@ -2399,6 +2490,42 @@ bool ReadPackedSignalWordFromBuffer(const gpga::SignalInfo& sig, uint32_t gid,
   return true;
 }
 
+bool WritePackedSignalWordToBuffer(const gpga::SignalInfo& sig, uint32_t gid,
+                                   uint64_t array_index,
+                                   gpga::MetalBuffer* buffer,
+                                   size_t base_offset, size_t word_index,
+                                   uint64_t value) {
+  if (!buffer || !buffer->contents()) {
+    return false;
+  }
+  size_t word_count = SignalWordCount(sig);
+  if (word_index >= word_count) {
+    return false;
+  }
+  size_t array_size = sig.array_size > 0 ? sig.array_size : 1u;
+  if (array_index >= array_size) {
+    return false;
+  }
+  size_t word_size = SignalWordSize(sig);
+  size_t element_size = SignalElementSize(sig);
+  size_t element_index =
+      static_cast<size_t>(gid) * array_size + static_cast<size_t>(array_index);
+  size_t offset =
+      base_offset + (element_index * element_size) + (word_index * word_size);
+  if (buffer->length() < offset + word_size) {
+    return false;
+  }
+  if (word_size == sizeof(uint64_t)) {
+    std::memcpy(static_cast<uint8_t*>(buffer->contents()) + offset, &value,
+                sizeof(uint64_t));
+  } else {
+    uint32_t tmp = static_cast<uint32_t>(value);
+    std::memcpy(static_cast<uint8_t*>(buffer->contents()) + offset, &tmp,
+                sizeof(uint32_t));
+  }
+  return true;
+}
+
 bool ReadSignalWord(const gpga::SignalInfo& sig, uint32_t gid,
                     uint64_t array_index,
                     const std::unordered_map<std::string, gpga::MetalBuffer>& buffers,
@@ -4368,6 +4495,19 @@ std::string NormalizeToken(const std::string& token) {
   return out;
 }
 
+bool LooksLikeBinaryLiteral(const std::string& token) {
+  if (token.empty()) {
+    return false;
+  }
+  for (char c : token) {
+    if (c == '0' || c == '1' || c == 'x' || c == 'X' || c == 'z' || c == 'Z') {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 bool ParseUnsigned(const std::string& token, int base, uint64_t* out) {
   if (!out) {
     return false;
@@ -4397,8 +4537,11 @@ bool ParseMemValue(const std::string& token_in, bool is_hex, uint32_t width,
     token = token.substr(2);
   } else if (token.size() >= 2 && token[0] == '0' &&
              (token[1] == 'b' || token[1] == 'B')) {
-    is_hex = false;
-    token = token.substr(2);
+    std::string rest = token.substr(2);
+    if (LooksLikeBinaryLiteral(rest)) {
+      is_hex = false;
+      token = std::move(rest);
+    }
   }
   uint64_t out_val = 0;
   uint64_t out_xz = 0;
@@ -4478,8 +4621,11 @@ bool ParseMemValueWords(const std::string& token_in, bool is_hex,
     token = token.substr(2);
   } else if (token.size() >= 2 && token[0] == '0' &&
              (token[1] == 'b' || token[1] == 'B')) {
-    is_hex = false;
-    token = token.substr(2);
+    std::string rest = token.substr(2);
+    if (LooksLikeBinaryLiteral(rest)) {
+      is_hex = false;
+      token = std::move(rest);
+    }
   }
   auto set_bit = [&](std::vector<uint64_t>* words, uint32_t bit) {
     size_t word_index = bit / 64u;
@@ -4545,6 +4691,8 @@ bool ParseMemValueWords(const std::string& token_in, bool is_hex,
 bool ApplyReadmem(const std::string& filename, bool is_hex,
                   const gpga::SignalInfo& signal, bool four_state,
                   std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
+                  const PackedStateLayout* packed_layout,
+                  gpga::MetalBuffer* packed_state_buf,
                   uint32_t instance_count, uint64_t start, uint64_t end,
                   std::string* error) {
   if (!buffers) {
@@ -4557,17 +4705,42 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
     }
     return false;
   }
+  gpga::MetalBuffer* val_buf = nullptr;
+  const PackedSignalOffsets* packed = nullptr;
   const std::string base = MslSignalName(signal.name);
   auto it_val = buffers->find(base + "_val");
   if (it_val == buffers->end()) {
     it_val = buffers->find(base);
   }
-  if (it_val == buffers->end()) {
+  if (it_val != buffers->end()) {
+    val_buf = &it_val->second;
+  } else if (packed_layout && packed_state_buf &&
+             packed_state_buf->contents()) {
+    packed = packed_layout->Find(signal.name);
+  }
+  if (!val_buf && (!packed || !packed->has_val)) {
     if (error) {
       *error = "readmem target buffer not found: " + signal.name;
     }
     return false;
   }
+  auto write_word = [&](uint32_t gid, uint64_t array_index, size_t word_index,
+                        uint64_t value, uint64_t xz) -> void {
+    if (val_buf) {
+      WriteSignalWord(signal, gid, array_index, word_index, value, xz,
+                      four_state, buffers);
+      return;
+    }
+    if (!packed || !packed_state_buf || !packed_state_buf->contents()) {
+      return;
+    }
+    WritePackedSignalWordToBuffer(signal, gid, array_index, packed_state_buf,
+                                  packed->val_offset, word_index, value);
+    if (four_state && packed->has_xz) {
+      WritePackedSignalWordToBuffer(signal, gid, array_index, packed_state_buf,
+                                    packed->xz_offset, word_index, xz);
+    }
+  };
   uint32_t width = signal.is_real ? 64u : signal.width;
   if (width == 0u) {
     width = 1u;
@@ -4619,8 +4792,7 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
           return false;
         }
         for (uint32_t gid = 0; gid < instance_count; ++gid) {
-          WriteSignalValueAtIndex(signal, gid, address, val, xz, four_state,
-                                  buffers);
+          write_word(gid, address, 0u, val, xz);
         }
       } else {
         std::vector<uint64_t> val_words;
@@ -4637,8 +4809,7 @@ bool ApplyReadmem(const std::string& filename, bool is_hex,
           for (size_t word = 0; word < word_count; ++word) {
             uint64_t val = (word < val_words.size()) ? val_words[word] : 0ull;
             uint64_t xz = (word < xz_words.size()) ? xz_words[word] : 0ull;
-            WriteSignalWord(signal, gid, address, word, val, xz, four_state,
-                            buffers);
+            write_word(gid, address, word, val, xz);
           }
         }
       }
@@ -4870,6 +5041,7 @@ bool HandleServiceRecords(
     const gpga::ServiceStringTable& strings, const gpga::ModuleInfo& module,
     const std::string& vcd_dir,
     const std::unordered_map<std::string, std::string>* flat_to_hier,
+    const PackedStateLayout* packed_layout,
     const std::string& timescale,
     bool four_state, uint32_t instance_count, uint32_t gid,
     uint32_t proc_count, FileTable* files,
@@ -4934,6 +5106,81 @@ bool HandleServiceRecords(
     wait_kind_ptr[idx] = kWaitNone;
     state_ptr[idx] = kProcReady;
   };
+  const gpga::MetalBuffer* packed_state_buf =
+      packed_layout ? FindBuffer(*buffers, "gpga_state", "") : nullptr;
+  gpga::MetalBuffer* packed_state_buf_mut =
+      packed_layout ? FindBufferMutable(buffers, "gpga_state", "") : nullptr;
+  auto read_signal_word = [&](const gpga::SignalInfo& sig, uint64_t array_index,
+                              size_t word_index, uint64_t* value_out) -> bool {
+    if (ReadSignalWord(sig, gid, array_index, *buffers, word_index, value_out)) {
+      return true;
+    }
+    if (!packed_layout || !packed_state_buf) {
+      return false;
+    }
+    const PackedSignalOffsets* packed = packed_layout->Find(sig.name);
+    if (!packed || !packed->has_val) {
+      return false;
+    }
+    return ReadPackedSignalWordFromBuffer(
+        sig, gid, array_index, *packed_state_buf, packed->val_offset,
+        word_index, value_out);
+  };
+  auto read_signal_string =
+      [&](const gpga::SignalInfo& sig) -> std::string {
+    size_t max_bytes = (SignalBitWidth(sig) + 7u) / 8u;
+    size_t word_count = SignalWordCount(sig);
+    std::vector<uint64_t> words(word_count, 0ull);
+    for (size_t i = 0; i < word_count; ++i) {
+      if (!read_signal_word(sig, 0u, i, &words[i])) {
+        return {};
+      }
+    }
+    return UnpackStringWords(words, max_bytes);
+  };
+  auto write_signal_word =
+      [&](const gpga::SignalInfo& sig, uint64_t array_index, size_t word_index,
+          uint64_t value, uint64_t xz) -> bool {
+    if (WriteSignalWord(sig, gid, array_index, word_index, value, xz,
+                        four_state, buffers)) {
+      return true;
+    }
+    if (!packed_layout || !packed_state_buf_mut ||
+        !packed_state_buf_mut->contents()) {
+      return false;
+    }
+    const PackedSignalOffsets* packed = packed_layout->Find(sig.name);
+    if (!packed || !packed->has_val) {
+      return false;
+    }
+    if (!WritePackedSignalWordToBuffer(sig, gid, array_index,
+                                       packed_state_buf_mut,
+                                       packed->val_offset, word_index, value)) {
+      return false;
+    }
+    if (four_state && packed->has_xz) {
+      if (!WritePackedSignalWordToBuffer(sig, gid, array_index,
+                                         packed_state_buf_mut,
+                                         packed->xz_offset, word_index, xz)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto write_signal_value = [&](const gpga::SignalInfo& sig,
+                                uint64_t array_index, uint64_t value,
+                                uint64_t xz) -> bool {
+    size_t word_count = SignalWordCount(sig);
+    if (!write_signal_word(sig, array_index, 0u, value, xz)) {
+      return false;
+    }
+    for (size_t i = 1; i < word_count; ++i) {
+      if (!write_signal_word(sig, array_index, i, 0ull, 0ull)) {
+        return false;
+      }
+    }
+    return true;
+  };
   auto resolve_string_or_ident = [&](const gpga::ServiceArgView& arg) -> std::string {
     if (arg.kind == gpga::ServiceArgKind::kString ||
         arg.kind == gpga::ServiceArgKind::kIdent) {
@@ -4942,7 +5189,7 @@ bool HandleServiceRecords(
       if (arg.kind == gpga::ServiceArgKind::kIdent) {
         const gpga::SignalInfo* sig = FindSignalInfo(module, value);
         if (sig) {
-          return ReadSignalString(*sig, gid, *buffers);
+          return read_signal_string(*sig);
         }
       }
       return value;
@@ -4965,8 +5212,7 @@ bool HandleServiceRecords(
       size_t max_bytes = (SignalBitWidth(*sig) + 7u) / 8u;
       std::vector<uint64_t> words = PackStringWords(str_value, max_bytes);
       for (size_t i = 0; i < words.size(); ++i) {
-        if (!WriteSignalWord(*sig, gid, 0u, i, words[i], 0ull, four_state,
-                             buffers)) {
+        if (!write_signal_word(*sig, 0u, i, words[i], 0ull)) {
           return false;
         }
       }
@@ -4977,15 +5223,14 @@ bool HandleServiceRecords(
       size_t word_count = SignalWordCount(*sig);
       for (size_t i = 0; i < word_count; ++i) {
         uint64_t word = (i < wide_words->size()) ? (*wide_words)[i] : 0ull;
-        if (!WriteSignalWord(*sig, gid, 0u, i, word, 0ull, four_state,
-                             buffers)) {
+        if (!write_signal_word(*sig, 0u, i, word, 0ull)) {
           return false;
         }
       }
       return true;
     }
     uint64_t masked = value & MaskForWidth(width);
-    return WriteSignalValue(*sig, gid, masked, 0ull, four_state, buffers);
+    return write_signal_value(*sig, 0u, masked, 0ull);
   };
   std::unordered_map<uint32_t, size_t> last_record_for_pid;
   last_record_for_pid.reserve(records.size());
@@ -5582,8 +5827,7 @@ bool HandleServiceRecords(
           for (size_t w = 0; w < word_count; ++w) {
             uint64_t word = w < val_words.size() ? val_words[w] : 0ull;
             uint64_t xz_word = w < xz_words.size() ? xz_words[w] : 0ull;
-            WriteSignalWord(*sig, gid, 0u, w, word, xz_word, four_state,
-                            buffers);
+            write_signal_word(*sig, 0u, w, word, xz_word);
           }
           resume_if_waiting(rec, record_index, static_cast<uint64_t>(bytes_read));
           break;
@@ -5623,8 +5867,7 @@ bool HandleServiceRecords(
           for (size_t w = 0; w < word_count; ++w) {
             uint64_t word = w < val_words.size() ? val_words[w] : 0ull;
             uint64_t xz_word = w < xz_words.size() ? xz_words[w] : 0ull;
-            WriteSignalWord(*sig, gid, start_index + i, w, word, xz_word,
-                            four_state, buffers);
+            write_signal_word(*sig, start_index + i, w, word, xz_word);
           }
           total_read += bytes_read;
           if (bytes_read < elem_bytes) {
@@ -5823,7 +6066,18 @@ bool HandleServiceRecords(
         std::string label =
             (rec.kind == gpga::ServiceKind::kReadmemh) ? "$readmemh"
                                                        : "$readmemb";
-        std::string filename = ResolveString(strings, rec.format_id);
+        std::string filename_expr = ResolveString(strings, rec.format_id);
+        std::string filename = filename_expr;
+        if (buffers && !filename_expr.empty()) {
+          const gpga::SignalInfo* file_sig =
+              FindSignalInfo(module, filename_expr);
+          if (file_sig) {
+            std::string file_value = read_signal_string(*file_sig);
+            if (!file_value.empty()) {
+              filename = file_value;
+            }
+          }
+        }
         std::string target;
         uint64_t start = 0;
         uint64_t end = std::numeric_limits<uint64_t>::max();
@@ -5832,14 +6086,13 @@ bool HandleServiceRecords(
         for (const auto& arg : rec.args) {
           if (arg.kind == gpga::ServiceArgKind::kIdent ||
               arg.kind == gpga::ServiceArgKind::kString) {
-            if (!seen_target &&
-                arg.kind == gpga::ServiceArgKind::kString &&
-                arg.value == static_cast<uint64_t>(rec.format_id)) {
-              continue;
-            }
             if (!seen_target) {
-              target =
+              std::string arg_text =
                   ResolveString(strings, static_cast<uint32_t>(arg.value));
+              if (!filename_expr.empty() && arg_text == filename_expr) {
+                continue;
+              }
+              target = std::move(arg_text);
               seen_target = true;
               continue;
             }
@@ -5868,6 +6121,7 @@ bool HandleServiceRecords(
         }
         bool is_hex = rec.kind == gpga::ServiceKind::kReadmemh;
         if (!ApplyReadmem(filename, is_hex, *it, four_state, buffers,
+                          packed_layout, packed_state_buf_mut,
                           instance_count, start, end, error)) {
           return false;
         }
@@ -6434,9 +6688,6 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   const bool has_dumpvars = ModuleUsesDumpvars(module);
   const uint32_t vcd_step_budget = (vcd_steps > 0u) ? vcd_steps : 1u;
   uint32_t effective_max_steps = max_steps;
-  if (has_dumpvars) {
-    effective_max_steps = 1u;
-  }
 
   auto params_it = buffers.find("params");
   if (params_it != buffers.end() && params_it->second.contents()) {
@@ -6497,7 +6748,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     const uint32_t kStatusIdle = 1u;
     for (uint64_t iter = 0ull;; ++iter) {
       if (sched_params && has_dumpvars) {
-        sched_params->max_steps = vcd.active() ? vcd_step_budget : 1u;
+        sched_params->max_steps = vcd.active() ? vcd_step_budget : max_steps;
       }
       if (sched_halt_mode && g_halt_request != 0) {
         for (uint32_t gid = 0; gid < count; ++gid) {
@@ -6552,7 +6803,10 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
                                  &decoded);
             gpga::ServiceDrainResult result;
             if (!HandleServiceRecords(decoded, strings, info, vcd_dir,
-                                      &flat_to_hier, module.timescale,
+                                      &flat_to_hier,
+                                      has_packed_layout ? &packed_layout
+                                                        : nullptr,
+                                      module.timescale,
                                       enable_4state, count, gid,
                                       sched.proc_count, &file_tables[gid],
                                       plusargs, &buffers, &vcd, &result,
@@ -8059,6 +8313,10 @@ int main(int argc, char** argv) {
     PrintUsage(argv[0]);
     return 2;
   }
+
+#ifndef NDEBUG
+  LoadDotEnvIfDebug();
+#endif
 
   std::vector<std::string> input_paths;
   std::string msl_out;

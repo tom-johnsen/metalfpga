@@ -6,6 +6,7 @@ docs/images/
 
 .DS_STORE
 .claude/
+.cache/
 
 persistent/
 host/

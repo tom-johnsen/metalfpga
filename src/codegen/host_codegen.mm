@@ -527,7 +527,7 @@ std::string EmitHostStub(const Module& module) {
   out << "  uint32_t max_steps = 1024u;\n";
   out << "  uint32_t max_proc_steps = 64u;\n";
   out << "  bool profile = false;\n";
-  out << "  if (const char* env = std::getenv(\"GPGA_PROFILE\")) {\n";
+  out << "  if (const char* env = std::getenv(\"METALFPGA_PROFILE\")) {\n";
   out << "    profile = *env != '\\0' && std::string(env) != \"0\";\n";
   out << "  }\n";
   out << "  for (int i = 2; i < argc; ++i) {\n";

@@ -298,6 +298,10 @@ struct MetalRuntime::Impl {
   bool gpu_timestamps_precise = false;
   uint32_t gpu_timestamp_every = 1;
   uint64_t gpu_timestamp_seq = 0;
+  bool dispatch_timing = false;
+  bool dispatch_timing_detail = false;
+  uint32_t dispatch_timing_every = 1;
+  uint64_t dispatch_timing_seq = 0;
   uint64_t timestamp_frequency = 0;
   NSUInteger timestamp_heap_count = 0;
   std::string last_source;
@@ -313,6 +317,16 @@ struct MetalRuntime::Impl {
     }
     uint64_t seq = gpu_timestamp_seq++;
     return (seq % gpu_timestamp_every) == 0u;
+  }
+  bool ShouldLogDispatchTiming() {
+    if (!dispatch_timing) {
+      return false;
+    }
+    if (dispatch_timing_every == 0u) {
+      return false;
+    }
+    uint64_t seq = dispatch_timing_seq++;
+    return (seq % dispatch_timing_every) == 0u;
   }
   bool EnsureTimestampHeap(NSUInteger count, std::string* error) {
     if (!device) {
@@ -354,18 +368,36 @@ struct MetalRuntime::Impl {
     return gpu_timestamps_precise ? MTL4TimestampGranularityPrecise
                                   : MTL4TimestampGranularityRelaxed;
   }
-  void LogGpuTimestampResult(const char* label, uint32_t grid_size,
-                             size_t dispatch_count) {
+  struct GpuTimestampSample {
+    bool ok = false;
+    bool has_ms = false;
+    double ms = 0.0;
+    uint64_t ticks = 0;
+    std::string error;
+  };
+  bool ResolveGpuTimestampSample(GpuTimestampSample* out) {
+    if (!out) {
+      return false;
+    }
+    out->ok = false;
+    out->has_ms = false;
+    out->ms = 0.0;
+    out->ticks = 0;
+    out->error.clear();
     if (!timestamp_heap) {
-      return;
+      out->error = "timestamp heap unavailable";
+      return false;
+    }
+    if (!device) {
+      out->error = "Metal device unavailable";
+      return false;
     }
     @autoreleasepool {
       NSData* data =
           [timestamp_heap resolveCounterRange:NSMakeRange(0, 2)];
       if (!data) {
-        std::cerr << "[gpu_profile] " << label
-                  << " resolveCounterRange failed\n";
-        return;
+        out->error = "resolveCounterRange failed";
+        return false;
       }
       const size_t length = [data length];
       size_t entry_size =
@@ -375,9 +407,8 @@ struct MetalRuntime::Impl {
         entry_size = sizeof(uint64_t);
       }
       if (length < entry_size * 2) {
-        std::cerr << "[gpu_profile] " << label
-                  << " timestamp data too small\n";
-        return;
+        out->error = "timestamp data too small";
+        return false;
       }
       const uint8_t* bytes =
           static_cast<const uint8_t*>([data bytes]);
@@ -385,18 +416,34 @@ struct MetalRuntime::Impl {
       uint64_t end = 0;
       std::memcpy(&start, bytes, sizeof(uint64_t));
       std::memcpy(&end, bytes + entry_size, sizeof(uint64_t));
+      out->ticks = (end >= start) ? (end - start) : 0;
       if (timestamp_frequency > 0 && end >= start) {
-        double ms =
+        out->ms =
             (static_cast<double>(end - start) * 1000.0) /
             static_cast<double>(timestamp_frequency);
-        std::cerr << "[gpu_profile] " << label << " ms=" << ms
-                  << " grid=" << grid_size
-                  << " dispatches=" << dispatch_count << "\n";
-      } else {
-        std::cerr << "[gpu_profile] " << label << " ticks=" << (end - start)
-                  << " grid=" << grid_size
-                  << " dispatches=" << dispatch_count << "\n";
+        out->has_ms = true;
       }
+      out->ok = true;
+      return true;
+    }
+    return false;
+  }
+  void LogGpuTimestampResult(const char* label, uint32_t grid_size,
+                             size_t dispatch_count) {
+    GpuTimestampSample sample;
+    if (!ResolveGpuTimestampSample(&sample)) {
+      std::cerr << "[gpu_profile] " << label
+                << " " << sample.error << "\n";
+      return;
+    }
+    if (sample.has_ms) {
+      std::cerr << "[gpu_profile] " << label << " ms=" << sample.ms
+                << " grid=" << grid_size
+                << " dispatches=" << dispatch_count << "\n";
+    } else {
+      std::cerr << "[gpu_profile] " << label << " ticks=" << sample.ticks
+                << " grid=" << grid_size
+                << " dispatches=" << dispatch_count << "\n";
     }
   }
   ~Impl() {
@@ -1692,6 +1739,12 @@ bool MetalRuntime::Initialize(std::string* error) {
     if (auto every = EnvU32("METALFPGA_GPU_TIMESTAMPS_EVERY")) {
       impl_->gpu_timestamp_every = std::max(1u, *every);
     }
+    impl_->dispatch_timing = EnvEnabled("METALFPGA_DISPATCH_TIMING");
+    impl_->dispatch_timing_detail =
+        EnvEnabled("METALFPGA_DISPATCH_TIMING_DETAIL");
+    if (auto every = EnvU32("METALFPGA_DISPATCH_TIMING_EVERY")) {
+      impl_->dispatch_timing_every = std::max(1u, *every);
+    }
   }
   if (impl_->pipeline_archive_load && !impl_->pipeline_archive) {
     std::string archive_path = impl_->pipeline_archive_path.string();
@@ -2572,6 +2625,11 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     }
     return false;
   }
+  const bool log_dispatch = impl_->ShouldLogDispatchTiming();
+  const bool log_detail = log_dispatch && impl_->dispatch_timing_detail;
+  const auto t_begin = log_dispatch
+                           ? std::chrono::steady_clock::now()
+                           : std::chrono::steady_clock::time_point{};
   id<MTL4CommandBuffer> cmd = [impl_->device newCommandBuffer];
   if (!cmd) {
     if (error) {
@@ -2579,6 +2637,9 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     }
     return false;
   }
+  const auto t_cmd_created = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
   [cmd beginCommandBufferWithAllocator:impl_->allocator];
   if (impl_->residency_set) {
     [cmd useResidencySet:impl_->residency_set];
@@ -2662,9 +2723,11 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     }
     [encoder setArgumentTable:table];
   }
+  const uint32_t thread_exec_width = kernel.ThreadExecutionWidth();
+  const uint32_t max_threads_per_tg = kernel.MaxThreadsPerThreadgroup();
   uint32_t threadgroup = ChooseThreadgroupSize(
-      impl_->threadgroup_override, kernel.ThreadExecutionWidth(),
-      kernel.MaxThreadsPerThreadgroup());
+      impl_->threadgroup_override, thread_exec_width, max_threads_per_tg);
+  const size_t binding_count = bindings.size();
   MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
   MTLSize grid = MTLSizeMake(grid_size, 1, 1);
   if (sample_gpu) {
@@ -2680,6 +2743,9 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   }
   [encoder endEncoding];
   [cmd endCommandBuffer];
+  const auto t_encode_done = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
   __block NSError* commit_error = nil;
   dispatch_semaphore_t done = dispatch_semaphore_create(0);
   MTL4CommitOptions* options = [[MTL4CommitOptions alloc] init];
@@ -2689,8 +2755,85 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     }
     dispatch_semaphore_signal(done);
   }];
+  const auto t_commit_begin = log_dispatch
+                                  ? std::chrono::steady_clock::now()
+                                  : std::chrono::steady_clock::time_point{};
   const id<MTL4CommandBuffer> buffers[] = {cmd};
   [impl_->queue commit:buffers count:1 options:options];
+  const auto t_commit_done = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+  const auto t_wait_start = log_dispatch
+                                ? t_commit_done
+                                : std::chrono::steady_clock::time_point{};
+  auto log_timing = [&](const char* result) {
+    if (!log_dispatch) {
+      return;
+    }
+    const auto t_done = std::chrono::steady_clock::now();
+    double encode_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_encode_done - t_begin)
+            .count();
+    double wait_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_done - t_wait_start)
+            .count();
+    double total_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_done - t_begin)
+            .count();
+    std::cerr << "[dispatch_timing] kernel=" << kernel.Name()
+              << " grid=" << grid_size
+              << " encode_ms=" << encode_ms
+              << " wait_ms=" << wait_ms
+              << " total_ms=" << total_ms
+              << " result=" << result;
+    if (log_detail) {
+      double create_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_cmd_created - t_begin)
+              .count();
+      double encode_only_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_encode_done - t_cmd_created)
+              .count();
+      double prep_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_commit_begin - t_encode_done)
+              .count();
+      double commit_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_commit_done - t_commit_begin)
+              .count();
+      std::cerr << " create_ms=" << create_ms
+                << " encode_only_ms=" << encode_only_ms
+                << " prep_ms=" << prep_ms
+                << " commit_ms=" << commit_ms
+                << " tg=" << threadgroup
+                << " tew=" << thread_exec_width
+                << " max_tg=" << max_threads_per_tg
+                << " binds=" << binding_count;
+      if (sample_gpu) {
+        Impl::GpuTimestampSample sample;
+        if (impl_->ResolveGpuTimestampSample(&sample)) {
+          if (sample.has_ms) {
+            double wait_gap_ms = wait_ms - sample.ms;
+            std::cerr << " gpu_ms=" << sample.ms
+                      << " wait_gap_ms=" << wait_gap_ms;
+          } else {
+            std::cerr << " gpu_ticks=" << sample.ticks;
+          }
+        } else if (!sample.error.empty()) {
+          std::cerr << " gpu_err=" << sample.error;
+        }
+      }
+    }
+    if (timeout_ms != 0u) {
+      std::cerr << " timeout_ms=" << timeout_ms;
+    }
+    std::cerr << "\n";
+  };
   if (timeout_ms == 0u) {
     dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
   } else {
@@ -2698,6 +2841,7 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
         dispatch_time(DISPATCH_TIME_NOW,
                       static_cast<int64_t>(timeout_ms) * NSEC_PER_MSEC);
     if (dispatch_semaphore_wait(done, timeout) != 0) {
+      log_timing("timeout");
       if (error) {
         *error = "Metal dispatch timed out";
       }
@@ -2715,6 +2859,7 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   dispatch_release(done);
 #endif
   if (commit_error) {
+    log_timing("error");
     if (error) {
       *error = FormatNSError(commit_error);
     }
@@ -2723,6 +2868,7 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     [impl_->allocator reset];
     return false;
   }
+  log_timing("ok");
   if (sample_gpu) {
     impl_->LogGpuTimestampResult("dispatch", grid_size, 1);
   }
@@ -2743,6 +2889,11 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
     }
     return false;
   }
+  const bool log_dispatch = impl_->ShouldLogDispatchTiming();
+  const bool log_detail = log_dispatch && impl_->dispatch_timing_detail;
+  const auto t_begin = log_dispatch
+                           ? std::chrono::steady_clock::now()
+                           : std::chrono::steady_clock::time_point{};
   id<MTL4CommandBuffer> cmd = [impl_->device newCommandBuffer];
   if (!cmd) {
     if (error) {
@@ -2750,6 +2901,9 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
     }
     return false;
   }
+  const auto t_cmd_created = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
   [cmd beginCommandBufferWithAllocator:impl_->allocator];
   if (impl_->residency_set) {
     [cmd useResidencySet:impl_->residency_set];
@@ -2778,6 +2932,9 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
                                   intoHeap:impl_->timestamp_heap
                                    atIndex:0];
   }
+  uint32_t threadgroup_first = 0;
+  bool threadgroup_mixed = false;
+  size_t bindings_total = 0;
   for (const auto& dispatch : dispatches) {
     const MetalKernel* kernel = dispatch.kernel;
     if (!kernel || !kernel->pipeline_) {
@@ -2796,6 +2953,9 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
         (id<MTL4ArgumentTable>)kernel->argument_table_;
     const std::vector<MetalBufferBinding>* bindings =
         dispatch.bindings ? dispatch.bindings : nullptr;
+    if (bindings) {
+      bindings_total += bindings->size();
+    }
     if (bindings && !bindings->empty() && !table) {
       if (error) {
         *error = "Metal 4 argument table unavailable for bindings";
@@ -2857,6 +3017,11 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
     uint32_t threadgroup = ChooseThreadgroupSize(
         impl_->threadgroup_override, kernel->ThreadExecutionWidth(),
         kernel->MaxThreadsPerThreadgroup());
+    if (threadgroup_first == 0u) {
+      threadgroup_first = threadgroup;
+    } else if (threadgroup_first != threadgroup) {
+      threadgroup_mixed = true;
+    }
     MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
     MTLSize grid = MTLSizeMake(grid_size, 1, 1);
     [encoder dispatchThreads:grid threadsPerThreadgroup:threads_per_group];
@@ -2868,6 +3033,9 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
   }
   [encoder endEncoding];
   [cmd endCommandBuffer];
+  const auto t_encode_done = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
   __block NSError* commit_error = nil;
   dispatch_semaphore_t done = dispatch_semaphore_create(0);
   MTL4CommitOptions* options = [[MTL4CommitOptions alloc] init];
@@ -2877,8 +3045,85 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
     }
     dispatch_semaphore_signal(done);
   }];
+  const auto t_commit_begin = log_dispatch
+                                  ? std::chrono::steady_clock::now()
+                                  : std::chrono::steady_clock::time_point{};
   const id<MTL4CommandBuffer> buffers[] = {cmd};
   [impl_->queue commit:buffers count:1 options:options];
+  const auto t_commit_done = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+  const auto t_wait_start = log_dispatch
+                                ? t_commit_done
+                                : std::chrono::steady_clock::time_point{};
+  auto log_timing = [&](const char* result) {
+    if (!log_dispatch) {
+      return;
+    }
+    const auto t_done = std::chrono::steady_clock::now();
+    double encode_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_encode_done - t_begin)
+            .count();
+    double wait_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_done - t_wait_start)
+            .count();
+    double total_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_done - t_begin)
+            .count();
+    std::cerr << "[dispatch_timing] batch=1"
+              << " dispatches=" << dispatches.size()
+              << " grid=" << grid_size
+              << " encode_ms=" << encode_ms
+              << " wait_ms=" << wait_ms
+              << " total_ms=" << total_ms
+              << " result=" << result;
+    if (log_detail) {
+      double create_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_cmd_created - t_begin)
+              .count();
+      double encode_only_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_encode_done - t_cmd_created)
+              .count();
+      double prep_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_commit_begin - t_encode_done)
+              .count();
+      double commit_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_commit_done - t_commit_begin)
+              .count();
+      std::cerr << " create_ms=" << create_ms
+                << " encode_only_ms=" << encode_only_ms
+                << " prep_ms=" << prep_ms
+                << " commit_ms=" << commit_ms
+                << " tg=" << threadgroup_first
+                << " tg_mixed=" << (threadgroup_mixed ? 1 : 0)
+                << " binds=" << bindings_total;
+      if (sample_gpu) {
+        Impl::GpuTimestampSample sample;
+        if (impl_->ResolveGpuTimestampSample(&sample)) {
+          if (sample.has_ms) {
+            double wait_gap_ms = wait_ms - sample.ms;
+            std::cerr << " gpu_ms=" << sample.ms
+                      << " wait_gap_ms=" << wait_gap_ms;
+          } else {
+            std::cerr << " gpu_ticks=" << sample.ticks;
+          }
+        } else if (!sample.error.empty()) {
+          std::cerr << " gpu_err=" << sample.error;
+        }
+      }
+    }
+    if (timeout_ms != 0u) {
+      std::cerr << " timeout_ms=" << timeout_ms;
+    }
+    std::cerr << "\n";
+  };
   if (timeout_ms == 0u) {
     dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
   } else {
@@ -2886,6 +3131,7 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
         dispatch_time(DISPATCH_TIME_NOW,
                       static_cast<int64_t>(timeout_ms) * NSEC_PER_MSEC);
     if (dispatch_semaphore_wait(done, timeout) != 0) {
+      log_timing("timeout");
       if (error) {
         *error = "Metal dispatch timed out";
       }
@@ -2903,6 +3149,7 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
   dispatch_release(done);
 #endif
   if (commit_error) {
+    log_timing("error");
     if (error) {
       *error = FormatNSError(commit_error);
     }
@@ -2911,6 +3158,7 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
     [impl_->allocator reset];
     return false;
   }
+  log_timing("ok");
   if (sample_gpu) {
     impl_->LogGpuTimestampResult("dispatch_batch", grid_size,
                                  dispatches.size());
