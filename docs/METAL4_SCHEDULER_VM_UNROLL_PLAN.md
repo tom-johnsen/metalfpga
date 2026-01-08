@@ -115,3 +115,10 @@ Rationale: `entry_count` can be large; disable unroll to prevent runaway IR.
 - MSL size should remain roughly unchanged.
 - VCD tests should stay correct (2-state + 4-state).
 - Compiler samples: watch for reduced CPU time in `MTLCompilerService`.
+
+## Status
+- Implemented `#pragma clang loop unroll(disable)` for all emitted `for (uint …)`
+  loops in `src/codegen/msl_codegen.cc` (scheduler init, wait loops, array
+  copies, wide-word helpers, and case entry scans).
+- Audit script shows 0 missing unroll pragmas for `out << "…for (uint …)"`
+  loops in the codegen output.

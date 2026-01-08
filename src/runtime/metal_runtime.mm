@@ -47,6 +47,220 @@ std::string FormatNSError(NSError* error);
 void LogPipeline(bool enabled, const std::string& message);
 std::string FormatTimestamp();
 
+struct SourceStats {
+  size_t bytes = 0;
+  size_t lines = 0;
+  size_t switches = 0;
+  size_t cases = 0;
+  size_t ifs = 0;
+  size_t fors = 0;
+  size_t whiles = 0;
+  size_t kernels = 0;
+  std::string top_functions;
+};
+
+struct FunctionStats {
+  std::string name;
+  size_t lines = 0;
+  size_t switches = 0;
+  size_t cases = 0;
+  size_t ifs = 0;
+  size_t fors = 0;
+  size_t whiles = 0;
+  size_t ternaries = 0;
+};
+
+size_t CountSubstr(const std::string& haystack, const char* needle) {
+  if (!needle || !*needle) {
+    return 0;
+  }
+  size_t count = 0;
+  size_t pos = 0;
+  const size_t len = std::strlen(needle);
+  while (true) {
+    pos = haystack.find(needle, pos);
+    if (pos == std::string::npos) {
+      break;
+    }
+    count++;
+    pos += len;
+  }
+  return count;
+}
+
+bool IsIdentStart(char ch) {
+  return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_';
+}
+
+bool IsIdentChar(char ch) {
+  return IsIdentStart(ch) || (ch >= '0' && ch <= '9') || ch == ':' || ch == '$';
+}
+
+std::string ExtractFunctionName(const std::string& line) {
+  size_t i = 0;
+  while (i < line.size()) {
+    if (!IsIdentStart(line[i])) {
+      i += 1;
+      continue;
+    }
+    size_t start = i;
+    i += 1;
+    while (i < line.size() && IsIdentChar(line[i])) {
+      i += 1;
+    }
+    std::string ident = line.substr(start, i - start);
+    size_t j = i;
+    while (j < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[j]))) {
+      j += 1;
+    }
+    if (j < line.size() && line[j] == '(') {
+      if (ident == "__attribute__") {
+        int depth = 0;
+        while (j < line.size()) {
+          if (line[j] == '(') {
+            depth += 1;
+          } else if (line[j] == ')') {
+            depth -= 1;
+            if (depth <= 0) {
+              j += 1;
+              break;
+            }
+          }
+          j += 1;
+        }
+        i = j;
+        continue;
+      }
+      return ident;
+    }
+  }
+  return std::string{};
+}
+
+std::string FormatTopFunctions(std::vector<FunctionStats> funcs) {
+  if (funcs.empty()) {
+    return std::string{};
+  }
+  std::sort(funcs.begin(), funcs.end(),
+            [](const FunctionStats& a, const FunctionStats& b) {
+              if (a.lines != b.lines) {
+                return a.lines > b.lines;
+              }
+              return a.ifs > b.ifs;
+            });
+  size_t count = std::min<size_t>(3u, funcs.size());
+  std::ostringstream oss;
+  for (size_t i = 0; i < count; ++i) {
+    if (i > 0) {
+      oss << ",";
+    }
+    const auto& fn = funcs[i];
+    oss << fn.name << "(lines=" << fn.lines
+        << ",if=" << fn.ifs
+        << ",sw=" << fn.switches
+        << ",for=" << fn.fors
+        << ",?:=" << fn.ternaries
+        << ")";
+  }
+  return oss.str();
+}
+
+SourceStats ComputeSourceStats(const std::string& source) {
+  SourceStats stats;
+  stats.bytes = source.size();
+  stats.lines = 1;
+  for (char ch : source) {
+    if (ch == '\n') {
+      stats.lines += 1;
+    }
+  }
+  stats.switches = CountSubstr(source, "switch (") +
+                   CountSubstr(source, "switch(");
+  stats.cases = CountSubstr(source, "case ");
+  stats.ifs = CountSubstr(source, "if (") + CountSubstr(source, "if(");
+  stats.fors = CountSubstr(source, "for (") + CountSubstr(source, "for(");
+  stats.whiles =
+      CountSubstr(source, "while (") + CountSubstr(source, "while(");
+  stats.kernels = CountSubstr(source, "kernel void ");
+  std::vector<FunctionStats> functions;
+  functions.reserve(64);
+  bool in_func = false;
+  bool pending_sig = false;
+  int brace_depth = 0;
+  FunctionStats current;
+  std::string signature;
+  std::istringstream iss(source);
+  std::string line;
+  while (std::getline(iss, line)) {
+    bool is_start = false;
+    if (!in_func) {
+      if (pending_sig) {
+        signature += " " + line;
+        if (line.find('{') != std::string::npos) {
+          std::string name = ExtractFunctionName(signature);
+          if (!name.empty()) {
+            current = FunctionStats{};
+            current.name = name;
+            in_func = true;
+            is_start = true;
+          }
+          pending_sig = false;
+          signature.clear();
+        } else if (line.find(");") != std::string::npos) {
+          pending_sig = false;
+          signature.clear();
+        }
+      } else if (line.find("kernel void ") != std::string::npos ||
+                 line.find("static __attribute__") != std::string::npos ||
+                 line.find("static inline ") != std::string::npos ||
+                 line.find("static ") != std::string::npos) {
+        if (line.find('(') != std::string::npos) {
+          if (line.find('{') != std::string::npos) {
+            std::string name = ExtractFunctionName(line);
+            if (!name.empty()) {
+              current = FunctionStats{};
+              current.name = name;
+              in_func = true;
+              is_start = true;
+            }
+          } else {
+            pending_sig = true;
+            signature = line;
+          }
+        }
+      }
+    }
+    if (in_func) {
+      current.lines += 1;
+      current.switches += CountSubstr(line, "switch (") +
+                          CountSubstr(line, "switch(");
+      current.cases += CountSubstr(line, "case ");
+      current.ifs += CountSubstr(line, "if (") + CountSubstr(line, "if(");
+      current.fors += CountSubstr(line, "for (") + CountSubstr(line, "for(");
+      current.whiles +=
+          CountSubstr(line, "while (") + CountSubstr(line, "while(");
+      current.ternaries += CountSubstr(line, "?");
+      for (char ch : line) {
+        if (ch == '{') {
+          brace_depth += 1;
+        } else if (ch == '}') {
+          brace_depth -= 1;
+        }
+      }
+      if (!is_start && brace_depth <= 0) {
+        functions.push_back(current);
+        in_func = false;
+        brace_depth = 0;
+      }
+    } else {
+      brace_depth = 0;
+    }
+  }
+  stats.top_functions = FormatTopFunctions(std::move(functions));
+  return stats;
+}
+
 struct MetalRuntime::Impl {
   struct PipelineTask {
     id<MTL4CompilerTask> task = nil;
@@ -87,6 +301,8 @@ struct MetalRuntime::Impl {
   uint64_t timestamp_frequency = 0;
   NSUInteger timestamp_heap_count = 0;
   std::string last_source;
+  SourceStats last_source_stats;
+  bool last_source_stats_valid = false;
   bool prefer_source_bindings = false;
   bool ShouldSampleGpuTimestamps() {
     if (!gpu_timestamps) {
@@ -1464,7 +1680,11 @@ bool MetalRuntime::Initialize(std::string* error) {
     if (auto override_size = EnvU32("METALFPGA_THREADGROUP_SIZE")) {
       impl_->threadgroup_override = *override_size;
     }
-    impl_->use_residency_set = EnvEnabled("METALFPGA_RESIDENCY_SET");
+    if (auto residency_pref = EnvTriState("METALFPGA_RESIDENCY_SET")) {
+      impl_->use_residency_set = *residency_pref;
+    } else {
+      impl_->use_residency_set = true;
+    }
     impl_->gpu_timestamps = EnvEnabled("METALFPGA_GPU_TIMESTAMPS") ||
                             EnvEnabled("METALFPGA_GPU_PROFILE");
     impl_->gpu_timestamps_precise =
@@ -1575,6 +1795,8 @@ bool MetalRuntime::CompileSource(const std::string& source,
   }
   if (impl_) {
     impl_->last_source = expanded;
+    impl_->last_source_stats = ComputeSourceStats(impl_->last_source);
+    impl_->last_source_stats_valid = true;
   }
   NSString* ns_source =
       [[NSString alloc] initWithBytes:expanded.data()
@@ -1719,6 +1941,122 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
                   .count();
           LogPipelineTrace(true, "still waiting: " + name + " " +
                                     std::to_string(elapsed_ms) + "ms");
+          std::string diag;
+          bool unexpected_state = false;
+          {
+            std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
+            size_t pending_count = impl_->pipeline_tasks.size();
+            size_t cache_count = impl_->pipeline_cache.size();
+            size_t done_count = impl_->precompile_done;
+            size_t total_count = impl_->precompile_total;
+            size_t source_bytes = impl_->last_source.size();
+            SourceStats stats = impl_->last_source_stats;
+            bool stats_valid = impl_->last_source_stats_valid;
+            int64_t wait_age_ms = -1;
+            int64_t task_age_ms = -1;
+            int64_t oldest_ms = -1;
+            int64_t newest_ms = -1;
+            bool name_found = false;
+            bool task_missing = false;
+            bool error_seen = false;
+            size_t listed = 0;
+            std::string names;
+            for (const auto& entry : impl_->pipeline_tasks) {
+              if (listed < 3u) {
+                if (!names.empty()) {
+                  names += ",";
+                }
+                names += entry.first;
+                listed += 1u;
+              }
+              if (entry.second.start !=
+                  std::chrono::steady_clock::time_point{}) {
+                int64_t age =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - entry.second.start)
+                        .count();
+                if (oldest_ms < 0 || age > oldest_ms) {
+                  oldest_ms = age;
+                }
+                if (newest_ms < 0 || age < newest_ms) {
+                  newest_ms = age;
+                }
+                if (entry.first == name) {
+                  name_found = true;
+                  task_missing = (entry.second.task == nil);
+                  error_seen = (entry.second.error != nil);
+                  wait_age_ms = age;
+                  task_age_ms = age;
+                }
+              }
+              if (entry.first == name &&
+                  entry.second.start ==
+                      std::chrono::steady_clock::time_point{}) {
+                name_found = true;
+                task_missing = (entry.second.task == nil);
+                error_seen = (entry.second.error != nil);
+              }
+            }
+            if (pending_count > listed && listed > 0u) {
+              names += ",+" + std::to_string(pending_count - listed);
+            }
+            std::string reason;
+            if (!name_found || pending_count == 0u || task_missing ||
+                error_seen || pending_count > 1u) {
+              unexpected_state = true;
+              reason = "unexpected_state";
+            }
+            diag =
+                (unexpected_state ? "PIPELINE ALERT: reason=" +
+                                        (reason.empty() ? std::string("wait")
+                                                        : reason)
+                                  : "pipeline diag") +
+                " name=" + name +
+                " pending=" + std::to_string(pending_count) +
+                " cache=" + std::to_string(cache_count) +
+                " precompile=" + std::to_string(done_count) + "/" +
+                std::to_string(total_count) + " source=" +
+                std::to_string(source_bytes) + "B";
+            if (!names.empty()) {
+              diag += " names=" + names;
+            }
+            if (task_age_ms >= 0) {
+              diag += " task_age=" + std::to_string(task_age_ms) + "ms";
+            } else if (wait_age_ms >= 0) {
+              diag += " wait_age=" + std::to_string(wait_age_ms) + "ms";
+            }
+            if (oldest_ms >= 0) {
+              diag += " oldest=" + std::to_string(oldest_ms) + "ms";
+            }
+            if (newest_ms >= 0) {
+              diag += " newest=" + std::to_string(newest_ms) + "ms";
+            }
+            if (!name_found) {
+              diag += " name_missing=1";
+            }
+            if (task_missing) {
+              diag += " task_missing=1";
+            }
+            if (error_seen) {
+              diag += " error_seen=1";
+            }
+            if (pending_count == 0u) {
+              diag += " pending=0_unexpected";
+            }
+            if (stats_valid) {
+              diag += " stats=lines:" + std::to_string(stats.lines) +
+                      " switch:" + std::to_string(stats.switches) +
+                      " case:" + std::to_string(stats.cases) +
+                      " if:" + std::to_string(stats.ifs) +
+                      " for:" + std::to_string(stats.fors) +
+                      " while:" + std::to_string(stats.whiles) +
+                      " kernels:" + std::to_string(stats.kernels);
+              if (!stats.top_functions.empty()) {
+                diag += " top_funcs=" + stats.top_functions;
+              }
+            }
+          }
+          LogPipelineTrace(true, diag);
           last_log = now;
         }
       }
@@ -2241,10 +2579,10 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
     }
     return false;
   }
+  [cmd beginCommandBufferWithAllocator:impl_->allocator];
   if (impl_->residency_set) {
     [cmd useResidencySet:impl_->residency_set];
   }
-  [cmd beginCommandBufferWithAllocator:impl_->allocator];
   id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
   if (!encoder) {
     if (error) {
@@ -2412,10 +2750,10 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
     }
     return false;
   }
+  [cmd beginCommandBufferWithAllocator:impl_->allocator];
   if (impl_->residency_set) {
     [cmd useResidencySet:impl_->residency_set];
   }
-  [cmd beginCommandBufferWithAllocator:impl_->allocator];
   id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
   if (!encoder) {
     if (error) {
@@ -2881,10 +3219,13 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
         }
         spec.length = sizeof(uint32_t) * instance_count * sched.proc_count *
                       sched.vm_call_frame_words * sched.vm_call_frame_depth;
+      } else if (name == "sched_vm_debug") {
+        spec.length = sizeof(uint32_t) * instance_count *
+                      GPGA_SCHED_VM_DEBUG_WORDS;
       } else if (name == "sched_vm_case_header") {
         const size_t count =
             (sched.vm_case_header_count > 0u) ? sched.vm_case_header_count : 1u;
-        spec.length = sizeof(uint32_t) * 6u * count;
+        spec.length = sizeof(GpgaSchedVmCaseHeader) * count;
       } else if (name == "sched_vm_case_entry") {
         const size_t count =
             (sched.vm_case_entry_count > 0u) ? sched.vm_case_entry_count : 1u;
@@ -3020,7 +3361,7 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       const size_t count = (sched.vm_case_header_count > 0u)
                                ? sched.vm_case_header_count
                                : 1u;
-      push_vm("sched_vm_case_header", sizeof(uint32_t) * 6u * count);
+      push_vm("sched_vm_case_header", sizeof(GpgaSchedVmCaseHeader) * count);
     }
     {
       const size_t count = (sched.vm_case_entry_count > 0u)

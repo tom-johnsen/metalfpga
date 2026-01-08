@@ -844,7 +844,9 @@ bool IsSystemTask(const std::string& name) {
 bool IdentAsString(const std::string& name) {
   return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
          name == "$writememh" || name == "$writememb" ||
-         name == "$printtimescale";
+         name == "$printtimescale" || name == "$async$and$array" ||
+         name == "$sync$or$plane" || name == "$async$nor$plane" ||
+         name == "$sync$nand$plane";
 }
 
 std::vector<char> ExtractFormatSpecs(const std::string& format) {
@@ -903,6 +905,80 @@ void AddString(SysTaskInfo* info, const std::string& value) {
   }
   info->string_ids[value] = info->string_table.size();
   info->string_table.push_back(value);
+}
+
+void CollectStringLiterals(const gpga::Expr& expr, SysTaskInfo* info) {
+  if (!info) {
+    return;
+  }
+  switch (expr.kind) {
+    case gpga::ExprKind::kString:
+      AddString(info, expr.string_value);
+      return;
+    case gpga::ExprKind::kUnary:
+      if (expr.operand) {
+        CollectStringLiterals(*expr.operand, info);
+      }
+      return;
+    case gpga::ExprKind::kBinary:
+      if (expr.lhs) {
+        CollectStringLiterals(*expr.lhs, info);
+      }
+      if (expr.rhs) {
+        CollectStringLiterals(*expr.rhs, info);
+      }
+      return;
+    case gpga::ExprKind::kTernary:
+      if (expr.condition) {
+        CollectStringLiterals(*expr.condition, info);
+      }
+      if (expr.then_expr) {
+        CollectStringLiterals(*expr.then_expr, info);
+      }
+      if (expr.else_expr) {
+        CollectStringLiterals(*expr.else_expr, info);
+      }
+      return;
+    case gpga::ExprKind::kSelect:
+      if (expr.base) {
+        CollectStringLiterals(*expr.base, info);
+      }
+      if (expr.msb_expr) {
+        CollectStringLiterals(*expr.msb_expr, info);
+      }
+      if (expr.lsb_expr) {
+        CollectStringLiterals(*expr.lsb_expr, info);
+      }
+      return;
+    case gpga::ExprKind::kIndex:
+      if (expr.base) {
+        CollectStringLiterals(*expr.base, info);
+      }
+      if (expr.index) {
+        CollectStringLiterals(*expr.index, info);
+      }
+      return;
+    case gpga::ExprKind::kCall:
+      for (const auto& arg : expr.call_args) {
+        if (arg) {
+          CollectStringLiterals(*arg, info);
+        }
+      }
+      return;
+    case gpga::ExprKind::kConcat:
+      for (const auto& element : expr.elements) {
+        if (element) {
+          CollectStringLiterals(*element, info);
+        }
+      }
+      if (expr.repeat_expr) {
+        CollectStringLiterals(*expr.repeat_expr, info);
+      }
+      return;
+    case gpga::ExprKind::kIdentifier:
+    case gpga::ExprKind::kNumber:
+      return;
+  }
 }
 
 void CollectSystemFunctionExpr(const gpga::Expr& expr, SysTaskInfo* info) {
@@ -1429,6 +1505,10 @@ void CollectTasks(const gpga::Statement& stmt, SysTaskInfo* info) {
                  format_specs[format_arg_index] == 's' &&
                  arg->kind == gpga::ExprKind::kIdentifier) {
         AddString(info, arg->ident);
+      } else if (has_format_specs && !is_format_literal &&
+                 format_arg_index < format_specs.size() &&
+                 format_specs[format_arg_index] == 's') {
+        CollectStringLiterals(*arg, info);
       }
       if (has_format_specs && !is_format_literal) {
         ++format_arg_index;
@@ -1744,13 +1824,14 @@ bool InitSchedulerVmBuffers(
       FindBufferMutable(buffers, "sched_vm_service_arg", "");
   auto* service_ret_assign_buf =
       FindBufferMutable(buffers, "sched_vm_service_ret_assign_entry", "");
+  auto* debug_buf = FindBufferMutable(buffers, "sched_vm_debug", "");
   if (!bytecode_buf || !offset_buf || !length_buf || !cond_val_buf ||
       !cond_xz_buf || !cond_entry_buf || !signal_entry_buf || !ip_buf ||
       !call_sp_buf || !call_frame_buf || !case_header_buf ||
       !case_entry_buf || !case_words_buf || !expr_buf || !expr_imm_buf ||
       !assign_entry_buf || !delay_assign_buf || !force_entry_buf ||
       !release_entry_buf || !service_entry_buf || !service_arg_buf ||
-      !service_ret_assign_buf) {
+      !service_ret_assign_buf || !debug_buf) {
     if (error) {
       *error = "missing scheduler VM buffers";
     }
@@ -1766,7 +1847,8 @@ bool InitSchedulerVmBuffers(
       !expr_imm_buf->contents() || !assign_entry_buf->contents() ||
       !delay_assign_buf->contents() || !force_entry_buf->contents() ||
       !release_entry_buf->contents() || !service_entry_buf->contents() ||
-      !service_arg_buf->contents() || !service_ret_assign_buf->contents()) {
+      !service_arg_buf->contents() || !service_ret_assign_buf->contents() ||
+      !debug_buf->contents()) {
     if (error) {
       *error = "scheduler VM buffers are not CPU-visible";
     }
@@ -1946,6 +2028,14 @@ bool InitSchedulerVmBuffers(
     }
     return false;
   }
+  const size_t debug_words_needed =
+      static_cast<size_t>(instance_count) * GPGA_SCHED_VM_DEBUG_WORDS;
+  if (debug_buf->length() < debug_words_needed * sizeof(uint32_t)) {
+    if (error) {
+      *error = "scheduler VM debug buffer length mismatch";
+    }
+    return false;
+  }
 
   std::memset(bytecode_buf->contents(), 0, bytecode_buf->length());
   std::memset(cond_val_buf->contents(), 0, cond_val_buf->length());
@@ -1968,6 +2058,7 @@ bool InitSchedulerVmBuffers(
   std::memset(service_arg_buf->contents(), 0, service_arg_buf->length());
   std::memset(service_ret_assign_buf->contents(), 0,
               service_ret_assign_buf->length());
+  std::memset(debug_buf->contents(), 0, debug_buf->length());
 
   auto* bytecode = static_cast<uint32_t*>(bytecode_buf->contents());
   auto* offsets = static_cast<uint32_t*>(offset_buf->contents());
@@ -1987,6 +2078,12 @@ bool InitSchedulerVmBuffers(
     if (has_layout) {
       std::memcpy(bytecode + vm_base, layout_bytecode,
                   sizeof(uint32_t) * layout->bytecode.size());
+      // Diagnostic: verify bytecode buffer contents on host
+      if (gid == 0 && layout->bytecode.size() > 0) {
+        fprintf(stderr, "host-bytecode-diag: gid=0 vm_base=%zu bc[0]=0x%08x bc[1]=0x%08x bc[2]=0x%08x bc[624]=0x%08x\n",
+                vm_base, bytecode[vm_base], bytecode[vm_base + 1],
+                bytecode[vm_base + 2], bytecode[vm_base + 624]);
+      }
     }
     for (uint32_t pid = 0u; pid < proc_count; ++pid) {
       const size_t bc_index = vm_base + (pid * words_per_proc);
@@ -6040,8 +6137,15 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
 
   const std::string base = "gpga_" + gpga::MslMangleIdentifier(module.name);
   const bool has_sched = HasKernel(msl, base + "_sched_step");
+  const bool has_fallback_kernel = HasKernel(msl, base);
   const bool has_init = HasKernel(msl, base + "_init");
   const bool has_tick = HasKernel(msl, base + "_tick");
+  if (!has_sched && !has_fallback_kernel) {
+    if (error) {
+      *error = "missing primary kernel in Metal source (" + base + ")";
+    }
+    return false;
+  }
   {
     std::vector<std::string> precompile;
     if (has_sched) {
@@ -6064,6 +6168,16 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   gpga::ParseSchedulerConstants(msl, &sched, error);
   gpga::SchedulerVmLayout vm_layout;
   const gpga::SchedulerVmLayout* vm_layout_ptr = nullptr;
+  uint32_t callgroup_procs = 0u;
+  uint32_t empty_procs = 0u;
+  size_t vm_proc_count = 0u;
+  bool vm_needs_call_group = false;
+  struct VmWatchProc {
+    uint32_t pid;
+    gpga::SchedulerVmOp op;
+    const char* label;
+  };
+  std::vector<VmWatchProc> vm_watch_procs;
   if (sched.vm_enabled) {
     if (!gpga::BuildSchedulerVmLayoutFromModule(
             module, &vm_layout, error, enable_4state)) {
@@ -6099,12 +6213,10 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
       vm_layout_ptr = &vm_layout;
     }
-    if (run_verbose) {
-      uint32_t callgroup_procs = 0u;
-      uint32_t empty_procs = 0u;
-      const size_t proc_count = std::min(vm_layout.proc_offsets.size(),
-                                         vm_layout.proc_lengths.size());
-      for (size_t pid = 0; pid < proc_count; ++pid) {
+    if (vm_layout_ptr) {
+      vm_proc_count = std::min(vm_layout.proc_offsets.size(),
+                               vm_layout.proc_lengths.size());
+      for (size_t pid = 0; pid < vm_proc_count; ++pid) {
         const uint32_t len = vm_layout.proc_lengths[pid];
         if (len == 0u) {
           empty_procs += 1u;
@@ -6120,15 +6232,107 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           callgroup_procs += 1u;
         }
       }
-      if (callgroup_procs == 0u) {
+      vm_needs_call_group = (callgroup_procs > 0u);
+    } else {
+      vm_needs_call_group = true;
+    }
+    if (has_sched && vm_needs_call_group && !has_fallback_kernel) {
+      if (error) {
+        *error =
+            "sched-vm: CallGroup fallbacks present but fallback kernel missing";
+      }
+      return false;
+    }
+    if (run_verbose) {
+      if (!vm_layout_ptr) {
+        std::cerr << "sched-vm: missing bytecode layout; assuming CallGroup fallback\n";
+      } else if (callgroup_procs == 0u) {
         std::cerr << "sched-vm: no CallGroup fallbacks; A-full helpers skipped\n";
       } else {
         std::cerr << "sched-vm: CallGroup fallbacks in " << callgroup_procs
-                  << " of " << proc_count << " procs";
+                  << " of " << vm_proc_count << " procs";
         if (empty_procs > 0u) {
           std::cerr << " (" << empty_procs << " empty bytecode)";
         }
         std::cerr << "\n";
+      }
+      if (vm_layout_ptr) {
+        std::vector<uint32_t> first_op_counts(256, 0u);
+        std::vector<uint32_t> len_bins(9, 0u);
+        uint32_t len_over_8 = 0u;
+        uint32_t zero_len = 0u;
+        for (uint32_t pid = 0u; pid < vm_proc_count; ++pid) {
+          const uint32_t len = vm_layout.proc_lengths[pid];
+          if (len == 0u) {
+            zero_len += 1u;
+          }
+          if (len < len_bins.size()) {
+            len_bins[len] += 1u;
+          } else {
+            len_over_8 += 1u;
+          }
+          if (len == 0u) {
+            continue;
+          }
+          const size_t offset = vm_layout.proc_offsets[pid];
+          if (offset < vm_layout.bytecode.size()) {
+            const auto op = gpga::DecodeSchedulerVmOp(vm_layout.bytecode[offset]);
+            const auto op_id = static_cast<uint32_t>(op);
+            if (op_id < first_op_counts.size()) {
+              first_op_counts[op_id] += 1u;
+            }
+          }
+        }
+        auto op_count = [&](gpga::SchedulerVmOp op) -> uint32_t {
+          return first_op_counts[static_cast<uint32_t>(op)];
+        };
+        std::cerr << "sched-vm: proc length bins len0=" << len_bins[0]
+                  << " len1=" << len_bins[1]
+                  << " len2=" << len_bins[2]
+                  << " len3=" << len_bins[3]
+                  << " len4=" << len_bins[4]
+                  << " len5=" << len_bins[5]
+                  << " len6=" << len_bins[6]
+                  << " len7=" << len_bins[7]
+                  << " len8=" << len_bins[8]
+                  << " len9+=" << len_over_8
+                  << " zero_len=" << zero_len << "\n";
+        std::cerr << "sched-vm: proc first-op counts"
+                  << " done=" << op_count(gpga::SchedulerVmOp::kDone)
+                  << " callgroup=" << op_count(gpga::SchedulerVmOp::kCallGroup)
+                  << " wait_time=" << op_count(gpga::SchedulerVmOp::kWaitTime)
+                  << " wait_delta=" << op_count(gpga::SchedulerVmOp::kWaitDelta)
+                  << " wait_edge=" << op_count(gpga::SchedulerVmOp::kWaitEdge)
+                  << " wait_cond=" << op_count(gpga::SchedulerVmOp::kWaitCond)
+                  << " wait_event=" << op_count(gpga::SchedulerVmOp::kWaitEvent)
+                  << " repeat=" << op_count(gpga::SchedulerVmOp::kRepeat)
+                  << " assign=" << op_count(gpga::SchedulerVmOp::kAssign)
+                  << " assign_nb=" << op_count(gpga::SchedulerVmOp::kAssignNb)
+                  << " assign_delay=" << op_count(gpga::SchedulerVmOp::kAssignDelay)
+                  << " service=" << op_count(gpga::SchedulerVmOp::kServiceCall)
+                  << "\n";
+        auto add_watch = [&](gpga::SchedulerVmOp op, const char* label) {
+          for (uint32_t pid = 0u; pid < vm_proc_count; ++pid) {
+            const uint32_t len = vm_layout.proc_lengths[pid];
+            if (len == 0u) {
+              continue;
+            }
+            const size_t offset = vm_layout.proc_offsets[pid];
+            if (offset >= vm_layout.bytecode.size()) {
+              continue;
+            }
+            if (gpga::DecodeSchedulerVmOp(vm_layout.bytecode[offset]) == op) {
+              vm_watch_procs.push_back(VmWatchProc{pid, op, label});
+              break;
+            }
+          }
+        };
+        vm_watch_procs.clear();
+        add_watch(gpga::SchedulerVmOp::kWaitTime, "wait_time");
+        add_watch(gpga::SchedulerVmOp::kWaitEdge, "wait_edge");
+        add_watch(gpga::SchedulerVmOp::kWaitCond, "wait_cond");
+        add_watch(gpga::SchedulerVmOp::kWaitEvent, "wait_event");
+        add_watch(gpga::SchedulerVmOp::kServiceCall, "service");
       }
     }
   }
@@ -6259,6 +6463,17 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       return false;
     }
   }
+  if (has_sched && sched.vm_enabled && run_verbose &&
+      sched_kernel.HasBuffer("sched_vm_debug")) {
+    auto flags_it = buffers.find("sched_flags");
+    if (flags_it != buffers.end() && flags_it->second.contents()) {
+      auto* flags =
+          static_cast<uint32_t*>(flags_it->second.contents());
+      for (uint32_t gid = 0u; gid < count; ++gid) {
+        flags[gid] |= GPGA_SCHED_FLAG_VM_DEBUG;
+      }
+    }
+  }
 
   gpga::ServiceStringTable strings = BuildStringTable(module);
   VcdWriter vcd;
@@ -6280,8 +6495,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     const uint32_t kStatusError = 3u;
     const uint32_t kStatusStopped = 4u;
     const uint32_t kStatusIdle = 1u;
-    const uint32_t max_iters = 100000u;
-    for (uint32_t iter = 0; iter < max_iters; ++iter) {
+    for (uint64_t iter = 0ull;; ++iter) {
       if (sched_params && has_dumpvars) {
         sched_params->max_steps = vcd.active() ? vcd_step_budget : 1u;
       }
@@ -6291,7 +6505,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
         }
         g_halt_request = 0;
       }
-      if (run_verbose && (iter == 0u || (iter % 1000u) == 0u)) {
+      if (run_verbose && (iter == 0ull || (iter % 1000ull) == 0ull)) {
         std::cerr << "Dispatch iter " << iter << "\n";
       }
       auto dispatch_start = std::chrono::steady_clock::now();
@@ -6299,7 +6513,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
                             dispatch_timeout_ms)) {
         return false;
       }
-      if (run_verbose && (iter == 0u || (iter % 1000u) == 0u)) {
+      if (run_verbose && (iter == 0ull || (iter % 1000ull) == 0ull)) {
         auto dispatch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - dispatch_start);
         std::cerr << "Dispatch iter " << iter << " took "
@@ -6365,9 +6579,285 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       auto* status =
           static_cast<uint32_t*>(buffers["sched_status"].contents());
       if (!status) {
+        if (run_verbose) {
+          std::cerr << "warning: sched_status buffer missing\n";
+        }
         break;
       }
       const uint32_t status_val = status[0];
+      if (run_verbose &&
+          (iter == 0u || status_val != GPGA_SCHED_STATUS_RUNNING)) {
+        auto* phase =
+            static_cast<uint32_t*>(buffers["sched_phase"].contents());
+        auto* flags =
+            static_cast<uint32_t*>(buffers["sched_flags"].contents());
+        auto* error_buf =
+            static_cast<uint32_t*>(buffers["sched_error"].contents());
+        auto* halt_buf =
+            static_cast<uint32_t*>(buffers["sched_halt_mode"].contents());
+        auto* time_buf =
+            static_cast<uint64_t*>(buffers["sched_time"].contents());
+        auto* wait_kind =
+            static_cast<uint32_t*>(buffers["sched_wait_kind"].contents());
+        auto* sched_state =
+            static_cast<uint32_t*>(buffers["sched_state"].contents());
+        auto* vm_len =
+            static_cast<uint32_t*>(
+                buffers["sched_vm_proc_bytecode_length"].contents());
+        auto* vm_ip =
+            static_cast<uint32_t*>(buffers["sched_vm_ip"].contents());
+        uint32_t* vm_debug = nullptr;
+        auto debug_it = buffers.find("sched_vm_debug");
+        if (debug_it != buffers.end() && debug_it->second.contents()) {
+          vm_debug = static_cast<uint32_t*>(debug_it->second.contents());
+        }
+        uint32_t wait_counts[8] = {0u};
+        if (wait_kind && sched.proc_count > 0u) {
+          for (uint32_t pid = 0u; pid < sched.proc_count; ++pid) {
+            uint32_t kind = wait_kind[pid];
+            if (kind < 8u) {
+              wait_counts[kind] += 1u;
+            }
+          }
+        }
+        uint32_t state_counts[3] = {0u};
+        if (sched_state && sched.proc_count > 0u) {
+          for (uint32_t pid = 0u; pid < sched.proc_count; ++pid) {
+            uint32_t state = sched_state[pid];
+            if (state < 3u) {
+              state_counts[state] += 1u;
+            }
+          }
+        }
+        uint32_t vm_len_vals[3] = {0u, 0u, 0u};
+        uint32_t vm_ip_vals[3] = {0u, 0u, 0u};
+        if (vm_len && vm_ip && sched.proc_count > 0u) {
+          const uint32_t limit =
+              std::min<uint32_t>(3u, sched.proc_count);
+          for (uint32_t pid = 0u; pid < limit; ++pid) {
+            vm_len_vals[pid] = vm_len[pid];
+            vm_ip_vals[pid] = vm_ip[pid];
+          }
+        }
+        std::cerr << "sched status: iter=" << iter
+                  << " status=" << status_val
+                  << " error=" << (error_buf ? error_buf[0] : 0u)
+                  << " halt=" << (halt_buf ? halt_buf[0] : 0u)
+                  << " phase=" << (phase ? phase[0] : 0u)
+                  << " flags=" << (flags ? flags[0] : 0u)
+                  << " time=" << (time_buf ? time_buf[0] : 0ull)
+                  << " state=[ready:" << state_counts[GPGA_SCHED_PROC_READY]
+                  << " blocked:" << state_counts[GPGA_SCHED_PROC_BLOCKED]
+                  << " done:" << state_counts[GPGA_SCHED_PROC_DONE]
+                  << "]"
+                  << " vm=[len:" << vm_len_vals[0] << "," << vm_len_vals[1]
+                  << "," << vm_len_vals[2] << " ip:" << vm_ip_vals[0]
+                  << "," << vm_ip_vals[1] << "," << vm_ip_vals[2] << "]"
+                  << " waits=[none:" << wait_counts[GPGA_SCHED_WAIT_NONE]
+                  << " time:" << wait_counts[GPGA_SCHED_WAIT_TIME]
+                  << " event:" << wait_counts[GPGA_SCHED_WAIT_EVENT]
+                  << " cond:" << wait_counts[GPGA_SCHED_WAIT_COND]
+                  << " join:" << wait_counts[GPGA_SCHED_WAIT_JOIN]
+                  << " delta:" << wait_counts[GPGA_SCHED_WAIT_DELTA]
+                  << " edge:" << wait_counts[GPGA_SCHED_WAIT_EDGE]
+                  << " service:" << wait_counts[GPGA_SCHED_WAIT_SERVICE]
+                  << "]\n";
+        if (vm_debug && flags &&
+            (flags[0] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {
+          const uint32_t magic = vm_debug[0];
+          const uint32_t instr = vm_debug[4];
+          const uint32_t op =
+              static_cast<uint32_t>(gpga::DecodeSchedulerVmOp(instr));
+          const uint32_t arg = gpga::DecodeSchedulerVmArg(instr);
+          std::cerr << "sched-vm-debug: magic=0x" << std::hex << magic
+                    << std::dec << " bc_base=" << vm_debug[1]
+                    << " len=" << vm_debug[2]
+                    << " ip=" << vm_debug[3]
+                    << " instr=0x" << std::hex << instr << std::dec
+                    << " op=" << op << " arg=" << arg
+                    << " instr0=0x" << std::hex << vm_debug[5] << std::dec
+                    << " instr1=0x" << std::hex << vm_debug[6] << std::dec
+                    << " vm_idx=" << vm_debug[10]
+                    << " flags=" << vm_debug[11] << "\n";
+          if (status_val == GPGA_SCHED_STATUS_ERROR) {
+            auto bc_it = buffers.find("sched_vm_bytecode");
+            if (bc_it != buffers.end() && bc_it->second.contents()) {
+              auto* bytecode_buf =
+                  static_cast<uint32_t*>(bc_it->second.contents());
+              const size_t bytecode_words =
+                  bc_it->second.length() / sizeof(uint32_t);
+              const uint32_t bc_base = vm_debug[1];
+              const uint32_t bc_len = vm_debug[2];
+              const uint32_t ip = vm_debug[3];
+              const uint32_t next_ip = ip + 1u;
+              uint32_t target = 0u;
+              bool target_ok = false;
+              if (next_ip < bc_len &&
+                  (static_cast<size_t>(bc_base) + next_ip) < bytecode_words) {
+                target = bytecode_buf[bc_base + next_ip];
+                target_ok = true;
+              }
+              std::cerr << "sched-vm-debug-error: op=" << op
+                        << " arg=" << arg
+                        << " next_ip=" << next_ip
+                        << " target=" << (target_ok ? target : 0u)
+                        << " target_ok=" << (target_ok ? 1 : 0)
+                        << " bc_len=" << bc_len
+                        << " cond_count=" << sched.vm_cond_count
+                        << " case_header_count="
+                        << sched.vm_case_header_count
+                        << " case_entry_count="
+                        << sched.vm_case_entry_count
+                        << " service_call_count=" << sched.vm_service_call_count
+                        << " service_assign_count="
+                        << sched.vm_service_assign_count
+                        << "\n";
+              if (op == static_cast<uint32_t>(gpga::SchedulerVmOp::kCase)) {
+                uint32_t case_count = 0u;
+                uint32_t default_target = 0u;
+                bool default_ok = false;
+                if (next_ip < bc_len &&
+                    (static_cast<size_t>(bc_base) + next_ip) < bytecode_words) {
+                  case_count = bytecode_buf[bc_base + next_ip];
+                }
+                const uint32_t target_base = next_ip + 1u;
+                const uint32_t default_index = target_base + case_count;
+                if (default_index < bc_len &&
+                    (static_cast<size_t>(bc_base) + default_index) <
+                        bytecode_words) {
+                  default_target = bytecode_buf[bc_base + default_index];
+                  default_ok = true;
+                }
+                std::cerr << "sched-vm-case-bytecode: case_id=" << arg
+                          << " case_count=" << case_count
+                          << " target_base=" << target_base
+                          << " default_index=" << default_index
+                          << " default_target="
+                          << (default_ok ? default_target : 0u)
+                          << " default_ok=" << (default_ok ? 1 : 0)
+                          << "\n";
+                if (case_count > 0u) {
+                  const uint32_t max_targets =
+                      std::min<uint32_t>(case_count, 8u);
+                  std::cerr << "sched-vm-case-targets:";
+                  for (uint32_t i = 0u; i < max_targets; ++i) {
+                    const uint32_t index = target_base + i;
+                    uint32_t val = 0u;
+                    bool ok = false;
+                    if (index < bc_len &&
+                        (static_cast<size_t>(bc_base) + index) <
+                            bytecode_words) {
+                      val = bytecode_buf[bc_base + index];
+                      ok = true;
+                    }
+                    std::cerr << " [" << i << "]="
+                              << (ok ? val : 0u)
+                              << (ok ? "" : "(bad)");
+                  }
+                  if (case_count > max_targets) {
+                    std::cerr << " ...";
+                  }
+                  std::cerr << "\n";
+                }
+                auto case_it = buffers.find("sched_vm_case_header");
+                if (case_it != buffers.end() &&
+                    case_it->second.contents()) {
+                  auto* headers =
+                      static_cast<gpga::SchedulerVmCaseHeader*>(
+                          case_it->second.contents());
+                  if (arg < sched.vm_case_header_count) {
+                    const auto& header = headers[arg];
+                    std::cerr << "sched-vm-case-header: case_id=" << arg
+                              << " kind=" << header.kind
+                              << " strategy=" << header.strategy
+                              << " width=" << header.width
+                              << " entry_count=" << header.entry_count
+                              << " entry_offset=" << header.entry_offset
+                              << " expr_offset=" << header.expr_offset
+                              << " default_target=" << header.default_target
+                              << "\n";
+                  } else {
+                    std::cerr << "sched-vm-case-header: case_id=" << arg
+                              << " out_of_range count="
+                              << sched.vm_case_header_count << "\n";
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!vm_watch_procs.empty()) {
+          auto* bytecode_buf =
+              static_cast<uint32_t*>(buffers["sched_vm_bytecode"].contents());
+          auto* offsets =
+              static_cast<uint32_t*>(
+                  buffers["sched_vm_proc_bytecode_offset"].contents());
+          auto* lengths =
+              static_cast<uint32_t*>(
+                  buffers["sched_vm_proc_bytecode_length"].contents());
+          const size_t bytecode_words =
+              buffers["sched_vm_bytecode"].length() / sizeof(uint32_t);
+          auto state_name = [](uint32_t state) -> const char* {
+            switch (state) {
+              case GPGA_SCHED_PROC_READY:
+                return "ready";
+              case GPGA_SCHED_PROC_BLOCKED:
+                return "blocked";
+              case GPGA_SCHED_PROC_DONE:
+                return "done";
+              default:
+                return "unknown";
+            }
+          };
+          auto wait_name = [](uint32_t kind) -> const char* {
+            switch (kind) {
+              case GPGA_SCHED_WAIT_NONE:
+                return "none";
+              case GPGA_SCHED_WAIT_TIME:
+                return "time";
+              case GPGA_SCHED_WAIT_EVENT:
+                return "event";
+              case GPGA_SCHED_WAIT_COND:
+                return "cond";
+              case GPGA_SCHED_WAIT_JOIN:
+                return "join";
+              case GPGA_SCHED_WAIT_DELTA:
+                return "delta";
+              case GPGA_SCHED_WAIT_EDGE:
+                return "edge";
+              case GPGA_SCHED_WAIT_SERVICE:
+                return "service";
+              default:
+                return "unknown";
+            }
+          };
+          if (bytecode_buf && offsets && lengths &&
+              sched_state && wait_kind && vm_ip) {
+            std::cerr << "sched-vm: watch";
+            for (const auto& watch : vm_watch_procs) {
+              const uint32_t pid = watch.pid;
+              const uint32_t idx = pid;
+              const uint32_t offset = offsets[idx];
+              const uint32_t len = lengths[idx];
+              uint32_t instr = 0u;
+              gpga::SchedulerVmOp op = gpga::SchedulerVmOp::kDone;
+              if (len > 0u && offset < bytecode_words) {
+                instr = bytecode_buf[offset];
+                op = gpga::DecodeSchedulerVmOp(instr);
+              }
+              std::cerr << " " << watch.label
+                        << "(pid=" << pid
+                        << " op=" << static_cast<uint32_t>(op)
+                        << " len=" << len
+                        << " ip=" << vm_ip[idx]
+                        << " state=" << state_name(sched_state[idx])
+                        << " wait=" << wait_name(wait_kind[idx])
+                        << ")";
+            }
+            std::cerr << "\n";
+          }
+        }
+      }
       const bool should_stop = status_val == kStatusFinished ||
           status_val == kStatusStopped || status_val == kStatusError ||
           saw_finish;

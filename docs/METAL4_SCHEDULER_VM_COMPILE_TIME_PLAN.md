@@ -57,6 +57,9 @@ LLVM alias analysis (GVN/MemoryDependence) into pathological cases.
 - Keep packed setup in `sched_vm_exec_service_ret_assign` only when fallback
   entries exist.
 - Re-emit MSL and compare size/async wait.
+  - Status: no packed setup emitted in `sched_vm_eval_expr`/`sched_vm_exec`/
+    `sched_vm_exec_service_call`; only `sched_vm_exec_service_ret_assign` emits
+    packed setup when fallback entries exist, so no change needed.
 
 2.1 Centralize packed-slot accessors
 - Emit small inline accessors for value/xz loads and stores that take
@@ -95,6 +98,9 @@ inflate the compiled kernel.
   for 4-state; reverted 2-state wide helpers to `inline` after Metal compile
   errors; fixed missing brace in 2-state index loads by using
   `gpga_sched_vm_load_word` (needs re-test on 2-state VCD run).
+- Status: disabled unrolling for all emitted `for (uint ...)` loops via
+  `#pragma clang loop unroll(disable)`; see
+  `docs/METAL4_SCHEDULER_VM_UNROLL_PLAN.md`.
 - Sample note: MTLCompilerService spends heavy time in LLVM `PHINode` removal
   and `CloneBasicBlock` (plus large memmove) with ~5GB footprint, pointing to
   CFG/PHI explosion. Prioritize unroll disabling and no-inline barriers.
@@ -111,6 +117,9 @@ inflate the compiled kernel.
 4.2 Stretch target
 - Run a larger testbench (if available) and repeat the above metrics to
   confirm scaling improvements.
+  - Status: emitted sched-vm MSL for `issue_00940/TopEntity` (larger netlist).
+    MSL size 9,693,206 bytes; fallback diag shows `rhs_unencodable: 28` in
+    `tmp/issue_00940_sched_vm_fallback_diag.txt`.
 
 ## Tracking Table (fill as we go)
 | Phase | MSL Size | Async Wait | Fallbacks | Notes |
@@ -119,6 +128,7 @@ inflate the compiled kernel.
 | 1     |          |            |           |       |
 | 2     | 8,904,637 bytes | not run | 0 | Added bit/range helpers and routed assign/delay updates through them. |
 | 3     | 8,902,686 bytes | not run | 0 | Unary/binary helpers + noinline wide helpers/sign64; re-emitted picorv32 MSL. |
+| 3.3   | 8,904,374 bytes | not run | 0 | Added `#pragma clang loop unroll(disable)` for all emitted loops. |
 
 ## Notes
 - This plan is intentionally about **compiler stress**, not new opcode

@@ -21,6 +21,29 @@ namespace gpga {
 
 namespace {
 
+class ConditionalStringBuf final : public std::stringbuf {
+ public:
+  void set_enabled(bool enabled) { enabled_ = enabled; }
+
+ protected:
+  int overflow(int ch) override {
+    if (!enabled_) {
+      return traits_type::not_eof(ch);
+    }
+    return std::stringbuf::overflow(ch);
+  }
+
+  std::streamsize xsputn(const char* s, std::streamsize n) override {
+    if (!enabled_) {
+      return n;
+    }
+    return std::stringbuf::xsputn(s, n);
+  }
+
+ private:
+  bool enabled_ = true;
+};
+
 std::string MslName(const std::string& name) {
   return MslMangleIdentifier(name);
 }
@@ -6633,6 +6656,7 @@ struct SchedulerVmContext {
   std::unordered_map<const Statement*, uint32_t> edge_wait_ids;
   const std::unordered_map<const Statement*, uint32_t>* delay_assign_ids =
       nullptr;
+  const std::vector<uint8_t>* case_vm_ok = nullptr;
   const std::unordered_map<const Statement*, std::vector<uint32_t>>*
       fork_children = nullptr;
   const std::unordered_map<std::string, uint32_t>* block_labels = nullptr;
@@ -9748,6 +9772,11 @@ bool EmitSchedulerVmStatements(const Statement& stmt,
       if (it == tables.case_ids.end()) {
         return false;
       }
+      if (context.case_vm_ok &&
+          it->second < context.case_vm_ok->size() &&
+          (*context.case_vm_ok)[it->second] == 0u) {
+        return false;
+      }
       const uint32_t label_end = emitter->CreateLabel();
       std::vector<uint32_t> item_labels;
       item_labels.reserve(stmt.case_items.size());
@@ -10736,6 +10765,31 @@ static bool BuildSchedulerVmLayoutFromModuleImpl(
   CollectSchedulerVmTables(procs, &tables);
   std::unordered_map<const Statement*, uint32_t> delay_assign_ids;
   CollectSchedulerVmDelayAssignIds(procs, &delay_assign_ids);
+  std::vector<SchedulerVmPackedSlot> signal_slots;
+  std::vector<SchedulerVmSignalEntry> signal_entries;
+  std::unordered_map<std::string, uint32_t> signal_ids;
+  BuildSchedulerVmSignalLayout(module, &signal_slots, &signal_entries,
+                               &signal_ids, four_state);
+  std::vector<uint8_t> case_vm_ok;
+  if (!tables.case_stmts.empty()) {
+    SchedulerVmExprBuilder case_expr_builder;
+    SchedulerVmCaseTableData case_tables;
+    if (BuildSchedulerVmCaseTables(module, tables, signal_ids,
+                                   signal_entries, &case_expr_builder,
+                                   &case_tables, nullptr)) {
+      case_vm_ok.assign(tables.case_stmts.size(), 0u);
+      const size_t count =
+          std::min(case_vm_ok.size(), case_tables.headers.size());
+      for (size_t i = 0; i < count; ++i) {
+        const auto& header = case_tables.headers[i];
+        const bool ok = (header.entry_count > 0u) &&
+                        (header.expr_offset != kSchedulerVmExprNoExtra);
+        case_vm_ok[i] = ok ? 1u : 0u;
+      }
+    } else {
+      case_vm_ok.assign(tables.case_stmts.size(), 0u);
+    }
+  }
   struct DelayAssignInfo {
     const Statement* stmt = nullptr;
     const Expr* delay_expr = nullptr;
@@ -10906,6 +10960,9 @@ static bool BuildSchedulerVmLayoutFromModuleImpl(
   context.wait_ids = std::move(wait_ids);
   context.edge_wait_ids = std::move(edge_wait_ids);
   context.delay_assign_ids = &delay_assign_ids;
+  if (!case_vm_ok.empty()) {
+    context.case_vm_ok = &case_vm_ok;
+  }
   context.fork_children = &fork_children;
   context.fork_child_labels = &fork_child_labels;
   context.global_block_targets = &global_block_targets;
@@ -10979,9 +11036,8 @@ static bool BuildSchedulerVmLayoutFromModuleImpl(
   if (!BuildSchedulerVmLayout(proc_words, out, error)) {
     return false;
   }
-  std::unordered_map<std::string, uint32_t> signal_ids;
-  BuildSchedulerVmSignalLayout(module, &out->packed_slots,
-                               &out->signal_entries, &signal_ids, four_state);
+  out->packed_slots = std::move(signal_slots);
+  out->signal_entries = std::move(signal_entries);
   SchedulerVmExprBuilder expr_builder;
   std::unordered_set<std::string> override_targets;
   override_targets.reserve(tables.force_stmts.size() +
@@ -11801,7 +11857,8 @@ bool BuildSchedulerVmLayoutFromModuleWithDiag(
 std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
   const bool needs_scheduler = ModuleNeedsScheduler(module);
   const bool four_state = options.four_state;
-  std::ostringstream out;
+  ConditionalStringBuf out_buf;
+  std::ostream out(&out_buf);
   out << "#include <metal_stdlib>\n";
   out << "using namespace metal;\n\n";
   if (options.four_state) {
@@ -13481,32 +13538,30 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               std::string val = "(" + pred + " ? 1u : 0u)";
               return FsExpr{val, literal_for_width(0, 1), drive_full(1), 1};
             }
-            std::string val;
-            std::string xz;
-            if (width > 64) {
-              std::string ax = MaskForWidthExpr(operand.xz, width);
-              std::string aval = MaskForWidthExpr(operand.val, width);
-              std::string known1 = wide_and(aval, wide_not(ax, width), width);
-              std::string a_true = wide_any(known1, width);
-              std::string a_false =
-                  "(!" + wide_any(ax, width) + " && !" +
-                  wide_any(aval, width) + ")";
-              val =
-                  "((" + a_true + ") ? 0u : ((" + a_false + ") ? 1u : 0u))";
-              xz =
-                  "((" + a_true + " || " + a_false + ") ? 0u : 1u)";
-            } else {
-              std::string zero = literal_for_width(0, width);
-              std::string a_true =
-                  "(" + operand.xz + " == " + zero + " && " + operand.val +
-                  " != " + zero + ")";
-              std::string a_false =
-                  "(" + operand.xz + " == " + zero + " && " + operand.val +
-                  " == " + zero + ")";
-              val =
-                  "((" + a_true + ") ? 0u : ((" + a_false + ") ? 1u : 0u))";
-              xz = "((" + a_true + " || " + a_false + ") ? 0u : 1u)";
+            if (width <= 64) {
+              std::string func = (width > 32) ? "fs_log_not64" : "fs_log_not32";
+              std::string base =
+                  func + "(" + fs_make_expr(operand, width) + ", " +
+                  std::to_string(width) + "u)";
+              if (width > 32) {
+                std::string base32 =
+                    "fs_make32(uint(" + base + ".val), uint(" + base +
+                    ".xz), 1u)";
+                return fs_expr_from_base(base32, drive_full(1), 1);
+              }
+              return fs_expr_from_base(base, drive_full(1), 1);
             }
+            std::string ax = MaskForWidthExpr(operand.xz, width);
+            std::string aval = MaskForWidthExpr(operand.val, width);
+            std::string known1 = wide_and(aval, wide_not(ax, width), width);
+            std::string a_true = wide_any(known1, width);
+            std::string a_false =
+                "(!" + wide_any(ax, width) + " && !" +
+                wide_any(aval, width) + ")";
+            std::string val =
+                "((" + a_true + ") ? 0u : ((" + a_false + ") ? 1u : 0u))";
+            std::string xz =
+                "((" + a_true + " || " + a_false + ") ? 0u : 1u)";
             return FsExpr{val, xz, drive_full(1), 1};
           }
           if (expr.unary_op == 'B') {
@@ -13675,39 +13730,22 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               }
               return FsExpr{val, xz, drive_full(1), 1};
             }
-            std::string zero = literal_for_width(0, width);
-            std::string a_true =
-                "(" + lhs.xz + " == " + zero + " && " + lhs.val + " != " +
-                zero + ")";
-            std::string b_true =
-                "(" + rhs.xz + " == " + zero + " && " + rhs.val + " != " +
-                zero + ")";
-            std::string a_false =
-                "(" + lhs.xz + " == " + zero + " && " + lhs.val + " == " +
-                zero + ")";
-            std::string b_false =
-                "(" + rhs.xz + " == " + zero + " && " + rhs.val + " == " +
-                zero + ")";
-            std::string val;
-            std::string xz;
-            if (expr.op == 'A') {
-              val =
-                  "((" + a_false + " || " + b_false +
-                  ") ? 0u : ((" + a_true + " && " + b_true +
-                  ") ? 1u : 0u))";
-              xz =
-                  "((" + a_false + " || " + b_false + " || (" + a_true +
-                  " && " + b_true + ")) ? 0u : 1u)";
-            } else {
-              val =
-                  "((" + a_true + " || " + b_true +
-                  ") ? 1u : ((" + a_false + " && " + b_false +
-                  ") ? 0u : 0u))";
-              xz =
-                  "((" + a_true + " || " + b_true + " || (" + a_false +
-                  " && " + b_false + ")) ? 0u : 1u)";
+            std::string func =
+                (expr.op == 'A') ? "fs_log_and" : "fs_log_or";
+            if (width > 32) {
+              std::string base64 =
+                  func + "64(" + fs_make_expr(lhs, width) + ", " +
+                  fs_make_expr(rhs, width) + ", " + std::to_string(width) +
+                  "u)";
+              std::string base32 =
+                  "fs_make32(uint(" + base64 + ".val), uint(" + base64 +
+                  ".xz), 1u)";
+              return fs_expr_from_base(base32, drive_full(1), 1);
             }
-            return FsExpr{val, xz, drive_full(1), 1};
+            std::string base =
+                func + "32(" + fs_make_expr(lhs, width) + ", " +
+                fs_make_expr(rhs, width) + ", " + std::to_string(width) + "u)";
+            return fs_expr_from_base(base, drive_full(1), 1);
           }
           if (expr.op == 'C' || expr.op == 'c' || expr.op == 'W' ||
               expr.op == 'w') {
@@ -15057,6 +15095,14 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     }
 
     const bool pack_signals = needs_scheduler;
+    bool emit_fallback_kernel = true;
+    if (options.sched_vm && needs_scheduler) {
+      SchedulerVmLayout vm_layout_tmp;
+      if (BuildSchedulerVmLayoutFromModule(module, &vm_layout_tmp, nullptr,
+                                           options.four_state)) {
+        emit_fallback_kernel = VmLayoutNeedsCallGroup(vm_layout_tmp);
+      }
+    }
     const bool pack_nb = pack_signals;
     struct PackedSignal {
       std::string name;
@@ -15233,6 +15279,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
           return var;
         };
+
+    if (!emit_fallback_kernel) {
+      out_buf.set_enabled(false);
+    }
 
     out << "kernel void gpga_" << MslName(module.name) << "(";
     int buffer_index = 0;
@@ -15537,6 +15587,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  " << type << " " << resolved_xz << " = " << zero << ";\n";
       out << "  " << type << " " << resolved_drive << " = " << zero << ";\n";
       if (lhs_width > 64) {
+        out << "  #pragma clang loop unroll(disable)\n";
         out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
         if (wired_and || wired_or) {
           out << "    bool has0 = false;\n";
@@ -15708,6 +15759,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         return;
       }
       std::string one = (lhs_width > 32) ? "1ul" : "1u";
+      out << "  #pragma clang loop unroll(disable)\n";
       out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
       out << "    " << type << " mask = (" << one << " << bit);\n";
       if (wired_and || wired_or) {
@@ -16731,6 +16783,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "    " << type << " " << m_val << " = " << zero << ";\n";
       out << "    " << type << " " << m_xz << " = " << zero << ";\n";
       out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
       out << "      " << type << " mask = (" << one << " << bit);\n";
       out << "      uint best0 = 0u;\n";
@@ -16961,6 +17014,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "    " << type << " " << m_val << " = " << zero << ";\n";
         out << "    " << type << " " << m_xz << " = " << zero << ";\n";
         out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+        out << "    #pragma clang loop unroll(disable)\n";
         out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
         out << "      " << type << " mask = (" << one << " << bit);\n";
         out << "      uint best0 = 0u;\n";
@@ -17121,6 +17175,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
           std::string mask = mask_literal(net.width);
           if (net.array_size > 0) {
+            out << "  #pragma clang loop unroll(disable)\n";
             out << "  for (uint i = 0u; i < " << net.array_size << "u; ++i) {\n";
             out << "    uint idx = (gid * " << net.array_size << "u) + i;\n";
             out << "    " << val_name(net.name) << "[idx] = " << mask << ";\n";
@@ -17594,6 +17649,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       }
       out << "  // Tick kernel: sequential logic (posedge/negedge in v0).\n";
       for (const auto* net : array_nets) {
+        out << "  #pragma clang loop unroll(disable)\n";
         out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
         out << "    " << MslValNextName(net->name) << "[(gid * "
             << net->array_size << "u) + i] = " << val_name(net->name)
@@ -18107,6 +18163,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       if (!nb_array_nets.empty()) {
         out << "  // Commit array NBAs.\n";
         for (const auto* net : nb_array_nets) {
+          out << "  #pragma clang loop unroll(disable)\n";
           out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
           out << "    " << val_name(net->name) << "[(gid * "
               << net->array_size << "u) + i] = " << MslValNextName(net->name)
@@ -18118,6 +18175,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
       }
       out << "}\n";
+    }
+    if (!emit_fallback_kernel) {
+      out_buf.set_enabled(true);
     }
     if (needs_scheduler) {
       struct ProcDef {
@@ -20420,6 +20480,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           if (options.sched_vm) {
             emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
                           std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_vm_debug [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
           }
           if (has_delayed_assigns) {
             emit_param_fn("  device ulong* sched_delay_val [[buffer(" +
@@ -20742,7 +20804,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "    sched_time[gid] = 0ul;\n";
         out << "    __gpga_time = 0ul;\n";
         out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
-        out << "    sched_flags[gid] = GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
+        out << "    uint __gpga_prev_flags = sched_flags[gid];\n";
+        out << "    sched_flags[gid] = (__gpga_prev_flags & GPGA_SCHED_FLAG_VM_DEBUG)\n";
+        out << "        | GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "    sched_error[gid] = 0u;\n";
         if (needs_reg_init) {
           for (const auto& net : module.nets) {
@@ -20755,6 +20819,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             }
             std::string mask = mask_literal(net.width);
             if (net.array_size > 0) {
+              out << "    #pragma clang loop unroll(disable)\n";
               out << "    for (uint i = 0u; i < " << net.array_size
                   << "u; ++i) {\n";
               out << "      uint idx = (gid * " << net.array_size
@@ -20779,11 +20844,13 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "    sched_dnba_count[gid] = 0u;\n";
         }
         if (has_events) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
           out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
           out << "    }\n";
         }
         if (has_edges) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint e = 0u; e < GPGA_SCHED_EDGE_COUNT; ++e) {\n";
           out << "      uint eidx = (gid * GPGA_SCHED_EDGE_COUNT) + e;\n";
           out << "      sched_edge_prev_val[eidx] = 0ul;\n";
@@ -20791,6 +20858,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "    }\n";
         }
         if (has_edge_star) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
           out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
           out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
@@ -20798,6 +20866,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "    }\n";
         }
         if (timing_check_count > 0u) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint t = 0u; t < GPGA_SCHED_TIMING_CHECK_COUNT; ++t) {\n";
           out << "      uint tslot = (gid * GPGA_SCHED_TIMING_CHECK_COUNT) + t;\n";
           out << "      sched_timing_data_time[tslot] = ~0ul;\n";
@@ -20805,6 +20874,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      sched_timing_window_start[tslot] = ~0ul;\n";
           out << "      sched_timing_window_end[tslot] = 0ul;\n";
           out << "    }\n";
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint t = 0u; t < (GPGA_SCHED_TIMING_CHECK_COUNT * 2u); ++t) {\n";
           out << "      uint tslot = (gid * (GPGA_SCHED_TIMING_CHECK_COUNT * 2u)) + t;\n";
           out << "      sched_timing_prev_val[tslot] = 0ul;\n";
@@ -20813,14 +20883,17 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
       if (!system_task_info.monitor_stmts.empty()) {
         out << "    sched_monitor_enable[gid] = 1u;\n";
+        out << "    #pragma clang loop unroll(disable)\n";
         out << "    for (uint m = 0u; m < GPGA_SCHED_MONITOR_COUNT; ++m) {\n";
         out << "      sched_monitor_active[(gid * GPGA_SCHED_MONITOR_COUNT) + m] = 0u;\n";
+        out << "      #pragma clang loop unroll(disable)\n";
         out << "      for (uint a = 0u; a < GPGA_SCHED_MONITOR_MAX_ARGS; ++a) {\n";
         out << "        uint offset = ((gid * GPGA_SCHED_MONITOR_COUNT) + m) * GPGA_SCHED_MONITOR_MAX_ARGS + a;\n";
         out << "        sched_monitor_val[offset] = 0ul;\n";
         out << "        sched_monitor_xz[offset] = 0ul;\n";
         if (service_wide_words > 0u) {
           out << "        uint wide_offset = offset * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+          out << "        #pragma clang loop unroll(disable)\n";
           out << "        for (uint w = 0u; w < GPGA_SCHED_SERVICE_WIDE_WORDS; ++w) {\n";
           out << "          sched_monitor_wide_val[wide_offset + w] = 0ul;\n";
           out << "          sched_monitor_wide_xz[wide_offset + w] = 0ul;\n";
@@ -20830,10 +20903,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "    }\n";
       }
       if (!system_task_info.strobe_stmts.empty()) {
+        out << "    #pragma clang loop unroll(disable)\n";
         out << "    for (uint s = 0u; s < GPGA_SCHED_STROBE_COUNT; ++s) {\n";
         out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
         out << "    }\n";
       }
+        out << "    #pragma clang loop unroll(disable)\n";
         out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "      uint idx = gpga_sched_index(gid, pid);\n";
         out << "      sched_pc[idx] = 0u;\n";
@@ -20852,36 +20927,42 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      sched_vm_call_sp[idx] = 0u;\n";
           out << "      uint __gpga_cond_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
                  "          GPGA_SCHED_VM_COND_COUNT;\n";
+          out << "      #pragma clang loop unroll(disable)\n";
           out << "      for (uint c = 0u; c < GPGA_SCHED_VM_COND_COUNT; ++c) {\n";
-          out << "        sched_vm_cond_val[__gpga_cond_base + c] = 0u;\n";
-          out << "        sched_vm_cond_xz[__gpga_cond_base + c] = 0u;\n";
+            out << "        sched_vm_cond_val[__gpga_cond_base + c] = 0u;\n";
+            out << "        sched_vm_cond_xz[__gpga_cond_base + c] = 0u;\n";
           out << "      }\n";
         }
         out << "    }\n";
         if (options.sched_vm) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
-          out << "      uint __gpga_vm_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
-                 "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
-          out << "      for (uint w = 0u; w < (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH); ++w) {\n";
-          out << "        sched_vm_call_frame[__gpga_vm_base + w] = 0u;\n";
-          out << "      }\n";
+            out << "      uint __gpga_vm_base = ((gid * GPGA_SCHED_PROC_COUNT) + pid) *\n"
+                   "          (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH);\n";
+            out << "      #pragma clang loop unroll(disable)\n";
+            out << "      for (uint w = 0u; w < (GPGA_SCHED_VM_CALL_FRAME_WORDS * GPGA_SCHED_VM_CALL_FRAME_DEPTH); ++w) {\n";
+              out << "        sched_vm_call_frame[__gpga_vm_base + w] = 0u;\n";
+            out << "      }\n";
           out << "    }\n";
         }
         if (repeat_state_count > 0) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint r = 0u; r < GPGA_SCHED_REPEAT_COUNT; ++r) {\n";
-          out << "      uint ridx = (gid * GPGA_SCHED_REPEAT_COUNT) + r;\n";
-          out << "      sched_repeat_left[ridx] = 0u;\n";
-          out << "      sched_repeat_active[ridx] = 0u;\n";
+            out << "      uint ridx = (gid * GPGA_SCHED_REPEAT_COUNT) + r;\n";
+            out << "      sched_repeat_left[ridx] = 0u;\n";
+            out << "      sched_repeat_active[ridx] = 0u;\n";
           out << "    }\n";
         }
         if (!force_target_list.empty()) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint f = 0u; f < GPGA_SCHED_FORCE_COUNT; ++f) {\n";
-          out << "      sched_force_id[(gid * GPGA_SCHED_FORCE_COUNT) + f] = 0xFFFFFFFFu;\n";
+            out << "      sched_force_id[(gid * GPGA_SCHED_FORCE_COUNT) + f] = 0xFFFFFFFFu;\n";
           out << "    }\n";
         }
         if (!passign_target_list.empty()) {
+          out << "    #pragma clang loop unroll(disable)\n";
           out << "    for (uint f = 0u; f < GPGA_SCHED_PCONT_COUNT; ++f) {\n";
-          out << "      sched_passign_id[(gid * GPGA_SCHED_PCONT_COUNT) + f] = 0xFFFFFFFFu;\n";
+            out << "      sched_passign_id[(gid * GPGA_SCHED_PCONT_COUNT) + f] = 0xFFFFFFFFu;\n";
           out << "    }\n";
         }
         out << "  }\n";
@@ -21812,6 +21893,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         if (!nb_array_nets.empty()) {
           out << "        // Initialize array NBA buffers.\n";
           for (const auto* net : nb_array_nets) {
+            out << "        #pragma clang loop unroll(disable)\n";
             out << "        for (uint i = 0u; i < " << net->array_size
                 << "u; ++i) {\n";
             out << "          " << MslValNextName(net->name) << "[(gid * "
@@ -21828,6 +21910,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "          uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
           out << "          uint __gpga_dnba_count = sched_dnba_count[gid];\n";
           out << "          uint __gpga_dnba_write = 0u;\n";
+          out << "          #pragma clang loop unroll(disable)\n";
           out << "          for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
           out << "            uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
           out << "            ulong __gpga_dnba_time = sched_dnba_time[__gpga_dnba_idx];\n";
@@ -21858,6 +21941,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
         out << "      }\n";
         emit_sched_comb_update(6);
+        out << "      #pragma clang loop unroll(disable)\n";
         out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "        uint idx = gpga_sched_index(gid, pid);\n";
         out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -24165,6 +24249,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                     }
                     out << "                    if (__gpga_dnba_count != 0u) {\n";
                     out << "                      uint __gpga_dnba_write = 0u;\n";
+                    out << "                      #pragma clang loop unroll(disable)\n";
                     out << "                      for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
                     out << "                        uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
                     out << "                        if (sched_dnba_id[__gpga_dnba_idx] == "
@@ -25224,6 +25309,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "      if (!did_work) {\n";
         emit_timing_checks(8);
         out << "        bool any_ready = false;\n";
+        out << "        #pragma clang loop unroll(disable)\n";
         out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "          uint idx = gpga_sched_index(gid, pid);\n";
         out << "          if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
@@ -25375,6 +25461,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "          }\n";
         out << "        }\n";
         if (has_events) {
+          out << "        #pragma clang loop unroll(disable)\n";
           out << "        for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
           out << "          sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
           out << "        }\n";
@@ -25483,6 +25570,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
         }
         out << "      bool any_ready = false;\n";
+        out << "      #pragma clang loop unroll(disable)\n";
         out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "        uint idx = gpga_sched_index(gid, pid);\n";
         out << "        if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -25632,8 +25720,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "        }\n";
         out << "      }\n";
         if (has_events) {
+          out << "      #pragma clang loop unroll(disable)\n";
           out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-          out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+            out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
           out << "      }\n";
         }
         out << "      if (any_ready) {\n";
@@ -25644,6 +25733,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "      // Advance time to next wakeup.\n";
         out << "      bool have_time = false;\n";
         out << "      ulong next_time = ~0ul;\n";
+        out << "      #pragma clang loop unroll(disable)\n";
         out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "        uint idx = gpga_sched_index(gid, pid);\n";
         out << "        if (sched_wait_kind[idx] != GPGA_SCHED_WAIT_TIME) {\n";
@@ -25657,9 +25747,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "      }\n";
         if (has_delayed_nba) {
           out << "      if (sched_dnba_count[gid] != 0u) {\n";
-          out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
-          out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
-          out << "        for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+            out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
+            out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+            out << "        #pragma clang loop unroll(disable)\n";
+            out << "        for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
           out << "          ulong __gpga_dnba_time = sched_dnba_time[__gpga_dnba_base + __gpga_dnba_i];\n";
           out << "          if (!have_time || __gpga_dnba_time < next_time) {\n";
           out << "            have_time = true;\n";
@@ -25669,9 +25760,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      }\n";
         }
         out << "      if (have_time) {\n";
-        out << "        sched_time[gid] = next_time;\n";
-        out << "        __gpga_time = next_time;\n";
-        out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+          out << "        sched_time[gid] = next_time;\n";
+          out << "        __gpga_time = next_time;\n";
+          out << "        #pragma clang loop unroll(disable)\n";
+          out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "          uint idx = gpga_sched_index(gid, pid);\n";
         out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_TIME &&\n";
         out << "              sched_wait_time[idx] == next_time) {\n";
@@ -25684,6 +25776,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "        continue;\n";
         out << "      }\n";
         out << "      bool have_service = false;\n";
+        out << "      #pragma clang loop unroll(disable)\n";
         out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
         out << "        uint idx = gpga_sched_index(gid, pid);\n";
         out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_SERVICE) {\n";
@@ -25752,6 +25845,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                 << "();\n";
             out << "  uint word = width >> 6u;\n";
             out << "  uint bit = width & 63u;\n";
+            out << "  #pragma clang loop unroll(disable)\n";
             out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
             out << "    if (i < word) {\n";
             out << "      out.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
@@ -25815,6 +25909,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << "  uint parity = 0u;\n";
             out << "  uint word = width >> 6u;\n";
             out << "  uint bit = width & 63u;\n";
+            out << "  #pragma clang loop unroll(disable)\n";
             out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
             out << "    ulong word_val = v.w[i];\n";
             out << "    if (i > word) {\n";
@@ -25842,6 +25937,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << "  }\n";
             out << "  uint word = width >> 6u;\n";
             out << "  uint bit = width & 63u;\n";
+            out << "  #pragma clang loop unroll(disable)\n";
             out << "  for (uint i = word; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
             out << "    if (i == word) {\n";
             out << "      ulong mask = (bit == 0u) ? 0xFFFFFFFFFFFFFFFFul\n";
@@ -28630,7 +28726,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
           out << "    return false;\n";
           out << "  }\n";
-          out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+          if (pack_nb && !packed_nb_signals.empty()) {
+            out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+          } else {
+            out << "  (void)use_nb;\n";
+            out << "  device uchar* __gpga_state = gpga_state;\n";
+          }
           out << "  uint __gpga_storage_width = __gpga_sig.width;\n";
           out << "  uint __gpga_storage_words = (__gpga_storage_width + 63u) >> 6u;\n";
           out << "  ulong __gpga_stride = (__gpga_storage_width > 64u)\n";
@@ -28755,7 +28856,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
           out << "    return false;\n";
           out << "  }\n";
-          out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+          if (pack_nb && !packed_nb_signals.empty()) {
+            out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+          } else {
+            out << "  (void)use_nb;\n";
+            out << "  device uchar* __gpga_state = gpga_state;\n";
+          }
           out << "  uint __gpga_storage_width = __gpga_sig.width;\n";
           out << "  uint __gpga_storage_words = (__gpga_storage_width + 63u) >> 6u;\n";
           out << "  ulong __gpga_stride = (__gpga_storage_width > 64u)\n";
@@ -28874,6 +28980,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "             : ((1ul << __gpga_header.width) - 1ul));\n";
           out << "  __gpga_case_val &= __gpga_mask;\n";
           out << "  __gpga_case_xz &= __gpga_mask;\n";
+          out << "  #pragma clang loop unroll(disable)\n";
           out << "  for (uint __gpga_entry = 0u; __gpga_entry < __gpga_header.entry_count; ++__gpga_entry) {\n";
           out << "    const GpgaSchedVmCaseEntry __gpga_entry_rec = "
                  "sched_vm_case_entry[__gpga_header.entry_offset + __gpga_entry];\n";
@@ -30009,6 +30116,29 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
           if (vm_needs_call_group) {
             out << "  if (__gpga_bc_len == 0u) {\n";
+            out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+            out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+            out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+            out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+            out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+            out << "        __gpga_dbg_ip = 0u;\n";
+            out << "      }\n";
+            out << "      uint __gpga_instr0 = 0u;\n";
+            out << "      uint __gpga_instr1 = 0u;\n";
+            out << "      uint __gpga_instr_ip = 0u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+            out << "    }\n";
             out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
             out << "    switch (__gpga_group) {\n";
             for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
@@ -30028,6 +30158,29 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << "  }\n";
           } else {
             out << "  if (__gpga_bc_len == 0u) {\n";
+            out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+            out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+            out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+            out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+            out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+            out << "        __gpga_dbg_ip = 0u;\n";
+            out << "      }\n";
+            out << "      uint __gpga_instr0 = 0u;\n";
+            out << "      uint __gpga_instr1 = 0u;\n";
+            out << "      uint __gpga_instr_ip = 0u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+            out << "    }\n";
             out << "    sched_error[gid] = 1u;\n";
             out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
@@ -30037,7 +30190,35 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  uint __gpga_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
           out << "  uint __gpga_ip = sched_vm_ip[__gpga_vm_idx];\n";
           out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
-          out << "    __gpga_ip = 0u;\n";
+            out << "    __gpga_ip = 0u;\n";
+          out << "  }\n";
+          out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+          out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+          out << "    uint __gpga_instr0 = (__gpga_bc_len > 0u)\n";
+          out << "        ? sched_vm_bytecode[__gpga_bc_base]\n";
+          out << "        : 0u;\n";
+          out << "    uint __gpga_instr1 = (__gpga_bc_len > 1u)\n";
+          out << "        ? sched_vm_bytecode[__gpga_bc_base + 1u]\n";
+          out << "        : 0u;\n";
+          out << "    uint __gpga_instr_ip = (__gpga_bc_len > 0u)\n";
+          out << "        ? sched_vm_bytecode[__gpga_bc_base + __gpga_ip]\n";
+          out << "        : 0u;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_bc_base;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 7u] = (__gpga_bc_len > 0u)\n";
+          out << "        ? sched_vm_bytecode[0]\n";
+          out << "        : 0u;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 8u] = (__gpga_bc_len > 1u)\n";
+          out << "        ? sched_vm_bytecode[1]\n";
+          out << "        : 0u;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
           out << "  }\n";
           out << "  #pragma clang loop unroll(disable)\n";
           out << "  for (; __gpga_ip < __gpga_bc_len;) {\n";
@@ -30045,6 +30226,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
           out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
           out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
+          out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+          out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr;\n";
+          out << "    }\n";
           if (vm_needs_call_group) {
             out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
             out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
@@ -30273,6 +30459,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "        if (__gpga_inertial) {\n";
           out << "          if (__gpga_dnba_count != 0u) {\n";
             out << "            uint __gpga_dnba_write = 0u;\n";
+            out << "            #pragma clang loop unroll(disable)\n";
             out << "            for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
             out << "              uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
             out << "              if (sched_dnba_id[__gpga_dnba_idx] == __gpga_arg &&\n";
@@ -31017,7 +31204,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
       }
     }
-    return out.str();
+    return out_buf.str();
   }
 
   std::unordered_set<std::string> sequential_regs;
@@ -31593,6 +31780,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     out << "  " << type << " " << resolved_val << " = " << zero << ";\n";
     out << "  " << type << " " << resolved_drive << " = " << zero << ";\n";
     if (lhs_width > 64) {
+      out << "  #pragma clang loop unroll(disable)\n";
       out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
       if (wired_and || wired_or) {
         out << "    bool has0 = false;\n";
@@ -31711,6 +31899,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       return;
     }
     std::string one = (lhs_width > 32) ? "1ul" : "1u";
+    out << "  #pragma clang loop unroll(disable)\n";
     out << "  for (uint bit = 0u; bit < " << lhs_width << "u; ++bit) {\n";
     out << "    " << type << " mask = (" << one << " << bit);\n";
     if (wired_and || wired_or) {
@@ -32279,6 +32468,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     out << "    " << type << " " << b_tmp << " = " << b_val << ";\n";
     out << "    " << type << " " << m_val << " = " << zero << ";\n";
     out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+    out << "    #pragma clang loop unroll(disable)\n";
     out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
     out << "      " << type << " mask = (" << one << " << bit);\n";
     out << "      uint best0 = 0u;\n";
@@ -32438,6 +32628,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "    " << type << " " << b_tmp << " = " << b_val << ";\n";
       out << "    " << type << " " << m_val << " = " << zero << ";\n";
       out << "    " << type << " " << m_drive << " = " << zero << ";\n";
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint bit = 0u; bit < " << width << "u; ++bit) {\n";
       out << "      " << type << " mask = (" << one << " << bit);\n";
       out << "      uint best0 = 0u;\n";
@@ -32862,6 +33053,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     }
     out << "  // Tick kernel: sequential logic (posedge/negedge in v0).\n";
     for (const auto* net : array_nets) {
+      out << "  #pragma clang loop unroll(disable)\n";
       out << "  for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
       out << "    " << MslNameNext(net->name) << "[(gid * " << net->array_size
           << "u) + i] = " << MslName(net->name) << "[(gid * "
@@ -35518,6 +35710,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         if (options.sched_vm) {
           emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
                         std::to_string(buffer_index++) + ")]]");
+          emit_param_fn("  device uint* sched_vm_debug [[buffer(" +
+                        std::to_string(buffer_index++) + ")]]");
         }
         if (has_delayed_assigns) {
           emit_param_fn("  device ulong* sched_delay_val [[buffer(" +
@@ -35782,7 +35976,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "    sched_time[gid] = 0ul;\n";
       out << "    __gpga_time = 0ul;\n";
       out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
-      out << "    sched_flags[gid] = GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
+      out << "    uint __gpga_prev_flags = sched_flags[gid];\n";
+      out << "    sched_flags[gid] = (__gpga_prev_flags & GPGA_SCHED_FLAG_VM_DEBUG)\n";
+      out << "        | GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "    sched_error[gid] = 0u;\n";
       for (const auto* reg : trireg_nets) {
         out << "    " << decay_name(reg->name) << "[gid] = 0ul;\n";
@@ -35791,23 +35987,27 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "    sched_dnba_count[gid] = 0u;\n";
       }
     if (has_events) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
       out << "      sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
       out << "    }\n";
     }
     if (has_edges) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint e = 0u; e < GPGA_SCHED_EDGE_COUNT; ++e) {\n";
       out << "      uint eidx = (gid * GPGA_SCHED_EDGE_COUNT) + e;\n";
       out << "      sched_edge_prev_val[eidx] = 0ul;\n";
       out << "    }\n";
     }
     if (has_edge_star) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint s = 0u; s < GPGA_SCHED_EDGE_STAR_COUNT; ++s) {\n";
       out << "      uint sidx = (gid * GPGA_SCHED_EDGE_STAR_COUNT) + s;\n";
       out << "      sched_edge_star_prev_val[sidx] = 0ul;\n";
       out << "    }\n";
     }
     if (timing_check_count > 0u) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint t = 0u; t < GPGA_SCHED_TIMING_CHECK_COUNT; ++t) {\n";
       out << "      uint tslot = (gid * GPGA_SCHED_TIMING_CHECK_COUNT) + t;\n";
       out << "      sched_timing_data_time[tslot] = ~0ul;\n";
@@ -35815,6 +36015,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      sched_timing_window_start[tslot] = ~0ul;\n";
       out << "      sched_timing_window_end[tslot] = 0ul;\n";
       out << "    }\n";
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint t = 0u; t < (GPGA_SCHED_TIMING_CHECK_COUNT * 2u); ++t) {\n";
       out << "      uint tslot = (gid * (GPGA_SCHED_TIMING_CHECK_COUNT * 2u)) + t;\n";
       out << "      sched_timing_prev_val[tslot] = 0ul;\n";
@@ -35822,35 +36023,42 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     }
     if (!system_task_info.monitor_stmts.empty()) {
       out << "    sched_monitor_enable[gid] = 1u;\n";
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint m = 0u; m < GPGA_SCHED_MONITOR_COUNT; ++m) {\n";
       out << "      sched_monitor_active[(gid * GPGA_SCHED_MONITOR_COUNT) + m] = 0u;\n";
+      out << "      #pragma clang loop unroll(disable)\n";
       out << "      for (uint a = 0u; a < GPGA_SCHED_MONITOR_MAX_ARGS; ++a) {\n";
       out << "        uint offset = ((gid * GPGA_SCHED_MONITOR_COUNT) + m) * GPGA_SCHED_MONITOR_MAX_ARGS + a;\n";
       out << "        sched_monitor_val[offset] = 0ul;\n";
       if (service_wide_words > 0u) {
         out << "        uint wide_offset = offset * GPGA_SCHED_SERVICE_WIDE_WORDS;\n";
+        out << "        #pragma clang loop unroll(disable)\n";
         out << "        for (uint w = 0u; w < GPGA_SCHED_SERVICE_WIDE_WORDS; ++w) {\n";
-        out << "          sched_monitor_wide_val[wide_offset + w] = 0ul;\n";
+          out << "          sched_monitor_wide_val[wide_offset + w] = 0ul;\n";
         out << "        }\n";
       }
       out << "      }\n";
       out << "    }\n";
     }
     if (!system_task_info.strobe_stmts.empty()) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint s = 0u; s < GPGA_SCHED_STROBE_COUNT; ++s) {\n";
       out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + s] = 0u;\n";
       out << "    }\n";
     }
     if (!force_target_list.empty()) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint f = 0u; f < GPGA_SCHED_FORCE_COUNT; ++f) {\n";
       out << "      sched_force_id[(gid * GPGA_SCHED_FORCE_COUNT) + f] = 0xFFFFFFFFu;\n";
       out << "    }\n";
     }
     if (!passign_target_list.empty()) {
+      out << "    #pragma clang loop unroll(disable)\n";
       out << "    for (uint f = 0u; f < GPGA_SCHED_PCONT_COUNT; ++f) {\n";
       out << "      sched_passign_id[(gid * GPGA_SCHED_PCONT_COUNT) + f] = 0xFFFFFFFFu;\n";
       out << "    }\n";
     }
+    out << "    #pragma clang loop unroll(disable)\n";
     out << "    for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "      uint idx = gpga_sched_index(gid, pid);\n";
       out << "      sched_pc[idx] = 0u;\n";
@@ -35866,6 +36074,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      sched_join_tag[idx] = gpga_proc_join_tag[pid];\n";
       out << "    }\n";
       if (repeat_state_count > 0) {
+        out << "    #pragma clang loop unroll(disable)\n";
         out << "    for (uint r = 0u; r < GPGA_SCHED_REPEAT_COUNT; ++r) {\n";
         out << "      uint ridx = (gid * GPGA_SCHED_REPEAT_COUNT) + r;\n";
         out << "      sched_repeat_left[ridx] = 0u;\n";
@@ -36802,6 +37011,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       if (!nb_array_nets.empty()) {
         out << "        // Initialize array NBA buffers.\n";
         for (const auto* net : nb_array_nets) {
+          out << "        #pragma clang loop unroll(disable)\n";
           out << "        for (uint i = 0u; i < " << net->array_size
               << "u; ++i) {\n";
           out << "          " << MslNameNext(net->name) << "[(gid * "
@@ -36815,6 +37025,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "          uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
         out << "          uint __gpga_dnba_count = sched_dnba_count[gid];\n";
         out << "          uint __gpga_dnba_write = 0u;\n";
+        out << "          #pragma clang loop unroll(disable)\n";
         out << "          for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
         out << "            uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
         out << "            ulong __gpga_dnba_time = sched_dnba_time[__gpga_dnba_idx];\n";
@@ -36840,6 +37051,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       }
       out << "      }\n";
       emit_sched_comb_update(6);
+      out << "      #pragma clang loop unroll(disable)\n";
       out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
       out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
@@ -38849,6 +39061,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                   }
                   out << "                    if (__gpga_dnba_count != 0u) {\n";
                   out << "                      uint __gpga_dnba_write = 0u;\n";
+                  out << "                      #pragma clang loop unroll(disable)\n";
                   out << "                      for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
                   out << "                        uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
                   out << "                        if (sched_dnba_id[__gpga_dnba_idx] == "
@@ -39847,6 +40060,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      if (!did_work) {\n";
       emit_timing_checks(8);
       out << "        bool any_ready = false;\n";
+      out << "        #pragma clang loop unroll(disable)\n";
       out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "          uint idx = gpga_sched_index(gid, pid);\n";
       out << "          if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
@@ -39986,6 +40200,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "          }\n";
       out << "        }\n";
       if (has_events) {
+        out << "        #pragma clang loop unroll(disable)\n";
         out << "        for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
         out << "          sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
         out << "        }\n";
@@ -40020,10 +40235,11 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
         }
       }
-      if (!nb_array_nets.empty()) {
-        out << "      // Commit array NBAs.\n";
-        for (const auto* net : nb_array_nets) {
-          out << "      for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
+        if (!nb_array_nets.empty()) {
+          out << "      // Commit array NBAs.\n";
+          for (const auto* net : nb_array_nets) {
+            out << "      #pragma clang loop unroll(disable)\n";
+            out << "      for (uint i = 0u; i < " << net->array_size << "u; ++i) {\n";
           out << "        " << MslName(net->name) << "[(gid * "
               << net->array_size << "u) + i] = " << MslNameNext(net->name)
               << "[(gid * " << net->array_size << "u) + i];\n";
@@ -40081,9 +40297,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "      sched_strobe_pending[(gid * GPGA_SCHED_STROBE_COUNT) + "
               << i << "u] = 0u;\n";
         }
-      }
-      out << "      bool any_ready = false;\n";
-      out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        }
+        out << "      bool any_ready = false;\n";
+        out << "      #pragma clang loop unroll(disable)\n";
+        out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
       out << "        if (sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
       out << "          any_ready = true;\n";
@@ -40220,8 +40437,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        }\n";
       out << "      }\n";
       if (has_events) {
+        out << "      #pragma clang loop unroll(disable)\n";
         out << "      for (uint e = 0u; e < GPGA_SCHED_EVENT_COUNT; ++e) {\n";
-        out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
+          out << "        sched_event_pending[(gid * GPGA_SCHED_EVENT_COUNT) + e] = 0u;\n";
         out << "      }\n";
       }
       out << "      if (any_ready) {\n";
@@ -40232,6 +40450,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      // Advance time to next wakeup.\n";
       out << "      bool have_time = false;\n";
       out << "      ulong next_time = ~0ul;\n";
+      out << "      #pragma clang loop unroll(disable)\n";
       out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
       out << "        if (sched_wait_kind[idx] != GPGA_SCHED_WAIT_TIME) {\n";
@@ -40245,9 +40464,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      }\n";
       if (has_delayed_nba) {
         out << "      if (sched_dnba_count[gid] != 0u) {\n";
-        out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
-        out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
-        out << "        for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
+          out << "        uint __gpga_dnba_base = gid * GPGA_SCHED_MAX_DNBA;\n";
+          out << "        uint __gpga_dnba_count = sched_dnba_count[gid];\n";
+          out << "        #pragma clang loop unroll(disable)\n";
+          out << "        for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
         out << "          ulong __gpga_dnba_time = sched_dnba_time[__gpga_dnba_base + __gpga_dnba_i];\n";
         out << "          if (!have_time || __gpga_dnba_time < next_time) {\n";
         out << "            have_time = true;\n";
@@ -40257,9 +40477,10 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "      }\n";
       }
       out << "      if (have_time) {\n";
-      out << "        sched_time[gid] = next_time;\n";
-      out << "        __gpga_time = next_time;\n";
-      out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "        sched_time[gid] = next_time;\n";
+        out << "        __gpga_time = next_time;\n";
+        out << "        #pragma clang loop unroll(disable)\n";
+        out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "          uint idx = gpga_sched_index(gid, pid);\n";
       out << "          if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_TIME &&\n";
       out << "              sched_wait_time[idx] == next_time) {\n";
@@ -40272,6 +40493,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        continue;\n";
       out << "      }\n";
       out << "      bool have_service = false;\n";
+      out << "      #pragma clang loop unroll(disable)\n";
       out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
       out << "        uint idx = gpga_sched_index(gid, pid);\n";
       out << "        if (sched_wait_kind[idx] == GPGA_SCHED_WAIT_SERVICE) {\n";
@@ -40328,7 +40550,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       if (vm_expr_wide_bits > 64u) {
         const std::string wide_bits = std::to_string(vm_expr_wide_bits);
         const std::string wide_type = "GpgaWide" + wide_bits;
-        out << "static inline " << wide_type
+        out << "static __attribute__((noinline)) " << wide_type
             << " gpga_sched_vm_wide_mask_bits(uint width) {\n";
         out << "  if (width == 0u) {\n";
         out << "    return gpga_wide_zero_" << wide_bits << "();\n";
@@ -40340,6 +40562,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             << "();\n";
         out << "  uint word = width >> 6u;\n";
         out << "  uint bit = width & 63u;\n";
+        out << "  #pragma clang loop unroll(disable)\n";
         out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
         out << "    if (i < word) {\n";
         out << "      out.w[i] = 0xFFFFFFFFFFFFFFFFul;\n";
@@ -40349,7 +40572,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  }\n";
         out << "  return out;\n";
         out << "}\n";
-        out << "static inline " << wide_type
+        out << "static __attribute__((noinline)) " << wide_type
             << " gpga_sched_vm_wide_mask_value(" << wide_type
             << " v, uint width) {\n";
         out << "  if (width == 0u) {\n";
@@ -40362,7 +40585,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  " << wide_type << " mask = gpga_sched_vm_wide_mask_bits(width);\n";
         out << "  return gpga_wide_and_" << wide_bits << "(v, mask);\n";
         out << "}\n";
-        out << "static inline bool gpga_sched_vm_wide_any_masked(" << wide_type
+        out << "static __attribute__((noinline)) bool gpga_sched_vm_wide_any_masked(" << wide_type
             << " v, uint width) {\n";
         out << "  if (width == 0u) {\n";
         out << "    return false;\n";
@@ -40375,7 +40598,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             << "(v, mask);\n";
         out << "  return gpga_wide_any_" << wide_bits << "(masked);\n";
         out << "}\n";
-        out << "static inline bool gpga_sched_vm_wide_eq_masked(" << wide_type
+        out << "static __attribute__((noinline)) bool gpga_sched_vm_wide_eq_masked(" << wide_type
             << " a, " << wide_type << " b, uint width) {\n";
         out << "  if (width == 0u) {\n";
         out << "    return true;\n";
@@ -40388,7 +40611,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  diff = gpga_wide_and_" << wide_bits << "(diff, mask);\n";
         out << "  return !gpga_wide_any_" << wide_bits << "(diff);\n";
         out << "}\n";
-        out << "static inline uint gpga_sched_vm_wide_red_xor(" << wide_type
+        out << "static __attribute__((noinline)) uint gpga_sched_vm_wide_red_xor(" << wide_type
             << " v, uint width) {\n";
         out << "  if (width == 0u) {\n";
         out << "    return 0u;\n";
@@ -40400,6 +40623,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  uint parity = 0u;\n";
         out << "  uint word = width >> 6u;\n";
         out << "  uint bit = width & 63u;\n";
+        out << "  #pragma clang loop unroll(disable)\n";
         out << "  for (uint i = 0u; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
         out << "    ulong word_val = v.w[i];\n";
         out << "    if (i > word) {\n";
@@ -40413,7 +40637,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  }\n";
         out << "  return parity & 1u;\n";
         out << "}\n";
-        out << "static inline " << wide_type
+        out << "static __attribute__((noinline)) " << wide_type
             << " gpga_sched_vm_wide_extend(" << wide_type
             << " v, uint width, bool sign_extend) {\n";
         out << "  v = gpga_sched_vm_wide_mask_value(v, width);\n";
@@ -40427,6 +40651,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  }\n";
         out << "  uint word = width >> 6u;\n";
         out << "  uint bit = width & 63u;\n";
+        out << "  #pragma clang loop unroll(disable)\n";
         out << "  for (uint i = word; i < GPGA_SCHED_VM_EXPR_WIDE_WORDS; ++i) {\n";
         out << "    if (i == word) {\n";
         out << "      ulong mask = (bit == 0u) ? 0xFFFFFFFFFFFFFFFFul\n";
@@ -43471,7 +43696,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
       out << "    return false;\n";
       out << "  }\n";
-      out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+      if (pack_nb && !packed_nb_signals.empty()) {
+        out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+      } else {
+        out << "  (void)use_nb;\n";
+        out << "  device uchar* __gpga_state = gpga_state;\n";
+      }
       out << "  uint __gpga_storage_width = __gpga_sig.width;\n";
       out << "  uint __gpga_storage_words = (__gpga_storage_width + 63u) >> 6u;\n";
       out << "  ulong __gpga_stride = (__gpga_storage_width > 64u)\n";
@@ -43555,7 +43785,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  if ((__gpga_sig.flags & GPGA_SCHED_VM_SIGNAL_FLAG_REAL) != 0u) {\n";
       out << "    return false;\n";
       out << "  }\n";
-      out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+      if (pack_nb && !packed_nb_signals.empty()) {
+        out << "  device uchar* __gpga_state = use_nb ? nb_state : gpga_state;\n";
+      } else {
+        out << "  (void)use_nb;\n";
+        out << "  device uchar* __gpga_state = gpga_state;\n";
+      }
       out << "  uint __gpga_storage_width = __gpga_sig.width;\n";
       out << "  uint __gpga_storage_words = (__gpga_storage_width + 63u) >> 6u;\n";
       out << "  ulong __gpga_stride = (__gpga_storage_width > 64u)\n";
@@ -43688,6 +43923,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "             : ((1ul << __gpga_header.width) - 1ul));\n";
       out << "  __gpga_case_val &= __gpga_mask;\n";
       out << "  __gpga_case_xz &= __gpga_mask;\n";
+      out << "  #pragma clang loop unroll(disable)\n";
       out << "  for (uint __gpga_entry = 0u; __gpga_entry < __gpga_header.entry_count; ++__gpga_entry) {\n";
       out << "    const GpgaSchedVmCaseEntry __gpga_entry_rec = "
              "sched_vm_case_entry[__gpga_header.entry_offset + __gpga_entry];\n";
@@ -44764,6 +45000,29 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
       if (vm_needs_call_group) {
         out << "  if (__gpga_bc_len == 0u) {\n";
+        out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+        out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+        out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+        out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+        out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+        out << "        __gpga_dbg_ip = 0u;\n";
+        out << "      }\n";
+        out << "      uint __gpga_instr0 = 0u;\n";
+        out << "      uint __gpga_instr1 = 0u;\n";
+        out << "      uint __gpga_instr_ip = 0u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+        out << "    }\n";
         out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
         out << "    switch (__gpga_group) {\n";
         for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
@@ -44783,6 +45042,29 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  }\n";
       } else {
         out << "  if (__gpga_bc_len == 0u) {\n";
+        out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+        out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+        out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+        out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+        out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+        out << "        __gpga_dbg_ip = 0u;\n";
+        out << "      }\n";
+        out << "      uint __gpga_instr0 = 0u;\n";
+        out << "      uint __gpga_instr1 = 0u;\n";
+        out << "      uint __gpga_instr_ip = 0u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+        out << "    }\n";
         out << "    sched_error[gid] = 1u;\n";
         out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
         out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
@@ -44794,12 +45076,45 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
       out << "    __gpga_ip = 0u;\n";
       out << "  }\n";
+      out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+      out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+      out << "    uint __gpga_instr0 = (__gpga_bc_len > 0u)\n";
+      out << "        ? sched_vm_bytecode[__gpga_bc_base]\n";
+      out << "        : 0u;\n";
+      out << "    uint __gpga_instr1 = (__gpga_bc_len > 1u)\n";
+      out << "        ? sched_vm_bytecode[__gpga_bc_base + 1u]\n";
+      out << "        : 0u;\n";
+      out << "    uint __gpga_instr_ip = (__gpga_bc_len > 0u)\n";
+      out << "        ? sched_vm_bytecode[__gpga_bc_base + __gpga_ip]\n";
+      out << "        : 0u;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_bc_base;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 7u] = (__gpga_bc_len > 0u)\n";
+      out << "        ? sched_vm_bytecode[0]\n";
+      out << "        : 0u;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 8u] = (__gpga_bc_len > 1u)\n";
+      out << "        ? sched_vm_bytecode[1]\n";
+      out << "        : 0u;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+      out << "    sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+      out << "  }\n";
       out << "  #pragma clang loop unroll(disable)\n";
       out << "  for (; __gpga_ip < __gpga_bc_len;) {\n";
       out << "    uint __gpga_instr = sched_vm_bytecode[__gpga_bc_base + __gpga_ip];\n";
       out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
       out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
       out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
+      out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+      out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+      out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+      out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr;\n";
+      out << "    }\n";
       if (vm_needs_call_group) {
         out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
         out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
@@ -45020,6 +45335,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        if (__gpga_inertial) {\n";
       out << "          if (__gpga_dnba_count != 0u) {\n";
       out << "            uint __gpga_dnba_write = 0u;\n";
+      out << "            #pragma clang loop unroll(disable)\n";
       out << "            for (uint __gpga_dnba_i = 0u; __gpga_dnba_i < __gpga_dnba_count; ++__gpga_dnba_i) {\n";
       out << "              uint __gpga_dnba_idx = __gpga_dnba_base + __gpga_dnba_i;\n";
       out << "              if (sched_dnba_id[__gpga_dnba_idx] == __gpga_arg &&\n";
@@ -45748,7 +46064,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
     }
     }
   }
-  return out.str();
+  return out_buf.str();
 }
 
 }  // namespace gpga
