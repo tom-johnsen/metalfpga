@@ -17,7 +17,8 @@ Runtime and profiling knobs used by the Metal 4 runtime and host harnesses.
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `METALFPGA_THREADGROUP_SIZE` | Override threadgroup size. | auto |
-| `METALFPGA_RESIDENCY_SET` | Enable residency set grouping. | off |
+| `METALFPGA_RESIDENCY_SET` | Enable residency set grouping. | on |
+| `METALFPGA_RESIDENCY_SET_QUEUE` | Attach residency set to the queue. | on (when residency set is on) |
 
 ## GPU profiling
 | Variable | Purpose | Default |

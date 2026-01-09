@@ -1,6 +1,7 @@
 #include "runtime/metal_runtime.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -11,11 +12,13 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mach/mach_time.h>
 #include <mutex>
 #include <optional>
 #include <regex>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "utils/msl_naming.hh"
 
@@ -46,6 +49,18 @@ namespace gpga {
 std::string FormatNSError(NSError* error);
 void LogPipeline(bool enabled, const std::string& message);
 std::string FormatTimestamp();
+
+CFTimeInterval HostTimeSeconds() {
+  static mach_timebase_info_data_t timebase = {};
+  if (timebase.denom == 0) {
+    (void)mach_timebase_info(&timebase);
+  }
+  const uint64_t ticks = mach_absolute_time();
+  const double nanos = (static_cast<double>(ticks) *
+                        static_cast<double>(timebase.numer)) /
+                       static_cast<double>(timebase.denom);
+  return nanos * 1e-9;
+}
 
 struct SourceStats {
   size_t bytes = 0;
@@ -293,7 +308,13 @@ struct MetalRuntime::Impl {
   size_t precompile_total = 0;
   size_t precompile_done = 0;
   uint32_t threadgroup_override = 0;
+  uint32_t sched_ready_reset_tg = 0;
+  uint32_t sched_wait_eval_tg = 0;
+  uint32_t sched_ready_flags_tg = 0;
+  uint32_t sched_ready_compact_tg = 0;
+  uint32_t sched_ready_dispatch_tg = 0;
   bool use_residency_set = false;
+  bool residency_set_queue = false;
   bool gpu_timestamps = false;
   bool gpu_timestamps_precise = false;
   uint32_t gpu_timestamp_every = 1;
@@ -302,6 +323,10 @@ struct MetalRuntime::Impl {
   bool dispatch_timing_detail = false;
   uint32_t dispatch_timing_every = 1;
   uint64_t dispatch_timing_seq = 0;
+  bool batch_barriers = true;
+  bool batch_barrier_alias = false;
+  bool batch_barrier_alias_auto = false;
+  MTL4VisibilityOptions batch_barrier_visibility = MTL4VisibilityOptionDevice;
   uint64_t timestamp_frequency = 0;
   NSUInteger timestamp_heap_count = 0;
   std::string last_source;
@@ -639,6 +664,55 @@ uint32_t ChooseThreadgroupSize(uint32_t override_size,
     threadgroup = 1u;
   }
   return threadgroup;
+}
+
+bool BatchNeedsAliasBarrier(const std::vector<MetalDispatch>& dispatches) {
+  std::unordered_set<const MetalBuffer*> bound_buffers;
+  bound_buffers.reserve(dispatches.size());
+  for (const auto& dispatch : dispatches) {
+    const auto* bindings = dispatch.bindings;
+    if (!bindings) {
+      continue;
+    }
+    for (const auto& binding : *bindings) {
+      if (binding.buffer) {
+        bound_buffers.insert(binding.buffer);
+      }
+    }
+  }
+  for (const auto& dispatch : dispatches) {
+    if (dispatch.indirect_buffer &&
+        bound_buffers.find(dispatch.indirect_buffer) != bound_buffers.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool HasKernelSuffix(const std::string& name, const char* suffix) {
+  const size_t suffix_len = std::strlen(suffix);
+  return name.size() >= suffix_len &&
+         name.compare(name.size() - suffix_len, suffix_len, suffix) == 0;
+}
+
+bool IsExecReadyKernelName(const std::string& name) {
+  return HasKernelSuffix(name, "_sched_exec_ready");
+}
+
+uint32_t RequiredThreadsPerThreadgroupForKernel(
+    const std::string& name, uint32_t global_override) {
+  if (!IsExecReadyKernelName(name)) {
+    return 0u;
+  }
+  if (auto exec_ready_override = EnvU32("METALFPGA_SCHED_EXEC_READY_TG")) {
+    if (*exec_ready_override > 0u) {
+      return *exec_ready_override;
+    }
+  }
+  if (global_override > 0u) {
+    return global_override;
+  }
+  return 64u;
 }
 
 std::filesystem::path DefaultPipelineArchivePath() {
@@ -1615,6 +1689,7 @@ MetalKernel::~MetalKernel() {
   max_buffer_bindings_ = 0;
   thread_execution_width_ = 0;
   max_threads_per_threadgroup_ = 0;
+  required_threads_per_threadgroup_ = 0;
 }
 
 MetalKernel::MetalKernel(MetalKernel&& other) noexcept
@@ -1625,12 +1700,14 @@ MetalKernel::MetalKernel(MetalKernel&& other) noexcept
       max_buffer_bindings_(other.max_buffer_bindings_),
       thread_execution_width_(other.thread_execution_width_),
       max_threads_per_threadgroup_(other.max_threads_per_threadgroup_),
+      required_threads_per_threadgroup_(other.required_threads_per_threadgroup_),
       last_binding_addresses_(std::move(other.last_binding_addresses_)) {
   other.pipeline_ = nullptr;
   other.argument_table_ = nullptr;
   other.max_buffer_bindings_ = 0;
   other.thread_execution_width_ = 0;
   other.max_threads_per_threadgroup_ = 0;
+  other.required_threads_per_threadgroup_ = 0;
 }
 
 MetalKernel& MetalKernel::operator=(MetalKernel&& other) noexcept {
@@ -1653,12 +1730,14 @@ MetalKernel& MetalKernel::operator=(MetalKernel&& other) noexcept {
   max_buffer_bindings_ = other.max_buffer_bindings_;
   thread_execution_width_ = other.thread_execution_width_;
   max_threads_per_threadgroup_ = other.max_threads_per_threadgroup_;
+  required_threads_per_threadgroup_ = other.required_threads_per_threadgroup_;
   last_binding_addresses_ = std::move(other.last_binding_addresses_);
   other.pipeline_ = nullptr;
   other.argument_table_ = nullptr;
   other.max_buffer_bindings_ = 0;
   other.thread_execution_width_ = 0;
   other.max_threads_per_threadgroup_ = 0;
+  other.required_threads_per_threadgroup_ = 0;
   return *this;
 }
 
@@ -1727,10 +1806,31 @@ bool MetalRuntime::Initialize(std::string* error) {
     if (auto override_size = EnvU32("METALFPGA_THREADGROUP_SIZE")) {
       impl_->threadgroup_override = *override_size;
     }
+    if (auto override_size = EnvU32("METALFPGA_SCHED_READY_RESET_TG")) {
+      impl_->sched_ready_reset_tg = *override_size;
+    }
+    if (auto override_size = EnvU32("METALFPGA_SCHED_WAIT_EVAL_TG")) {
+      impl_->sched_wait_eval_tg = *override_size;
+    }
+    if (auto override_size = EnvU32("METALFPGA_SCHED_READY_FLAGS_TG")) {
+      impl_->sched_ready_flags_tg = *override_size;
+    }
+    if (auto override_size = EnvU32("METALFPGA_SCHED_READY_COMPACT_TG")) {
+      impl_->sched_ready_compact_tg = *override_size;
+    }
+    if (auto override_size = EnvU32("METALFPGA_SCHED_READY_DISPATCH_TG")) {
+      impl_->sched_ready_dispatch_tg = *override_size;
+    }
     if (auto residency_pref = EnvTriState("METALFPGA_RESIDENCY_SET")) {
       impl_->use_residency_set = *residency_pref;
     } else {
       impl_->use_residency_set = true;
+    }
+    if (auto queue_pref =
+            EnvTriState("METALFPGA_RESIDENCY_SET_QUEUE")) {
+      impl_->residency_set_queue = *queue_pref;
+    } else {
+      impl_->residency_set_queue = impl_->use_residency_set;
     }
     impl_->gpu_timestamps = EnvEnabled("METALFPGA_GPU_TIMESTAMPS") ||
                             EnvEnabled("METALFPGA_GPU_PROFILE");
@@ -1745,6 +1845,12 @@ bool MetalRuntime::Initialize(std::string* error) {
     if (auto every = EnvU32("METALFPGA_DISPATCH_TIMING_EVERY")) {
       impl_->dispatch_timing_every = std::max(1u, *every);
     }
+    impl_->batch_barriers =
+        !EnvEnabled("METALFPGA_BATCH_BARRIERS_DISABLE");
+    impl_->batch_barrier_alias = EnvEnabled("METALFPGA_BATCH_BARRIER_ALIAS");
+    impl_->batch_barrier_alias_auto =
+        EnvEnabled("METALFPGA_BATCH_BARRIER_ALIAS_AUTO");
+    impl_->batch_barrier_visibility = MTL4VisibilityOptionDevice;
   }
   if (impl_->pipeline_archive_load && !impl_->pipeline_archive) {
     std::string archive_path = impl_->pipeline_archive_path.string();
@@ -1790,6 +1896,9 @@ bool MetalRuntime::Initialize(std::string* error) {
     impl_->residency_set =
         [impl_->device newResidencySetWithDescriptor:desc error:&res_err];
     [desc release];
+    if (impl_->residency_set && impl_->queue && impl_->residency_set_queue) {
+      [impl_->queue addResidencySet:impl_->residency_set];
+    }
   }
   if (!impl_->allocator) {
     impl_->allocator = [impl_->device newCommandAllocator];
@@ -1958,6 +2067,9 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
     }
     return false;
   }
+  const uint32_t required_tg =
+      RequiredThreadsPerThreadgroupForKernel(name,
+                                             impl_->threadgroup_override);
   id<MTLComputePipelineState> pipeline = nil;
   auto cached = impl_->pipeline_cache.find(name);
   if (cached != impl_->pipeline_cache.end() && cached->second) {
@@ -2168,6 +2280,9 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
       pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
     }
     desc.options = pipe_opts;
+    if (required_tg > 0u) {
+      desc.requiredThreadsPerThreadgroup = MTLSizeMake(required_tg, 1, 1);
+    }
 
     NSError* err = nil;
     auto compile_start = std::chrono::steady_clock::now();
@@ -2222,6 +2337,19 @@ bool MetalRuntime::CreateKernel(const std::string& name, MetalKernel* kernel,
       static_cast<uint32_t>(pipeline.threadExecutionWidth);
   temp.max_threads_per_threadgroup_ =
       static_cast<uint32_t>(pipeline.maxTotalThreadsPerThreadgroup);
+  temp.required_threads_per_threadgroup_ = required_tg;
+  if (required_tg > 0u && temp.max_threads_per_threadgroup_ > 0u &&
+      required_tg > temp.max_threads_per_threadgroup_) {
+    if (error) {
+      *error = "required threadgroup size (" + std::to_string(required_tg) +
+               ") exceeds max (" +
+               std::to_string(temp.max_threads_per_threadgroup_) +
+               ") for kernel " + name;
+    }
+    [pipeline release];
+    temp.pipeline_ = nullptr;
+    return false;
+  }
   uint32_t max_index = 0;
   bool has_index = false;
   if (impl_->prefer_source_bindings && !impl_->last_source.empty()) {
@@ -2323,6 +2451,9 @@ bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
     if (name.empty()) {
       continue;
     }
+    const uint32_t required_tg =
+        RequiredThreadsPerThreadgroupForKernel(name,
+                                               impl_->threadgroup_override);
     {
       std::lock_guard<std::mutex> lock(impl_->pipeline_mutex);
       if (impl_->pipeline_cache.find(name) != impl_->pipeline_cache.end() ||
@@ -2349,6 +2480,9 @@ bool MetalRuntime::PrecompileKernels(const std::vector<std::string>& names,
       pipe_opts.shaderReflection = MTL4ShaderReflectionBindingInfo;
     }
     desc.options = pipe_opts;
+    if (required_tg > 0u) {
+      desc.requiredThreadsPerThreadgroup = MTLSizeMake(required_tg, 1, 1);
+    }
 
     NSError* archive_err = nil;
     id<MTLComputePipelineState> archive_pipeline = nil;
@@ -2641,7 +2775,7 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
                                  ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
   [cmd beginCommandBufferWithAllocator:impl_->allocator];
-  if (impl_->residency_set) {
+  if (impl_->residency_set && !impl_->residency_set_queue) {
     [cmd useResidencySet:impl_->residency_set];
   }
   id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
@@ -2725,8 +2859,7 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   }
   const uint32_t thread_exec_width = kernel.ThreadExecutionWidth();
   const uint32_t max_threads_per_tg = kernel.MaxThreadsPerThreadgroup();
-  uint32_t threadgroup = ChooseThreadgroupSize(
-      impl_->threadgroup_override, thread_exec_width, max_threads_per_tg);
+  uint32_t threadgroup = ComputeThreadgroupSize(kernel);
   const size_t binding_count = bindings.size();
   MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
   MTLSize grid = MTLSizeMake(grid_size, 1, 1);
@@ -2746,18 +2879,32 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   const auto t_encode_done = log_dispatch
                                  ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
+  struct FeedbackTimes {
+    std::atomic<double> gpu_start{0.0};
+    std::atomic<double> gpu_end{0.0};
+    std::atomic<bool> has{false};
+  };
+  FeedbackTimes feedback_times;
   __block NSError* commit_error = nil;
   dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  FeedbackTimes* feedback_times_ptr = &feedback_times;
   MTL4CommitOptions* options = [[MTL4CommitOptions alloc] init];
   [options addFeedbackHandler:^(id<MTL4CommitFeedback> feedback) {
     if (feedback.error) {
       commit_error = [feedback.error retain];
     }
+    feedback_times_ptr->gpu_start.store(feedback.GPUStartTime,
+                                        std::memory_order_relaxed);
+    feedback_times_ptr->gpu_end.store(feedback.GPUEndTime,
+                                      std::memory_order_relaxed);
+    feedback_times_ptr->has.store(true, std::memory_order_release);
     dispatch_semaphore_signal(done);
   }];
   const auto t_commit_begin = log_dispatch
                                   ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
+  const CFTimeInterval t_commit_host =
+      log_dispatch ? HostTimeSeconds() : 0.0;
   const id<MTL4CommandBuffer> buffers[] = {cmd};
   [impl_->queue commit:buffers count:1 options:options];
   const auto t_commit_done = log_dispatch
@@ -2814,6 +2961,16 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
                 << " tew=" << thread_exec_width
                 << " max_tg=" << max_threads_per_tg
                 << " binds=" << binding_count;
+      if (feedback_times.has.load(std::memory_order_acquire)) {
+        double feedback_start =
+            feedback_times.gpu_start.load(std::memory_order_relaxed);
+        double feedback_end =
+            feedback_times.gpu_end.load(std::memory_order_relaxed);
+        double queue_ms = (feedback_start - t_commit_host) * 1000.0;
+        double gpu_exec_ms = (feedback_end - feedback_start) * 1000.0;
+        std::cerr << " queue_ms=" << queue_ms
+                  << " gpu_exec_ms=" << gpu_exec_ms;
+      }
       if (sample_gpu) {
         Impl::GpuTimestampSample sample;
         if (impl_->ResolveGpuTimestampSample(&sample)) {
@@ -2877,6 +3034,371 @@ bool MetalRuntime::Dispatch(const MetalKernel& kernel,
   return true;
 }
 
+bool MetalRuntime::DispatchIndirectThreads(
+    const MetalKernel& kernel, const std::vector<MetalBufferBinding>& bindings,
+    const MetalBuffer& indirect_buffer, size_t indirect_offset,
+    std::string* error, uint32_t timeout_ms) {
+  if (!impl_ || !impl_->queue || !impl_->allocator || !kernel.pipeline_) {
+    if (error) {
+      *error = "Metal runtime not initialized";
+    }
+    return false;
+  }
+  if (!indirect_buffer.handle_) {
+    if (error) {
+      *error = "Indirect dispatch buffer is null";
+    }
+    return false;
+  }
+  if ((indirect_offset & 0x3u) != 0u) {
+    if (error) {
+      *error = "Indirect dispatch buffer offset must be 4-byte aligned";
+    }
+    return false;
+  }
+  const size_t kIndirectWords = 6u;
+  if (indirect_offset + (sizeof(uint32_t) * kIndirectWords) >
+      indirect_buffer.length()) {
+    if (error) {
+      *error = "Indirect dispatch buffer too small";
+    }
+    return false;
+  }
+  uint32_t grid_size = 0u;
+  uint32_t tg_x = 0u;
+  uint32_t tg_y = 0u;
+  uint32_t tg_z = 0u;
+  if (indirect_buffer.contents()) {
+    const uint8_t* base =
+        static_cast<const uint8_t*>(indirect_buffer.contents()) +
+        indirect_offset;
+    grid_size = ReadU32(base, 0u);
+    tg_x = ReadU32(base, sizeof(uint32_t) * 3u);
+    tg_y = ReadU32(base, sizeof(uint32_t) * 4u);
+    tg_z = ReadU32(base, sizeof(uint32_t) * 5u);
+  }
+  uint32_t threadgroup = ComputeThreadgroupSize(kernel);
+  if (tg_x == 0u || tg_y == 0u || tg_z == 0u) {
+    if (error) {
+      *error = "Indirect dispatch buffer missing threadsPerThreadgroup";
+    }
+    return false;
+  }
+  if (threadgroup > 0u &&
+      (tg_x != threadgroup || tg_y != 1u || tg_z != 1u)) {
+    if (error) {
+      *error = "Indirect dispatch threadsPerThreadgroup mismatch";
+    }
+    return false;
+  }
+  const bool log_dispatch = impl_->ShouldLogDispatchTiming();
+  const bool log_detail = log_dispatch && impl_->dispatch_timing_detail;
+  const auto t_begin = log_dispatch
+                           ? std::chrono::steady_clock::now()
+                           : std::chrono::steady_clock::time_point{};
+  id<MTL4CommandBuffer> cmd = [impl_->device newCommandBuffer];
+  if (!cmd) {
+    if (error) {
+      *error = "Failed to create Metal 4 command buffer";
+    }
+    return false;
+  }
+  const auto t_cmd_created = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+  [cmd beginCommandBufferWithAllocator:impl_->allocator];
+  if (impl_->residency_set && !impl_->residency_set_queue) {
+    [cmd useResidencySet:impl_->residency_set];
+  }
+  id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
+  if (!encoder) {
+    if (error) {
+      *error = "Failed to create Metal 4 compute encoder";
+    }
+    [cmd endCommandBuffer];
+    [cmd release];
+    return false;
+  }
+  bool sample_gpu = impl_->ShouldSampleGpuTimestamps();
+  if (sample_gpu) {
+    std::string ts_error;
+    if (!impl_->EnsureTimestampHeap(2, &ts_error)) {
+      if (!ts_error.empty()) {
+        std::cerr << "[gpu_profile] " << ts_error << "\n";
+      }
+      sample_gpu = false;
+    }
+  }
+  id<MTLComputePipelineState> pipeline =
+      (id<MTLComputePipelineState>)kernel.pipeline_;
+  [encoder setComputePipelineState:pipeline];
+  id<MTL4ArgumentTable> table = (id<MTL4ArgumentTable>)kernel.argument_table_;
+  if (!bindings.empty() && !table) {
+    if (error) {
+      *error = "Metal 4 argument table unavailable for bindings";
+    }
+    [encoder endEncoding];
+    [cmd endCommandBuffer];
+    [cmd release];
+    return false;
+  }
+  if (table) {
+    const uint32_t max_bindings = kernel.MaxBufferBindings();
+    if (max_bindings > 0u &&
+        kernel.last_binding_addresses_.size() != max_bindings) {
+      kernel.last_binding_addresses_.assign(
+          max_bindings, std::numeric_limits<uint64_t>::max());
+    }
+    for (const auto& binding : bindings) {
+      if (!binding.buffer || !binding.buffer->handle_) {
+        continue;
+      }
+      if (max_bindings != 0u && binding.index >= max_bindings) {
+        if (error) {
+          *error = "Metal buffer binding index out of range (index=" +
+                   std::to_string(binding.index) + ", max=" +
+                   std::to_string(max_bindings - 1u) + ")";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      if (binding.offset >= binding.buffer->length()) {
+        if (error) {
+          *error = "Metal buffer binding offset out of range (offset=" +
+                   std::to_string(binding.offset) + ", length=" +
+                   std::to_string(binding.buffer->length()) + ")";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      id<MTLBuffer> buffer = (id<MTLBuffer>)binding.buffer->handle_;
+      MTLGPUAddress address =
+          buffer.gpuAddress + static_cast<MTLGPUAddress>(binding.offset);
+      const uint64_t addr_key = static_cast<uint64_t>(address);
+      if (max_bindings == 0u ||
+          addr_key != kernel.last_binding_addresses_[binding.index]) {
+        [table setAddress:address atIndex:binding.index];
+        if (max_bindings != 0u) {
+          kernel.last_binding_addresses_[binding.index] = addr_key;
+        }
+      }
+    }
+    [encoder setArgumentTable:table];
+  }
+  const uint32_t thread_exec_width = kernel.ThreadExecutionWidth();
+  const uint32_t max_threads_per_tg = kernel.MaxThreadsPerThreadgroup();
+  const size_t binding_count = bindings.size();
+  if (sample_gpu) {
+    [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
+                                  intoHeap:impl_->timestamp_heap
+                                   atIndex:0];
+  }
+  id<MTLBuffer> indirect = (id<MTLBuffer>)indirect_buffer.handle_;
+  MTLGPUAddress indirect_addr =
+      indirect.gpuAddress + static_cast<MTLGPUAddress>(indirect_offset);
+  [encoder dispatchThreadsWithIndirectBuffer:indirect_addr];
+  if (sample_gpu) {
+    [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
+                                  intoHeap:impl_->timestamp_heap
+                                   atIndex:1];
+  }
+  [encoder endEncoding];
+  [cmd endCommandBuffer];
+  const auto t_encode_done = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+  struct FeedbackTimes {
+    std::atomic<double> gpu_start{0.0};
+    std::atomic<double> gpu_end{0.0};
+    std::atomic<bool> has{false};
+  };
+  FeedbackTimes feedback_times;
+  __block NSError* commit_error = nil;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  FeedbackTimes* feedback_times_ptr = &feedback_times;
+  MTL4CommitOptions* options = [[MTL4CommitOptions alloc] init];
+  [options addFeedbackHandler:^(id<MTL4CommitFeedback> feedback) {
+    if (feedback.error) {
+      commit_error = [feedback.error retain];
+    }
+    feedback_times_ptr->gpu_start.store(feedback.GPUStartTime,
+                                        std::memory_order_relaxed);
+    feedback_times_ptr->gpu_end.store(feedback.GPUEndTime,
+                                      std::memory_order_relaxed);
+    feedback_times_ptr->has.store(true, std::memory_order_release);
+    dispatch_semaphore_signal(done);
+  }];
+  const auto t_commit_begin = log_dispatch
+                                  ? std::chrono::steady_clock::now()
+                                  : std::chrono::steady_clock::time_point{};
+  const CFTimeInterval t_commit_host =
+      log_dispatch ? HostTimeSeconds() : 0.0;
+  const id<MTL4CommandBuffer> buffers[] = {cmd};
+  [impl_->queue commit:buffers count:1 options:options];
+  const auto t_commit_done = log_dispatch
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+  const auto t_wait_start = log_dispatch
+                                ? t_commit_done
+                                : std::chrono::steady_clock::time_point{};
+  auto log_timing = [&](const char* result) {
+    if (!log_dispatch) {
+      return;
+    }
+    const auto t_done = std::chrono::steady_clock::now();
+    double encode_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_encode_done - t_begin)
+            .count();
+    double wait_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_done - t_wait_start)
+            .count();
+    double total_ms =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            t_done - t_begin)
+            .count();
+    std::cerr << "[dispatch_timing] kernel=" << kernel.Name()
+              << " grid=" << grid_size
+              << " encode_ms=" << encode_ms
+              << " wait_ms=" << wait_ms
+              << " total_ms=" << total_ms
+              << " result=" << result;
+    if (log_detail) {
+      double create_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_cmd_created - t_begin)
+              .count();
+      double encode_only_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_encode_done - t_cmd_created)
+              .count();
+      double prep_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_commit_begin - t_encode_done)
+              .count();
+      double commit_ms =
+          std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+              t_commit_done - t_commit_begin)
+              .count();
+      std::cerr << " create_ms=" << create_ms
+                << " encode_only_ms=" << encode_only_ms
+                << " prep_ms=" << prep_ms
+                << " commit_ms=" << commit_ms
+                << " tg=" << threadgroup
+                << " tew=" << thread_exec_width
+                << " max_tg=" << max_threads_per_tg
+                << " binds=" << binding_count;
+      if (feedback_times.has.load(std::memory_order_acquire)) {
+        double feedback_start =
+            feedback_times.gpu_start.load(std::memory_order_relaxed);
+        double feedback_end =
+            feedback_times.gpu_end.load(std::memory_order_relaxed);
+        double queue_ms = (feedback_start - t_commit_host) * 1000.0;
+        double gpu_exec_ms = (feedback_end - feedback_start) * 1000.0;
+        std::cerr << " queue_ms=" << queue_ms
+                  << " gpu_exec_ms=" << gpu_exec_ms;
+      }
+      if (sample_gpu) {
+        Impl::GpuTimestampSample sample;
+        if (impl_->ResolveGpuTimestampSample(&sample)) {
+          if (sample.has_ms) {
+            double wait_gap_ms = wait_ms - sample.ms;
+            std::cerr << " gpu_ms=" << sample.ms
+                      << " wait_gap_ms=" << wait_gap_ms;
+          } else {
+            std::cerr << " gpu_ticks=" << sample.ticks;
+          }
+        } else if (!sample.error.empty()) {
+          std::cerr << " gpu_err=" << sample.error;
+        }
+      }
+    }
+    if (timeout_ms != 0u) {
+      std::cerr << " timeout_ms=" << timeout_ms;
+    }
+    std::cerr << "\n";
+  };
+  if (timeout_ms == 0u) {
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  } else {
+    dispatch_time_t timeout =
+        dispatch_time(DISPATCH_TIME_NOW,
+                      static_cast<int64_t>(timeout_ms) * NSEC_PER_MSEC);
+    if (dispatch_semaphore_wait(done, timeout) != 0) {
+      log_timing("timeout");
+      if (error) {
+        *error = "Metal dispatch timed out";
+      }
+#if !OS_OBJECT_USE_OBJC
+      dispatch_release(done);
+#endif
+      [options release];
+      [cmd release];
+      [impl_->allocator reset];
+      return false;
+    }
+  }
+  [options release];
+#if !OS_OBJECT_USE_OBJC
+  dispatch_release(done);
+#endif
+  if (commit_error) {
+    log_timing("error");
+    if (error) {
+      *error = FormatNSError(commit_error);
+    }
+    [commit_error release];
+    [cmd release];
+    [impl_->allocator reset];
+    return false;
+  }
+  log_timing("ok");
+  if (sample_gpu) {
+    impl_->LogGpuTimestampResult("dispatch", grid_size, 1);
+  }
+  [cmd release];
+  [impl_->allocator reset];
+  return true;
+}
+
+uint32_t MetalRuntime::ComputeThreadgroupSize(
+    const MetalKernel& kernel) const {
+  if (!impl_) {
+    return 1u;
+  }
+  if (kernel.RequiredThreadsPerThreadgroup() > 0u) {
+    return kernel.RequiredThreadsPerThreadgroup();
+  }
+  uint32_t override_size = 0u;
+  const std::string& name = kernel.Name();
+  if (impl_->sched_ready_reset_tg > 0u &&
+      HasKernelSuffix(name, "_sched_ready_reset")) {
+    override_size = impl_->sched_ready_reset_tg;
+  } else if (impl_->sched_wait_eval_tg > 0u &&
+             HasKernelSuffix(name, "_sched_wait_eval")) {
+    override_size = impl_->sched_wait_eval_tg;
+  } else if (impl_->sched_ready_flags_tg > 0u &&
+             HasKernelSuffix(name, "_sched_ready_flags")) {
+    override_size = impl_->sched_ready_flags_tg;
+  } else if (impl_->sched_ready_compact_tg > 0u &&
+             HasKernelSuffix(name, "_sched_ready_compact")) {
+    override_size = impl_->sched_ready_compact_tg;
+  } else if (impl_->sched_ready_dispatch_tg > 0u &&
+             HasKernelSuffix(name, "_sched_ready_dispatch")) {
+    override_size = impl_->sched_ready_dispatch_tg;
+  }
+  if (override_size == 0u) {
+    override_size = impl_->threadgroup_override;
+  }
+  return ChooseThreadgroupSize(override_size, kernel.ThreadExecutionWidth(),
+                               kernel.MaxThreadsPerThreadgroup());
+}
+
 bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
                                  uint32_t grid_size, std::string* error,
                                  uint32_t timeout_ms) {
@@ -2905,7 +3427,7 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
                                  ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
   [cmd beginCommandBufferWithAllocator:impl_->allocator];
-  if (impl_->residency_set) {
+  if (impl_->residency_set && !impl_->residency_set_queue) {
     [cmd useResidencySet:impl_->residency_set];
   }
   id<MTL4ComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
@@ -2932,10 +3454,28 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
                                   intoHeap:impl_->timestamp_heap
                                    atIndex:0];
   }
+  bool barrier_alias = impl_->batch_barrier_alias;
+  if (!barrier_alias && impl_->batch_barrier_alias_auto) {
+    barrier_alias = BatchNeedsAliasBarrier(dispatches);
+  }
+  MTL4VisibilityOptions barrier_visibility =
+      static_cast<MTL4VisibilityOptions>(
+          impl_->batch_barrier_visibility &
+          ~MTL4VisibilityOptionResourceAlias);
+  if (barrier_alias) {
+    barrier_visibility = static_cast<MTL4VisibilityOptions>(
+        barrier_visibility | MTL4VisibilityOptionResourceAlias);
+  }
   uint32_t threadgroup_first = 0;
   bool threadgroup_mixed = false;
+  uint32_t grid_first = 0;
+  bool grid_mixed = false;
+  uint32_t grid_min = std::numeric_limits<uint32_t>::max();
+  uint32_t grid_max = 0;
   size_t bindings_total = 0;
-  for (const auto& dispatch : dispatches) {
+  for (size_t dispatch_index = 0; dispatch_index < dispatches.size();
+       ++dispatch_index) {
+    const auto& dispatch = dispatches[dispatch_index];
     const MetalKernel* kernel = dispatch.kernel;
     if (!kernel || !kernel->pipeline_) {
       if (error) {
@@ -2953,6 +3493,9 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
         (id<MTL4ArgumentTable>)kernel->argument_table_;
     const std::vector<MetalBufferBinding>* bindings =
         dispatch.bindings ? dispatch.bindings : nullptr;
+    const MetalBuffer* indirect_buffer = dispatch.indirect_buffer;
+    const size_t indirect_offset = dispatch.indirect_offset;
+    const bool use_indirect = (indirect_buffer != nullptr);
     if (bindings) {
       bindings_total += bindings->size();
     }
@@ -3014,17 +3557,100 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
       }
       [encoder setArgumentTable:table];
     }
-    uint32_t threadgroup = ChooseThreadgroupSize(
-        impl_->threadgroup_override, kernel->ThreadExecutionWidth(),
-        kernel->MaxThreadsPerThreadgroup());
+    uint32_t threadgroup = ComputeThreadgroupSize(*kernel);
     if (threadgroup_first == 0u) {
       threadgroup_first = threadgroup;
     } else if (threadgroup_first != threadgroup) {
       threadgroup_mixed = true;
     }
-    MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
-    MTLSize grid = MTLSizeMake(grid_size, 1, 1);
-    [encoder dispatchThreads:grid threadsPerThreadgroup:threads_per_group];
+    const uint32_t dispatch_grid =
+        (dispatch.grid_size != 0u) ? dispatch.grid_size : grid_size;
+    if (grid_first == 0u) {
+      grid_first = dispatch_grid;
+    } else if (grid_first != dispatch_grid) {
+      grid_mixed = true;
+    }
+    if (dispatch_grid < grid_min) {
+      grid_min = dispatch_grid;
+    }
+    if (dispatch_grid > grid_max) {
+      grid_max = dispatch_grid;
+    }
+    if (use_indirect) {
+      if (!indirect_buffer->handle_) {
+        if (error) {
+          *error = "Metal indirect dispatch buffer unavailable";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      if ((indirect_offset % 4u) != 0u) {
+        if (error) {
+          *error = "Metal indirect dispatch offset not 4-byte aligned";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      if (indirect_offset + sizeof(MTLDispatchThreadsIndirectArguments) >
+          indirect_buffer->length()) {
+        if (error) {
+          *error = "Metal indirect dispatch buffer too small for arguments";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      uint32_t tg_x = 0u;
+      uint32_t tg_y = 0u;
+      uint32_t tg_z = 0u;
+      if (indirect_buffer->contents()) {
+        const uint8_t* base =
+            static_cast<const uint8_t*>(indirect_buffer->contents()) +
+            indirect_offset;
+        tg_x = ReadU32(base, sizeof(uint32_t) * 3u);
+        tg_y = ReadU32(base, sizeof(uint32_t) * 4u);
+        tg_z = ReadU32(base, sizeof(uint32_t) * 5u);
+      }
+      uint32_t required_tg = ComputeThreadgroupSize(*kernel);
+      if (tg_x == 0u || tg_y == 0u || tg_z == 0u) {
+        if (error) {
+          *error = "Indirect dispatch buffer missing threadsPerThreadgroup";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      if (required_tg > 0u &&
+          (tg_x != required_tg || tg_y != 1u || tg_z != 1u)) {
+        if (error) {
+          *error = "Indirect dispatch threadsPerThreadgroup mismatch";
+        }
+        [encoder endEncoding];
+        [cmd endCommandBuffer];
+        [cmd release];
+        return false;
+      }
+      id<MTLBuffer> buffer = (id<MTLBuffer>)indirect_buffer->handle_;
+      MTLGPUAddress address =
+          buffer.gpuAddress +
+          static_cast<MTLGPUAddress>(indirect_offset);
+      [encoder dispatchThreadsWithIndirectBuffer:address];
+    } else {
+      MTLSize threads_per_group = MTLSizeMake(threadgroup, 1, 1);
+      MTLSize grid = MTLSizeMake(dispatch_grid, 1, 1);
+      [encoder dispatchThreads:grid threadsPerThreadgroup:threads_per_group];
+    }
+    if (impl_->batch_barriers && dispatch_index + 1 < dispatches.size()) {
+      [encoder barrierAfterEncoderStages:MTLStageDispatch
+                     beforeEncoderStages:MTLStageDispatch
+                       visibilityOptions:barrier_visibility];
+    }
   }
   if (sample_gpu) {
     [encoder writeTimestampWithGranularity:impl_->TimestampGranularity()
@@ -3036,18 +3662,32 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
   const auto t_encode_done = log_dispatch
                                  ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
+  struct FeedbackTimes {
+    std::atomic<double> gpu_start{0.0};
+    std::atomic<double> gpu_end{0.0};
+    std::atomic<bool> has{false};
+  };
+  FeedbackTimes feedback_times;
   __block NSError* commit_error = nil;
   dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  FeedbackTimes* feedback_times_ptr = &feedback_times;
   MTL4CommitOptions* options = [[MTL4CommitOptions alloc] init];
   [options addFeedbackHandler:^(id<MTL4CommitFeedback> feedback) {
     if (feedback.error) {
       commit_error = [feedback.error retain];
     }
+    feedback_times_ptr->gpu_start.store(feedback.GPUStartTime,
+                                        std::memory_order_relaxed);
+    feedback_times_ptr->gpu_end.store(feedback.GPUEndTime,
+                                      std::memory_order_relaxed);
+    feedback_times_ptr->has.store(true, std::memory_order_release);
     dispatch_semaphore_signal(done);
   }];
   const auto t_commit_begin = log_dispatch
                                   ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
+  const CFTimeInterval t_commit_host =
+      log_dispatch ? HostTimeSeconds() : 0.0;
   const id<MTL4CommandBuffer> buffers[] = {cmd};
   [impl_->queue commit:buffers count:1 options:options];
   const auto t_commit_done = log_dispatch
@@ -3075,7 +3715,7 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
             .count();
     std::cerr << "[dispatch_timing] batch=1"
               << " dispatches=" << dispatches.size()
-              << " grid=" << grid_size
+              << " grid=" << grid_first
               << " encode_ms=" << encode_ms
               << " wait_ms=" << wait_ms
               << " total_ms=" << total_ms
@@ -3103,7 +3743,24 @@ bool MetalRuntime::DispatchBatch(const std::vector<MetalDispatch>& dispatches,
                 << " commit_ms=" << commit_ms
                 << " tg=" << threadgroup_first
                 << " tg_mixed=" << (threadgroup_mixed ? 1 : 0)
-                << " binds=" << bindings_total;
+                << " grid_mixed=" << (grid_mixed ? 1 : 0)
+                << " grid_min=" << (grid_min == std::numeric_limits<uint32_t>::max()
+                                        ? 0u
+                                        : grid_min)
+                << " grid_max=" << grid_max
+                << " binds=" << bindings_total
+                << " barriers=" << (impl_->batch_barriers ? 1 : 0)
+                << " barrier_alias=" << (barrier_alias ? 1 : 0);
+      if (feedback_times.has.load(std::memory_order_acquire)) {
+        double feedback_start =
+            feedback_times.gpu_start.load(std::memory_order_relaxed);
+        double feedback_end =
+            feedback_times.gpu_end.load(std::memory_order_relaxed);
+        double queue_ms = (feedback_start - t_commit_host) * 1000.0;
+        double gpu_exec_ms = (feedback_end - feedback_start) * 1000.0;
+        std::cerr << " queue_ms=" << queue_ms
+                  << " gpu_exec_ms=" << gpu_exec_ms;
+      }
       if (sample_gpu) {
         Impl::GpuTimestampSample sample;
         if (impl_->ResolveGpuTimestampSample(&sample)) {
@@ -3414,12 +4071,19 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       } else if (name == "sched_strobe_pending") {
         spec.length = sizeof(uint32_t) * instance_count * sched.strobe_count;
       } else if (name == "sched_service_count") {
+        spec.length = sizeof(uint32_t) * instance_count * 2u;
+      } else if (name == "sched_service_head") {
         spec.length = sizeof(uint32_t) * instance_count;
       } else if (name == "sched_service") {
         size_t stride =
             ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args),
                                 sched.service_wide_words, module.four_state);
         spec.length = stride * instance_count * service_capacity;
+      } else if (name == "sched_ready") {
+        const size_t stride =
+            static_cast<size_t>(instance_count) * sched.proc_count;
+        spec.length = sizeof(uint32_t) *
+                      ((stride * 2u) + instance_count + 6u);
       } else if (name == "sched_force_id") {
         spec.length = sizeof(uint32_t) * instance_count * sched.force_count;
       } else if (name == "sched_passign_id") {

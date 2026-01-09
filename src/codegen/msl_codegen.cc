@@ -20328,6 +20328,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
           return decl.substr(space + 1);
         };
+        const bool emit_vm_debug = false;
         auto for_each_sched_param = [&](const auto& emit_param_fn) {
           int buffer_index = 0;
           if (pack_signals) {
@@ -20480,7 +20481,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           if (options.sched_vm) {
             emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
                           std::to_string(buffer_index++) + ")]]");
-            emit_param_fn("  device uint* sched_vm_debug [[buffer(" +
+            emit_param_fn("  device uint* sched_ready [[buffer(" +
                           std::to_string(buffer_index++) + ")]]");
           }
           if (has_delayed_assigns) {
@@ -20537,7 +20538,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           }
           emit_param_fn("  constant GpgaSchedParams& sched [[buffer(" +
                         std::to_string(buffer_index++) + ")]]");
-          emit_param_fn("  uint gid [[thread_position_in_grid]]) {\n");
+          emit_param_fn("  uint gid [[thread_position_in_grid]]");
+          // Additional threadgroup/thread params are appended at kernel emission time.
         };
         for_each_sched_param([&](const std::string& text) {
           std::string decl = sched_param_decl(text);
@@ -20554,12 +20556,16 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << pad << sched_params[i].decl;
           }
         };
-        auto emit_sched_param_names = [&]() {
+        auto emit_sched_param_names = [&](const char* gid_override = nullptr) {
           for (size_t i = 0; i < sched_params.size(); ++i) {
             if (i > 0) {
               out << ", ";
             }
-            out << sched_params[i].name;
+            if (gid_override && sched_params[i].name == "gid") {
+              out << gid_override;
+            } else {
+              out << sched_params[i].name;
+            }
           }
         };
 
@@ -20729,6 +20735,318 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << ");\n";
       }
 
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_exec_step(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+             "  thread bool* did_work_ptr,\n"
+             "  thread bool* finished_ptr,\n"
+             "  thread bool* stopped_ptr,\n"
+             "  thread ulong* __gpga_time_ptr) {\n";
+      out << "  *did_work_ptr = true;\n";
+      out << "  (*steps_ptr)--;\n";
+      if (options.sched_vm) {
+        out << "  gpga_" << MslName(module.name) << "_sched_vm_exec(";
+        emit_sched_param_names();
+        out << ", pid, idx, steps_ptr, did_work_ptr, finished_ptr, stopped_ptr,"
+               " __gpga_time_ptr);\n";
+        out << "  sched_pc[idx] = sched_vm_ip[idx];\n";
+      } else {
+        out << "  uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+        out << "  switch (__gpga_group) {\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "    case " << group << "u:\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_group_"
+              << group << "(";
+          emit_sched_param_names();
+          out << ", pid, idx, steps_ptr, did_work_ptr, finished_ptr,"
+                 " stopped_ptr, __gpga_time_ptr);\n";
+          out << "      break;\n";
+        }
+        out << "    default: {\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      break;\n";
+        out << "    }\n";
+        out << "  }\n";
+      }
+      out << "}\n";
+
+      if (options.sched_vm) {
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_ready_reset(";
+        bool reset_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!reset_first) {
+            out << ",\n";
+          }
+          reset_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device atomic_uint* __gpga_ready_count =\n";
+        out << "      reinterpret_cast<device atomic_uint*>(\n";
+        out << "          __gpga_ready_u32 + (__gpga_ready_stride * 2u));\n";
+        out << "  if (gid >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  atomic_store_explicit(&__gpga_ready_count[gid], 0u,\n";
+        out << "                       memory_order_relaxed);\n";
+        out << "}\n";
+      out << "kernel void gpga_" << MslName(module.name)
+          << "_sched_ready_flags(";
+      bool ready_first = true;
+      for_each_sched_param([&](const std::string& text) {
+        if (!ready_first) {
+            out << ",\n";
+          }
+          ready_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  device uint* __gpga_ready_flags = __gpga_ready_u32;\n";
+        out << "  uint __gpga_sim = gid / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_pid = gid - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint __gpga_idx = gpga_sched_index(__gpga_sim, __gpga_pid);\n";
+        out << "  uint __gpga_ready =\n";
+        out << "      (sched_state[__gpga_idx] == GPGA_SCHED_PROC_READY)\n";
+        out << "          ? 1u : 0u;\n";
+        out << "  if (sched_wait_kind[__gpga_idx] != GPGA_SCHED_WAIT_NONE) {\n";
+        out << "    __gpga_ready = 0u;\n";
+        out << "  }\n";
+        out << "  __gpga_ready_flags[__gpga_idx] = __gpga_ready;\n";
+        out << "}\n";
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_wait_eval(";
+        bool wait_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!wait_first) {
+            out << ",\n";
+          }
+          wait_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  uint __gpga_sim = gid / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  if (sched_phase[__gpga_sim] != GPGA_SCHED_PHASE_ACTIVE) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint pid = gid - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint idx = gpga_sched_index(__gpga_sim, pid);\n";
+        out << "  if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_wait_kind = sched_wait_kind[idx];\n";
+        out << "  if (__gpga_wait_kind == GPGA_SCHED_WAIT_DELTA) {\n";
+        out << "    sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  if (__gpga_wait_kind == GPGA_SCHED_WAIT_TIME) {\n";
+        out << "    ulong t = sched_wait_time[idx];\n";
+        out << "    if (t <= sched_time[__gpga_sim]) {\n";
+        out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "    }\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  if (__gpga_wait_kind == GPGA_SCHED_WAIT_COND) {\n";
+        out << "    bool ready = false;\n";
+        if (options.sched_vm) {
+          out << "    uint __gpga_wait_id = sched_wait_id[idx];\n";
+          out << "    if (__gpga_wait_id < GPGA_SCHED_WAIT_COND_COUNT) {\n";
+          out << "      if (gpga_sched_wait_cond_valid[__gpga_wait_id] != 0u) {\n";
+          out << "        uint __gpga_cond_id = gpga_sched_wait_cond_id[__gpga_wait_id];\n";
+          out << "        uint __gpga_cond_val = 0u;\n";
+          out << "        uint __gpga_cond_xz = 1u;\n";
+          out << "        gpga_" << MslName(module.name)
+              << "_sched_vm_eval_cond(";
+          emit_sched_param_names();
+          out << ", pid, __gpga_cond_id, &__gpga_cond_val, &__gpga_cond_xz, nullptr, nullptr, nullptr";
+          if (vm_expr_wide_bits > 64u) {
+            out << ", nullptr, nullptr";
+          }
+          out << ");\n";
+          out << "        ready = (__gpga_cond_xz == 0u) && (__gpga_cond_val != 0u);\n";
+          out << "      }\n";
+          out << "    }\n";
+        } else {
+          out << "    switch (sched_wait_id[idx]) {\n";
+          for (size_t i = 0; i < wait_exprs.size(); ++i) {
+            FsExpr cond = emit_expr4(*wait_exprs[i]);
+            cond = hoist_full_for_use(cond, 8);
+            out << "      case " << i << "u:\n";
+            out << "        ready = (" << cond_bool(cond) << ");\n";
+            out << "        break;\n";
+          }
+          out << "      default:\n";
+          out << "        ready = false;\n";
+          out << "        break;\n";
+          out << "    }\n";
+        }
+        out << "    if (ready) {\n";
+        out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "}\n";
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_ready_compact(";
+        bool compact_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!compact_first) {
+            out << ",\n";
+          }
+          compact_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device uint* __gpga_ready_list =\n";
+        out << "      __gpga_ready_u32 + __gpga_ready_stride;\n";
+        out << "  device atomic_uint* __gpga_ready_count =\n";
+        out << "      reinterpret_cast<device atomic_uint*>(\n";
+        out << "          __gpga_ready_u32 + (__gpga_ready_stride * 2u));\n";
+        out << "  uint __gpga_sim = gid / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_pid = gid - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint __gpga_base = __gpga_sim * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  uint __gpga_idx = __gpga_base + __gpga_pid;\n";
+        out << "  if (__gpga_ready_u32[__gpga_idx] == 0u) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_out = atomic_fetch_add_explicit(\n";
+        out << "      &__gpga_ready_count[0], 1u, memory_order_relaxed);\n";
+        out << "  if (__gpga_out < __gpga_ready_stride) {\n";
+        out << "    __gpga_ready_list[__gpga_out] = __gpga_idx;\n";
+        out << "  }\n";
+        out << "}\n";
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_ready_dispatch(";
+        bool dispatch_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!dispatch_first) {
+            out << ",\n";
+          }
+          dispatch_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device atomic_uint* __gpga_ready_count =\n";
+        out << "      reinterpret_cast<device atomic_uint*>(\n";
+        out << "          __gpga_ready_u32 + (__gpga_ready_stride * 2u));\n";
+        out << "  device uint* __gpga_dispatch_u32 =\n";
+        out << "      __gpga_ready_u32 + (__gpga_ready_stride * 2u) + sched.count;\n";
+        out << "  if (gid != 0u) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_ready = atomic_load_explicit(\n";
+        out << "      &__gpga_ready_count[0], memory_order_relaxed);\n";
+        out << "  if (__gpga_ready > __gpga_ready_stride) {\n";
+        out << "    __gpga_ready = __gpga_ready_stride;\n";
+        out << "  }\n";
+        out << "  uint __gpga_threads = (__gpga_ready > 0u) ? __gpga_ready : 1u;\n";
+        out << "  __gpga_dispatch_u32[0u] = __gpga_threads;\n";
+        out << "  __gpga_dispatch_u32[1u] = 1u;\n";
+        out << "  __gpga_dispatch_u32[2u] = 1u;\n";
+        out << "}\n";
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_exec_ready(";
+        bool exec_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!exec_first) {
+            out << ",\n";
+          }
+          exec_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device uint* __gpga_ready_list =\n";
+        out << "      __gpga_ready_u32 + __gpga_ready_stride;\n";
+        out << "  device uint* __gpga_ready_count =\n";
+        out << "      __gpga_ready_u32 + (__gpga_ready_stride * 2u);\n";
+        out << "  uint __gpga_ready_total = __gpga_ready_count[0];\n";
+        out << "  if (__gpga_ready_total > __gpga_ready_stride) {\n";
+        out << "    __gpga_ready_total = __gpga_ready_stride;\n";
+        out << "  }\n";
+        out << "  if (gid >= __gpga_ready_total) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_idx = __gpga_ready_list[gid];\n";
+        out << "  if (__gpga_idx >= __gpga_ready_stride) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_sim = __gpga_idx / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint pid = __gpga_idx - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint idx = __gpga_idx;\n";
+        out << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  if (sched_wait_kind[idx] != GPGA_SCHED_WAIT_NONE) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint steps = sched.max_proc_steps;\n";
+        out << "  if (steps == 0u) {\n";
+        out << "    steps = sched.max_steps;\n";
+        out << "  }\n";
+        out << "  bool did_work = false;\n";
+        out << "  bool finished = false;\n";
+        out << "  bool stopped = false;\n";
+        out << "  ulong __gpga_time = sched_time[__gpga_sim];\n";
+        out << "  while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+        out << "    gpga_" << MslName(module.name) << "_sched_exec_step(";
+        emit_sched_param_names("__gpga_sim");
+        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+        out << "  }\n";
+        out << "  if (sched_state[idx] == GPGA_SCHED_PROC_DONE) {\n";
+        out << "    uint parent = sched_parent[idx];\n";
+        out << "    if (parent != GPGA_SCHED_NO_PARENT) {\n";
+        out << "      uint pidx = gpga_sched_index(__gpga_sim, parent);\n";
+        out << "      if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+        out << "          sched_wait_id[pidx] == sched_join_tag[idx]) {\n";
+        out << "        if (sched_join_count[pidx] > 0u) {\n";
+        out << "          sched_join_count[pidx] -= 1u;\n";
+        out << "        }\n";
+        out << "        if (sched_join_count[pidx] == 0u) {\n";
+        out << "          sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "          sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "  if (finished) {\n";
+        out << "    sched_halt_mode[__gpga_sim] = GPGA_SCHED_HALT_FINISH;\n";
+        out << "    sched_status[__gpga_sim] = GPGA_SCHED_STATUS_FINISHED;\n";
+        out << "  } else if (stopped) {\n";
+        out << "    sched_halt_mode[__gpga_sim] = GPGA_SCHED_HALT_STOP;\n";
+        out << "    sched_status[__gpga_sim] = GPGA_SCHED_STATUS_STOPPED;\n";
+        out << "  }\n";
+        out << "}\n";
+      }
+
         out << "kernel void gpga_" << MslName(module.name) << "_sched_step(";
         bool first = true;
         for_each_sched_param([&](const std::string& text) {
@@ -20738,9 +21056,21 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           first = false;
           out << text;
         });
+        out << ",\n"
+               "  uint tgid [[threadgroup_position_in_grid]],\n"
+               "  uint tid [[thread_position_in_threadgroup]]) {\n";
         out << "  if (gid >= sched.count) {\n";
         out << "    return;\n";
         out << "  }\n";
+        if (emit_vm_debug) {
+          out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+          out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 12u] = gid;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 13u] = tgid;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 14u] = tid;\n";
+          out << "    sched_vm_debug[__gpga_dbg_base + 15u] = 0u;\n";
+          out << "  }\n";
+        }
         if (pack_signals) {
           emit_packed_signal_setup("sched.count");
         }
@@ -20796,16 +21126,18 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  " << val_name(net.name) << "[gid] = " << zero << ";\n";
           out << "  " << xz_name(net.name) << "[gid] = " << mask << ";\n";
         }
-        if (has_services) {
-          out << "  sched_service_count[gid] = 0u;\n";
-        }
         out << "  ulong __gpga_time = sched_time[gid];\n";
         out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_INITIALIZED) == 0u) {\n";
+        if (has_services) {
+          out << "    sched_service_count[gid] = 0u;\n";
+          out << "    sched_service_count[sched.count + gid] = 0u;\n";
+        }
         out << "    sched_time[gid] = 0ul;\n";
         out << "    __gpga_time = 0ul;\n";
         out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
         out << "    uint __gpga_prev_flags = sched_flags[gid];\n";
-        out << "    sched_flags[gid] = (__gpga_prev_flags & GPGA_SCHED_FLAG_VM_DEBUG)\n";
+        out << "    sched_flags[gid] = (__gpga_prev_flags & (GPGA_SCHED_FLAG_VM_DEBUG |\n";
+        out << "                                          GPGA_SCHED_FLAG_EXEC_READY))\n";
         out << "        | GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "    sched_error[gid] = 0u;\n";
         if (needs_reg_init) {
@@ -21878,6 +22210,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  }\n";
         out << "  while (steps > 0u) {\n";
         out << "    bool did_work = false;\n";
+        out << "    bool __gpga_exec_ready =\n";
+        out << "        (sched_flags[gid] & GPGA_SCHED_FLAG_EXEC_READY) != 0u;\n";
         out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
         out << "      if ((sched_flags[gid] & GPGA_SCHED_FLAG_ACTIVE_INIT) != 0u) {\n";
         out << "        sched_flags[gid] &= ~GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
@@ -21941,35 +22275,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
         out << "      }\n";
         emit_sched_comb_update(6);
-        out << "      #pragma clang loop unroll(disable)\n";
-        out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
-        out << "        uint idx = gpga_sched_index(gid, pid);\n";
-        out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-        out << "          did_work = true;\n";
-        out << "          steps--;\n";
-        if (options.sched_vm) {
-          out << "          gpga_" << MslName(module.name)
-              << "_sched_vm_exec(";
-          emit_sched_param_names();
-          out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
-          out << "          sched_pc[idx] = sched_vm_ip[idx];\n";
-        } else {
-          out << "          uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
-          out << "          switch (__gpga_group) {\n";
-          for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-            out << "            case " << group << "u:\n";
-            out << "              gpga_" << MslName(module.name)
-                << "_sched_group_" << group << "(";
-            emit_sched_param_names();
-            out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
-            out << "              break;\n";
-          }
-          out << "            default: {\n";
-          out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-          out << "              break;\n";
-          out << "            }\n";
-          out << "          }\n";
-        }
+        out << "      if (__gpga_exec_ready) {\n";
+        out << "        // Exec-ready mode: sched_exec_ready performs proc execution.\n";
+        out << "        #pragma clang loop unroll(disable)\n";
+        out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "          uint idx = gpga_sched_index(gid, pid);\n";
+        out << "          if (sched_state[idx] == GPGA_SCHED_PROC_READY &&\n";
+        out << "              sched_wait_kind[idx] == GPGA_SCHED_WAIT_NONE) {\n";
+        out << "            did_work = true;\n";
+        out << "            steps = 0u;\n";
+        out << "            break;\n";
+        out << "          }\n";
+        out << "        }\n";
+        out << "      } else {\n";
+        out << "        #pragma clang loop unroll(disable)\n";
+        out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "          uint idx = gpga_sched_index(gid, pid);\n";
+        out << "          while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+        out << "            gpga_" << MslName(module.name) << "_sched_exec_step(";
+        emit_sched_param_names();
+        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
 
         auto emit_inline_assign =
             [&](const SequentialAssign& assign, int indent,
@@ -22610,16 +22935,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                 const std::vector<ServiceArg>& args, int indent) -> void {
           std::string pad(indent, ' ');
           out << pad << "{\n";
-          out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-          out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+          out << pad << "  device atomic_uint* __gpga_svc_tail =\n";
+          out << pad
+              << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+          out << pad
+              << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+          out << pad << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+          out << pad
+              << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+          out << pad
+              << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+          out << pad << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
           out << pad << "    sched_error[gid] = 1u;\n";
           out << pad << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           out << pad << "  } else {\n";
           out << pad
-              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
-                 "__gpga_svc_index;\n";
+              << "    uint __gpga_svc_slot = __gpga_svc_index % "
+                 "sched.service_capacity;\n";
           out << pad
-              << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+                 "__gpga_svc_slot;\n";
           out << pad << "    sched_service[__gpga_svc_offset].kind = "
               << kind_expr << ";\n";
           out << pad << "    sched_service[__gpga_svc_offset].pid = pid;\n";
@@ -22637,16 +22972,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                 const std::vector<ServiceArg>& args, int indent) -> void {
           std::string pad(indent, ' ');
           out << pad << "{\n";
-          out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-          out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+          out << pad << "  device atomic_uint* __gpga_svc_tail =\n";
+          out << pad
+              << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+          out << pad
+              << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+          out << pad << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+          out << pad
+              << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+          out << pad
+              << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+          out << pad << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
           out << pad << "    sched_error[gid] = 1u;\n";
           out << pad << "    steps = 0u;\n";
           out << pad << "  } else {\n";
           out << pad
-              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
-                 "__gpga_svc_index;\n";
+              << "    uint __gpga_svc_slot = __gpga_svc_index % "
+                 "sched.service_capacity;\n";
           out << pad
-              << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+                 "__gpga_svc_slot;\n";
           out << pad << "    sched_service[__gpga_svc_offset].kind = "
               << "GPGA_SERVICE_KIND_MONITOR" << ";\n";
           out << pad << "    sched_service[__gpga_svc_offset].pid = "
@@ -22666,16 +23011,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                 const std::vector<ServiceArg>& args, int indent) -> void {
           std::string pad(indent, ' ');
           out << pad << "{\n";
-          out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-          out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+          out << pad << "  device atomic_uint* __gpga_svc_tail =\n";
+          out << pad
+              << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+          out << pad
+              << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+          out << pad << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+          out << pad
+              << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+          out << pad
+              << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+          out << pad << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
           out << pad << "    sched_error[gid] = 1u;\n";
           out << pad << "    steps = 0u;\n";
           out << pad << "  } else {\n";
           out << pad
-              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
-                 "__gpga_svc_index;\n";
+              << "    uint __gpga_svc_slot = __gpga_svc_index % "
+                 "sched.service_capacity;\n";
           out << pad
-              << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+              << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+                 "__gpga_svc_slot;\n";
           out << pad << "    sched_service[__gpga_svc_offset].kind = "
               << kind_expr << ";\n";
           out << pad << "    sched_service[__gpga_svc_offset].pid = "
@@ -25305,7 +25660,21 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "            }\n";
         out << "          }\n";
         out << "        }\n";
+        out << "        }\n";
         out << "      }\n";
+        out << "        bool __gpga_any_ready = false;\n";
+        out << "        #pragma clang loop unroll(disable)\n";
+        out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+        out << "          uint idx = gpga_sched_index(gid, pid);\n";
+        out << "          if (sched_state[idx] == GPGA_SCHED_PROC_READY &&\n";
+        out << "              sched_wait_kind[idx] == GPGA_SCHED_WAIT_NONE) {\n";
+        out << "            __gpga_any_ready = true;\n";
+        out << "            break;\n";
+        out << "          }\n";
+        out << "        }\n";
+        out << "        if (__gpga_any_ready) {\n";
+        out << "          did_work = true;\n";
+        out << "        }\n";
         out << "      if (!did_work) {\n";
         emit_timing_checks(8);
         out << "        bool any_ready = false;\n";
@@ -25468,9 +25837,15 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
         out << "        if (any_ready) {\n";
         out << "          sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+        out << "          if (__gpga_exec_ready) {\n";
+        out << "            steps = 0u;\n";
+        out << "          }\n";
         out << "          continue;\n";
         out << "        }\n";
         out << "        sched_phase[gid] = GPGA_SCHED_PHASE_NBA;\n";
+        out << "      }\n";
+        out << "      if (__gpga_exec_ready) {\n";
+        out << "        steps = 0u;\n";
         out << "      }\n";
         out << "      continue;\n";
         out << "    }\n";
@@ -25728,6 +26103,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "      if (any_ready) {\n";
         out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+        out << "        if (__gpga_exec_ready) {\n";
+        out << "          steps = 0u;\n";
+        out << "        }\n";
         out << "        continue;\n";
         out << "      }\n";
         out << "      // Advance time to next wakeup.\n";
@@ -25773,6 +26151,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "        }\n";
         out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
         out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+        out << "        if (__gpga_exec_ready) {\n";
+        out << "          steps = 0u;\n";
+        out << "        }\n";
         out << "        continue;\n";
         out << "      }\n";
         out << "      bool have_service = false;\n";
@@ -29868,15 +30249,20 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << "    return;\n";
             out << "  }\n";
           }
-          out << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-          out << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+          out << "  device atomic_uint* __gpga_svc_tail =\n";
+          out << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+          out << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+          out << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+          out << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+          out << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+          out << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
           out << "    sched_error[gid] = 1u;\n";
           out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
           out << "    return;\n";
           out << "  }\n";
+          out << "  uint __gpga_svc_slot = __gpga_svc_index % sched.service_capacity;\n";
           out << "  uint __gpga_svc_offset = (gid * sched.service_capacity) +\n";
-          out << "      __gpga_svc_index;\n";
-          out << "  sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+          out << "      __gpga_svc_slot;\n";
           out << "  sched_service[__gpga_svc_offset].kind = __gpga_entry.kind;\n";
           out << "  sched_service[__gpga_svc_offset].pid = pid;\n";
           out << "  sched_service[__gpga_svc_offset].format_id = __gpga_entry.format_id;\n";
@@ -30116,29 +30502,31 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
           if (vm_needs_call_group) {
             out << "  if (__gpga_bc_len == 0u) {\n";
-            out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-            out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-            out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
-            out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
-            out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
-            out << "        __gpga_dbg_ip = 0u;\n";
-            out << "      }\n";
-            out << "      uint __gpga_instr0 = 0u;\n";
-            out << "      uint __gpga_instr1 = 0u;\n";
-            out << "      uint __gpga_instr_ip = 0u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
-            out << "    }\n";
+            if (emit_vm_debug) {
+              out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+              out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+              out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+              out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+              out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+              out << "        __gpga_dbg_ip = 0u;\n";
+              out << "      }\n";
+              out << "      uint __gpga_instr0 = 0u;\n";
+              out << "      uint __gpga_instr1 = 0u;\n";
+              out << "      uint __gpga_instr_ip = 0u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+              out << "    }\n";
+            }
             out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
             out << "    switch (__gpga_group) {\n";
             for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
@@ -30158,29 +30546,31 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
             out << "  }\n";
           } else {
             out << "  if (__gpga_bc_len == 0u) {\n";
-            out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-            out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-            out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
-            out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
-            out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
-            out << "        __gpga_dbg_ip = 0u;\n";
-            out << "      }\n";
-            out << "      uint __gpga_instr0 = 0u;\n";
-            out << "      uint __gpga_instr1 = 0u;\n";
-            out << "      uint __gpga_instr_ip = 0u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
-            out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
-            out << "    }\n";
+            if (emit_vm_debug) {
+              out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+              out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+              out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+              out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+              out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+              out << "        __gpga_dbg_ip = 0u;\n";
+              out << "      }\n";
+              out << "      uint __gpga_instr0 = 0u;\n";
+              out << "      uint __gpga_instr1 = 0u;\n";
+              out << "      uint __gpga_instr_ip = 0u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+              out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+              out << "    }\n";
+            }
             out << "    sched_error[gid] = 1u;\n";
             out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
             out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
@@ -30192,45 +30582,49 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
             out << "    __gpga_ip = 0u;\n";
           out << "  }\n";
-          out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-          out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-          out << "    uint __gpga_instr0 = (__gpga_bc_len > 0u)\n";
-          out << "        ? sched_vm_bytecode[__gpga_bc_base]\n";
-          out << "        : 0u;\n";
-          out << "    uint __gpga_instr1 = (__gpga_bc_len > 1u)\n";
-          out << "        ? sched_vm_bytecode[__gpga_bc_base + 1u]\n";
-          out << "        : 0u;\n";
-          out << "    uint __gpga_instr_ip = (__gpga_bc_len > 0u)\n";
-          out << "        ? sched_vm_bytecode[__gpga_bc_base + __gpga_ip]\n";
-          out << "        : 0u;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_bc_base;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 7u] = (__gpga_bc_len > 0u)\n";
-          out << "        ? sched_vm_bytecode[0]\n";
-          out << "        : 0u;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 8u] = (__gpga_bc_len > 1u)\n";
-          out << "        ? sched_vm_bytecode[1]\n";
-          out << "        : 0u;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
-          out << "    sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
-          out << "  }\n";
+          if (emit_vm_debug) {
+            out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+            out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+            out << "    uint __gpga_instr0 = (__gpga_bc_len > 0u)\n";
+            out << "        ? sched_vm_bytecode[__gpga_bc_base]\n";
+            out << "        : 0u;\n";
+            out << "    uint __gpga_instr1 = (__gpga_bc_len > 1u)\n";
+            out << "        ? sched_vm_bytecode[__gpga_bc_base + 1u]\n";
+            out << "        : 0u;\n";
+            out << "    uint __gpga_instr_ip = (__gpga_bc_len > 0u)\n";
+            out << "        ? sched_vm_bytecode[__gpga_bc_base + __gpga_ip]\n";
+            out << "        : 0u;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_bc_base;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 7u] = (__gpga_bc_len > 0u)\n";
+            out << "        ? sched_vm_bytecode[0]\n";
+            out << "        : 0u;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 8u] = (__gpga_bc_len > 1u)\n";
+            out << "        ? sched_vm_bytecode[1]\n";
+            out << "        : 0u;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+            out << "    sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+            out << "  }\n";
+          }
           out << "  #pragma clang loop unroll(disable)\n";
           out << "  for (; __gpga_ip < __gpga_bc_len;) {\n";
           out << "    uint __gpga_instr = sched_vm_bytecode[__gpga_bc_base + __gpga_ip];\n";
           out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
           out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
           out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
-          out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-          out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-          out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
-          out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr;\n";
-          out << "    }\n";
+          if (emit_vm_debug) {
+            out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+            out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+            out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr;\n";
+            out << "    }\n";
+          }
           if (vm_needs_call_group) {
             out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
             out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
@@ -35582,6 +35976,7 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
         return decl.substr(space + 1);
       };
+      const bool emit_vm_debug = false;
       auto for_each_sched_param = [&](const auto& emit_param_fn) {
         int buffer_index = 0;
         if (pack_signals) {
@@ -35707,12 +36102,12 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
                       std::to_string(buffer_index++) + ")]]");
         emit_param_fn("  device uint* sched_status [[buffer(" +
                       std::to_string(buffer_index++) + ")]]");
-        if (options.sched_vm) {
-          emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
-                        std::to_string(buffer_index++) + ")]]");
-          emit_param_fn("  device uint* sched_vm_debug [[buffer(" +
-                        std::to_string(buffer_index++) + ")]]");
-        }
+          if (options.sched_vm) {
+            emit_param_fn("  constant GpgaSchedVmArgs& sched_vm_args [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+            emit_param_fn("  device uint* sched_ready [[buffer(" +
+                          std::to_string(buffer_index++) + ")]]");
+          }
         if (has_delayed_assigns) {
           emit_param_fn("  device ulong* sched_delay_val [[buffer(" +
                         std::to_string(buffer_index++) + ")]]");
@@ -35756,7 +36151,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         }
         emit_param_fn("  constant GpgaSchedParams& sched [[buffer(" +
                       std::to_string(buffer_index++) + ")]]");
-        emit_param_fn("  uint gid [[thread_position_in_grid]]) {\n");
+        emit_param_fn("  uint gid [[thread_position_in_grid]]");
+        // Additional threadgroup/thread params are appended at kernel emission time.
       };
       for_each_sched_param([&](const std::string& text) {
         std::string decl = sched_param_decl(text);
@@ -35773,12 +36169,16 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
           out << pad << sched_params[i].decl;
         }
       };
-      auto emit_sched_param_names = [&]() {
+      auto emit_sched_param_names = [&](const char* gid_override = nullptr) {
         for (size_t i = 0; i < sched_params.size(); ++i) {
           if (i > 0) {
             out << ", ";
           }
-          out << sched_params[i].name;
+          if (gid_override && sched_params[i].name == "gid") {
+            out << gid_override;
+          } else {
+            out << sched_params[i].name;
+          }
         }
       };
 
@@ -35944,6 +36344,318 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << ");\n";
       }
 
+      out << "static __attribute__((noinline)) void gpga_"
+          << MslName(module.name) << "_sched_exec_step(";
+      emit_sched_param_decls(2);
+      out << ",\n  uint pid,\n  uint idx,\n  thread uint* steps_ptr,\n"
+             "  thread bool* did_work_ptr,\n"
+             "  thread bool* finished_ptr,\n"
+             "  thread bool* stopped_ptr,\n"
+             "  thread ulong* __gpga_time_ptr) {\n";
+      out << "  *did_work_ptr = true;\n";
+      out << "  (*steps_ptr)--;\n";
+      if (options.sched_vm) {
+        out << "  gpga_" << MslName(module.name) << "_sched_vm_exec(";
+        emit_sched_param_names();
+        out << ", pid, idx, steps_ptr, did_work_ptr, finished_ptr, stopped_ptr,"
+               " __gpga_time_ptr);\n";
+        out << "  sched_pc[idx] = sched_vm_ip[idx];\n";
+      } else {
+        out << "  uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
+        out << "  switch (__gpga_group) {\n";
+        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
+          out << "    case " << group << "u:\n";
+          out << "      gpga_" << MslName(module.name) << "_sched_group_" << group
+              << "(";
+          emit_sched_param_names();
+          out << ", pid, idx, steps_ptr, did_work_ptr, finished_ptr,"
+                 " stopped_ptr, __gpga_time_ptr);\n";
+          out << "      break;\n";
+        }
+        out << "    default: {\n";
+        out << "      sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
+        out << "      break;\n";
+        out << "    }\n";
+        out << "  }\n";
+      }
+      out << "}\n";
+
+      if (options.sched_vm) {
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_ready_reset(";
+        bool reset_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!reset_first) {
+            out << ",\n";
+          }
+          reset_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device atomic_uint* __gpga_ready_count =\n";
+        out << "      reinterpret_cast<device atomic_uint*>(\n";
+        out << "          __gpga_ready_u32 + (__gpga_ready_stride * 2u));\n";
+        out << "  if (gid >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  atomic_store_explicit(&__gpga_ready_count[gid], 0u,\n";
+        out << "                       memory_order_relaxed);\n";
+        out << "}\n";
+        out << "kernel void gpga_" << MslName(module.name)
+            << "_sched_ready_flags(";
+        bool ready_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!ready_first) {
+            out << ",\n";
+          }
+          ready_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  device uint* __gpga_ready_flags = __gpga_ready_u32;\n";
+        out << "  uint __gpga_sim = gid / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_pid = gid - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint __gpga_idx = gpga_sched_index(__gpga_sim, __gpga_pid);\n";
+        out << "  uint __gpga_ready =\n";
+        out << "      (sched_state[__gpga_idx] == GPGA_SCHED_PROC_READY)\n";
+        out << "          ? 1u : 0u;\n";
+        out << "  if (sched_wait_kind[__gpga_idx] != GPGA_SCHED_WAIT_NONE) {\n";
+        out << "    __gpga_ready = 0u;\n";
+        out << "  }\n";
+      out << "  __gpga_ready_flags[__gpga_idx] = __gpga_ready;\n";
+      out << "}\n";
+      out << "kernel void gpga_" << MslName(module.name)
+          << "_sched_wait_eval(";
+      bool wait_first = true;
+      for_each_sched_param([&](const std::string& text) {
+        if (!wait_first) {
+          out << ",\n";
+        }
+        wait_first = false;
+        out << text;
+      });
+      out << ") {\n";
+      out << "  uint __gpga_sim = gid / GPGA_SCHED_PROC_COUNT;\n";
+      out << "  if (__gpga_sim >= sched.count) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  if (sched_phase[__gpga_sim] != GPGA_SCHED_PHASE_ACTIVE) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  uint pid = gid - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+      out << "  uint idx = gpga_sched_index(__gpga_sim, pid);\n";
+      out << "  if (sched_state[idx] != GPGA_SCHED_PROC_BLOCKED) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  uint __gpga_wait_kind = sched_wait_kind[idx];\n";
+      out << "  if (__gpga_wait_kind == GPGA_SCHED_WAIT_DELTA) {\n";
+      out << "    sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "    sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  if (__gpga_wait_kind == GPGA_SCHED_WAIT_TIME) {\n";
+      out << "    ulong t = sched_wait_time[idx];\n";
+      out << "    if (t <= sched_time[__gpga_sim]) {\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "    }\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  if (__gpga_wait_kind == GPGA_SCHED_WAIT_COND) {\n";
+      out << "    bool ready = false;\n";
+      if (options.sched_vm) {
+        out << "    uint __gpga_wait_id = sched_wait_id[idx];\n";
+        out << "    if (__gpga_wait_id < GPGA_SCHED_WAIT_COND_COUNT) {\n";
+        out << "      if (gpga_sched_wait_cond_valid[__gpga_wait_id] != 0u) {\n";
+        out << "        uint __gpga_cond_id = gpga_sched_wait_cond_id[__gpga_wait_id];\n";
+        out << "        uint __gpga_cond_val = 0u;\n";
+        out << "        uint __gpga_cond_xz = 1u;\n";
+        out << "        gpga_" << MslName(module.name)
+            << "_sched_vm_eval_cond(";
+        emit_sched_param_names();
+        out << ", pid, __gpga_cond_id, &__gpga_cond_val, &__gpga_cond_xz, nullptr, nullptr, nullptr";
+        if (vm_expr_wide_bits > 64u) {
+          out << ", nullptr, nullptr";
+        }
+        out << ");\n";
+        out << "        ready = (__gpga_cond_xz == 0u) && (__gpga_cond_val != 0u);\n";
+        out << "      }\n";
+        out << "    }\n";
+      } else {
+        out << "    switch (sched_wait_id[idx]) {\n";
+        for (size_t i = 0; i < wait_exprs.size(); ++i) {
+          std::string cond = EmitCondExpr(*wait_exprs[i], module, sched_locals,
+                                          sched_regs);
+          out << "      case " << i << "u:\n";
+          out << "        ready = (" << cond << ");\n";
+          out << "        break;\n";
+        }
+        out << "      default:\n";
+        out << "        ready = false;\n";
+        out << "        break;\n";
+        out << "    }\n";
+      }
+      out << "    if (ready) {\n";
+      out << "      sched_wait_kind[idx] = GPGA_SCHED_WAIT_NONE;\n";
+      out << "      sched_state[idx] = GPGA_SCHED_PROC_READY;\n";
+      out << "    }\n";
+      out << "  }\n";
+      out << "}\n";
+      out << "kernel void gpga_" << MslName(module.name)
+          << "_sched_ready_compact(";
+        bool compact_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!compact_first) {
+            out << ",\n";
+          }
+          compact_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device uint* __gpga_ready_list =\n";
+        out << "      __gpga_ready_u32 + __gpga_ready_stride;\n";
+        out << "  device atomic_uint* __gpga_ready_count =\n";
+        out << "      reinterpret_cast<device atomic_uint*>(\n";
+        out << "          __gpga_ready_u32 + (__gpga_ready_stride * 2u));\n";
+        out << "  uint __gpga_sim = gid / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_pid = gid - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint __gpga_base = __gpga_sim * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  uint __gpga_idx = __gpga_base + __gpga_pid;\n";
+        out << "  if (__gpga_ready_u32[__gpga_idx] == 0u) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+      out << "  uint __gpga_out = atomic_fetch_add_explicit(\n";
+      out << "      &__gpga_ready_count[0], 1u, memory_order_relaxed);\n";
+      out << "  if (__gpga_out < __gpga_ready_stride) {\n";
+      out << "    __gpga_ready_list[__gpga_out] = __gpga_idx;\n";
+      out << "  }\n";
+      out << "}\n";
+      out << "kernel void gpga_" << MslName(module.name)
+          << "_sched_ready_dispatch(";
+      bool dispatch_first = true;
+      for_each_sched_param([&](const std::string& text) {
+        if (!dispatch_first) {
+          out << ",\n";
+        }
+        dispatch_first = false;
+        out << text;
+      });
+      out << ") {\n";
+      out << "  device uint* __gpga_ready_u32 =\n";
+      out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+      out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+      out << "  device atomic_uint* __gpga_ready_count =\n";
+      out << "      reinterpret_cast<device atomic_uint*>(\n";
+      out << "          __gpga_ready_u32 + (__gpga_ready_stride * 2u));\n";
+      out << "  device uint* __gpga_dispatch_u32 =\n";
+      out << "      __gpga_ready_u32 + (__gpga_ready_stride * 2u) + sched.count;\n";
+      out << "  if (gid != 0u) {\n";
+      out << "    return;\n";
+      out << "  }\n";
+      out << "  uint __gpga_ready = atomic_load_explicit(\n";
+      out << "      &__gpga_ready_count[0], memory_order_relaxed);\n";
+      out << "  if (__gpga_ready > __gpga_ready_stride) {\n";
+      out << "    __gpga_ready = __gpga_ready_stride;\n";
+      out << "  }\n";
+      out << "  uint __gpga_threads = (__gpga_ready > 0u) ? __gpga_ready : 1u;\n";
+      out << "  __gpga_dispatch_u32[0u] = __gpga_threads;\n";
+      out << "  __gpga_dispatch_u32[1u] = 1u;\n";
+      out << "  __gpga_dispatch_u32[2u] = 1u;\n";
+      out << "}\n";
+      out << "kernel void gpga_" << MslName(module.name)
+          << "_sched_exec_ready(";
+        bool exec_first = true;
+        for_each_sched_param([&](const std::string& text) {
+          if (!exec_first) {
+            out << ",\n";
+          }
+          exec_first = false;
+          out << text;
+        });
+        out << ") {\n";
+        out << "  device uint* __gpga_ready_u32 =\n";
+        out << "      reinterpret_cast<device uint*>(sched_ready);\n";
+        out << "  uint __gpga_ready_stride = sched.count * GPGA_SCHED_PROC_COUNT;\n";
+        out << "  device uint* __gpga_ready_list =\n";
+        out << "      __gpga_ready_u32 + __gpga_ready_stride;\n";
+        out << "  device uint* __gpga_ready_count =\n";
+        out << "      __gpga_ready_u32 + (__gpga_ready_stride * 2u);\n";
+        out << "  uint __gpga_ready_total = __gpga_ready_count[0];\n";
+        out << "  if (__gpga_ready_total > __gpga_ready_stride) {\n";
+        out << "    __gpga_ready_total = __gpga_ready_stride;\n";
+        out << "  }\n";
+        out << "  if (gid >= __gpga_ready_total) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_idx = __gpga_ready_list[gid];\n";
+        out << "  if (__gpga_idx >= __gpga_ready_stride) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint __gpga_sim = __gpga_idx / GPGA_SCHED_PROC_COUNT;\n";
+        out << "  if (__gpga_sim >= sched.count) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint pid = __gpga_idx - (__gpga_sim * GPGA_SCHED_PROC_COUNT);\n";
+        out << "  uint idx = __gpga_idx;\n";
+        out << "  if (sched_state[idx] != GPGA_SCHED_PROC_READY) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  if (sched_wait_kind[idx] != GPGA_SCHED_WAIT_NONE) {\n";
+        out << "    return;\n";
+        out << "  }\n";
+        out << "  uint steps = sched.max_proc_steps;\n";
+        out << "  if (steps == 0u) {\n";
+        out << "    steps = sched.max_steps;\n";
+        out << "  }\n";
+        out << "  bool did_work = false;\n";
+        out << "  bool finished = false;\n";
+        out << "  bool stopped = false;\n";
+        out << "  ulong __gpga_time = sched_time[__gpga_sim];\n";
+        out << "  while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+      out << "    gpga_" << MslName(module.name) << "_sched_exec_step(";
+      emit_sched_param_names("__gpga_sim");
+      out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
+        out << "  }\n";
+        out << "  if (sched_state[idx] == GPGA_SCHED_PROC_DONE) {\n";
+        out << "    uint parent = sched_parent[idx];\n";
+        out << "    if (parent != GPGA_SCHED_NO_PARENT) {\n";
+        out << "      uint pidx = gpga_sched_index(__gpga_sim, parent);\n";
+        out << "      if (sched_wait_kind[pidx] == GPGA_SCHED_WAIT_JOIN &&\n";
+        out << "          sched_wait_id[pidx] == sched_join_tag[idx]) {\n";
+        out << "        if (sched_join_count[pidx] > 0u) {\n";
+        out << "          sched_join_count[pidx] -= 1u;\n";
+        out << "        }\n";
+        out << "        if (sched_join_count[pidx] == 0u) {\n";
+        out << "          sched_wait_kind[pidx] = GPGA_SCHED_WAIT_NONE;\n";
+        out << "          sched_state[pidx] = GPGA_SCHED_PROC_READY;\n";
+        out << "        }\n";
+        out << "      }\n";
+        out << "    }\n";
+        out << "  }\n";
+        out << "  if (finished) {\n";
+        out << "    sched_halt_mode[__gpga_sim] = GPGA_SCHED_HALT_FINISH;\n";
+        out << "    sched_status[__gpga_sim] = GPGA_SCHED_STATUS_FINISHED;\n";
+        out << "  } else if (stopped) {\n";
+        out << "    sched_halt_mode[__gpga_sim] = GPGA_SCHED_HALT_STOP;\n";
+        out << "    sched_status[__gpga_sim] = GPGA_SCHED_STATUS_STOPPED;\n";
+        out << "  }\n";
+        out << "}\n";
+      }
+
       out << "kernel void gpga_" << MslName(module.name) << "_sched_step(";
       bool first = true;
       for_each_sched_param([&](const std::string& text) {
@@ -35953,9 +36665,21 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         first = false;
         out << text;
       });
+    out << ",\n"
+           "  uint tgid [[threadgroup_position_in_grid]],\n"
+           "  uint tid [[thread_position_in_threadgroup]]) {\n";
     out << "  if (gid >= sched.count) {\n";
     out << "    return;\n";
     out << "  }\n";
+      if (emit_vm_debug) {
+        out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+        out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 12u] = gid;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 13u] = tgid;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 14u] = tid;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 15u] = 0u;\n";
+        out << "  }\n";
+      }
     if (pack_signals) {
       emit_packed_signal_setup("sched.count");
     }
@@ -35968,16 +36692,18 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  " << type << " " << MslName(name) << " = " << zero << ";\n";
       }
     }
-    if (has_services) {
-      out << "  sched_service_count[gid] = 0u;\n";
-    }
-    out << "  ulong __gpga_time = sched_time[gid];\n";
-      out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_INITIALIZED) == 0u) {\n";
-      out << "    sched_time[gid] = 0ul;\n";
+        out << "  ulong __gpga_time = sched_time[gid];\n";
+        out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_INITIALIZED) == 0u) {\n";
+        if (has_services) {
+          out << "    sched_service_count[gid] = 0u;\n";
+          out << "    sched_service_count[sched.count + gid] = 0u;\n";
+        }
+        out << "    sched_time[gid] = 0ul;\n";
       out << "    __gpga_time = 0ul;\n";
       out << "    sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
       out << "    uint __gpga_prev_flags = sched_flags[gid];\n";
-      out << "    sched_flags[gid] = (__gpga_prev_flags & GPGA_SCHED_FLAG_VM_DEBUG)\n";
+      out << "    sched_flags[gid] = (__gpga_prev_flags & (GPGA_SCHED_FLAG_VM_DEBUG |\n";
+      out << "                                          GPGA_SCHED_FLAG_EXEC_READY))\n";
       out << "        | GPGA_SCHED_FLAG_INITIALIZED | GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "    sched_error[gid] = 0u;\n";
       for (const auto* reg : trireg_nets) {
@@ -36998,6 +37724,8 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  }\n";
       out << "  while (steps > 0u) {\n";
       out << "    bool did_work = false;\n";
+      out << "    bool __gpga_exec_ready =\n";
+      out << "        (sched_flags[gid] & GPGA_SCHED_FLAG_EXEC_READY) != 0u;\n";
       out << "    if (sched_phase[gid] == GPGA_SCHED_PHASE_ACTIVE) {\n";
       out << "      if ((sched_flags[gid] & GPGA_SCHED_FLAG_ACTIVE_INIT) != 0u) {\n";
       out << "        sched_flags[gid] &= ~GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
@@ -37051,35 +37779,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       }
       out << "      }\n";
       emit_sched_comb_update(6);
-      out << "      #pragma clang loop unroll(disable)\n";
-      out << "      for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
-      out << "        uint idx = gpga_sched_index(gid, pid);\n";
-      out << "        while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
-      out << "          did_work = true;\n";
-      out << "          steps--;\n";
-      if (options.sched_vm) {
-        out << "          gpga_" << MslName(module.name)
-            << "_sched_vm_exec(";
-        emit_sched_param_names();
-        out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
-        out << "          sched_pc[idx] = sched_vm_ip[idx];\n";
-      } else {
-        out << "          uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
-        out << "          switch (__gpga_group) {\n";
-        for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
-          out << "            case " << group << "u:\n";
-          out << "              gpga_" << MslName(module.name) << "_sched_group_"
-              << group << "(";
-          emit_sched_param_names();
-          out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
-          out << "              break;\n";
-        }
-        out << "            default: {\n";
-        out << "              sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
-        out << "              break;\n";
-        out << "            }\n";
-        out << "          }\n";
-      }
+      out << "      if (__gpga_exec_ready) {\n";
+      out << "        // Exec-ready mode: sched_exec_ready performs proc execution.\n";
+      out << "        #pragma clang loop unroll(disable)\n";
+      out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "          uint idx = gpga_sched_index(gid, pid);\n";
+      out << "          if (sched_state[idx] == GPGA_SCHED_PROC_READY &&\n";
+      out << "              sched_wait_kind[idx] == GPGA_SCHED_WAIT_NONE) {\n";
+      out << "            did_work = true;\n";
+      out << "            steps = 0u;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "      } else {\n";
+      out << "        #pragma clang loop unroll(disable)\n";
+      out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "          uint idx = gpga_sched_index(gid, pid);\n";
+      out << "          while (steps > 0u && sched_state[idx] == GPGA_SCHED_PROC_READY) {\n";
+      out << "            gpga_" << MslName(module.name) << "_sched_exec_step(";
+      emit_sched_param_names();
+      out << ", pid, idx, &steps, &did_work, &finished, &stopped, &__gpga_time);\n";
 
     auto emit_inline_assign =
         [&](const SequentialAssign& assign, int indent,
@@ -37465,16 +38184,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               const std::vector<ServiceArg>& args, int indent) -> void {
         std::string pad(indent, ' ');
         out << pad << "{\n";
-        out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-        out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+        out << pad << "  device atomic_uint* __gpga_svc_tail =\n";
+        out << pad
+            << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+        out << pad
+            << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+        out << pad << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+        out << pad
+            << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+        out << pad
+            << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+        out << pad << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
         out << pad << "    sched_error[gid] = 1u;\n";
         out << pad << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
         out << pad << "  } else {\n";
         out << pad
-            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
-               "__gpga_svc_index;\n";
+            << "    uint __gpga_svc_slot = __gpga_svc_index % "
+               "sched.service_capacity;\n";
         out << pad
-            << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+               "__gpga_svc_slot;\n";
         out << pad << "    sched_service[__gpga_svc_offset].kind = "
             << kind_expr << ";\n";
         out << pad << "    sched_service[__gpga_svc_offset].pid = pid;\n";
@@ -37616,16 +38345,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               const std::vector<ServiceArg>& args, int indent) -> void {
         std::string pad(indent, ' ');
         out << pad << "{\n";
-        out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-        out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+        out << pad << "  device atomic_uint* __gpga_svc_tail =\n";
+        out << pad
+            << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+        out << pad
+            << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+        out << pad << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+        out << pad
+            << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+        out << pad
+            << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+        out << pad << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
         out << pad << "    sched_error[gid] = 1u;\n";
         out << pad << "    steps = 0u;\n";
         out << pad << "  } else {\n";
         out << pad
-            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
-               "__gpga_svc_index;\n";
+            << "    uint __gpga_svc_slot = __gpga_svc_index % "
+               "sched.service_capacity;\n";
         out << pad
-            << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+               "__gpga_svc_slot;\n";
         out << pad << "    sched_service[__gpga_svc_offset].kind = "
             << "GPGA_SERVICE_KIND_MONITOR" << ";\n";
         out << pad << "    sched_service[__gpga_svc_offset].pid = "
@@ -37645,16 +38384,26 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
               const std::vector<ServiceArg>& args, int indent) -> void {
         std::string pad(indent, ' ');
         out << pad << "{\n";
-        out << pad << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-        out << pad << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+        out << pad << "  device atomic_uint* __gpga_svc_tail =\n";
+        out << pad
+            << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+        out << pad
+            << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+        out << pad << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+        out << pad
+            << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+        out << pad
+            << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+        out << pad << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
         out << pad << "    sched_error[gid] = 1u;\n";
         out << pad << "    steps = 0u;\n";
         out << pad << "  } else {\n";
         out << pad
-            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
-               "__gpga_svc_index;\n";
+            << "    uint __gpga_svc_slot = __gpga_svc_index % "
+               "sched.service_capacity;\n";
         out << pad
-            << "    sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+            << "    uint __gpga_svc_offset = (gid * sched.service_capacity) + "
+               "__gpga_svc_slot;\n";
         out << pad << "    sched_service[__gpga_svc_offset].kind = "
             << kind_expr << ";\n";
         out << pad << "    sched_service[__gpga_svc_offset].pid = "
@@ -40056,7 +40805,21 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "            }\n";
       out << "          }\n";
       out << "        }\n";
+      out << "        }\n";
       out << "      }\n";
+      out << "        bool __gpga_any_ready = false;\n";
+      out << "        #pragma clang loop unroll(disable)\n";
+      out << "        for (uint pid = 0u; pid < GPGA_SCHED_PROC_COUNT; ++pid) {\n";
+      out << "          uint idx = gpga_sched_index(gid, pid);\n";
+      out << "          if (sched_state[idx] == GPGA_SCHED_PROC_READY &&\n";
+      out << "              sched_wait_kind[idx] == GPGA_SCHED_WAIT_NONE) {\n";
+      out << "            __gpga_any_ready = true;\n";
+      out << "            break;\n";
+      out << "          }\n";
+      out << "        }\n";
+      out << "        if (__gpga_any_ready) {\n";
+      out << "          did_work = true;\n";
+      out << "        }\n";
       out << "      if (!did_work) {\n";
       emit_timing_checks(8);
       out << "        bool any_ready = false;\n";
@@ -40207,9 +40970,15 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       }
       out << "        if (any_ready) {\n";
       out << "          sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+      out << "          if (__gpga_exec_ready) {\n";
+      out << "            steps = 0u;\n";
+      out << "          }\n";
       out << "          continue;\n";
       out << "        }\n";
       out << "        sched_phase[gid] = GPGA_SCHED_PHASE_NBA;\n";
+      out << "      }\n";
+      out << "      if (__gpga_exec_ready) {\n";
+      out << "        steps = 0u;\n";
       out << "      }\n";
       out << "      continue;\n";
       out << "    }\n";
@@ -40445,6 +41214,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "      if (any_ready) {\n";
       out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+      out << "        if (__gpga_exec_ready) {\n";
+      out << "          steps = 0u;\n";
+      out << "        }\n";
       out << "        continue;\n";
       out << "      }\n";
       out << "      // Advance time to next wakeup.\n";
@@ -40490,6 +41262,9 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "        }\n";
       out << "        sched_flags[gid] |= GPGA_SCHED_FLAG_ACTIVE_INIT;\n";
       out << "        sched_phase[gid] = GPGA_SCHED_PHASE_ACTIVE;\n";
+      out << "        if (__gpga_exec_ready) {\n";
+      out << "          steps = 0u;\n";
+      out << "        }\n";
       out << "        continue;\n";
       out << "      }\n";
       out << "      bool have_service = false;\n";
@@ -44770,15 +45545,20 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "    return;\n";
         out << "  }\n";
       }
-      out << "  uint __gpga_svc_index = sched_service_count[gid];\n";
-      out << "  if (__gpga_svc_index >= sched.service_capacity) {\n";
+      out << "  device atomic_uint* __gpga_svc_tail =\n";
+      out << "      reinterpret_cast<device atomic_uint*>(sched_service_count);\n";
+      out << "  uint __gpga_svc_head = sched_service_count[sched.count + gid];\n";
+      out << "  uint __gpga_svc_index = atomic_fetch_add_explicit(\n";
+      out << "      &__gpga_svc_tail[gid], 1u, memory_order_relaxed);\n";
+      out << "  uint __gpga_svc_used = __gpga_svc_index - __gpga_svc_head;\n";
+      out << "  if (__gpga_svc_used >= sched.service_capacity) {\n";
       out << "    sched_error[gid] = 1u;\n";
       out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
       out << "    return;\n";
       out << "  }\n";
+      out << "  uint __gpga_svc_slot = __gpga_svc_index % sched.service_capacity;\n";
       out << "  uint __gpga_svc_offset = (gid * sched.service_capacity) +\n";
-      out << "      __gpga_svc_index;\n";
-      out << "  sched_service_count[gid] = __gpga_svc_index + 1u;\n";
+      out << "      __gpga_svc_slot;\n";
       out << "  sched_service[__gpga_svc_offset].kind = __gpga_entry.kind;\n";
       out << "  sched_service[__gpga_svc_offset].pid = pid;\n";
       out << "  sched_service[__gpga_svc_offset].format_id = __gpga_entry.format_id;\n";
@@ -45000,29 +45780,31 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  uint __gpga_bc_len = sched_vm_proc_bytecode_length[__gpga_vm_idx];\n";
       if (vm_needs_call_group) {
         out << "  if (__gpga_bc_len == 0u) {\n";
-        out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-        out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-        out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
-        out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
-        out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
-        out << "        __gpga_dbg_ip = 0u;\n";
-        out << "      }\n";
-        out << "      uint __gpga_instr0 = 0u;\n";
-        out << "      uint __gpga_instr1 = 0u;\n";
-        out << "      uint __gpga_instr_ip = 0u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
-        out << "    }\n";
+        if (emit_vm_debug) {
+          out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+          out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+          out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+          out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+          out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+          out << "        __gpga_dbg_ip = 0u;\n";
+          out << "      }\n";
+          out << "      uint __gpga_instr0 = 0u;\n";
+          out << "      uint __gpga_instr1 = 0u;\n";
+          out << "      uint __gpga_instr_ip = 0u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+          out << "    }\n";
+        }
         out << "    uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";
         out << "    switch (__gpga_group) {\n";
         for (uint32_t group = 0u; group < sched_proc_group_count; ++group) {
@@ -45042,29 +45824,31 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
         out << "  }\n";
       } else {
         out << "  if (__gpga_bc_len == 0u) {\n";
-        out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-        out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-        out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
-        out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
-        out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
-        out << "        __gpga_dbg_ip = 0u;\n";
-        out << "      }\n";
-        out << "      uint __gpga_instr0 = 0u;\n";
-        out << "      uint __gpga_instr1 = 0u;\n";
-        out << "      uint __gpga_instr_ip = 0u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
-        out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
-        out << "    }\n";
+        if (emit_vm_debug) {
+          out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+          out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+          out << "      uint __gpga_dbg_bc_base = sched_vm_proc_bytecode_offset[__gpga_vm_idx];\n";
+          out << "      uint __gpga_dbg_ip = sched_vm_ip[__gpga_vm_idx];\n";
+          out << "      if (__gpga_dbg_ip >= __gpga_bc_len) {\n";
+          out << "        __gpga_dbg_ip = 0u;\n";
+          out << "      }\n";
+          out << "      uint __gpga_instr0 = 0u;\n";
+          out << "      uint __gpga_instr1 = 0u;\n";
+          out << "      uint __gpga_instr_ip = 0u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_dbg_bc_base;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_dbg_ip;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 7u] = 0u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 8u] = 0u;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+          out << "      sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+          out << "    }\n";
+        }
         out << "    sched_error[gid] = 1u;\n";
         out << "    sched_state[idx] = GPGA_SCHED_PROC_DONE;\n";
         out << "    sched_vm_ip[__gpga_vm_idx] = 0u;\n";
@@ -45076,45 +45860,49 @@ std::string EmitMSLStub(const Module& module, const MslEmitOptions& options) {
       out << "  if (__gpga_ip >= __gpga_bc_len) {\n";
       out << "    __gpga_ip = 0u;\n";
       out << "  }\n";
-      out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-      out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-      out << "    uint __gpga_instr0 = (__gpga_bc_len > 0u)\n";
-      out << "        ? sched_vm_bytecode[__gpga_bc_base]\n";
-      out << "        : 0u;\n";
-      out << "    uint __gpga_instr1 = (__gpga_bc_len > 1u)\n";
-      out << "        ? sched_vm_bytecode[__gpga_bc_base + 1u]\n";
-      out << "        : 0u;\n";
-      out << "    uint __gpga_instr_ip = (__gpga_bc_len > 0u)\n";
-      out << "        ? sched_vm_bytecode[__gpga_bc_base + __gpga_ip]\n";
-      out << "        : 0u;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_bc_base;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 7u] = (__gpga_bc_len > 0u)\n";
-      out << "        ? sched_vm_bytecode[0]\n";
-      out << "        : 0u;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 8u] = (__gpga_bc_len > 1u)\n";
-      out << "        ? sched_vm_bytecode[1]\n";
-      out << "        : 0u;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
-      out << "    sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
-      out << "  }\n";
+      if (emit_vm_debug) {
+        out << "  if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+        out << "    uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+        out << "    uint __gpga_instr0 = (__gpga_bc_len > 0u)\n";
+        out << "        ? sched_vm_bytecode[__gpga_bc_base]\n";
+        out << "        : 0u;\n";
+        out << "    uint __gpga_instr1 = (__gpga_bc_len > 1u)\n";
+        out << "        ? sched_vm_bytecode[__gpga_bc_base + 1u]\n";
+        out << "        : 0u;\n";
+        out << "    uint __gpga_instr_ip = (__gpga_bc_len > 0u)\n";
+        out << "        ? sched_vm_bytecode[__gpga_bc_base + __gpga_ip]\n";
+        out << "        : 0u;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 0u] = 0x564D4447u;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 1u] = __gpga_bc_base;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 2u] = __gpga_bc_len;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr_ip;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 5u] = __gpga_instr0;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 6u] = __gpga_instr1;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 7u] = (__gpga_bc_len > 0u)\n";
+        out << "        ? sched_vm_bytecode[0]\n";
+        out << "        : 0u;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 8u] = (__gpga_bc_len > 1u)\n";
+        out << "        ? sched_vm_bytecode[1]\n";
+        out << "        : 0u;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 9u] = GPGA_SCHED_PROC_COUNT;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 10u] = __gpga_vm_idx;\n";
+        out << "    sched_vm_debug[__gpga_dbg_base + 11u] = sched_flags[gid];\n";
+        out << "  }\n";
+      }
       out << "  #pragma clang loop unroll(disable)\n";
       out << "  for (; __gpga_ip < __gpga_bc_len;) {\n";
       out << "    uint __gpga_instr = sched_vm_bytecode[__gpga_bc_base + __gpga_ip];\n";
       out << "    uint __gpga_op = __gpga_instr & GPGA_SCHED_VM_OP_MASK;\n";
       out << "    uint __gpga_arg = __gpga_instr >> GPGA_SCHED_VM_OP_SHIFT;\n";
       out << "    uint __gpga_next_ip = __gpga_ip + 1u;\n";
-      out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
-      out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
-      out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
-      out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr;\n";
-      out << "    }\n";
+      if (emit_vm_debug) {
+        out << "    if ((sched_flags[gid] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {\n";
+        out << "      uint __gpga_dbg_base = gid * GPGA_SCHED_VM_DEBUG_WORDS;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 3u] = __gpga_ip;\n";
+        out << "      sched_vm_debug[__gpga_dbg_base + 4u] = __gpga_instr;\n";
+        out << "    }\n";
+      }
       if (vm_needs_call_group) {
         out << "    if (__gpga_op == GPGA_SCHED_VM_OP_CALL_GROUP) {\n";
         out << "      uint __gpga_group = pid / GPGA_SCHED_PROC_GROUP_SIZE;\n";

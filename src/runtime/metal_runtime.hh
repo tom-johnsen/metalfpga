@@ -195,6 +195,9 @@ class MetalKernel;
 struct MetalDispatch {
   const MetalKernel* kernel = nullptr;
   const std::vector<MetalBufferBinding>* bindings = nullptr;
+  uint32_t grid_size = 0;
+  const MetalBuffer* indirect_buffer = nullptr;
+  size_t indirect_offset = 0;
 };
 
 class MetalKernel {
@@ -216,6 +219,9 @@ class MetalKernel {
   uint32_t MaxThreadsPerThreadgroup() const {
     return max_threads_per_threadgroup_;
   }
+  uint32_t RequiredThreadsPerThreadgroup() const {
+    return required_threads_per_threadgroup_;
+  }
   uint32_t MaxBufferBindings() const { return max_buffer_bindings_; }
 
  private:
@@ -227,6 +233,7 @@ class MetalKernel {
   uint32_t max_buffer_bindings_ = 0;
   uint32_t thread_execution_width_ = 0;
   uint32_t max_threads_per_threadgroup_ = 0;
+  uint32_t required_threads_per_threadgroup_ = 0;
   mutable std::vector<uint64_t> last_binding_addresses_;
 };
 
@@ -255,9 +262,15 @@ class MetalRuntime {
                 const std::vector<MetalBufferBinding>& bindings,
                 uint32_t grid_size, std::string* error,
                 uint32_t timeout_ms = 0u);
+  bool DispatchIndirectThreads(const MetalKernel& kernel,
+                               const std::vector<MetalBufferBinding>& bindings,
+                               const MetalBuffer& indirect_buffer,
+                               size_t indirect_offset, std::string* error,
+                               uint32_t timeout_ms = 0u);
   bool DispatchBatch(const std::vector<MetalDispatch>& dispatches,
                      uint32_t grid_size, std::string* error,
                      uint32_t timeout_ms = 0u);
+  uint32_t ComputeThreadgroupSize(const MetalKernel& kernel) const;
 
  private:
   struct Impl;

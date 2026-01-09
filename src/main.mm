@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -176,6 +178,77 @@ std::string ToLowerAscii(const std::string& input) {
     out.push_back(static_cast<char>(std::tolower(ch)));
   }
   return out;
+}
+
+bool EnvEnabled(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return false;
+  }
+  const std::string lowered = ToLowerAscii(value);
+  return !(lowered == "0" || lowered == "false" || lowered == "no" ||
+           lowered == "off");
+}
+
+std::optional<bool> EnvTriState(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return std::nullopt;
+  }
+  const std::string lowered = ToLowerAscii(value);
+  if (lowered == "0" || lowered == "false" || lowered == "no" ||
+      lowered == "off") {
+    return false;
+  }
+  return true;
+}
+
+uint32_t EnvUint(const char* key, uint32_t default_value) {
+  const char* value = std::getenv(key);
+  if (!value || *value == '\0') {
+    return default_value;
+  }
+  char* end = nullptr;
+  unsigned long parsed = std::strtoul(value, &end, 10);
+  if (!end || end == value) {
+    return default_value;
+  }
+  if (parsed > std::numeric_limits<uint32_t>::max()) {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  return static_cast<uint32_t>(parsed);
+}
+
+const char* SchedulerStatusLabel(uint32_t status) {
+  switch (status) {
+    case GPGA_SCHED_STATUS_RUNNING:
+      return "running";
+    case GPGA_SCHED_STATUS_IDLE:
+      return "idle";
+    case GPGA_SCHED_STATUS_FINISHED:
+      return "finished";
+    case GPGA_SCHED_STATUS_ERROR:
+      return "error";
+    case GPGA_SCHED_STATUS_STOPPED:
+      return "stopped";
+    default:
+      return "unknown";
+  }
+}
+
+const char* HaltModeLabel(uint32_t mode) {
+  switch (mode) {
+    case GPGA_SCHED_HALT_FINISH:
+      return "finish";
+    case GPGA_SCHED_HALT_STOP:
+      return "stop";
+    case GPGA_SCHED_HALT_ERROR:
+      return "error";
+    case GPGA_SCHED_HALT_NONE:
+      return "none";
+    default:
+      return "unknown";
+  }
 }
 
 std::string DirLabel(gpga::PortDir dir) {
@@ -1915,19 +1988,19 @@ bool InitSchedulerVmBuffers(
       FindBufferMutable(buffers, "sched_vm_service_arg", "");
   auto* service_ret_assign_buf =
       FindBufferMutable(buffers, "sched_vm_service_ret_assign_entry", "");
-  auto* debug_buf = FindBufferMutable(buffers, "sched_vm_debug", "");
   if (!bytecode_buf || !offset_buf || !length_buf || !cond_val_buf ||
       !cond_xz_buf || !cond_entry_buf || !signal_entry_buf || !ip_buf ||
       !call_sp_buf || !call_frame_buf || !case_header_buf ||
       !case_entry_buf || !case_words_buf || !expr_buf || !expr_imm_buf ||
       !assign_entry_buf || !delay_assign_buf || !force_entry_buf ||
       !release_entry_buf || !service_entry_buf || !service_arg_buf ||
-      !service_ret_assign_buf || !debug_buf) {
+      !service_ret_assign_buf) {
     if (error) {
       *error = "missing scheduler VM buffers";
     }
     return false;
   }
+  auto* debug_buf = FindBufferMutable(buffers, "sched_vm_debug", "");
   if (!bytecode_buf->contents() || !offset_buf->contents() ||
       !length_buf->contents() || !cond_val_buf->contents() ||
       !cond_xz_buf->contents() || !cond_entry_buf->contents() ||
@@ -1938,8 +2011,7 @@ bool InitSchedulerVmBuffers(
       !expr_imm_buf->contents() || !assign_entry_buf->contents() ||
       !delay_assign_buf->contents() || !force_entry_buf->contents() ||
       !release_entry_buf->contents() || !service_entry_buf->contents() ||
-      !service_arg_buf->contents() || !service_ret_assign_buf->contents() ||
-      !debug_buf->contents()) {
+      !service_arg_buf->contents() || !service_ret_assign_buf->contents()) {
     if (error) {
       *error = "scheduler VM buffers are not CPU-visible";
     }
@@ -2119,13 +2191,15 @@ bool InitSchedulerVmBuffers(
     }
     return false;
   }
-  const size_t debug_words_needed =
-      static_cast<size_t>(instance_count) * GPGA_SCHED_VM_DEBUG_WORDS;
-  if (debug_buf->length() < debug_words_needed * sizeof(uint32_t)) {
-    if (error) {
-      *error = "scheduler VM debug buffer length mismatch";
+  if (debug_buf) {
+    const size_t debug_words_needed =
+        static_cast<size_t>(instance_count) * GPGA_SCHED_VM_DEBUG_WORDS;
+    if (debug_buf->length() < debug_words_needed * sizeof(uint32_t)) {
+      if (error) {
+        *error = "scheduler VM debug buffer length mismatch";
+      }
+      return false;
     }
-    return false;
   }
 
   std::memset(bytecode_buf->contents(), 0, bytecode_buf->length());
@@ -2149,7 +2223,9 @@ bool InitSchedulerVmBuffers(
   std::memset(service_arg_buf->contents(), 0, service_arg_buf->length());
   std::memset(service_ret_assign_buf->contents(), 0,
               service_ret_assign_buf->length());
-  std::memset(debug_buf->contents(), 0, debug_buf->length());
+  if (debug_buf && debug_buf->contents()) {
+    std::memset(debug_buf->contents(), 0, debug_buf->length());
+  }
 
   auto* bytecode = static_cast<uint32_t*>(bytecode_buf->contents());
   auto* offsets = static_cast<uint32_t*>(offset_buf->contents());
@@ -6394,6 +6470,77 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   const bool has_fallback_kernel = HasKernel(msl, base);
   const bool has_init = HasKernel(msl, base + "_init");
   const bool has_tick = HasKernel(msl, base + "_tick");
+  const bool ready_diag = EnvEnabled("METALFPGA_SCHED_READY_DIAG");
+  const bool exec_ready_diag = EnvEnabled("METALFPGA_SCHED_EXEC_READY_DIAG");
+  const bool wait_eval_diag = EnvEnabled("METALFPGA_SCHED_WAIT_EVAL_DIAG");
+  const bool exec_ready_enabled =
+      exec_ready_diag || EnvEnabled("METALFPGA_SCHED_EXEC_READY");
+  const bool ready_enabled =
+      ready_diag || exec_ready_enabled ||
+      EnvEnabled("METALFPGA_SCHED_READY");
+  const bool wait_eval_enabled =
+      wait_eval_diag || exec_ready_enabled ||
+      EnvEnabled("METALFPGA_SCHED_WAIT_EVAL");
+  const auto ready_batch_pref =
+      EnvTriState("METALFPGA_SCHED_READY_BATCH");
+  const auto sched_batch_pref =
+      EnvTriState("METALFPGA_SCHED_BATCH");
+  bool ready_batch = ready_batch_pref.value_or(exec_ready_enabled);
+  bool sched_batch = sched_batch_pref.value_or(exec_ready_enabled);
+  uint32_t ready_every =
+      std::max<uint32_t>(1u, EnvUint("METALFPGA_SCHED_READY_EVERY", 1u));
+  uint32_t service_drain_every =
+      std::max<uint32_t>(1u,
+                         EnvUint("METALFPGA_SCHED_SERVICE_DRAIN_EVERY", 1u));
+  if (exec_ready_enabled && ready_every != 1u) {
+    if (run_verbose) {
+      std::cerr << "sched ready every overridden to 1 for exec-ready mode\n";
+    }
+    ready_every = 1u;
+  }
+  const bool has_sched_ready_flags =
+      has_sched && HasKernel(msl, base + "_sched_ready_flags");
+  const bool has_sched_ready_reset =
+      has_sched && HasKernel(msl, base + "_sched_ready_reset");
+  const bool has_sched_ready_compact =
+      has_sched && HasKernel(msl, base + "_sched_ready_compact");
+  const bool has_sched_ready_dispatch =
+      has_sched && HasKernel(msl, base + "_sched_ready_dispatch");
+  const bool has_sched_wait_eval =
+      has_sched && HasKernel(msl, base + "_sched_wait_eval");
+  const bool has_sched_exec_ready =
+      has_sched && HasKernel(msl, base + "_sched_exec_ready");
+  bool use_sched_ready =
+      ready_enabled && has_sched_ready_reset &&
+      has_sched_ready_flags && has_sched_ready_compact;
+  bool use_sched_exec_ready =
+      exec_ready_enabled && has_sched_exec_ready;
+  bool use_sched_wait_eval =
+      wait_eval_enabled && has_sched_wait_eval;
+  bool use_sched_ready_dispatch =
+      use_sched_ready && use_sched_exec_ready && has_sched_ready_dispatch;
+  bool use_exec_ready_indirect = false;
+  size_t sched_ready_dispatch_offset = 0u;
+  if (ready_enabled && has_sched &&
+      (!has_sched_ready_reset ||
+       !has_sched_ready_flags || !has_sched_ready_compact)) {
+    if (error) {
+      *error = "sched-ready kernels requested but missing in Metal source";
+    }
+    return false;
+  }
+  if (exec_ready_enabled && has_sched && !has_sched_exec_ready) {
+    if (error) {
+      *error = "sched-exec-ready kernel requested but missing in Metal source";
+    }
+    return false;
+  }
+  if (wait_eval_enabled && has_sched && !has_sched_wait_eval) {
+    if (error) {
+      *error = "sched-wait-eval kernel requested but missing in Metal source";
+    }
+    return false;
+  }
   if (!has_sched && !has_fallback_kernel) {
     if (error) {
       *error = "missing primary kernel in Metal source (" + base + ")";
@@ -6404,6 +6551,20 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     std::vector<std::string> precompile;
     if (has_sched) {
       precompile.push_back(base + "_sched_step");
+      if (use_sched_ready) {
+        precompile.push_back(base + "_sched_ready_reset");
+        precompile.push_back(base + "_sched_ready_flags");
+        precompile.push_back(base + "_sched_ready_compact");
+      }
+      if (use_sched_wait_eval) {
+        precompile.push_back(base + "_sched_wait_eval");
+      }
+      if (use_sched_ready_dispatch) {
+        precompile.push_back(base + "_sched_ready_dispatch");
+      }
+      if (use_sched_exec_ready) {
+        precompile.push_back(base + "_sched_exec_ready");
+      }
     } else {
       precompile.push_back(base);
       if (has_init) {
@@ -6597,6 +6758,12 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   gpga::MetalKernel init_kernel;
   gpga::MetalKernel tick_kernel;
   gpga::MetalKernel sched_kernel;
+  gpga::MetalKernel sched_ready_reset_kernel;
+  gpga::MetalKernel sched_ready_flags_kernel;
+  gpga::MetalKernel sched_ready_compact_kernel;
+  gpga::MetalKernel sched_wait_eval_kernel;
+  gpga::MetalKernel sched_ready_dispatch_kernel;
+  gpga::MetalKernel sched_exec_ready_kernel;
 
   if (has_sched) {
     if (run_verbose) {
@@ -6604,6 +6771,46 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     }
     if (!runtime.CreateKernel(base + "_sched_step", &sched_kernel, error)) {
       return false;
+    }
+    if (use_sched_ready) {
+      if (run_verbose) {
+        std::cerr << "Creating scheduler ready kernels...\n";
+      }
+      if (!runtime.CreateKernel(base + "_sched_ready_reset",
+                                &sched_ready_reset_kernel, error)) {
+        return false;
+      }
+      if (!runtime.CreateKernel(base + "_sched_ready_flags",
+                                &sched_ready_flags_kernel, error)) {
+        return false;
+      }
+      if (!runtime.CreateKernel(base + "_sched_ready_compact",
+                                &sched_ready_compact_kernel, error)) {
+        return false;
+      }
+      if (use_sched_wait_eval) {
+        if (!runtime.CreateKernel(base + "_sched_wait_eval",
+                                  &sched_wait_eval_kernel, error)) {
+          return false;
+        }
+      }
+      if (use_sched_ready_dispatch) {
+        if (!runtime.CreateKernel(base + "_sched_ready_dispatch",
+                                  &sched_ready_dispatch_kernel, error)) {
+          return false;
+        }
+      }
+    }
+    if (use_sched_exec_ready) {
+      if (run_verbose) {
+        std::cerr << "Creating scheduler exec-ready kernel...\n";
+        std::cerr << "sched_exec_ready enabled; sched_step will skip its "
+                     "per-proc exec loop\n";
+      }
+      if (!runtime.CreateKernel(base + "_sched_exec_ready",
+                                &sched_exec_ready_kernel, error)) {
+        return false;
+      }
     }
   } else {
     if (run_verbose) {
@@ -6677,6 +6884,73 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       sched_halt_mode[gid] = GPGA_SCHED_HALT_NONE;
     }
   }
+  if (use_sched_ready) {
+    auto ready_it = buffers.find("sched_ready");
+    if (ready_it == buffers.end() || !ready_it->second.contents()) {
+      if (run_verbose) {
+        std::cerr << "sched ready disabled: sched_ready buffer missing\n";
+      }
+      use_sched_ready = false;
+    } else {
+      const size_t required_u32 =
+          static_cast<size_t>(count) *
+              static_cast<size_t>(sched.proc_count) * 2u +
+          static_cast<size_t>(count);
+      const size_t required_bytes = required_u32 * sizeof(uint32_t);
+      if (ready_it->second.length() < required_bytes) {
+        if (run_verbose) {
+          std::cerr << "sched ready disabled: sched_ready too small ("
+                    << ready_it->second.length() << " < " << required_bytes
+                    << " bytes)\n";
+        }
+        use_sched_ready = false;
+      }
+    }
+  }
+  if (!use_sched_ready) {
+    use_sched_wait_eval = false;
+    use_sched_ready_dispatch = false;
+  }
+  if (use_sched_ready_dispatch) {
+    auto ready_it = buffers.find("sched_ready");
+    if (ready_it == buffers.end() || !ready_it->second.contents()) {
+      if (run_verbose) {
+        std::cerr << "sched ready dispatch disabled: sched_ready missing\n";
+      }
+      use_sched_ready_dispatch = false;
+    } else {
+      const size_t stride =
+          static_cast<size_t>(count) * static_cast<size_t>(sched.proc_count);
+      const size_t dispatch_base_u32 = (stride * 2u) + count;
+      const size_t required_bytes =
+          (dispatch_base_u32 + 6u) *
+          sizeof(uint32_t);
+      if (ready_it->second.length() < required_bytes) {
+        if (run_verbose) {
+          std::cerr << "sched ready dispatch disabled: sched_ready too small ("
+                    << ready_it->second.length() << " < "
+                    << required_bytes << " bytes)\n";
+        }
+        use_sched_ready_dispatch = false;
+      }
+    }
+    if (use_sched_ready_dispatch) {
+      const uint32_t exec_tg =
+          runtime.ComputeThreadgroupSize(sched_exec_ready_kernel);
+      const size_t stride =
+          static_cast<size_t>(count) * static_cast<size_t>(sched.proc_count);
+      const size_t dispatch_base_u32 = (stride * 2u) + count;
+      sched_ready_dispatch_offset =
+          dispatch_base_u32 * sizeof(uint32_t);
+      auto* ready_u32 =
+          static_cast<uint32_t*>(ready_it->second.contents());
+      auto* dispatch_u32 = ready_u32 + dispatch_base_u32;
+      dispatch_u32[3u] = exec_tg;
+      dispatch_u32[4u] = 1u;
+      dispatch_u32[5u] = 1u;
+      use_exec_ready_indirect = true;
+    }
+  }
 
   PackedStateLayout packed_layout;
   bool has_packed_layout = false;
@@ -6725,6 +6999,16 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       }
     }
   }
+  if (has_sched && sched.vm_enabled && use_sched_exec_ready) {
+    auto flags_it = buffers.find("sched_flags");
+    if (flags_it != buffers.end() && flags_it->second.contents()) {
+      auto* flags =
+          static_cast<uint32_t*>(flags_it->second.contents());
+      for (uint32_t gid = 0u; gid < count; ++gid) {
+        flags[gid] |= GPGA_SCHED_FLAG_EXEC_READY;
+      }
+    }
+  }
 
   gpga::ServiceStringTable strings = BuildStringTable(module);
   VcdWriter vcd;
@@ -6742,10 +7026,49 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     if (!BuildBindings(sched_kernel, buffers, &bindings, error)) {
       return false;
     }
+    std::vector<gpga::MetalBufferBinding> ready_reset_bindings;
+    std::vector<gpga::MetalBufferBinding> ready_flags_bindings;
+    std::vector<gpga::MetalBufferBinding> ready_compact_bindings;
+    std::vector<gpga::MetalBufferBinding> wait_eval_bindings;
+    std::vector<gpga::MetalBufferBinding> ready_dispatch_bindings;
+    std::vector<gpga::MetalBufferBinding> exec_ready_bindings;
+    if (use_sched_ready) {
+      if (!BuildBindings(sched_ready_reset_kernel, buffers,
+                         &ready_reset_bindings, error)) {
+        return false;
+      }
+      if (!BuildBindings(sched_ready_flags_kernel, buffers,
+                         &ready_flags_bindings, error)) {
+        return false;
+      }
+      if (!BuildBindings(sched_ready_compact_kernel, buffers,
+                         &ready_compact_bindings, error)) {
+        return false;
+      }
+      if (use_sched_wait_eval) {
+        if (!BuildBindings(sched_wait_eval_kernel, buffers,
+                           &wait_eval_bindings, error)) {
+          return false;
+        }
+      }
+      if (use_sched_ready_dispatch) {
+        if (!BuildBindings(sched_ready_dispatch_kernel, buffers,
+                           &ready_dispatch_bindings, error)) {
+          return false;
+        }
+      }
+    }
+    if (use_sched_exec_ready) {
+      if (!BuildBindings(sched_exec_ready_kernel, buffers,
+                         &exec_ready_bindings, error)) {
+        return false;
+      }
+    }
     const uint32_t kStatusFinished = 2u;
     const uint32_t kStatusError = 3u;
     const uint32_t kStatusStopped = 4u;
     const uint32_t kStatusIdle = 1u;
+    uint32_t last_status_val = std::numeric_limits<uint32_t>::max();
     for (uint64_t iter = 0ull;; ++iter) {
       if (sched_params && has_dumpvars) {
         sched_params->max_steps = vcd.active() ? vcd_step_budget : max_steps;
@@ -6760,9 +7083,78 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
         std::cerr << "Dispatch iter " << iter << "\n";
       }
       auto dispatch_start = std::chrono::steady_clock::now();
-      if (!runtime.Dispatch(sched_kernel, bindings, count, error,
-                            dispatch_timeout_ms)) {
-        return false;
+      const bool do_ready =
+          use_sched_ready && sched.proc_count > 0u &&
+          (ready_every == 1u || (iter % ready_every) == 0u);
+      uint64_t ready_grid = 0u;
+      if (do_ready) {
+        ready_grid = static_cast<uint64_t>(count) *
+            static_cast<uint64_t>(sched.proc_count);
+        if (ready_grid > std::numeric_limits<uint32_t>::max()) {
+          if (error) {
+            *error = "sched-ready grid too large";
+          }
+          return false;
+        }
+      }
+      bool exec_ready_batched = false;
+      bool exec_ready_after_drain = false;
+      if (sched_batch && do_ready) {
+        std::vector<gpga::MetalDispatch> batch_dispatches;
+        batch_dispatches.push_back(
+            gpga::MetalDispatch{&sched_kernel, &bindings, count});
+        batch_dispatches.push_back(
+            gpga::MetalDispatch{&sched_ready_reset_kernel,
+                                &ready_reset_bindings, count});
+        if (use_sched_wait_eval) {
+          batch_dispatches.push_back(
+              gpga::MetalDispatch{&sched_wait_eval_kernel, &wait_eval_bindings,
+                                  static_cast<uint32_t>(ready_grid)});
+        }
+        batch_dispatches.push_back(
+            gpga::MetalDispatch{&sched_ready_flags_kernel,
+                                &ready_flags_bindings,
+                                static_cast<uint32_t>(ready_grid)});
+        batch_dispatches.push_back(
+            gpga::MetalDispatch{&sched_ready_compact_kernel,
+                                &ready_compact_bindings,
+                                static_cast<uint32_t>(ready_grid)});
+        if (use_exec_ready_indirect) {
+          batch_dispatches.push_back(
+              gpga::MetalDispatch{&sched_ready_dispatch_kernel,
+                                  &ready_dispatch_bindings, 1u});
+        }
+        if (use_sched_exec_ready) {
+          if (use_exec_ready_indirect) {
+            auto ready_it = buffers.find("sched_ready");
+            if (ready_it == buffers.end()) {
+              if (error) {
+                *error = "sched_ready buffer missing for indirect dispatch";
+              }
+              return false;
+            }
+            gpga::MetalDispatch exec_dispatch{
+                &sched_exec_ready_kernel, &exec_ready_bindings, 1u};
+            exec_dispatch.indirect_buffer = &ready_it->second;
+            exec_dispatch.indirect_offset = sched_ready_dispatch_offset;
+            batch_dispatches.push_back(exec_dispatch);
+          } else {
+            gpga::MetalDispatch exec_dispatch{
+                &sched_exec_ready_kernel, &exec_ready_bindings,
+                static_cast<uint32_t>(ready_grid)};
+            batch_dispatches.push_back(exec_dispatch);
+          }
+          exec_ready_batched = true;
+        }
+        if (!runtime.DispatchBatch(batch_dispatches, count, error,
+                                   dispatch_timeout_ms)) {
+          return false;
+        }
+      } else {
+        if (!runtime.Dispatch(sched_kernel, bindings, count, error,
+                              dispatch_timeout_ms)) {
+          return false;
+        }
       }
       if (run_verbose && (iter == 0ull || (iter % 1000ull) == 0ull)) {
         auto dispatch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -6771,52 +7163,140 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
                   << dispatch_ms.count() << " ms\n";
       }
       bool saw_finish = false;
-      if (sched_kernel.HasBuffer("sched_service") &&
-          sched_kernel.HasBuffer("sched_service_count")) {
+      const bool do_service_drain =
+          (service_drain_every == 1u || (iter % service_drain_every) == 0u);
+      const bool exec_ready_late =
+          do_ready && use_sched_exec_ready && !sched_batch;
+      auto service_records_pending = [&]() -> bool {
+        if (!sched_kernel.HasBuffer("sched_service") ||
+            !sched_kernel.HasBuffer("sched_service_count")) {
+          return false;
+        }
+        auto count_it = buffers.find("sched_service_count");
+        auto record_it = buffers.find("sched_service");
+        if (count_it == buffers.end() || record_it == buffers.end()) {
+          return false;
+        }
+        auto head_it = buffers.find("sched_service_head");
         auto* counts =
-            static_cast<uint32_t*>(buffers["sched_service_count"].contents());
+            static_cast<uint32_t*>(count_it->second.contents());
+        auto* heads = (head_it != buffers.end())
+                          ? static_cast<uint32_t*>(head_it->second.contents())
+                          : nullptr;
+        if (!counts) {
+          return false;
+        }
+        if (!heads) {
+          const size_t min_words = static_cast<size_t>(count) * 2u;
+          if (count_it->second.length() >= min_words * sizeof(uint32_t)) {
+            heads = counts + count;
+          }
+        }
+        for (uint32_t gid = 0; gid < count; ++gid) {
+          uint32_t head = heads ? heads[gid] : 0u;
+          if (counts[gid] != head) {
+            return true;
+          }
+        }
+        return false;
+      };
+      auto drain_services = [&](bool force) -> bool {
+        if (!force && !do_service_drain) {
+          return true;
+        }
+        if (!sched_kernel.HasBuffer("sched_service") ||
+            !sched_kernel.HasBuffer("sched_service_count")) {
+          return true;
+        }
+        auto count_it = buffers.find("sched_service_count");
+        auto record_it = buffers.find("sched_service");
+        if (count_it == buffers.end() || record_it == buffers.end()) {
+          return true;
+        }
+        auto head_it = buffers.find("sched_service_head");
+        auto* counts =
+            static_cast<uint32_t*>(count_it->second.contents());
+        auto* heads = (head_it != buffers.end())
+                          ? static_cast<uint32_t*>(head_it->second.contents())
+                          : nullptr;
         auto* records =
-            static_cast<uint8_t*>(buffers["sched_service"].contents());
-        if (counts && records) {
-          size_t stride =
-              gpga::ServiceRecordStride(
-                  std::max<uint32_t>(1u, sched.service_max_args),
-                  sched.service_wide_words, enable_4state);
-          for (uint32_t gid = 0; gid < count; ++gid) {
-            uint32_t used = counts[gid];
-            if (used > service_capacity) {
-              std::cerr << "warning: service record overflow (gid=" << gid
-                        << ", used=" << used << ", capacity="
-                        << service_capacity << ")\n";
-              used = service_capacity;
-            }
-            if (used == 0u) {
-              continue;
-            }
-            const uint8_t* rec_base =
-                records + (gid * service_capacity * stride);
-            std::vector<DecodedServiceRecord> decoded;
-            DecodeServiceRecords(rec_base, used,
-                                 std::max<uint32_t>(1u,
-                                                    sched.service_max_args),
-                                 sched.service_wide_words, enable_4state,
-                                 &decoded);
-            gpga::ServiceDrainResult result;
-            if (!HandleServiceRecords(decoded, strings, info, vcd_dir,
-                                      &flat_to_hier,
-                                      has_packed_layout ? &packed_layout
-                                                        : nullptr,
-                                      module.timescale,
-                                      enable_4state, count, gid,
-                                      sched.proc_count, &file_tables[gid],
-                                      plusargs, &buffers, &vcd, &result,
-                                      &dumpfile, error)) {
-              return false;
-            }
-            if (result.saw_finish || result.saw_stop || result.saw_error) {
-              saw_finish = true;
-            }
+            static_cast<uint8_t*>(record_it->second.contents());
+        if (!counts || !records) {
+          return true;
+        }
+        if (!heads) {
+          const size_t min_words = static_cast<size_t>(count) * 2u;
+          if (count_it->second.length() >= min_words * sizeof(uint32_t)) {
+            heads = counts + count;
+          }
+        }
+        size_t stride =
+            gpga::ServiceRecordStride(
+                std::max<uint32_t>(1u, sched.service_max_args),
+                sched.service_wide_words, enable_4state);
+        for (uint32_t gid = 0; gid < count; ++gid) {
+          uint32_t tail = counts[gid];
+          uint32_t head = heads ? heads[gid] : 0u;
+          uint32_t used = tail - head;
+          if (used > service_capacity) {
+            std::cerr << "warning: service record overflow (gid=" << gid
+                      << ", used=" << used << ", capacity="
+                      << service_capacity << ")\n";
+            used = service_capacity;
+          }
+          if (used == 0u) {
+            continue;
+          }
+          const uint8_t* rec_base =
+              records + (gid * service_capacity * stride);
+          std::vector<uint8_t> staging;
+          staging.resize(static_cast<size_t>(used) * stride);
+          uint32_t head_slot =
+              service_capacity ? (head % service_capacity) : 0u;
+          uint32_t first_span =
+              std::min<uint32_t>(used, service_capacity - head_slot);
+          std::memcpy(staging.data(),
+                      rec_base + (static_cast<size_t>(head_slot) * stride),
+                      static_cast<size_t>(first_span) * stride);
+          if (used > first_span) {
+            std::memcpy(
+                staging.data() + (static_cast<size_t>(first_span) * stride),
+                rec_base,
+                static_cast<size_t>(used - first_span) * stride);
+          }
+          std::vector<DecodedServiceRecord> decoded;
+          DecodeServiceRecords(staging.data(), used,
+                               std::max<uint32_t>(1u,
+                                                  sched.service_max_args),
+                               sched.service_wide_words, enable_4state,
+                               &decoded);
+          gpga::ServiceDrainResult result;
+          if (!HandleServiceRecords(decoded, strings, info, vcd_dir,
+                                    &flat_to_hier,
+                                    has_packed_layout ? &packed_layout
+                                                      : nullptr,
+                                    module.timescale,
+                                    enable_4state, count, gid,
+                                    sched.proc_count, &file_tables[gid],
+                                    plusargs, &buffers, &vcd, &result,
+                                    &dumpfile, error)) {
+            return false;
+          }
+          if (result.saw_finish || result.saw_stop || result.saw_error) {
+            saw_finish = true;
+          }
+          if (heads) {
+            heads[gid] = tail;
+          } else {
             counts[gid] = 0u;
+          }
+        }
+        return true;
+      };
+      if (do_service_drain) {
+        if (!exec_ready_late || service_records_pending()) {
+          if (!drain_services(false)) {
+            return false;
           }
         }
       }
@@ -6830,6 +7310,153 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           vcd.Update(static_cast<uint64_t>(iter), buffers);
         }
       }
+      if (do_ready) {
+        if (!sched_batch) {
+          if (ready_batch) {
+            std::vector<gpga::MetalDispatch> ready_dispatches;
+            ready_dispatches.push_back(
+                gpga::MetalDispatch{&sched_ready_reset_kernel,
+                                    &ready_reset_bindings, count});
+            if (use_sched_wait_eval) {
+              ready_dispatches.push_back(
+                  gpga::MetalDispatch{&sched_wait_eval_kernel,
+                                      &wait_eval_bindings,
+                                      static_cast<uint32_t>(ready_grid)});
+            }
+            ready_dispatches.push_back(
+                gpga::MetalDispatch{&sched_ready_flags_kernel,
+                                    &ready_flags_bindings,
+                                    static_cast<uint32_t>(ready_grid)});
+            ready_dispatches.push_back(
+                gpga::MetalDispatch{&sched_ready_compact_kernel,
+                                    &ready_compact_bindings,
+                                    static_cast<uint32_t>(ready_grid)});
+            if (use_exec_ready_indirect) {
+              ready_dispatches.push_back(
+                  gpga::MetalDispatch{&sched_ready_dispatch_kernel,
+                                      &ready_dispatch_bindings, 1u});
+            }
+            if (use_sched_exec_ready) {
+              if (use_exec_ready_indirect) {
+                auto ready_it = buffers.find("sched_ready");
+                if (ready_it == buffers.end()) {
+                  if (error) {
+                    *error =
+                        "sched_ready buffer missing for indirect dispatch";
+                  }
+                  return false;
+                }
+                gpga::MetalDispatch exec_dispatch{
+                    &sched_exec_ready_kernel, &exec_ready_bindings, 1u};
+                exec_dispatch.indirect_buffer = &ready_it->second;
+                exec_dispatch.indirect_offset = sched_ready_dispatch_offset;
+                ready_dispatches.push_back(exec_dispatch);
+              } else {
+                ready_dispatches.push_back(
+                    gpga::MetalDispatch{&sched_exec_ready_kernel,
+                                        &exec_ready_bindings,
+                                        static_cast<uint32_t>(ready_grid)});
+              }
+              exec_ready_batched = true;
+              exec_ready_after_drain = true;
+            }
+            if (!runtime.DispatchBatch(ready_dispatches, count, error,
+                                       dispatch_timeout_ms)) {
+              return false;
+            }
+          } else {
+            if (!runtime.Dispatch(sched_ready_reset_kernel,
+                                  ready_reset_bindings, count, error,
+                                  dispatch_timeout_ms)) {
+              return false;
+            }
+            if (use_sched_wait_eval) {
+              if (!runtime.Dispatch(sched_wait_eval_kernel, wait_eval_bindings,
+                                    static_cast<uint32_t>(ready_grid), error,
+                                    dispatch_timeout_ms)) {
+                return false;
+              }
+            }
+            if (!runtime.Dispatch(sched_ready_flags_kernel,
+                                  ready_flags_bindings,
+                                  static_cast<uint32_t>(ready_grid), error,
+                                  dispatch_timeout_ms)) {
+              return false;
+            }
+            if (!runtime.Dispatch(sched_ready_compact_kernel,
+                                  ready_compact_bindings,
+                                  static_cast<uint32_t>(ready_grid), error,
+                                  dispatch_timeout_ms)) {
+              return false;
+            }
+            if (use_exec_ready_indirect) {
+              if (!runtime.Dispatch(sched_ready_dispatch_kernel,
+                                    ready_dispatch_bindings, 1u, error,
+                                    dispatch_timeout_ms)) {
+                return false;
+              }
+            }
+          }
+        }
+        if (use_sched_exec_ready && !exec_ready_batched) {
+          if (use_exec_ready_indirect) {
+            auto ready_it = buffers.find("sched_ready");
+            if (ready_it == buffers.end()) {
+              if (error) {
+                *error = "sched_ready buffer missing for indirect dispatch";
+              }
+              return false;
+            }
+            if (!runtime.DispatchIndirectThreads(
+                    sched_exec_ready_kernel, exec_ready_bindings,
+                    ready_it->second, sched_ready_dispatch_offset, error,
+                    dispatch_timeout_ms)) {
+              return false;
+            }
+            exec_ready_after_drain = true;
+          } else {
+            if (!runtime.Dispatch(sched_exec_ready_kernel,
+                                  exec_ready_bindings,
+                                  static_cast<uint32_t>(ready_grid), error,
+                                  dispatch_timeout_ms)) {
+              return false;
+            }
+            exec_ready_after_drain = true;
+          }
+        }
+        if (exec_ready_after_drain) {
+          if (do_service_drain && service_records_pending()) {
+            if (!drain_services(false)) {
+              return false;
+            }
+          }
+        }
+        if (run_verbose) {
+          auto ready_it = buffers.find("sched_ready");
+          if (ready_it != buffers.end() && ready_it->second.contents()) {
+            auto* ready_u32 =
+                static_cast<uint32_t*>(ready_it->second.contents());
+            const size_t stride =
+                static_cast<size_t>(count) *
+                static_cast<size_t>(sched.proc_count);
+            auto* ready_counts = ready_u32 + (stride * 2u);
+            std::cerr << "sched ready (compact): total=" << ready_counts[0]
+                      << "\n";
+          }
+        }
+        if (run_verbose && (iter == 0ull || (iter % 1000ull) == 0ull)) {
+          auto ready_it = buffers.find("sched_ready");
+          if (ready_it != buffers.end() && ready_it->second.contents()) {
+            auto* ready_u32 =
+                static_cast<uint32_t*>(ready_it->second.contents());
+            const size_t stride =
+                static_cast<size_t>(count) *
+                static_cast<size_t>(sched.proc_count);
+            auto* ready_counts = ready_u32 + (stride * 2u);
+            std::cerr << "sched ready: total=" << ready_counts[0] << "\n";
+          }
+        }
+      }
       auto* status =
           static_cast<uint32_t*>(buffers["sched_status"].contents());
       if (!status) {
@@ -6839,6 +7466,29 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
         break;
       }
       const uint32_t status_val = status[0];
+      if (run_verbose &&
+          status_val != last_status_val &&
+          (status_val == kStatusStopped || status_val == kStatusFinished ||
+           status_val == kStatusError)) {
+        uint32_t halt_val = 0u;
+        auto* halt_buf =
+            static_cast<uint32_t*>(buffers["sched_halt_mode"].contents());
+        if (halt_buf) {
+          halt_val = halt_buf[0];
+        }
+        std::cerr << "sched stop: iter=" << iter
+                  << " status=" << status_val
+                  << "(" << SchedulerStatusLabel(status_val) << ")"
+                  << " halt=" << halt_val
+                  << "(" << HaltModeLabel(halt_val) << ")";
+        auto* error_buf =
+            static_cast<uint32_t*>(buffers["sched_error"].contents());
+        if (error_buf) {
+          std::cerr << " error=" << error_buf[0];
+        }
+        std::cerr << "\n";
+      }
+      last_status_val = status_val;
       if (run_verbose &&
           (iter == 0u || status_val != GPGA_SCHED_STATUS_RUNNING)) {
         auto* phase =
@@ -6895,6 +7545,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
         }
         std::cerr << "sched status: iter=" << iter
                   << " status=" << status_val
+                  << "(" << SchedulerStatusLabel(status_val) << ")"
                   << " error=" << (error_buf ? error_buf[0] : 0u)
                   << " halt=" << (halt_buf ? halt_buf[0] : 0u)
                   << " phase=" << (phase ? phase[0] : 0u)
@@ -6918,21 +7569,45 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
                   << "]\n";
         if (vm_debug && flags &&
             (flags[0] & GPGA_SCHED_FLAG_VM_DEBUG) != 0u) {
-          const uint32_t magic = vm_debug[0];
-          const uint32_t instr = vm_debug[4];
-          const uint32_t op =
-              static_cast<uint32_t>(gpga::DecodeSchedulerVmOp(instr));
-          const uint32_t arg = gpga::DecodeSchedulerVmArg(instr);
-          std::cerr << "sched-vm-debug: magic=0x" << std::hex << magic
-                    << std::dec << " bc_base=" << vm_debug[1]
-                    << " len=" << vm_debug[2]
-                    << " ip=" << vm_debug[3]
-                    << " instr=0x" << std::hex << instr << std::dec
-                    << " op=" << op << " arg=" << arg
-                    << " instr0=0x" << std::hex << vm_debug[5] << std::dec
-                    << " instr1=0x" << std::hex << vm_debug[6] << std::dec
-                    << " vm_idx=" << vm_debug[10]
-                    << " flags=" << vm_debug[11] << "\n";
+          uint32_t op = 0u;
+          uint32_t arg = 0u;
+          if (vm_debug) {
+            const uint32_t instr = vm_debug[4];
+            op = static_cast<uint32_t>(gpga::DecodeSchedulerVmOp(instr));
+            arg = gpga::DecodeSchedulerVmArg(instr);
+          }
+          const std::array<uint32_t, 3> dbg_gids = {0u, 1u, 32u};
+          uint32_t dbg_count = std::min<uint32_t>(2u, count);
+          if (count > 32u) {
+            dbg_count = 3u;
+          }
+          for (uint32_t idx = 0u; idx < dbg_count; ++idx) {
+            const uint32_t dbg_gid = dbg_gids[idx];
+            if (dbg_gid >= count) {
+              continue;
+            }
+            const uint32_t* dbg =
+                vm_debug + (dbg_gid * GPGA_SCHED_VM_DEBUG_WORDS);
+            const uint32_t magic = dbg[0];
+            const uint32_t instr = dbg[4];
+            const uint32_t dbg_op =
+                static_cast<uint32_t>(gpga::DecodeSchedulerVmOp(instr));
+            const uint32_t dbg_arg = gpga::DecodeSchedulerVmArg(instr);
+            std::cerr << "sched-vm-debug[g=" << dbg_gid << "]: magic=0x"
+                      << std::hex << magic << std::dec
+                      << " bc_base=" << dbg[1]
+                      << " len=" << dbg[2]
+                      << " ip=" << dbg[3]
+                      << " instr=0x" << std::hex << instr << std::dec
+                      << " op=" << dbg_op << " arg=" << dbg_arg
+                      << " instr0=0x" << std::hex << dbg[5] << std::dec
+                      << " instr1=0x" << std::hex << dbg[6] << std::dec
+                      << " vm_idx=" << dbg[10]
+                      << " flags=" << dbg[11]
+                      << " gid=" << dbg[12]
+                      << " tg=" << dbg[13]
+                      << " tid=" << dbg[14] << "\n";
+          }
           if (status_val == GPGA_SCHED_STATUS_ERROR) {
             auto bc_it = buffers.find("sched_vm_bytecode");
             if (bc_it != buffers.end() && bc_it->second.contents()) {
@@ -7119,6 +7794,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
         continue;
       }
       if (should_stop || status_val == kStatusIdle) {
+        if (!drain_services(true)) {
+          return false;
+        }
         vcd.FinalSnapshot(buffers);
         vcd.Close();
         break;
