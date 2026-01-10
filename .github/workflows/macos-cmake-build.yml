@@ -70,7 +70,7 @@ jobs:
           set -euxo pipefail
           ARTIFACT_ID='${{ steps.upload.outputs.artifact-id }}'
           ZIP_NAME="metalfpga-macos-${ARTIFACT_ID}.zip"
-          ditto -c -k --sequesterRsrc --keepParent \
+          zip -r "$ZIP_NAME" \
             build/metalfpga_cli \
             build/metalfpga_smoke \
             build/compile_commands.json \
