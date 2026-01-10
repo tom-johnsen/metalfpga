@@ -14,6 +14,7 @@ test_results/
 artifacts/
 goldentests/
 thirdparty/
+!thirdparty/crlibm/
 deprecated/docs
 tmp/
 

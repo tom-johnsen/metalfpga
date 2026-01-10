@@ -1,5 +1,8 @@
 name: macos-cmake-build
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: ["**"]
@@ -14,7 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+        with:
+          submodules: recursive
+          
       - name: Environment (Xcode/Metal)
         shell: bash
         run: |
