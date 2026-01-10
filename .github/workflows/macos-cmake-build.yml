@@ -1,7 +1,7 @@
 name: macos-cmake-build
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
@@ -49,6 +49,7 @@ jobs:
           cmake --build build --parallel --target metalfpga_cli metalfpga_smoke
 
       - name: Upload artifact
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: metalfpga-macos-${{ github.sha }}
@@ -60,3 +61,41 @@ jobs:
             README.md
             LICENSE
             LICENSE.COMMERCIAL
+
+      # Create a single release asset archive (recommended for GitHub Releases)
+      - name: Package release assets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ARTIFACT_ID='${{ steps.upload.outputs.artifact-id }}'
+          ZIP_NAME="metalfpga-macos-${ARTIFACT_ID}.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/metalfpga_cli \
+            build/metalfpga_smoke \
+            build/compile_commands.json \
+            README.md \
+            LICENSE \
+            LICENSE.COMMERCIAL \
+            "$ZIP_NAME"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+
+      - name: Create tag + GitHub Release (artifact id as version)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ARTIFACT_ID='${{ steps.upload.outputs.artifact-id }}'
+          TAG="v${ARTIFACT_ID}"
+
+          # Tag the current commit and push the tag
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          # Create release and upload zip asset
+          gh release create "$TAG" "$ZIP_NAME" \
+            --title "$TAG" \
+            --notes "Automated macOS build for artifact id: $ARTIFACT_ID (commit $GITHUB_SHA)" \
+            --latest=false
