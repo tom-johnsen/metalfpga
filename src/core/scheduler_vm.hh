@@ -107,6 +107,8 @@ enum class SchedulerVmExprBinaryOp : uint32_t {
   kLe = 20u,
   kGt = 21u,
   kGe = 22u,
+  kCaseZ = 23u,
+  kCaseX = 24u,
 };
 
 enum class SchedulerVmExprCallOp : uint32_t {
@@ -168,6 +170,8 @@ constexpr uint32_t kSchedulerVmAssignFlagIsBitSelect = 1u << 3u;
 constexpr uint32_t kSchedulerVmAssignFlagIsRange = 1u << 4u;
 constexpr uint32_t kSchedulerVmAssignFlagIsIndexedRange = 1u << 5u;
 constexpr uint32_t kSchedulerVmAssignFlagWideConst = 1u << 6u;
+constexpr uint32_t kSchedulerVmAssignFlagRhsCond = 1u << 7u;
+constexpr uint32_t kSchedulerVmAssignFlagRhsSigned = 1u << 8u;
 constexpr uint32_t kSchedulerVmForceFlagProcedural = 1u << 0u;
 constexpr uint32_t kSchedulerVmForceFlagFallback = 1u << 1u;
 constexpr uint32_t kSchedulerVmForceFlagOverrideReg = 1u << 2u;
@@ -284,6 +288,8 @@ struct SchedulerVmAssignEntry {
   uint32_t base_width = 0u;
   uint32_t range_lsb = 0u;
   uint32_t array_size = 0u;
+  uint32_t force_slot = 0xFFFFFFFFu;
+  uint32_t passign_slot = 0xFFFFFFFFu;
 };
 
 struct SchedulerVmDelayAssignEntry {
@@ -444,10 +450,9 @@ inline bool BuildSchedulerVmLayout(
   out->edge_star_expr_offsets.clear();
   const uint32_t proc_count = static_cast<uint32_t>(procs.size());
   if (proc_count == 0u) {
-    if (error) {
-      *error = "scheduler VM layout requires at least one proc";
-    }
-    return false;
+    out->proc_count = 0u;
+    out->words_per_proc = kSchedulerVmWordsPerProc;
+    return true;
   }
   uint32_t max_len = 0u;
   for (const auto& proc : procs) {
@@ -478,12 +483,6 @@ inline bool BuildSchedulerVmLayout(
 inline bool BuildSchedulerVmSeedLayout(uint32_t proc_count,
                                        SchedulerVmLayout* out,
                                        std::string* error) {
-  if (proc_count == 0u) {
-    if (error) {
-      *error = "scheduler VM enabled without proc count";
-    }
-    return false;
-  }
   std::vector<std::vector<uint32_t>> procs(proc_count);
   for (uint32_t pid = 0u; pid < proc_count; ++pid) {
     SchedulerVmBuilder builder;

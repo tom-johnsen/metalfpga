@@ -1,3 +1,19 @@
 [submodule "thirdparty/crlibm"]
 	path = thirdparty/crlibm
 	url = https://github.com/tom-johnsen/crlibm.git
+
+[submodule "goldentests/ispras-sv-tests"]
+	path = goldentests/ispras-sv-tests
+	url = https://github.com/ispras/sv-tests.git
+
+[submodule "goldentests/ivtest"]
+	path = goldentests/ivtest
+	url = https://github.com/steveicarus/ivtest.git
+
+[submodule "goldentests/sv-tests"]
+	path = goldentests/sv-tests
+	url = https://github.com/chipsalliance/sv-tests.git
+
+[submodule "goldentests/yosys-tests"]
+	path = goldentests/yosys-tests
+	url = https://github.com/YosysHQ/yosys-tests.git

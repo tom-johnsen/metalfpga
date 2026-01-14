@@ -1488,7 +1488,14 @@ bool ParseSchedDefineConstants(const std::string& source,
     if (values.size() > 18u) {
       info->pcont_count = values[18];
     }
-    info->has_scheduler = info->proc_count > 0u;
+    info->has_scheduler =
+        info->proc_count > 0u || info->event_count > 0u ||
+        info->edge_count > 0u || info->edge_star_count > 0u ||
+        info->repeat_count > 0u || info->delay_count > 0u ||
+        info->max_dnba > 0u || info->monitor_count > 0u ||
+        info->strobe_count > 0u || info->service_max_args > 0u ||
+        info->force_count > 0u || info->pcont_count > 0u ||
+        info->vm_enabled;
     info->has_services = info->service_max_args > 0u;
     return true;
   };
@@ -3895,7 +3902,14 @@ bool ParseSchedulerConstants(const std::string& source,
                  &info.vm_expr_imm_word_count);
   ParseUintConst(sliced, "GPGA_SCHED_VM_SIGNAL_COUNT",
                  &info.vm_signal_count);
-  info.has_scheduler = info.proc_count > 0u;
+  info.has_scheduler =
+      info.proc_count > 0u || info.event_count > 0u ||
+      info.edge_count > 0u || info.edge_star_count > 0u ||
+      info.repeat_count > 0u || info.delay_count > 0u ||
+      info.max_dnba > 0u || info.monitor_count > 0u ||
+      info.strobe_count > 0u || info.service_max_args > 0u ||
+      info.force_count > 0u || info.pcont_count > 0u ||
+      info.timing_check_count > 0u || info.vm_enabled;
   info.has_services = info.service_max_args > 0u;
   *out = info;
   return true;
@@ -3935,6 +3949,9 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
   auto align8 = [](size_t value) -> size_t {
     return (value + 7u) & ~static_cast<size_t>(7u);
   };
+  auto nonzero_bytes = [](size_t bytes, size_t min_bytes) -> size_t {
+    return bytes > 0u ? bytes : min_bytes;
+  };
   auto packed_state_bytes = [&]() -> size_t {
     size_t total = 0;
     for (const auto& signal : module.signals) {
@@ -3959,11 +3976,236 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
   const auto& indices = kernel.BufferIndices();
   const bool use_vm_arg_buffer =
       sched.vm_enabled && kernel.HasBuffer("sched_vm_args");
+  const bool use_sched_arg_buffer = kernel.HasBuffer("sched_args");
   specs->reserve(indices.size());
+  auto append_sched_spec = [&](const std::string& name) -> bool {
+    BufferSpec spec;
+    spec.name = name;
+    if (!sched.has_scheduler) {
+      if (error) {
+        *error = "scheduler buffers requested but no scheduler constants";
+      }
+      return false;
+    }
+    if (StartsWith(name, "sched_vm_") && !sched.vm_enabled) {
+      if (error) {
+        *error = "scheduler VM buffers requested but VM not enabled";
+      }
+      return false;
+    }
+    if (name == "sched_pc" || name == "sched_state" ||
+        name == "sched_wait_kind" || name == "sched_wait_edge_kind" ||
+        name == "sched_wait_id" || name == "sched_wait_event" ||
+        name == "sched_join_count" || name == "sched_parent" ||
+        name == "sched_join_tag") {
+      spec.length = nonzero_bytes(
+          sizeof(uint32_t) * instance_count * sched.proc_count,
+          sizeof(uint32_t));
+    } else if (name == "sched_wait_time") {
+      spec.length = nonzero_bytes(
+          sizeof(uint64_t) * instance_count * sched.proc_count,
+          sizeof(uint64_t));
+    } else if (name == "sched_time") {
+      spec.length = sizeof(uint64_t) * instance_count;
+    } else if (name == "sched_phase" || name == "sched_flags" ||
+               name == "sched_error" || name == "sched_status" ||
+               name == "sched_halt_mode") {
+      spec.length = sizeof(uint32_t) * instance_count;
+    } else if (name == "sched_repeat_left" ||
+               name == "sched_repeat_active") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.repeat_count;
+    } else if (name == "sched_edge_prev_val" ||
+               name == "sched_edge_prev_xz") {
+      spec.length = sizeof(uint64_t) * instance_count * sched.edge_count;
+    } else if (name == "sched_edge_star_prev_val" ||
+               name == "sched_edge_star_prev_xz") {
+      spec.length = sizeof(uint64_t) * instance_count *
+                    sched.edge_star_count;
+    } else if (name == "sched_timing_prev_val" ||
+               name == "sched_timing_prev_xz") {
+      spec.length = sizeof(uint64_t) * instance_count *
+                    sched.timing_check_count * 2u;
+    } else if (name == "sched_timing_data_time" ||
+               name == "sched_timing_ref_time" ||
+               name == "sched_timing_window_start" ||
+               name == "sched_timing_window_end") {
+      spec.length = sizeof(uint64_t) * instance_count *
+                    sched.timing_check_count;
+    } else if (name == "sched_event_pending") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.event_count;
+    } else if (name == "sched_delay_val" || name == "sched_delay_xz") {
+      spec.length = sizeof(uint64_t) * instance_count * sched.delay_count;
+    } else if (name == "sched_delay_index_val" ||
+               name == "sched_delay_index_xz") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.delay_count;
+    } else if (name == "sched_dnba_count") {
+      spec.length = sizeof(uint32_t) * instance_count;
+    } else if (name == "sched_dnba_time" || name == "sched_dnba_val" ||
+               name == "sched_dnba_xz") {
+      spec.length = sizeof(uint64_t) * instance_count * sched.max_dnba;
+    } else if (name == "sched_dnba_id" ||
+               name == "sched_dnba_index_val" ||
+               name == "sched_dnba_index_xz") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.max_dnba;
+    } else if (name == "sched_monitor_active") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.monitor_count;
+    } else if (name == "sched_monitor_enable") {
+      spec.length = sizeof(uint32_t) * instance_count;
+    } else if (name == "sched_monitor_val" ||
+               name == "sched_monitor_xz") {
+      spec.length = sizeof(uint64_t) * instance_count * sched.monitor_count *
+                    sched.monitor_max_args;
+    } else if (name == "sched_monitor_wide_val" ||
+               name == "sched_monitor_wide_xz") {
+      if (sched.service_wide_words == 0u) {
+        if (error) {
+          *error = "scheduler wide monitor buffer requested without wide words";
+        }
+        return false;
+      }
+      spec.length = sizeof(uint64_t) * instance_count * sched.monitor_count *
+                    sched.monitor_max_args * sched.service_wide_words;
+    } else if (name == "sched_strobe_pending") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.strobe_count;
+    } else if (name == "sched_service_count") {
+      spec.length = sizeof(uint32_t) * instance_count * 2u;
+    } else if (name == "sched_service_head") {
+      spec.length = sizeof(uint32_t) * instance_count;
+    } else if (name == "sched_service") {
+      size_t stride =
+          ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args),
+                              sched.service_wide_words, module.four_state);
+      spec.length = stride * instance_count * service_capacity;
+    } else if (name == "sched_ready") {
+      const size_t stride =
+          static_cast<size_t>(instance_count) * sched.proc_count;
+      spec.length = sizeof(uint32_t) *
+                    ((stride * 2u) + instance_count + 6u);
+    } else if (name == "sched_force_id") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.force_count;
+    } else if (name == "sched_passign_id") {
+      spec.length = sizeof(uint32_t) * instance_count * sched.pcont_count;
+    } else if (name == "sched_force_state") {
+      spec.length = packed_state_bytes();
+    } else if (name == "sched_vm_bytecode") {
+      if (sched.vm_bytecode_words == 0u && sched.proc_count > 0u) {
+        if (error) {
+          *error = "sched_vm_bytecode requested without bytecode words";
+        }
+        return false;
+      }
+      spec.length = nonzero_bytes(
+          sizeof(uint32_t) * instance_count * sched.vm_bytecode_words,
+          sizeof(uint32_t));
+    } else if (name == "sched_vm_cond_val" ||
+               name == "sched_vm_cond_xz") {
+      if (sched.vm_cond_count == 0u) {
+        if (error) {
+          *error = "sched_vm_cond buffers requested without cond sizing";
+        }
+        return false;
+      }
+      spec.length = nonzero_bytes(
+          sizeof(uint32_t) * instance_count * sched.proc_count *
+              sched.vm_cond_count,
+          sizeof(uint32_t));
+    } else if (name == "sched_vm_cond_entry") {
+      const size_t count =
+          (sched.vm_cond_count > 0u) ? sched.vm_cond_count : 1u;
+      spec.length = sizeof(uint32_t) * 4u * count;
+    } else if (name == "sched_vm_signal_entry") {
+      const size_t count =
+          (sched.vm_signal_count > 0u) ? sched.vm_signal_count : 1u;
+      spec.length = sizeof(uint32_t) * 5u * count;
+    } else if (name == "sched_vm_proc_bytecode_offset" ||
+               name == "sched_vm_proc_bytecode_length" ||
+               name == "sched_vm_ip" ||
+               name == "sched_vm_call_sp") {
+      spec.length = nonzero_bytes(
+          sizeof(uint32_t) * instance_count * sched.proc_count,
+          sizeof(uint32_t));
+    } else if (name == "sched_vm_call_frame") {
+      if (sched.vm_call_frame_words == 0u || sched.vm_call_frame_depth == 0u) {
+        if (error) {
+          *error = "sched_vm_call_frame requested without frame sizing";
+        }
+        return false;
+      }
+      spec.length = nonzero_bytes(
+          sizeof(uint32_t) * instance_count * sched.proc_count *
+              sched.vm_call_frame_words * sched.vm_call_frame_depth,
+          sizeof(uint32_t));
+    } else if (name == "sched_vm_debug") {
+      spec.length = sizeof(uint32_t) * instance_count *
+                    GPGA_SCHED_VM_DEBUG_WORDS;
+    } else if (name == "sched_vm_case_header") {
+      const size_t count =
+          (sched.vm_case_header_count > 0u) ? sched.vm_case_header_count : 1u;
+      spec.length = sizeof(GpgaSchedVmCaseHeader) * count;
+    } else if (name == "sched_vm_case_entry") {
+      const size_t count =
+          (sched.vm_case_entry_count > 0u) ? sched.vm_case_entry_count : 1u;
+      spec.length = sizeof(uint32_t) * 3u * count;
+    } else if (name == "sched_vm_case_words") {
+      const size_t count =
+          (sched.vm_case_word_count > 0u) ? sched.vm_case_word_count : 1u;
+      spec.length = sizeof(uint64_t) * count;
+    } else if (name == "sched_vm_expr") {
+      const size_t count =
+          (sched.vm_expr_word_count > 0u) ? sched.vm_expr_word_count : 1u;
+      spec.length = sizeof(uint32_t) * count;
+    } else if (name == "sched_vm_expr_imm") {
+      const size_t count = (sched.vm_expr_imm_word_count > 0u)
+                               ? sched.vm_expr_imm_word_count
+                               : 1u;
+      spec.length = sizeof(uint32_t) * count;
+    } else if (name == "sched_vm_assign_entry") {
+      const size_t count =
+          (sched.vm_assign_count > 0u) ? sched.vm_assign_count : 1u;
+      spec.length = sizeof(GpgaSchedVmAssignEntry) * count;
+    } else if (name == "sched_vm_force_entry") {
+      const size_t count =
+          (sched.vm_force_count > 0u) ? sched.vm_force_count : 1u;
+      spec.length = sizeof(uint32_t) * 6u * count;
+    } else if (name == "sched_vm_release_entry") {
+      const size_t count =
+          (sched.vm_release_count > 0u) ? sched.vm_release_count : 1u;
+      spec.length = sizeof(uint32_t) * 4u * count;
+    } else if (name == "sched_vm_service_entry") {
+      const size_t count = (sched.vm_service_call_count > 0u)
+                               ? sched.vm_service_call_count
+                               : 1u;
+      spec.length = sizeof(GpgaSchedVmServiceEntry) * count;
+    } else if (name == "sched_vm_service_arg") {
+      const size_t count = (sched.vm_service_arg_count > 0u)
+                               ? sched.vm_service_arg_count
+                               : 1u;
+      spec.length = sizeof(GpgaSchedVmServiceArg) * count;
+    } else if (name == "sched_vm_service_ret_assign_entry") {
+      const size_t count = (sched.vm_service_assign_count > 0u)
+                               ? sched.vm_service_assign_count
+                               : 1u;
+      spec.length = sizeof(GpgaSchedVmServiceRetAssignEntry) * count;
+    } else if (name == "sched_vm_delay_assign_entry") {
+      const size_t count =
+          (sched.delay_count > 0u) ? sched.delay_count : 1u;
+      spec.length = sizeof(uint32_t) * 11u * count;
+    } else {
+      if (error) {
+        *error = "unknown scheduler buffer: " + name;
+      }
+      return false;
+    }
+    specs->push_back(spec);
+    return true;
+  };
   for (const auto& entry : indices) {
     BufferSpec spec;
     spec.name = entry.first;
     const std::string& name = spec.name;
+    if (name == "sched_args") {
+      continue;
+    }
     if (name == "sched_vm_args") {
       continue;
     }
@@ -3988,211 +4230,9 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       continue;
     }
     if (StartsWith(name, "sched_")) {
-      if (!sched.has_scheduler) {
-        if (error) {
-          *error = "scheduler buffers requested but no scheduler constants";
-        }
+      if (!append_sched_spec(name)) {
         return false;
       }
-      if (StartsWith(name, "sched_vm_") && !sched.vm_enabled) {
-        if (error) {
-          *error = "scheduler VM buffers requested but VM not enabled";
-        }
-        return false;
-      }
-      if (name == "sched_pc" || name == "sched_state" ||
-          name == "sched_wait_kind" || name == "sched_wait_edge_kind" ||
-          name == "sched_wait_id" || name == "sched_wait_event" ||
-          name == "sched_join_count" || name == "sched_parent" ||
-          name == "sched_join_tag") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count;
-      } else if (name == "sched_wait_time") {
-        spec.length = sizeof(uint64_t) * instance_count * sched.proc_count;
-      } else if (name == "sched_time") {
-        spec.length = sizeof(uint64_t) * instance_count;
-      } else if (name == "sched_phase" || name == "sched_flags" ||
-                 name == "sched_error" || name == "sched_status" ||
-                 name == "sched_halt_mode") {
-        spec.length = sizeof(uint32_t) * instance_count;
-      } else if (name == "sched_repeat_left" ||
-                 name == "sched_repeat_active") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.repeat_count;
-      } else if (name == "sched_edge_prev_val" ||
-                 name == "sched_edge_prev_xz") {
-        spec.length = sizeof(uint64_t) * instance_count * sched.edge_count;
-      } else if (name == "sched_edge_star_prev_val" ||
-                 name == "sched_edge_star_prev_xz") {
-        spec.length = sizeof(uint64_t) * instance_count *
-                      sched.edge_star_count;
-      } else if (name == "sched_timing_prev_val" ||
-                 name == "sched_timing_prev_xz") {
-        spec.length = sizeof(uint64_t) * instance_count *
-                      sched.timing_check_count * 2u;
-      } else if (name == "sched_timing_data_time" ||
-                 name == "sched_timing_ref_time" ||
-                 name == "sched_timing_window_start" ||
-                 name == "sched_timing_window_end") {
-        spec.length = sizeof(uint64_t) * instance_count *
-                      sched.timing_check_count;
-      } else if (name == "sched_event_pending") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.event_count;
-      } else if (name == "sched_delay_val" || name == "sched_delay_xz") {
-        spec.length = sizeof(uint64_t) * instance_count * sched.delay_count;
-      } else if (name == "sched_delay_index_val" ||
-                 name == "sched_delay_index_xz") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.delay_count;
-      } else if (name == "sched_dnba_count") {
-        spec.length = sizeof(uint32_t) * instance_count;
-      } else if (name == "sched_dnba_time" || name == "sched_dnba_val" ||
-                 name == "sched_dnba_xz") {
-        spec.length = sizeof(uint64_t) * instance_count * sched.max_dnba;
-      } else if (name == "sched_dnba_id" ||
-                 name == "sched_dnba_index_val" ||
-                 name == "sched_dnba_index_xz") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.max_dnba;
-      } else if (name == "sched_monitor_active") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.monitor_count;
-      } else if (name == "sched_monitor_enable") {
-        spec.length = sizeof(uint32_t) * instance_count;
-      } else if (name == "sched_monitor_val" ||
-                 name == "sched_monitor_xz") {
-        spec.length = sizeof(uint64_t) * instance_count * sched.monitor_count *
-                      sched.monitor_max_args;
-      } else if (name == "sched_monitor_wide_val" ||
-                 name == "sched_monitor_wide_xz") {
-        if (sched.service_wide_words == 0u) {
-          if (error) {
-            *error = "scheduler wide monitor buffer requested without wide words";
-          }
-          return false;
-        }
-        spec.length = sizeof(uint64_t) * instance_count * sched.monitor_count *
-                      sched.monitor_max_args * sched.service_wide_words;
-      } else if (name == "sched_strobe_pending") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.strobe_count;
-      } else if (name == "sched_service_count") {
-        spec.length = sizeof(uint32_t) * instance_count * 2u;
-      } else if (name == "sched_service_head") {
-        spec.length = sizeof(uint32_t) * instance_count;
-      } else if (name == "sched_service") {
-        size_t stride =
-            ServiceRecordStride(std::max<uint32_t>(1, sched.service_max_args),
-                                sched.service_wide_words, module.four_state);
-        spec.length = stride * instance_count * service_capacity;
-      } else if (name == "sched_ready") {
-        const size_t stride =
-            static_cast<size_t>(instance_count) * sched.proc_count;
-        spec.length = sizeof(uint32_t) *
-                      ((stride * 2u) + instance_count + 6u);
-      } else if (name == "sched_force_id") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.force_count;
-      } else if (name == "sched_passign_id") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.pcont_count;
-      } else if (name == "sched_force_state") {
-        spec.length = packed_state_bytes();
-      } else if (name == "sched_vm_bytecode") {
-        if (sched.vm_bytecode_words == 0u) {
-          if (error) {
-            *error = "sched_vm_bytecode requested without bytecode words";
-          }
-          return false;
-        }
-        spec.length =
-            sizeof(uint32_t) * instance_count * sched.vm_bytecode_words;
-      } else if (name == "sched_vm_cond_val" ||
-                 name == "sched_vm_cond_xz") {
-        if (sched.vm_cond_count == 0u) {
-          if (error) {
-            *error = "sched_vm_cond buffers requested without cond sizing";
-          }
-          return false;
-        }
-        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count *
-                      sched.vm_cond_count;
-      } else if (name == "sched_vm_cond_entry") {
-        const size_t count =
-            (sched.vm_cond_count > 0u) ? sched.vm_cond_count : 1u;
-        spec.length = sizeof(uint32_t) * 4u * count;
-      } else if (name == "sched_vm_signal_entry") {
-        const size_t count =
-            (sched.vm_signal_count > 0u) ? sched.vm_signal_count : 1u;
-        spec.length = sizeof(uint32_t) * 5u * count;
-      } else if (name == "sched_vm_proc_bytecode_offset" ||
-                 name == "sched_vm_proc_bytecode_length" ||
-                 name == "sched_vm_ip" ||
-                 name == "sched_vm_call_sp") {
-        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count;
-      } else if (name == "sched_vm_call_frame") {
-        if (sched.vm_call_frame_words == 0u || sched.vm_call_frame_depth == 0u) {
-          if (error) {
-            *error = "sched_vm_call_frame requested without frame sizing";
-          }
-          return false;
-        }
-        spec.length = sizeof(uint32_t) * instance_count * sched.proc_count *
-                      sched.vm_call_frame_words * sched.vm_call_frame_depth;
-      } else if (name == "sched_vm_debug") {
-        spec.length = sizeof(uint32_t) * instance_count *
-                      GPGA_SCHED_VM_DEBUG_WORDS;
-      } else if (name == "sched_vm_case_header") {
-        const size_t count =
-            (sched.vm_case_header_count > 0u) ? sched.vm_case_header_count : 1u;
-        spec.length = sizeof(GpgaSchedVmCaseHeader) * count;
-      } else if (name == "sched_vm_case_entry") {
-        const size_t count =
-            (sched.vm_case_entry_count > 0u) ? sched.vm_case_entry_count : 1u;
-        spec.length = sizeof(uint32_t) * 3u * count;
-      } else if (name == "sched_vm_case_words") {
-        const size_t count =
-            (sched.vm_case_word_count > 0u) ? sched.vm_case_word_count : 1u;
-        spec.length = sizeof(uint64_t) * count;
-      } else if (name == "sched_vm_expr") {
-        const size_t count =
-            (sched.vm_expr_word_count > 0u) ? sched.vm_expr_word_count : 1u;
-        spec.length = sizeof(uint32_t) * count;
-      } else if (name == "sched_vm_expr_imm") {
-        const size_t count = (sched.vm_expr_imm_word_count > 0u)
-                                 ? sched.vm_expr_imm_word_count
-                                 : 1u;
-        spec.length = sizeof(uint32_t) * count;
-      } else if (name == "sched_vm_assign_entry") {
-        const size_t count =
-            (sched.vm_assign_count > 0u) ? sched.vm_assign_count : 1u;
-        spec.length = sizeof(GpgaSchedVmAssignEntry) * count;
-      } else if (name == "sched_vm_force_entry") {
-        const size_t count =
-            (sched.vm_force_count > 0u) ? sched.vm_force_count : 1u;
-        spec.length = sizeof(uint32_t) * 6u * count;
-      } else if (name == "sched_vm_release_entry") {
-        const size_t count =
-            (sched.vm_release_count > 0u) ? sched.vm_release_count : 1u;
-        spec.length = sizeof(uint32_t) * 4u * count;
-      } else if (name == "sched_vm_service_entry") {
-        const size_t count = (sched.vm_service_call_count > 0u)
-                                 ? sched.vm_service_call_count
-                                 : 1u;
-        spec.length = sizeof(GpgaSchedVmServiceEntry) * count;
-      } else if (name == "sched_vm_service_arg") {
-        const size_t count = (sched.vm_service_arg_count > 0u)
-                                 ? sched.vm_service_arg_count
-                                 : 1u;
-        spec.length = sizeof(GpgaSchedVmServiceArg) * count;
-      } else if (name == "sched_vm_service_ret_assign_entry") {
-        const size_t count = (sched.vm_service_assign_count > 0u)
-                                 ? sched.vm_service_assign_count
-                                 : 1u;
-        spec.length = sizeof(GpgaSchedVmServiceRetAssignEntry) * count;
-      } else if (name == "sched_vm_delay_assign_entry") {
-        const size_t count =
-            (sched.delay_count > 0u) ? sched.delay_count : 1u;
-        spec.length = sizeof(uint32_t) * 11u * count;
-      } else {
-        if (error) {
-          *error = "unknown scheduler buffer: " + name;
-        }
-        return false;
-      }
-      specs->push_back(spec);
       continue;
     }
 
@@ -4208,6 +4248,11 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
     if (EndsWith(base, "_next")) {
       base = base.substr(0, base.size() - 5);
     }
+    bool is_decay = false;
+    if (EndsWith(base, "_decay_time")) {
+      base = base.substr(0, base.size() - (sizeof("_decay_time") - 1u));
+      is_decay = true;
+    }
     auto it = signals.find(base);
     if (it == signals.end()) {
       if (error) {
@@ -4216,8 +4261,166 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       return false;
     }
     const SignalInfo& signal = it->second;
-    spec.length = signal_bytes(signal) * signal_elements(signal);
+    if (is_decay) {
+      if (!signal.is_trireg) {
+        if (error) {
+          *error = "decay buffer requested for non-trireg signal: " + name;
+        }
+        return false;
+      }
+      spec.length = sizeof(uint64_t) * signal_elements(signal);
+    } else {
+      spec.length = signal_bytes(signal) * signal_elements(signal);
+    }
     specs->push_back(spec);
+  }
+  if (use_sched_arg_buffer) {
+    const bool needs_force_shadow =
+        (sched.force_count > 0u) || (sched.pcont_count > 0u);
+    const bool has_edges = sched.edge_count > 0u;
+    const bool has_edge_star = sched.edge_star_count > 0u;
+    const bool has_events = sched.event_count > 0u;
+    const bool has_repeat = sched.repeat_count > 0u;
+    const bool has_timing = sched.timing_check_count > 0u;
+    const bool has_delayed_assigns = sched.delay_count > 0u;
+    const bool has_delayed_nba = sched.max_dnba > 0u;
+    const bool has_monitor = sched.monitor_count > 0u;
+    const bool has_strobe = sched.strobe_count > 0u;
+    const bool has_services = sched.has_services;
+    const bool has_wide = sched.service_wide_words > 0u;
+    const bool use_vm = sched.vm_enabled;
+    const bool four_state = module.four_state;
+    auto append_sched = [&](const char* name) -> bool {
+      return append_sched_spec(name);
+    };
+    if (needs_force_shadow && !append_sched("sched_force_state")) {
+      return false;
+    }
+    if (sched.force_count > 0u && !append_sched("sched_force_id")) {
+      return false;
+    }
+    if (sched.pcont_count > 0u && !append_sched("sched_passign_id")) {
+      return false;
+    }
+    if (!append_sched("sched_pc") || !append_sched("sched_state") ||
+        !append_sched("sched_wait_kind") ||
+        !append_sched("sched_wait_edge_kind") ||
+        !append_sched("sched_wait_id") ||
+        !append_sched("sched_wait_event")) {
+      return false;
+    }
+    if (has_edges) {
+      if (!append_sched("sched_edge_prev_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_edge_prev_xz")) {
+        return false;
+      }
+    }
+    if (has_edge_star) {
+      if (!append_sched("sched_edge_star_prev_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_edge_star_prev_xz")) {
+        return false;
+      }
+    }
+    if (has_timing) {
+      if (!append_sched("sched_timing_prev_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_timing_prev_xz")) {
+        return false;
+      }
+      if (!append_sched("sched_timing_data_time") ||
+          !append_sched("sched_timing_ref_time") ||
+          !append_sched("sched_timing_window_start") ||
+          !append_sched("sched_timing_window_end")) {
+        return false;
+      }
+    }
+    if (!append_sched("sched_wait_time") ||
+        !append_sched("sched_join_count") ||
+        !append_sched("sched_parent") ||
+        !append_sched("sched_join_tag")) {
+      return false;
+    }
+    if (has_repeat) {
+      if (!append_sched("sched_repeat_left") ||
+          !append_sched("sched_repeat_active")) {
+        return false;
+      }
+    }
+    if (!append_sched("sched_time") || !append_sched("sched_phase") ||
+        !append_sched("sched_flags") || !append_sched("sched_halt_mode")) {
+      return false;
+    }
+    if (has_events && !append_sched("sched_event_pending")) {
+      return false;
+    }
+    if (!append_sched("sched_error") || !append_sched("sched_status")) {
+      return false;
+    }
+    if (use_vm && !append_sched("sched_ready")) {
+      return false;
+    }
+    if (has_delayed_assigns) {
+      if (!append_sched("sched_delay_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_delay_xz")) {
+        return false;
+      }
+      if (!append_sched("sched_delay_index_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_delay_index_xz")) {
+        return false;
+      }
+    }
+    if (has_delayed_nba) {
+      if (!append_sched("sched_dnba_count") ||
+          !append_sched("sched_dnba_time") ||
+          !append_sched("sched_dnba_id") ||
+          !append_sched("sched_dnba_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_dnba_xz")) {
+        return false;
+      }
+      if (!append_sched("sched_dnba_index_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_dnba_index_xz")) {
+        return false;
+      }
+    }
+    if (has_monitor) {
+      if (!append_sched("sched_monitor_active") ||
+          !append_sched("sched_monitor_enable") ||
+          !append_sched("sched_monitor_val")) {
+        return false;
+      }
+      if (four_state && !append_sched("sched_monitor_xz")) {
+        return false;
+      }
+      if (has_wide && !append_sched("sched_monitor_wide_val")) {
+        return false;
+      }
+      if (four_state && has_wide &&
+          !append_sched("sched_monitor_wide_xz")) {
+        return false;
+      }
+    }
+    if (has_strobe && !append_sched("sched_strobe_pending")) {
+      return false;
+    }
+    if (has_services) {
+      if (!append_sched("sched_service_count") ||
+          !append_sched("sched_service")) {
+        return false;
+      }
+    }
   }
   if (use_vm_arg_buffer) {
     auto push_vm = [&](const std::string& name, size_t length) {
@@ -4226,22 +4429,26 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       spec.length = length;
       specs->push_back(spec);
     };
-    if (sched.vm_bytecode_words == 0u) {
+    if (sched.vm_bytecode_words == 0u && sched.proc_count > 0u) {
       if (error) {
         *error = "sched_vm_bytecode requested without bytecode words";
       }
       return false;
     }
     push_vm("sched_vm_bytecode",
-            sizeof(uint32_t) * instance_count * sched.vm_bytecode_words);
+            nonzero_bytes(sizeof(uint32_t) * instance_count *
+                              sched.vm_bytecode_words,
+                          sizeof(uint32_t)));
     if (sched.vm_cond_count == 0u) {
       if (error) {
         *error = "sched_vm_cond buffers requested without cond sizing";
       }
       return false;
     }
-    const size_t cond_len = sizeof(uint32_t) * instance_count *
-                            sched.proc_count * sched.vm_cond_count;
+    const size_t cond_len = nonzero_bytes(
+        sizeof(uint32_t) * instance_count * sched.proc_count *
+            sched.vm_cond_count,
+        sizeof(uint32_t));
     push_vm("sched_vm_cond_val", cond_len);
     push_vm("sched_vm_cond_xz", cond_len);
     {
@@ -4254,8 +4461,9 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
           (sched.vm_signal_count > 0u) ? sched.vm_signal_count : 1u;
       push_vm("sched_vm_signal_entry", sizeof(uint32_t) * 5u * count);
     }
-    const size_t proc_words =
-        sizeof(uint32_t) * instance_count * sched.proc_count;
+    const size_t proc_words = nonzero_bytes(
+        sizeof(uint32_t) * instance_count * sched.proc_count,
+        sizeof(uint32_t));
     push_vm("sched_vm_proc_bytecode_offset", proc_words);
     push_vm("sched_vm_proc_bytecode_length", proc_words);
     push_vm("sched_vm_ip", proc_words);
@@ -4267,8 +4475,10 @@ bool BuildBufferSpecs(const ModuleInfo& module, const MetalKernel& kernel,
       return false;
     }
     push_vm("sched_vm_call_frame",
-            sizeof(uint32_t) * instance_count * sched.proc_count *
-                sched.vm_call_frame_words * sched.vm_call_frame_depth);
+            nonzero_bytes(sizeof(uint32_t) * instance_count * sched.proc_count *
+                              sched.vm_call_frame_words *
+                              sched.vm_call_frame_depth,
+                          sizeof(uint32_t)));
     {
       const size_t count = (sched.vm_case_header_count > 0u)
                                ? sched.vm_case_header_count

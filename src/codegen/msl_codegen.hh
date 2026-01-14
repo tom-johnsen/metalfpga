@@ -66,12 +66,14 @@ std::string EmitMSLStub(const Module& module,
 bool BuildSchedulerVmLayoutFromModule(const Module& module,
                                       SchedulerVmLayout* out,
                                       std::string* error,
-                                      bool four_state);
+                                      bool four_state,
+                                      std::vector<std::string>* extra_signal_names = nullptr);
 bool BuildSchedulerVmLayoutFromModuleWithDiag(
     const Module& module,
     SchedulerVmLayout* out,
     std::string* error,
     bool four_state,
-    SchedulerVmFallbackDiagnostics* diag);
+    SchedulerVmFallbackDiagnostics* diag,
+    std::vector<std::string>* extra_signal_names = nullptr);
 
 }  // namespace gpga

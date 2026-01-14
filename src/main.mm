@@ -1006,11 +1006,12 @@ bool IsSystemTask(const std::string& name) {
 }
 
 bool IdentAsString(const std::string& name) {
-  return name == "$dumpvars" || name == "$readmemh" || name == "$readmemb" ||
+  return name == "$dumpvars" || name == "$dumpports" ||
+         name == "$readmemh" || name == "$readmemb" ||
          name == "$writememh" || name == "$writememb" ||
          name == "$printtimescale" || name == "$async$and$array" ||
-         name == "$sync$or$plane" || name == "$async$nor$plane" ||
-         name == "$sync$nand$plane";
+         name == "$async$and$plane" || name == "$sync$or$plane" ||
+         name == "$async$nor$plane" || name == "$sync$nand$plane";
 }
 
 std::vector<char> ExtractFormatSpecs(const std::string& format) {
@@ -1056,7 +1057,8 @@ bool IsFileSystemFunctionName(const std::string& name) {
          name == "$fgets" || name == "$feof" || name == "$fscanf" ||
          name == "$sscanf" || name == "$ftell" || name == "$fseek" ||
          name == "$ferror" || name == "$ungetc" || name == "$fread" ||
-         name == "$test$plusargs" || name == "$value$plusargs";
+         name == "$rewind" || name == "$test$plusargs" ||
+         name == "$value$plusargs";
 }
 
 void AddString(SysTaskInfo* info, const std::string& value) {
@@ -1627,7 +1629,7 @@ void CollectTasks(const gpga::Statement& stmt, SysTaskInfo* info) {
   if (stmt.kind == gpga::StatementKind::kTaskCall &&
       IsSystemTask(stmt.task_name)) {
     info->has_tasks = true;
-    if (stmt.task_name == "$dumpvars") {
+    if (stmt.task_name == "$dumpvars" || stmt.task_name == "$dumpports") {
       info->has_dumpvars = true;
     }
     info->max_args = std::max(info->max_args, stmt.task_args.size());
@@ -1788,8 +1790,10 @@ bool ModuleUsesDumpvars(const gpga::Module& module) {
   return info.has_dumpvars;
 }
 
-gpga::ModuleInfo BuildModuleInfo(const gpga::Module& module,
-                                 bool four_state) {
+gpga::ModuleInfo BuildModuleInfo(
+    const gpga::Module& module,
+    bool four_state,
+    const std::vector<std::string>* extra_signals) {
   gpga::ModuleInfo info;
   info.name = module.name;
   info.four_state = four_state;
@@ -1823,6 +1827,17 @@ gpga::ModuleInfo BuildModuleInfo(const gpga::Module& module,
       if (net.type == gpga::NetType::kTrireg) {
         it->second.is_trireg = true;
       }
+    }
+  }
+  if (extra_signals) {
+    for (const auto& name : *extra_signals) {
+      if (name.empty() || signals.count(name) > 0) {
+        continue;
+      }
+      gpga::SignalInfo sig;
+      sig.name = name;
+      sig.width = 32u;
+      signals[name] = sig;
     }
   }
   info.signals.reserve(signals.size());
@@ -1908,7 +1923,7 @@ bool InitSchedulerVmBuffers(
   const uint32_t layout_proc_count = layout ? layout->proc_count : proc_count;
   const uint32_t layout_words_per_proc =
       layout ? layout->words_per_proc : 0u;
-  if (proc_count == 0u || vm_words == 0u) {
+  if (proc_count > 0u && vm_words == 0u) {
     if (error) {
       *error = "scheduler VM enabled without bytecode sizing";
     }
@@ -1926,31 +1941,34 @@ bool InitSchedulerVmBuffers(
     }
     return false;
   }
-  if (vm_words < proc_count * kMinWordsPerProc) {
-    if (error) {
-      *error = "scheduler VM bytecode buffer too small for proc count";
+  uint32_t words_per_proc = 0u;
+  if (proc_count > 0u) {
+    if (vm_words < proc_count * kMinWordsPerProc) {
+      if (error) {
+        *error = "scheduler VM bytecode buffer too small for proc count";
+      }
+      return false;
     }
-    return false;
-  }
-  if (vm_words % proc_count != 0u) {
-    if (error) {
-      *error = "scheduler VM bytecode words not divisible by proc count";
+    if (vm_words % proc_count != 0u) {
+      if (error) {
+        *error = "scheduler VM bytecode words not divisible by proc count";
+      }
+      return false;
     }
-    return false;
-  }
-  const uint32_t words_per_proc = vm_words / proc_count;
-  if (words_per_proc < kMinWordsPerProc) {
-    if (error) {
-      *error = "scheduler VM words per proc below minimum";
+    words_per_proc = vm_words / proc_count;
+    if (words_per_proc < kMinWordsPerProc) {
+      if (error) {
+        *error = "scheduler VM words per proc below minimum";
+      }
+      return false;
     }
-    return false;
-  }
-  if (layout && layout_words_per_proc != 0u &&
-      layout_words_per_proc != words_per_proc) {
-    if (error) {
-      *error = "scheduler VM layout words-per-proc mismatch";
+    if (layout && layout_words_per_proc != 0u &&
+        layout_words_per_proc != words_per_proc) {
+      if (error) {
+        *error = "scheduler VM layout words-per-proc mismatch";
+      }
+      return false;
     }
-    return false;
   }
   auto* bytecode_buf = FindBufferMutable(buffers, "sched_vm_bytecode", "");
   auto* offset_buf =
@@ -2365,6 +2383,8 @@ bool InitSchedulerVmBuffers(
         entries[i].base_width = src.base_width;
         entries[i].range_lsb = src.range_lsb;
         entries[i].array_size = src.array_size;
+        entries[i].force_slot = src.force_slot;
+        entries[i].passign_slot = src.passign_slot;
       }
     }
     if (!layout->delay_assign_entries.empty()) {
@@ -3501,7 +3521,8 @@ size_t Align8(size_t value) {
 PackedStateLayout BuildPackedStateLayout(const gpga::Module& module,
                                          const gpga::ModuleInfo& info,
                                          bool four_state,
-                                         uint32_t count) {
+                                         uint32_t count,
+                                         const std::vector<std::string>* extra_signals) {
   PackedStateLayout layout;
   std::unordered_set<std::string> scheduled_reads;
   for (const auto& block : module.always_blocks) {
@@ -3534,6 +3555,27 @@ PackedStateLayout BuildPackedStateLayout(const gpga::Module& module,
     if (net.type == gpga::NetType::kReg ||
         scheduled_reads.count(net.name) > 0) {
       reg_names.push_back(net.name);
+    }
+  }
+  std::unordered_set<std::string> reg_name_set(reg_names.begin(),
+                                               reg_names.end());
+  auto is_array_or_trireg = [&](const std::string& name) -> bool {
+    for (const auto& net : module.nets) {
+      if (net.name == name) {
+        return net.array_size > 0 || net.type == gpga::NetType::kTrireg;
+      }
+    }
+    return false;
+  };
+  if (extra_signals) {
+    for (const auto& name : *extra_signals) {
+      if (name.empty() || port_names.count(name) > 0 ||
+          reg_name_set.count(name) > 0 ||
+          is_array_or_trireg(name)) {
+        continue;
+      }
+      reg_names.push_back(name);
+      reg_name_set.insert(name);
     }
   }
   std::vector<const gpga::Net*> trireg_nets;
@@ -6330,6 +6372,191 @@ bool BuildBindings(const gpga::MetalKernel& kernel,
   return true;
 }
 
+bool BuildSchedulerArgBuffer(
+    gpga::MetalRuntime* runtime, const gpga::MetalKernel& kernel,
+    const gpga::SchedulerConstants& sched, bool four_state,
+    std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
+    std::string* error) {
+  if (!runtime || !buffers) {
+    if (error) {
+      *error = "scheduler argument buffer requires runtime and buffers";
+    }
+    return false;
+  }
+  if (!kernel.HasBuffer("sched_args")) {
+    return true;
+  }
+  if (!sched.has_scheduler) {
+    if (error) {
+      *error = "scheduler argument buffer requested without scheduler data";
+    }
+    return false;
+  }
+  std::vector<gpga::MetalBufferBinding> bindings;
+  bindings.reserve(32);
+  uint32_t arg_id = 0;
+  auto add_binding = [&](const char* name) -> bool {
+    auto it = buffers->find(name);
+    if (it == buffers->end()) {
+      if (error) {
+        *error = std::string("missing buffer for scheduler arg: ") + name;
+      }
+      return false;
+    }
+    bindings.push_back({arg_id++, &it->second, 0});
+    return true;
+  };
+  const bool needs_force_shadow =
+      (sched.force_count > 0u) || (sched.pcont_count > 0u);
+  const bool has_edges = sched.edge_count > 0u;
+  const bool has_edge_star = sched.edge_star_count > 0u;
+  const bool has_events = sched.event_count > 0u;
+  const bool has_repeat = sched.repeat_count > 0u;
+  const bool has_timing = sched.timing_check_count > 0u;
+  const bool has_delayed_assigns = sched.delay_count > 0u;
+  const bool has_delayed_nba = sched.max_dnba > 0u;
+  const bool has_monitor = sched.monitor_count > 0u;
+  const bool has_strobe = sched.strobe_count > 0u;
+  const bool has_services = sched.has_services;
+  const bool has_wide = sched.service_wide_words > 0u;
+  const bool use_vm = sched.vm_enabled;
+  if (needs_force_shadow && !add_binding("sched_force_state")) {
+    return false;
+  }
+  if (sched.force_count > 0u && !add_binding("sched_force_id")) {
+    return false;
+  }
+  if (sched.pcont_count > 0u && !add_binding("sched_passign_id")) {
+    return false;
+  }
+  if (!add_binding("sched_pc") || !add_binding("sched_state") ||
+      !add_binding("sched_wait_kind") ||
+      !add_binding("sched_wait_edge_kind") ||
+      !add_binding("sched_wait_id") ||
+      !add_binding("sched_wait_event")) {
+    return false;
+  }
+  if (has_edges) {
+    if (!add_binding("sched_edge_prev_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_edge_prev_xz")) {
+      return false;
+    }
+  }
+  if (has_edge_star) {
+    if (!add_binding("sched_edge_star_prev_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_edge_star_prev_xz")) {
+      return false;
+    }
+  }
+  if (has_timing) {
+    if (!add_binding("sched_timing_prev_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_timing_prev_xz")) {
+      return false;
+    }
+    if (!add_binding("sched_timing_data_time") ||
+        !add_binding("sched_timing_ref_time") ||
+        !add_binding("sched_timing_window_start") ||
+        !add_binding("sched_timing_window_end")) {
+      return false;
+    }
+  }
+  if (!add_binding("sched_wait_time") ||
+      !add_binding("sched_join_count") ||
+      !add_binding("sched_parent") ||
+      !add_binding("sched_join_tag")) {
+    return false;
+  }
+  if (has_repeat) {
+    if (!add_binding("sched_repeat_left") ||
+        !add_binding("sched_repeat_active")) {
+      return false;
+    }
+  }
+  if (!add_binding("sched_time") || !add_binding("sched_phase") ||
+      !add_binding("sched_flags") || !add_binding("sched_halt_mode")) {
+    return false;
+  }
+  if (has_events && !add_binding("sched_event_pending")) {
+    return false;
+  }
+  if (!add_binding("sched_error") || !add_binding("sched_status")) {
+    return false;
+  }
+  if (use_vm && !add_binding("sched_ready")) {
+    return false;
+  }
+  if (has_delayed_assigns) {
+    if (!add_binding("sched_delay_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_delay_xz")) {
+      return false;
+    }
+    if (!add_binding("sched_delay_index_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_delay_index_xz")) {
+      return false;
+    }
+  }
+  if (has_delayed_nba) {
+    if (!add_binding("sched_dnba_count") ||
+        !add_binding("sched_dnba_time") ||
+        !add_binding("sched_dnba_id") ||
+        !add_binding("sched_dnba_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_dnba_xz")) {
+      return false;
+    }
+    if (!add_binding("sched_dnba_index_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_dnba_index_xz")) {
+      return false;
+    }
+  }
+  if (has_monitor) {
+    if (!add_binding("sched_monitor_active") ||
+        !add_binding("sched_monitor_enable") ||
+        !add_binding("sched_monitor_val")) {
+      return false;
+    }
+    if (four_state && !add_binding("sched_monitor_xz")) {
+      return false;
+    }
+    if (has_wide && !add_binding("sched_monitor_wide_val")) {
+      return false;
+    }
+    if (four_state && has_wide && !add_binding("sched_monitor_wide_xz")) {
+      return false;
+    }
+  }
+  if (has_strobe && !add_binding("sched_strobe_pending")) {
+    return false;
+  }
+  if (has_services) {
+    if (!add_binding("sched_service_count") ||
+        !add_binding("sched_service")) {
+      return false;
+    }
+  }
+  const uint32_t arg_index = kernel.BufferIndex("sched_args");
+  gpga::MetalBuffer arg_buffer;
+  if (!runtime->EncodeArgumentBuffer(kernel, arg_index, bindings, &arg_buffer,
+                                     error)) {
+    return false;
+  }
+  (*buffers)["sched_args"] = std::move(arg_buffer);
+  return true;
+}
+
 bool BuildSchedulerVmArgBuffer(
     gpga::MetalRuntime* runtime, const gpga::MetalKernel& kernel,
     std::unordered_map<std::string, gpga::MetalBuffer>* buffers,
@@ -6521,26 +6748,6 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       use_sched_ready && use_sched_exec_ready && has_sched_ready_dispatch;
   bool use_exec_ready_indirect = false;
   size_t sched_ready_dispatch_offset = 0u;
-  if (ready_enabled && has_sched &&
-      (!has_sched_ready_reset ||
-       !has_sched_ready_flags || !has_sched_ready_compact)) {
-    if (error) {
-      *error = "sched-ready kernels requested but missing in Metal source";
-    }
-    return false;
-  }
-  if (exec_ready_enabled && has_sched && !has_sched_exec_ready) {
-    if (error) {
-      *error = "sched-exec-ready kernel requested but missing in Metal source";
-    }
-    return false;
-  }
-  if (wait_eval_enabled && has_sched && !has_sched_wait_eval) {
-    if (error) {
-      *error = "sched-wait-eval kernel requested but missing in Metal source";
-    }
-    return false;
-  }
   if (!has_sched && !has_fallback_kernel) {
     if (error) {
       *error = "missing primary kernel in Metal source (" + base + ")";
@@ -6581,7 +6788,30 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
 
   gpga::SchedulerConstants sched;
   gpga::ParseSchedulerConstants(msl, &sched, error);
+  if (ready_enabled && has_sched && sched.vm_enabled && sched.proc_count > 0u &&
+      (!has_sched_ready_reset ||
+       !has_sched_ready_flags || !has_sched_ready_compact)) {
+    if (error) {
+      *error = "sched-ready kernels requested but missing in Metal source";
+    }
+    return false;
+  }
+  if (exec_ready_enabled && has_sched && sched.vm_enabled &&
+      sched.proc_count > 0u && !has_sched_exec_ready) {
+    if (error) {
+      *error = "sched-exec-ready kernel requested but missing in Metal source";
+    }
+    return false;
+  }
+  if (wait_eval_enabled && has_sched && sched.vm_enabled &&
+      sched.proc_count > 0u && !has_sched_wait_eval) {
+    if (error) {
+      *error = "sched-wait-eval kernel requested but missing in Metal source";
+    }
+    return false;
+  }
   gpga::SchedulerVmLayout vm_layout;
+  std::vector<std::string> vm_extra_signals;
   const gpga::SchedulerVmLayout* vm_layout_ptr = nullptr;
   uint32_t callgroup_procs = 0u;
   uint32_t empty_procs = 0u;
@@ -6595,7 +6825,7 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   std::vector<VmWatchProc> vm_watch_procs;
   if (sched.vm_enabled) {
     if (!gpga::BuildSchedulerVmLayoutFromModule(
-            module, &vm_layout, error, enable_4state)) {
+            module, &vm_layout, error, enable_4state, &vm_extra_signals)) {
       return false;
     }
     if (!vm_layout.bytecode.empty()) {
@@ -6626,8 +6856,8 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
           static_cast<uint32_t>(vm_layout.expr_table.words.size());
       sched.vm_expr_imm_word_count =
           static_cast<uint32_t>(vm_layout.expr_table.imm_words.size());
-      vm_layout_ptr = &vm_layout;
     }
+    vm_layout_ptr = &vm_layout;
     if (vm_layout_ptr) {
       vm_proc_count = std::min(vm_layout.proc_offsets.size(),
                                vm_layout.proc_lengths.size());
@@ -6752,7 +6982,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
     }
   }
 
-  gpga::ModuleInfo info = BuildModuleInfo(module, enable_4state);
+  gpga::ModuleInfo info = BuildModuleInfo(
+      module, enable_4state,
+      vm_extra_signals.empty() ? nullptr : &vm_extra_signals);
 
   gpga::MetalKernel comb_kernel;
   gpga::MetalKernel init_kernel;
@@ -6955,7 +7187,9 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
   PackedStateLayout packed_layout;
   bool has_packed_layout = false;
   if (buffers.find("gpga_state") != buffers.end()) {
-    packed_layout = BuildPackedStateLayout(module, info, enable_4state, count);
+    packed_layout = BuildPackedStateLayout(
+        module, info, enable_4state, count,
+        vm_extra_signals.empty() ? nullptr : &vm_extra_signals);
     has_packed_layout = true;
   }
 
@@ -6982,6 +7216,12 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
 
   if (!InitSchedulerVmBuffers(&buffers, sched, count, vm_layout_ptr, error)) {
     return false;
+  }
+  if (has_sched) {
+    if (!BuildSchedulerArgBuffer(&runtime, sched_kernel, sched, enable_4state,
+                                 &buffers, error)) {
+      return false;
+    }
   }
   if (has_sched && sched.vm_enabled) {
     if (!BuildSchedulerVmArgBuffer(&runtime, sched_kernel, &buffers, error)) {
@@ -7168,10 +7408,6 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       const bool exec_ready_late =
           do_ready && use_sched_exec_ready && !sched_batch;
       auto service_records_pending = [&]() -> bool {
-        if (!sched_kernel.HasBuffer("sched_service") ||
-            !sched_kernel.HasBuffer("sched_service_count")) {
-          return false;
-        }
         auto count_it = buffers.find("sched_service_count");
         auto record_it = buffers.find("sched_service");
         if (count_it == buffers.end() || record_it == buffers.end()) {
@@ -7202,10 +7438,6 @@ bool RunMetal(const gpga::Module& module, const std::string& msl,
       };
       auto drain_services = [&](bool force) -> bool {
         if (!force && !do_service_drain) {
-          return true;
-        }
-        if (!sched_kernel.HasBuffer("sched_service") ||
-            !sched_kernel.HasBuffer("sched_service_count")) {
           return true;
         }
         auto count_it = buffers.find("sched_service_count");

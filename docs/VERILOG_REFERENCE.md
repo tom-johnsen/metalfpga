@@ -12,7 +12,7 @@ Verilog employs a **4-value logic system** (unlike typical programming languages
 
 - **0**: Logical zero/false
 - **1**: Logical one/true
-- **X**: Unknown value (uninitialized or conflicting)
+- **X**: Unknown value (uninitialized or conflicting) (effectively both states)
 - **Z**: High impedance state (tri-state, disconnected)
 
 This 4-state system is fundamental to hardware modeling and represents real circuit behavior including unknown states during simulation and high-impedance tri-state buffers.

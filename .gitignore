@@ -3,20 +3,19 @@ docs/apple/
 docs/markdown/
 docs/pdfs/
 docs/images/
+docs/secret/
 
 .DS_STORE
 .claude/
 .cache/
 
-persistent/
-host/
-test_results/
 artifacts/
-goldentests/
 thirdparty/
 !thirdparty/crlibm/
 deprecated/docs
 tmp/
+
+goldentests/results/
 
 docs/PLAN.md
 docs/IDEA.md
