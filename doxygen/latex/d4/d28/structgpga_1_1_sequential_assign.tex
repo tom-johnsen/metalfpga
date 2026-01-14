@@ -1,0 +1,255 @@
+\doxysection{gpga::\+Sequential\+Assign Struct Reference}
+\hypertarget{structgpga_1_1_sequential_assign}{}\label{structgpga_1_1_sequential_assign}\index{gpga::SequentialAssign@{gpga::SequentialAssign}}
+
+
+Procedural assignment description.  
+
+
+
+
+{\ttfamily \+\#include $<$ast.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_af786548953701607c4c7f0959797d6ff_af786548953701607c4c7f0959797d6ff}{lhs}}
+\begin{DoxyCompactList}\small\item\em Left-\/hand identifier. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a69b0cd537cca9964bb486e5fdd3c064c_a69b0cd537cca9964bb486e5fdd3c064c}{lhs\+\_\+index}}
+\begin{DoxyCompactList}\small\item\em Single index expression. \end{DoxyCompactList}\item 
+std::\+vector$<$ std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ $>$ \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a78f9c2dc506fc3db5d406087f81b843e_a78f9c2dc506fc3db5d406087f81b843e}{lhs\+\_\+indices}}
+\begin{DoxyCompactList}\small\item\em Multi-\/dimensional indices. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a41812ac7d17d2c2f4df2c3cda8bbf772_a41812ac7d17d2c2f4df2c3cda8bbf772}{lhs\+\_\+has\+\_\+range}} = false
+\begin{DoxyCompactList}\small\item\em True if LHS has an explicit range. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_aa0b489222723f3e54a7833f6f7eb0e35_aa0b489222723f3e54a7833f6f7eb0e35}{lhs\+\_\+indexed\+\_\+range}} = false
+\begin{DoxyCompactList}\small\item\em True for indexed part-\/select. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_ac3ea65817e34ff1be3a0e29d95d67642_ac3ea65817e34ff1be3a0e29d95d67642}{lhs\+\_\+indexed\+\_\+desc}} = false
+\begin{DoxyCompactList}\small\item\em True if indexed range is descending. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a3a24e148b285f64bc6f39d5ed415513c_a3a24e148b285f64bc6f39d5ed415513c}{lhs\+\_\+indexed\+\_\+width}} = 0
+\begin{DoxyCompactList}\small\item\em Width for indexed part-\/select. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a5523a9394bda49972b0756a9418cfd2e_a5523a9394bda49972b0756a9418cfd2e}{lhs\+\_\+msb}} = 0
+\begin{DoxyCompactList}\small\item\em Constant MSB for range. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_ac7c65e23938a41bd8cb698279e76367d_ac7c65e23938a41bd8cb698279e76367d}{lhs\+\_\+lsb}} = 0
+\begin{DoxyCompactList}\small\item\em Constant LSB for range. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a9a823e5311f5778f1086e4fcc05b80b9_a9a823e5311f5778f1086e4fcc05b80b9}{lhs\+\_\+msb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em MSB expression for range. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_aabf627e98a24f69b714de928f477897b_aabf627e98a24f69b714de928f477897b}{lhs\+\_\+lsb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em LSB expression for range. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a29970b2876955d25ff3fca4440582ac0_a29970b2876955d25ff3fca4440582ac0}{rhs}}
+\begin{DoxyCompactList}\small\item\em Right-\/hand expression. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_a588254aef6a6299fb838451c1f472121_a588254aef6a6299fb838451c1f472121}{delay}}
+\begin{DoxyCompactList}\small\item\em Optional delay expression. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_sequential_assign_af062f46ebf436a2d94cbb4a2b9127a15_af062f46ebf436a2d94cbb4a2b9127a15}{nonblocking}} = true
+\begin{DoxyCompactList}\small\item\em True for nonblocking assignment. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Procedural assignment description. 
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00237}{237}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_sequential_assign_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_sequential_assign_a588254aef6a6299fb838451c1f472121_a588254aef6a6299fb838451c1f472121}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!delay@{delay}}
+\index{delay@{delay}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{delay}{delay}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a588254aef6a6299fb838451c1f472121_a588254aef6a6299fb838451c1f472121} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Sequential\+Assign::\+delay}
+
+
+
+Optional delay expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00250}{250}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_af786548953701607c4c7f0959797d6ff_af786548953701607c4c7f0959797d6ff}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs@{lhs}}
+\index{lhs@{lhs}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs}{lhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_af786548953701607c4c7f0959797d6ff_af786548953701607c4c7f0959797d6ff} 
+std::\+string gpga::\+\+Sequential\+Assign::\+lhs}
+
+
+
+Left-\/hand identifier. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00238}{238}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a41812ac7d17d2c2f4df2c3cda8bbf772_a41812ac7d17d2c2f4df2c3cda8bbf772}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_has\_range@{lhs\_has\_range}}
+\index{lhs\_has\_range@{lhs\_has\_range}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_has\_range}{lhs\_has\_range}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a41812ac7d17d2c2f4df2c3cda8bbf772_a41812ac7d17d2c2f4df2c3cda8bbf772} 
+bool gpga::\+\+Sequential\+Assign::\+lhs\+\_\+has\+\_\+range = false}
+
+
+
+True if LHS has an explicit range. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00241}{241}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a69b0cd537cca9964bb486e5fdd3c064c_a69b0cd537cca9964bb486e5fdd3c064c}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_index@{lhs\_index}}
+\index{lhs\_index@{lhs\_index}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_index}{lhs\_index}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a69b0cd537cca9964bb486e5fdd3c064c_a69b0cd537cca9964bb486e5fdd3c064c} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Sequential\+Assign::\+lhs\+\_\+index}
+
+
+
+Single index expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00239}{239}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_ac3ea65817e34ff1be3a0e29d95d67642_ac3ea65817e34ff1be3a0e29d95d67642}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_indexed\_desc@{lhs\_indexed\_desc}}
+\index{lhs\_indexed\_desc@{lhs\_indexed\_desc}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_indexed\_desc}{lhs\_indexed\_desc}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_ac3ea65817e34ff1be3a0e29d95d67642_ac3ea65817e34ff1be3a0e29d95d67642} 
+bool gpga::\+\+Sequential\+Assign::\+lhs\+\_\+indexed\+\_\+desc = false}
+
+
+
+True if indexed range is descending. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00243}{243}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_aa0b489222723f3e54a7833f6f7eb0e35_aa0b489222723f3e54a7833f6f7eb0e35}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_indexed\_range@{lhs\_indexed\_range}}
+\index{lhs\_indexed\_range@{lhs\_indexed\_range}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_indexed\_range}{lhs\_indexed\_range}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_aa0b489222723f3e54a7833f6f7eb0e35_aa0b489222723f3e54a7833f6f7eb0e35} 
+bool gpga::\+\+Sequential\+Assign::\+lhs\+\_\+indexed\+\_\+range = false}
+
+
+
+True for indexed part-\/select. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00242}{242}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a3a24e148b285f64bc6f39d5ed415513c_a3a24e148b285f64bc6f39d5ed415513c}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_indexed\_width@{lhs\_indexed\_width}}
+\index{lhs\_indexed\_width@{lhs\_indexed\_width}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_indexed\_width}{lhs\_indexed\_width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a3a24e148b285f64bc6f39d5ed415513c_a3a24e148b285f64bc6f39d5ed415513c} 
+int gpga::\+\+Sequential\+Assign::\+lhs\+\_\+indexed\+\_\+width = 0}
+
+
+
+Width for indexed part-\/select. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00244}{244}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a78f9c2dc506fc3db5d406087f81b843e_a78f9c2dc506fc3db5d406087f81b843e}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_indices@{lhs\_indices}}
+\index{lhs\_indices@{lhs\_indices}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_indices}{lhs\_indices}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a78f9c2dc506fc3db5d406087f81b843e_a78f9c2dc506fc3db5d406087f81b843e} 
+std::\+vector$<$std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ $>$ gpga::\+\+Sequential\+Assign::\+lhs\+\_\+indices}
+
+
+
+Multi-\/dimensional indices. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00240}{240}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_ac7c65e23938a41bd8cb698279e76367d_ac7c65e23938a41bd8cb698279e76367d}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_lsb@{lhs\_lsb}}
+\index{lhs\_lsb@{lhs\_lsb}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_lsb}{lhs\_lsb}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_ac7c65e23938a41bd8cb698279e76367d_ac7c65e23938a41bd8cb698279e76367d} 
+int gpga::\+\+Sequential\+Assign::\+lhs\+\_\+lsb = 0}
+
+
+
+Constant LSB for range. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00246}{246}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_aabf627e98a24f69b714de928f477897b_aabf627e98a24f69b714de928f477897b}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_lsb\_expr@{lhs\_lsb\_expr}}
+\index{lhs\_lsb\_expr@{lhs\_lsb\_expr}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_lsb\_expr}{lhs\_lsb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_aabf627e98a24f69b714de928f477897b_aabf627e98a24f69b714de928f477897b} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Sequential\+Assign::\+lhs\+\_\+lsb\+\_\+expr}
+
+
+
+LSB expression for range. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00248}{248}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a5523a9394bda49972b0756a9418cfd2e_a5523a9394bda49972b0756a9418cfd2e}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_msb@{lhs\_msb}}
+\index{lhs\_msb@{lhs\_msb}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_msb}{lhs\_msb}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a5523a9394bda49972b0756a9418cfd2e_a5523a9394bda49972b0756a9418cfd2e} 
+int gpga::\+\+Sequential\+Assign::\+lhs\+\_\+msb = 0}
+
+
+
+Constant MSB for range. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00245}{245}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a9a823e5311f5778f1086e4fcc05b80b9_a9a823e5311f5778f1086e4fcc05b80b9}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!lhs\_msb\_expr@{lhs\_msb\_expr}}
+\index{lhs\_msb\_expr@{lhs\_msb\_expr}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{lhs\_msb\_expr}{lhs\_msb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a9a823e5311f5778f1086e4fcc05b80b9_a9a823e5311f5778f1086e4fcc05b80b9} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Sequential\+Assign::\+lhs\+\_\+msb\+\_\+expr}
+
+
+
+MSB expression for range. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00247}{247}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_af062f46ebf436a2d94cbb4a2b9127a15_af062f46ebf436a2d94cbb4a2b9127a15}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!nonblocking@{nonblocking}}
+\index{nonblocking@{nonblocking}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{nonblocking}{nonblocking}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_af062f46ebf436a2d94cbb4a2b9127a15_af062f46ebf436a2d94cbb4a2b9127a15} 
+bool gpga::\+\+Sequential\+Assign::\+nonblocking = true}
+
+
+
+True for nonblocking assignment. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00251}{251}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_sequential_assign_a29970b2876955d25ff3fca4440582ac0_a29970b2876955d25ff3fca4440582ac0}\index{gpga::SequentialAssign@{gpga::SequentialAssign}!rhs@{rhs}}
+\index{rhs@{rhs}!gpga::SequentialAssign@{gpga::SequentialAssign}}
+\doxysubsubsection{\texorpdfstring{rhs}{rhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_sequential_assign_a29970b2876955d25ff3fca4440582ac0_a29970b2876955d25ff3fca4440582ac0} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Sequential\+Assign::\+rhs}
+
+
+
+Right-\/hand expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00249}{249}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+\doxymbox{\hyperlink{ast_8hh}{ast.\+hh}}\end{DoxyCompactItemize}

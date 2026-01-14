@@ -1,0 +1,559 @@
+\doxysection{include/\+gpga\+\_\+wide.h File Reference}
+\hypertarget{gpga__wide_8h}{}\label{gpga__wide_8h}\index{include/gpga\_wide.h@{include/gpga\_wide.h}}
+
+
+Macro-\/generated helpers for wide (\texorpdfstring{$>$}{>}64-\/bit) unsigned integers.  
+
+
+{\ttfamily \+\#include $<$cstdint$>$}\newline
+\doxysubsubsection*{Macros}
+\begin{DoxyCompactItemize}
+\item 
+\+\#define \doxymbox{\hyperlink{gpga__wide_8h_a13292ac5948271d4313e4543fc03d78e_a13292ac5948271d4313e4543fc03d78e}{GPGA\+\_\+\+WIDE\+\_\+\+DEFINE}}(width,  words,  last\+\_\+mask)
+\begin{DoxyCompactList}\small\item\em Generate a wide integer type and helpers for the given bit width. \end{DoxyCompactList}\item 
+\+\#define \doxymbox{\hyperlink{gpga__wide_8h_abef3958616541376a865eee6529add79_abef3958616541376a865eee6529add79}{GPGA\+\_\+\+WIDE\+\_\+\+DEFINE\+\_\+\+RESIZE}}(dst,  src,  dst\+\_\+words,  src\+\_\+words,  dst\+\_\+last\+\_\+mask,  src\+\_\+mod)
+\begin{DoxyCompactList}\small\item\em Generate resize and sign-\/extend helpers between wide types. \end{DoxyCompactList}\item 
+\+\#define \doxymbox{\hyperlink{gpga__wide_8h_aa035ae05b70022969412302bdf542bf5_aa035ae05b70022969412302bdf542bf5}{GPGA\+\_\+\+WIDE\+\_\+\+DEFINE\+\_\+\+FS}}(width)
+\begin{DoxyCompactList}\small\item\em Generate a four-\/state wide value wrapper. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+static \doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{gpga__wide_8h_a165a9cf9c6a39c71e0e10f1bed2177ab_a165a9cf9c6a39c71e0e10f1bed2177ab}{popcount}} (\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} value)
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Macro-\/generated helpers for wide (\texorpdfstring{$>$}{>}64-\/bit) unsigned integers. 
+
+
+
+Definition in file \doxymbox{\hyperlink{gpga__wide_8h_source}{gpga\+\_\+wide.\+h}}.
+
+
+
+\label{doc-define-members}
+\Hypertarget{gpga__wide_8h_doc-define-members}
+\doxysubsection{Macro Definition Documentation}
+\Hypertarget{gpga__wide_8h_a13292ac5948271d4313e4543fc03d78e_a13292ac5948271d4313e4543fc03d78e}\index{gpga\_wide.h@{gpga\_wide.h}!GPGA\_WIDE\_DEFINE@{GPGA\_WIDE\_DEFINE}}
+\index{GPGA\_WIDE\_DEFINE@{GPGA\_WIDE\_DEFINE}!gpga\_wide.h@{gpga\_wide.h}}
+\doxysubsubsection{\texorpdfstring{GPGA\_WIDE\_DEFINE}{GPGA\_WIDE\_DEFINE}}
+{\footnotesize\ttfamily \label{gpga__wide_8h_a13292ac5948271d4313e4543fc03d78e_a13292ac5948271d4313e4543fc03d78e} 
+\+\#define GPGA\+\_\+\+WIDE\+\_\+\+DEFINE(\begin{DoxyParamCaption}\item[{}]{width}{, }\item[{}]{words}{, }\item[{}]{last\+\_\+mask}{}\end{DoxyParamCaption})}
+
+
+
+Generate a wide integer type and helpers for the given bit width. 
+
+The macro emits a struct {\ttfamily Gpga\+Wide\texorpdfstring{$<$}{<}width\texorpdfstring{$>$}{>}} with {\ttfamily words} 64-\/bit limbs and a family of helpers named {\ttfamily gpga\+\_\+wide\+\_\+\texorpdfstring{$\ast$}{*}\+\_\+\texorpdfstring{$<$}{<}width\texorpdfstring{$>$}{>}}.
+
+
+\begin{DoxyParams}{Parameters}
+{\em width} & Total bit width of the generated type. \\
+\hline
+{\em words} & Number of 64-\/bit limbs used to store the value. \\
+\hline
+{\em last\+\_\+mask} & Bit mask applied to the most significant limb. \\
+\hline
+\end{DoxyParams}
+
+
+Definition at line \doxymbox{\hyperlink{gpga__wide_8h_source_l00030}{30}} of file \doxymbox{\hyperlink{gpga__wide_8h_source}{gpga\+\_\+wide.\+h}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00030\ \textcolor{preprocessor}{\#define\ GPGA\_WIDE\_DEFINE(width,\ words,\ last\_mask)\ \(\backslash\)}}
+\DoxyCodeLine{00031\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00032\ \textcolor{preprocessor}{struct\ GpgaWide\#\#width\ \{\ ulong\ w[words];\ }\textcolor{preprocessor}{\ \};\ \(\backslash\)}}
+\DoxyCodeLine{00033\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00034\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_zero\_\#\#width()\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00035\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00036\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ 0ul;\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00037\ \textcolor{preprocessor}{\ \ return\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00038\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00039\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00040\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_mask\_const\_\#\#width()\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00041\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00042\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ 0xFFFFFFFFFFFFFFFFul;\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00043\ \textcolor{preprocessor}{\ \ out.w[words\ -\/\ 1]\ =\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00044\ \textcolor{preprocessor}{\ \ return\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00045\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00046\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00047\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_from\_u64\_\#\#width(ulong\ value)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00048\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00049\ \textcolor{preprocessor}{\ \ out.w[0]\ =\ value;\ \(\backslash\)}}
+\DoxyCodeLine{00050\ \textcolor{preprocessor}{\ \ return\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00051\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00052\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00053\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_mask\_\#\#width(GpgaWide\#\#width\ v)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00054\ \textcolor{preprocessor}{\ \ v.w[words\ -\/\ 1]\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00055\ \textcolor{preprocessor}{\ \ return\ v;\ \(\backslash\)}}
+\DoxyCodeLine{00056\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00057\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00058\ \textcolor{preprocessor}{inline\ ulong\ gpga\_wide\_to\_u64\_\#\#width(GpgaWide\#\#width\ v)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00059\ \textcolor{preprocessor}{\ \ return\ v.w[0];\ \(\backslash\)}}
+\DoxyCodeLine{00060\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00061\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00062\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_any\_\#\#width(GpgaWide\#\#width\ v)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00063\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00064\ \textcolor{preprocessor}{\ \ \ \ ulong\ word\ =\ v.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00065\ \textcolor{preprocessor}{\ \ \ \ if\ (i\ ==\ words\ -\/\ 1u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00066\ \textcolor{preprocessor}{\ \ \ \ \ \ word\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00067\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00068\ \textcolor{preprocessor}{\ \ \ \ if\ (word\ !=\ 0ul)\ return\ true;\ \(\backslash\)}}
+\DoxyCodeLine{00069\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00070\ \textcolor{preprocessor}{\ \ return\ false;\ \(\backslash\)}}
+\DoxyCodeLine{00071\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00072\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00073\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_select\_\#\#width(bool\ cond,\ GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00074\ \textcolor{preprocessor}{\ \ if\ (cond)\ return\ a;\ \(\backslash\)}}
+\DoxyCodeLine{00075\ \textcolor{preprocessor}{\ \ return\ b;\ \(\backslash\)}}
+\DoxyCodeLine{00076\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00077\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00078\ \textcolor{preprocessor}{inline\ uint\ gpga\_wide\_get\_bit\_\#\#width(GpgaWide\#\#width\ v,\ uint\ idx)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00079\ \textcolor{preprocessor}{\ \ if\ (idx\ >=\ width\#\#u)\ return\ 0u;\ \(\backslash\)}}
+\DoxyCodeLine{00080\ \textcolor{preprocessor}{\ \ uint\ word\ =\ idx\ >>\ 6u;\ \(\backslash\)}}
+\DoxyCodeLine{00081\ \textcolor{preprocessor}{\ \ uint\ bit\ =\ idx\ \&\ 63u;\ \(\backslash\)}}
+\DoxyCodeLine{00082\ \textcolor{preprocessor}{\ \ return\ uint((v.w[word]\ >>\ bit)\ \&\ 1ul);\ \(\backslash\)}}
+\DoxyCodeLine{00083\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00084\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00085\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_set\_bit\_\#\#width(GpgaWide\#\#width\ v,\ uint\ idx,\ uint\ bit)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00086\ \textcolor{preprocessor}{\ \ if\ (idx\ >=\ width\#\#u)\ return\ v;\ \(\backslash\)}}
+\DoxyCodeLine{00087\ \textcolor{preprocessor}{\ \ uint\ word\ =\ idx\ >>\ 6u;\ \(\backslash\)}}
+\DoxyCodeLine{00088\ \textcolor{preprocessor}{\ \ uint\ shift\ =\ idx\ \&\ 63u;\ \(\backslash\)}}
+\DoxyCodeLine{00089\ \textcolor{preprocessor}{\ \ ulong\ mask\ =\ (1ul\ <<\ shift);\ \(\backslash\)}}
+\DoxyCodeLine{00090\ \textcolor{preprocessor}{\ \ if\ (bit\ !=\ 0u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00091\ \textcolor{preprocessor}{\ \ \ \ v.w[word]\ |=\ mask;\ \(\backslash\)}}
+\DoxyCodeLine{00092\ \textcolor{preprocessor}{\ \ \}\ else\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00093\ \textcolor{preprocessor}{\ \ \ \ v.w[word]\ \&=\ \string~mask;\ \(\backslash\)}}
+\DoxyCodeLine{00094\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00095\ \textcolor{preprocessor}{\ \ return\ v;\ \(\backslash\)}}
+\DoxyCodeLine{00096\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00097\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00098\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_set\_word\_\#\#width(GpgaWide\#\#width\ v,\ uint\ word,\ ulong\ value)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00099\ \textcolor{preprocessor}{\ \ if\ (word\ >=\ words)\ return\ v;\ \(\backslash\)}}
+\DoxyCodeLine{00100\ \textcolor{preprocessor}{\ \ v.w[word]\ =\ value;\ \(\backslash\)}}
+\DoxyCodeLine{00101\ \textcolor{preprocessor}{\ \ if\ (word\ ==\ words\ -\/\ 1u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00102\ \textcolor{preprocessor}{\ \ \ \ v.w[word]\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00103\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00104\ \textcolor{preprocessor}{\ \ return\ v;\ \(\backslash\)}}
+\DoxyCodeLine{00105\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00106\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00107\ \textcolor{preprocessor}{inline\ uint\ gpga\_wide\_signbit\_\#\#width(GpgaWide\#\#width\ v)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00108\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_get\_bit\_\#\#width(v,\ width\ -\/\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00109\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00110\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00111\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_not\_\#\#width(GpgaWide\#\#width\ a)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00112\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00113\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ \string~a.w[i];\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00114\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00115\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00116\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00117\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_and\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00118\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00119\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ a.w[i]\ \&\ b.w[i];\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00120\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00121\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00122\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00123\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_or\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00124\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00125\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ a.w[i]\ |\ b.w[i];\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00126\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00127\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00128\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00129\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_xor\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00130\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00131\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ a.w[i]\ \string^\ b.w[i];\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00132\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00133\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00134\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00135\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_add\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00136\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00137\ \textcolor{preprocessor}{\ \ ulong\ carry\ =\ 0ul;\ \(\backslash\)}}
+\DoxyCodeLine{00138\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00139\ \textcolor{preprocessor}{\ \ \ \ ulong\ ai\ =\ a.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00140\ \textcolor{preprocessor}{\ \ \ \ ulong\ bi\ =\ b.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00141\ \textcolor{preprocessor}{\ \ \ \ ulong\ sum\ =\ ai\ +\ bi;\ \(\backslash\)}}
+\DoxyCodeLine{00142\ \textcolor{preprocessor}{\ \ \ \ ulong\ carry1\ =\ (sum\ <\ ai)\ ?\ 1ul\ :\ 0ul;\ \(\backslash\)}}
+\DoxyCodeLine{00143\ \textcolor{preprocessor}{\ \ \ \ sum\ +=\ carry;\ \(\backslash\)}}
+\DoxyCodeLine{00144\ \textcolor{preprocessor}{\ \ \ \ ulong\ carry2\ =\ (sum\ <\ carry)\ ?\ 1ul\ :\ 0ul;\ \(\backslash\)}}
+\DoxyCodeLine{00145\ \textcolor{preprocessor}{\ \ \ \ carry\ =\ (carry1\ |\ carry2);\ \(\backslash\)}}
+\DoxyCodeLine{00146\ \textcolor{preprocessor}{\ \ \ \ out.w[i]\ =\ sum;\ \(\backslash\)}}
+\DoxyCodeLine{00147\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00148\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00149\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00150\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00151\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_sub\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00152\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00153\ \textcolor{preprocessor}{\ \ ulong\ borrow\ =\ 0ul;\ \(\backslash\)}}
+\DoxyCodeLine{00154\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00155\ \textcolor{preprocessor}{\ \ \ \ ulong\ ai\ =\ a.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00156\ \textcolor{preprocessor}{\ \ \ \ ulong\ bi\ =\ b.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00157\ \textcolor{preprocessor}{\ \ \ \ ulong\ diff\ =\ ai\ -\/\ bi;\ \(\backslash\)}}
+\DoxyCodeLine{00158\ \textcolor{preprocessor}{\ \ \ \ ulong\ borrow1\ =\ (ai\ <\ bi)\ ?\ 1ul\ :\ 0ul;\ \(\backslash\)}}
+\DoxyCodeLine{00159\ \textcolor{preprocessor}{\ \ \ \ ulong\ diff2\ =\ diff\ -\/\ borrow;\ \(\backslash\)}}
+\DoxyCodeLine{00160\ \textcolor{preprocessor}{\ \ \ \ ulong\ borrow2\ =\ (diff\ <\ borrow)\ ?\ 1ul\ :\ 0ul;\ \(\backslash\)}}
+\DoxyCodeLine{00161\ \textcolor{preprocessor}{\ \ \ \ borrow\ =\ (borrow1\ |\ borrow2);\ \(\backslash\)}}
+\DoxyCodeLine{00162\ \textcolor{preprocessor}{\ \ \ \ out.w[i]\ =\ diff2;\ \(\backslash\)}}
+\DoxyCodeLine{00163\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00164\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00165\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00166\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00167\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_shl\_\#\#width(GpgaWide\#\#width\ a,\ uint\ shift)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00168\ \textcolor{preprocessor}{\ \ if\ (shift\ >=\ width\#\#u)\ return\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00169\ \textcolor{preprocessor}{\ \ uint\ word\_shift\ =\ shift\ >>\ 6u;\ \(\backslash\)}}
+\DoxyCodeLine{00170\ \textcolor{preprocessor}{\ \ uint\ bit\_shift\ =\ shift\ \&\ 63u;\ \(\backslash\)}}
+\DoxyCodeLine{00171\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00172\ \textcolor{preprocessor}{\ \ for\ (int\ i\ =\ int(words)\ -\/\ 1;\ i\ >=\ 0;\ -\/-\/i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00173\ \textcolor{preprocessor}{\ \ \ \ int\ src\ =\ i\ -\/\ int(word\_shift);\ \(\backslash\)}}
+\DoxyCodeLine{00174\ \textcolor{preprocessor}{\ \ \ \ if\ (src\ <\ 0)\ continue;\ \(\backslash\)}}
+\DoxyCodeLine{00175\ \textcolor{preprocessor}{\ \ \ \ ulong\ val\ =\ a.w[src]\ <<\ bit\_shift;\ \(\backslash\)}}
+\DoxyCodeLine{00176\ \textcolor{preprocessor}{\ \ \ \ if\ (bit\_shift\ !=\ 0u\ \&\&\ src\ >\ 0)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00177\ \textcolor{preprocessor}{\ \ \ \ \ \ val\ |=\ (a.w[src\ -\/\ 1]\ >>\ (64u\ -\/\ bit\_shift));\ \(\backslash\)}}
+\DoxyCodeLine{00178\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00179\ \textcolor{preprocessor}{\ \ \ \ out.w[i]\ =\ val;\ \(\backslash\)}}
+\DoxyCodeLine{00180\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00181\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00182\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00183\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00184\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_shr\_\#\#width(GpgaWide\#\#width\ a,\ uint\ shift)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00185\ \textcolor{preprocessor}{\ \ if\ (shift\ >=\ width\#\#u)\ return\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00186\ \textcolor{preprocessor}{\ \ uint\ word\_shift\ =\ shift\ >>\ 6u;\ \(\backslash\)}}
+\DoxyCodeLine{00187\ \textcolor{preprocessor}{\ \ uint\ bit\_shift\ =\ shift\ \&\ 63u;\ \(\backslash\)}}
+\DoxyCodeLine{00188\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00189\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00190\ \textcolor{preprocessor}{\ \ \ \ uint\ src\ =\ i\ +\ word\_shift;\ \(\backslash\)}}
+\DoxyCodeLine{00191\ \textcolor{preprocessor}{\ \ \ \ if\ (src\ >=\ words)\ continue;\ \(\backslash\)}}
+\DoxyCodeLine{00192\ \textcolor{preprocessor}{\ \ \ \ ulong\ val\ =\ a.w[src]\ >>\ bit\_shift;\ \(\backslash\)}}
+\DoxyCodeLine{00193\ \textcolor{preprocessor}{\ \ \ \ if\ (bit\_shift\ !=\ 0u\ \&\&\ (src\ +\ 1u)\ <\ words)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00194\ \textcolor{preprocessor}{\ \ \ \ \ \ val\ |=\ (a.w[src\ +\ 1u]\ <<\ (64u\ -\/\ bit\_shift));\ \(\backslash\)}}
+\DoxyCodeLine{00195\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00196\ \textcolor{preprocessor}{\ \ \ \ out.w[i]\ =\ val;\ \(\backslash\)}}
+\DoxyCodeLine{00197\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00198\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00199\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00200\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00201\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_sar\_\#\#width(GpgaWide\#\#width\ a,\ uint\ shift)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00202\ \textcolor{preprocessor}{\ \ uint\ sign\ =\ gpga\_wide\_signbit\_\#\#width(a);\ \(\backslash\)}}
+\DoxyCodeLine{00203\ \textcolor{preprocessor}{\ \ if\ (shift\ >=\ width\#\#u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00204\ \textcolor{preprocessor}{\ \ \ \ return\ sign\ ?\ gpga\_wide\_mask\_const\_\#\#width()\ :\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00205\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00206\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out\ =\ gpga\_wide\_shr\_\#\#width(a,\ shift);\ \(\backslash\)}}
+\DoxyCodeLine{00207\ \textcolor{preprocessor}{\ \ if\ (sign\ ==\ 0u\ ||\ shift\ ==\ 0u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00208\ \textcolor{preprocessor}{\ \ \ \ return\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00209\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00210\ \textcolor{preprocessor}{\ \ uint\ fill\_start\ =\ width\#\#u\ -\/\ shift;\ \(\backslash\)}}
+\DoxyCodeLine{00211\ \textcolor{preprocessor}{\ \ uint\ word\ =\ fill\_start\ >>\ 6u;\ \(\backslash\)}}
+\DoxyCodeLine{00212\ \textcolor{preprocessor}{\ \ uint\ bit\ =\ fill\_start\ \&\ 63u;\ \(\backslash\)}}
+\DoxyCodeLine{00213\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ word\ +\ 1u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00214\ \textcolor{preprocessor}{\ \ \ \ out.w[i]\ =\ 0xFFFFFFFFFFFFFFFFul;\ \(\backslash\)}}
+\DoxyCodeLine{00215\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00216\ \textcolor{preprocessor}{\ \ if\ (word\ <\ words)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00217\ \textcolor{preprocessor}{\ \ \ \ ulong\ mask\ =\ (bit\ ==\ 0u)\ ?\ 0xFFFFFFFFFFFFFFFFul\ :\ (0xFFFFFFFFFFFFFFFFul\ <<\ bit);\ \(\backslash\)}}
+\DoxyCodeLine{00218\ \textcolor{preprocessor}{\ \ \ \ out.w[word]\ |=\ mask;\ \(\backslash\)}}
+\DoxyCodeLine{00219\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00220\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00221\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00222\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00223\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_eq\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00224\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00225\ \textcolor{preprocessor}{\ \ \ \ ulong\ aw\ =\ a.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00226\ \textcolor{preprocessor}{\ \ \ \ ulong\ bw\ =\ b.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00227\ \textcolor{preprocessor}{\ \ \ \ if\ (i\ ==\ words\ -\/\ 1u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00228\ \textcolor{preprocessor}{\ \ \ \ \ \ aw\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00229\ \textcolor{preprocessor}{\ \ \ \ \ \ bw\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00230\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00231\ \textcolor{preprocessor}{\ \ \ \ if\ (aw\ !=\ bw)\ return\ false;\ \(\backslash\)}}
+\DoxyCodeLine{00232\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00233\ \textcolor{preprocessor}{\ \ return\ true;\ \(\backslash\)}}
+\DoxyCodeLine{00234\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00235\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00236\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_ne\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00237\ \textcolor{preprocessor}{\ \ return\ !gpga\_wide\_eq\_\#\#width(a,\ b);\ \(\backslash\)}}
+\DoxyCodeLine{00238\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00239\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00240\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_lt\_u\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00241\ \textcolor{preprocessor}{\ \ for\ (int\ i\ =\ int(words)\ -\/\ 1;\ i\ >=\ 0;\ -\/-\/i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00242\ \textcolor{preprocessor}{\ \ \ \ ulong\ aw\ =\ a.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00243\ \textcolor{preprocessor}{\ \ \ \ ulong\ bw\ =\ b.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00244\ \textcolor{preprocessor}{\ \ \ \ if\ (i\ ==\ int(words)\ -\/\ 1)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00245\ \textcolor{preprocessor}{\ \ \ \ \ \ aw\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00246\ \textcolor{preprocessor}{\ \ \ \ \ \ bw\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00247\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00248\ \textcolor{preprocessor}{\ \ \ \ if\ (aw\ <\ bw)\ return\ true;\ \(\backslash\)}}
+\DoxyCodeLine{00249\ \textcolor{preprocessor}{\ \ \ \ if\ (aw\ >\ bw)\ return\ false;\ \(\backslash\)}}
+\DoxyCodeLine{00250\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00251\ \textcolor{preprocessor}{\ \ return\ false;\ \(\backslash\)}}
+\DoxyCodeLine{00252\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00253\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00254\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_gt\_u\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00255\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_u\_\#\#width(b,\ a);\ \(\backslash\)}}
+\DoxyCodeLine{00256\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00257\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00258\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_le\_u\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00259\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_u\_\#\#width(a,\ b)\ ||\ gpga\_wide\_eq\_\#\#width(a,\ b);\ \(\backslash\)}}
+\DoxyCodeLine{00260\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00261\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00262\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_ge\_u\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00263\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_u\_\#\#width(b,\ a)\ ||\ gpga\_wide\_eq\_\#\#width(a,\ b);\ \(\backslash\)}}
+\DoxyCodeLine{00264\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00265\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00266\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_lt\_s\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00267\ \textcolor{preprocessor}{\ \ uint\ sa\ =\ gpga\_wide\_signbit\_\#\#width(a);\ \(\backslash\)}}
+\DoxyCodeLine{00268\ \textcolor{preprocessor}{\ \ uint\ sb\ =\ gpga\_wide\_signbit\_\#\#width(b);\ \(\backslash\)}}
+\DoxyCodeLine{00269\ \textcolor{preprocessor}{\ \ if\ (sa\ !=\ sb)\ return\ sa\ >\ sb;\ \(\backslash\)}}
+\DoxyCodeLine{00270\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_u\_\#\#width(a,\ b);\ \(\backslash\)}}
+\DoxyCodeLine{00271\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00272\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00273\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_gt\_s\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00274\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_s\_\#\#width(b,\ a);\ \(\backslash\)}}
+\DoxyCodeLine{00275\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00276\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00277\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_le\_s\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00278\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_s\_\#\#width(a,\ b)\ ||\ gpga\_wide\_eq\_\#\#width(a,\ b);\ \(\backslash\)}}
+\DoxyCodeLine{00279\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00280\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00281\ \textcolor{preprocessor}{inline\ bool\ gpga\_wide\_ge\_s\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00282\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_lt\_s\_\#\#width(b,\ a)\ ||\ gpga\_wide\_eq\_\#\#width(a,\ b);\ \(\backslash\)}}
+\DoxyCodeLine{00283\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00284\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00285\ \textcolor{preprocessor}{inline\ uint\ gpga\_wide\_red\_and\_\#\#width(GpgaWide\#\#width\ a)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00286\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_eq\_\#\#width(gpga\_wide\_mask\_\#\#width(a),\ gpga\_wide\_mask\_const\_\#\#width())\ ?\ 1u\ :\ 0u;\ \(\backslash\)}}
+\DoxyCodeLine{00287\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00288\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00289\ \textcolor{preprocessor}{inline\ uint\ gpga\_wide\_red\_or\_\#\#width(GpgaWide\#\#width\ a)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00290\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_any\_\#\#width(a)\ ?\ 1u\ :\ 0u;\ \(\backslash\)}}
+\DoxyCodeLine{00291\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00292\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00293\ \textcolor{preprocessor}{inline\ uint\ gpga\_wide\_red\_xor\_\#\#width(GpgaWide\#\#width\ a)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00294\ \textcolor{preprocessor}{\ \ uint\ parity\ =\ 0u;\ \(\backslash\)}}
+\DoxyCodeLine{00295\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ words;\ ++i)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00296\ \textcolor{preprocessor}{\ \ \ \ ulong\ word\ =\ a.w[i];\ \(\backslash\)}}
+\DoxyCodeLine{00297\ \textcolor{preprocessor}{\ \ \ \ if\ (i\ ==\ words\ -\/\ 1u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00298\ \textcolor{preprocessor}{\ \ \ \ \ \ word\ \&=\ last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00299\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00300\ \textcolor{preprocessor}{\ \ \ \ uint\ lo\ =\ uint(word);\ \(\backslash\)}}
+\DoxyCodeLine{00301\ \textcolor{preprocessor}{\ \ \ \ uint\ hi\ =\ uint(word\ >>\ 32u);\ \(\backslash\)}}
+\DoxyCodeLine{00302\ \textcolor{preprocessor}{\ \ \ \ parity\ \string^=\ (popcount(lo)\ +\ popcount(hi))\ \&\ 1u;\ \(\backslash\)}}
+\DoxyCodeLine{00303\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00304\ \textcolor{preprocessor}{\ \ return\ parity\ \&\ 1u;\ \(\backslash\)}}
+\DoxyCodeLine{00305\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00306\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00307\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_mul\_\#\#width(GpgaWide\#\#width\ a,\ GpgaWide\#\#width\ b)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00308\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ result\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00309\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ temp\ =\ a;\ \(\backslash\)}}
+\DoxyCodeLine{00310\ \textcolor{preprocessor}{\ \ for\ (uint\ bit\ =\ 0u;\ bit\ <\ width\#\#u;\ ++bit)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00311\ \textcolor{preprocessor}{\ \ \ \ if\ (gpga\_wide\_get\_bit\_\#\#width(b,\ bit))\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00312\ \textcolor{preprocessor}{\ \ \ \ \ \ result\ =\ gpga\_wide\_add\_\#\#width(result,\ temp);\ \(\backslash\)}}
+\DoxyCodeLine{00313\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00314\ \textcolor{preprocessor}{\ \ \ \ temp\ =\ gpga\_wide\_shl\_\#\#width(temp,\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00315\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00316\ \textcolor{preprocessor}{\ \ return\ result;\ \(\backslash\)}}
+\DoxyCodeLine{00317\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00318\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00319\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_div\_\#\#width(GpgaWide\#\#width\ num,\ GpgaWide\#\#width\ den)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00320\ \textcolor{preprocessor}{\ \ if\ (!gpga\_wide\_any\_\#\#width(den))\ return\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00321\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ quotient\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00322\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ rem\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00323\ \textcolor{preprocessor}{\ \ for\ (int\ bit\ =\ int(width)\ -\/\ 1;\ bit\ >=\ 0;\ -\/-\/bit)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00324\ \textcolor{preprocessor}{\ \ \ \ rem\ =\ gpga\_wide\_shl\_\#\#width(rem,\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00325\ \textcolor{preprocessor}{\ \ \ \ if\ (gpga\_wide\_get\_bit\_\#\#width(num,\ uint(bit))\ !=\ 0u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00326\ \textcolor{preprocessor}{\ \ \ \ \ \ rem\ =\ gpga\_wide\_set\_bit\_\#\#width(rem,\ 0u,\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00327\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00328\ \textcolor{preprocessor}{\ \ \ \ if\ (!gpga\_wide\_lt\_u\_\#\#width(rem,\ den))\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00329\ \textcolor{preprocessor}{\ \ \ \ \ \ rem\ =\ gpga\_wide\_sub\_\#\#width(rem,\ den);\ \(\backslash\)}}
+\DoxyCodeLine{00330\ \textcolor{preprocessor}{\ \ \ \ \ \ quotient\ =\ gpga\_wide\_set\_bit\_\#\#width(quotient,\ uint(bit),\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00331\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00332\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00333\ \textcolor{preprocessor}{\ \ return\ quotient;\ \(\backslash\)}}
+\DoxyCodeLine{00334\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00335\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00336\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_mod\_\#\#width(GpgaWide\#\#width\ num,\ GpgaWide\#\#width\ den)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00337\ \textcolor{preprocessor}{\ \ if\ (!gpga\_wide\_any\_\#\#width(den))\ return\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00338\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ rem\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00339\ \textcolor{preprocessor}{\ \ for\ (int\ bit\ =\ int(width)\ -\/\ 1;\ bit\ >=\ 0;\ -\/-\/bit)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00340\ \textcolor{preprocessor}{\ \ \ \ rem\ =\ gpga\_wide\_shl\_\#\#width(rem,\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00341\ \textcolor{preprocessor}{\ \ \ \ if\ (gpga\_wide\_get\_bit\_\#\#width(num,\ uint(bit))\ !=\ 0u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00342\ \textcolor{preprocessor}{\ \ \ \ \ \ rem\ =\ gpga\_wide\_set\_bit\_\#\#width(rem,\ 0u,\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00343\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00344\ \textcolor{preprocessor}{\ \ \ \ if\ (!gpga\_wide\_lt\_u\_\#\#width(rem,\ den))\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00345\ \textcolor{preprocessor}{\ \ \ \ \ \ rem\ =\ gpga\_wide\_sub\_\#\#width(rem,\ den);\ \(\backslash\)}}
+\DoxyCodeLine{00346\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00347\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00348\ \textcolor{preprocessor}{\ \ return\ rem;\ \(\backslash\)}}
+\DoxyCodeLine{00349\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00350\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00351\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_pow\_u\_\#\#width(GpgaWide\#\#width\ base,\ GpgaWide\#\#width\ exp)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00352\ \textcolor{preprocessor}{\ \ ulong\ exp\_u\ =\ gpga\_wide\_to\_u64\_\#\#width(exp);\ \(\backslash\)}}
+\DoxyCodeLine{00353\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ result\ =\ gpga\_wide\_from\_u64\_\#\#width(1ul);\ \(\backslash\)}}
+\DoxyCodeLine{00354\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ cur\ =\ base;\ \(\backslash\)}}
+\DoxyCodeLine{00355\ \textcolor{preprocessor}{\ \ while\ (exp\_u\ !=\ 0ul)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00356\ \textcolor{preprocessor}{\ \ \ \ if\ (exp\_u\ \&\ 1ul)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00357\ \textcolor{preprocessor}{\ \ \ \ \ \ result\ =\ gpga\_wide\_mul\_\#\#width(result,\ cur);\ \(\backslash\)}}
+\DoxyCodeLine{00358\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00359\ \textcolor{preprocessor}{\ \ \ \ cur\ =\ gpga\_wide\_mul\_\#\#width(cur,\ cur);\ \(\backslash\)}}
+\DoxyCodeLine{00360\ \textcolor{preprocessor}{\ \ \ \ exp\_u\ >>=\ 1ul;\ \(\backslash\)}}
+\DoxyCodeLine{00361\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00362\ \textcolor{preprocessor}{\ \ return\ result;\ \(\backslash\)}}
+\DoxyCodeLine{00363\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00364\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00365\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_pow\_s\_\#\#width(GpgaWide\#\#width\ base,\ GpgaWide\#\#width\ exp)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00366\ \textcolor{preprocessor}{\ \ long\ exp\_s\ =\ (long)gpga\_wide\_to\_u64\_\#\#width(exp);\ \(\backslash\)}}
+\DoxyCodeLine{00367\ \textcolor{preprocessor}{\ \ if\ (exp\_s\ <\ 0)\ return\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00368\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_pow\_u\_\#\#width(base,\ exp);\ \(\backslash\)}}
+\DoxyCodeLine{00369\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00370\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00371\ \textcolor{preprocessor}{inline\ GpgaWide\#\#width\ gpga\_wide\_sext\_from\_u64\_\#\#width(ulong\ value,\ uint\ src\_width)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00372\ \textcolor{preprocessor}{\ \ if\ (src\_width\ ==\ 0u)\ return\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00373\ \textcolor{preprocessor}{\ \ GpgaWide\#\#width\ out\ =\ gpga\_wide\_zero\_\#\#width();\ \(\backslash\)}}
+\DoxyCodeLine{00374\ \textcolor{preprocessor}{\ \ out.w[0]\ =\ value;\ \(\backslash\)}}
+\DoxyCodeLine{00375\ \textcolor{preprocessor}{\ \ if\ (src\_width\ <\ 64u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00376\ \textcolor{preprocessor}{\ \ \ \ ulong\ sign\_mask\ =\ 1ul\ <<\ (src\_width\ -\/\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00377\ \textcolor{preprocessor}{\ \ \ \ if\ ((value\ \&\ sign\_mask)\ !=\ 0ul)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00378\ \textcolor{preprocessor}{\ \ \ \ \ \ ulong\ upper\ =\ \string~((1ul\ <<\ src\_width)\ -\/\ 1ul);\ \(\backslash\)}}
+\DoxyCodeLine{00379\ \textcolor{preprocessor}{\ \ \ \ \ \ out.w[0]\ |=\ upper;\ \(\backslash\)}}
+\DoxyCodeLine{00380\ \textcolor{preprocessor}{\ \ \ \ \ \ for\ (uint\ i\ =\ 1u;\ i\ <\ words;\ ++i)\ \{\ out.w[i]\ =\ 0xFFFFFFFFFFFFFFFFul;\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00381\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00382\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00383\ \textcolor{preprocessor}{\ \ return\ gpga\_wide\_mask\_\#\#width(out);\ \(\backslash\)}}
+\DoxyCodeLine{00384\ \textcolor{preprocessor}{\}}}
+
+\end{DoxyCode}
+\Hypertarget{gpga__wide_8h_aa035ae05b70022969412302bdf542bf5_aa035ae05b70022969412302bdf542bf5}\index{gpga\_wide.h@{gpga\_wide.h}!GPGA\_WIDE\_DEFINE\_FS@{GPGA\_WIDE\_DEFINE\_FS}}
+\index{GPGA\_WIDE\_DEFINE\_FS@{GPGA\_WIDE\_DEFINE\_FS}!gpga\_wide.h@{gpga\_wide.h}}
+\doxysubsubsection{\texorpdfstring{GPGA\_WIDE\_DEFINE\_FS}{GPGA\_WIDE\_DEFINE\_FS}}
+{\footnotesize\ttfamily \label{gpga__wide_8h_aa035ae05b70022969412302bdf542bf5_aa035ae05b70022969412302bdf542bf5} 
+\+\#define GPGA\+\_\+\+WIDE\+\_\+\+DEFINE\+\_\+\+FS(\begin{DoxyParamCaption}\item[{}]{width}{}\end{DoxyParamCaption})}
+
+{\bfseries Value:\+}
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\ \(\backslash\)}
+\DoxyCodeLine{\textcolor{keyword}{struct\ }GpgaWideFs\#\#width\ \{\ GpgaWide\#\#width\ val;\ \ GpgaWide\#\#width\ xz;\ \ \};}
+
+\end{DoxyCode}
+
+
+Generate a four-\/state wide value wrapper. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em width} & Total bit width of the generated type. \\
+\hline
+\end{DoxyParams}
+
+
+Definition at line \doxymbox{\hyperlink{gpga__wide_8h_source_l00428}{428}} of file \doxymbox{\hyperlink{gpga__wide_8h_source}{gpga\+\_\+wide.\+h}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00428\ \textcolor{preprocessor}{\#define\ GPGA\_WIDE\_DEFINE\_FS(width)\ \(\backslash\)}}
+\DoxyCodeLine{00429\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00430\ \textcolor{preprocessor}{struct\ GpgaWideFs\#\#width\ \{\ GpgaWide\#\#width\ val;\ }\textcolor{preprocessor}{\ GpgaWide\#\#width\ xz;\ }\textcolor{preprocessor}{\ \};}}
+
+\end{DoxyCode}
+\Hypertarget{gpga__wide_8h_abef3958616541376a865eee6529add79_abef3958616541376a865eee6529add79}\index{gpga\_wide.h@{gpga\_wide.h}!GPGA\_WIDE\_DEFINE\_RESIZE@{GPGA\_WIDE\_DEFINE\_RESIZE}}
+\index{GPGA\_WIDE\_DEFINE\_RESIZE@{GPGA\_WIDE\_DEFINE\_RESIZE}!gpga\_wide.h@{gpga\_wide.h}}
+\doxysubsubsection{\texorpdfstring{GPGA\_WIDE\_DEFINE\_RESIZE}{GPGA\_WIDE\_DEFINE\_RESIZE}}
+{\footnotesize\ttfamily \label{gpga__wide_8h_abef3958616541376a865eee6529add79_abef3958616541376a865eee6529add79} 
+\+\#define GPGA\+\_\+\+WIDE\+\_\+\+DEFINE\+\_\+\+RESIZE(\begin{DoxyParamCaption}\item[{}]{dst}{, }\item[{}]{src}{, }\item[{}]{dst\+\_\+words}{, }\item[{}]{src\+\_\+words}{, }\item[{}]{dst\+\_\+last\+\_\+mask}{, }\item[{}]{src\+\_\+mod}{}\end{DoxyParamCaption})}
+
+{\bfseries Value:\+}
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\ \(\backslash\)}
+\DoxyCodeLine{\textcolor{keyword}{inline}\ GpgaWide\#\#dst\ gpga\_wide\_resize\_\#\#dst\#\#\_from\_\#\#src(GpgaWide\#\#src\ v)\ \{\ \(\backslash\)}
+\DoxyCodeLine{\ \ GpgaWide\#\#dst\ out\ =\ gpga\_wide\_zero\_\#\#dst();\ \(\backslash\)}
+\DoxyCodeLine{\ \ \doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}}\ count\ =\ (dst\_words\ <\ src\_words)\ ?\ dst\_words\ :\ src\_words;\ \(\backslash\)}
+\DoxyCodeLine{\ \ for\ (\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}}\ i\ =\ 0u;\ i\ <\ count;\ ++i)\ \{\ out.w[i]\ =\ v.w[i];\ \}\ \(\backslash\)}
+\DoxyCodeLine{\ \ out.w[dst\_words\ -\/\ 1]\ \&=\ dst\_last\_mask;\ \(\backslash\)}
+\DoxyCodeLine{\ \ \textcolor{keywordflow}{return}\ out;\ \(\backslash\)}
+\DoxyCodeLine{\}\ \(\backslash\)\ \(\backslash\)}
+\DoxyCodeLine{\textcolor{keyword}{inline}\ GpgaWide\#\#dst\ gpga\_wide\_sext\_\#\#dst\#\#\_from\_\#\#src(GpgaWide\#\#src\ v)\ \{\ \(\backslash\)}
+\DoxyCodeLine{\ \ if\ (dst\ <=\ src)\ \{\ \(\backslash\)}
+\DoxyCodeLine{\ \ \ \ \textcolor{keywordflow}{return}\ gpga\_wide\_resize\_\#\#dst\#\#\_from\_\#\#src(v);\ \(\backslash\)}
+\DoxyCodeLine{\ \ \}\ \(\backslash\)}
+\DoxyCodeLine{\ \ GpgaWide\#\#dst\ out\ =\ gpga\_wide\_resize\_\#\#dst\#\#\_from\_\#\#src(v);\ \(\backslash\)}
+\DoxyCodeLine{\ \ \doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}}\ sign\ =\ gpga\_wide\_get\_bit\_\#\#src(v,\ src\ -\/\ 1u);\ \(\backslash\)}
+\DoxyCodeLine{\ \ if\ (sign\ !=\ 0u)\ \{\ \(\backslash\)}
+\DoxyCodeLine{\ \ \ \ if\ (src\_mod\ !=\ 0)\ \{\ \(\backslash\)}
+\DoxyCodeLine{\ \ \ \ \ \ \doxymbox{\hyperlink{gpga__4state_8h_ab46637ef82283186e57f54756fe67203_ab46637ef82283186e57f54756fe67203}{ulong}}\ upper\_mask\ =\ \string~((1ul\ <<\ src\_mod)\ -\/\ 1ul);\ \(\backslash\)}
+\DoxyCodeLine{\ \ \ \ \ \ out.w[src\_words\ -\/\ 1]\ |=\ upper\_mask;\ \(\backslash\)}
+\DoxyCodeLine{\ \ \ \ \}\ \(\backslash\)}
+\DoxyCodeLine{\ \ \ \ for\ (\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}}\ i\ =\ src\_words;\ i\ <\ dst\_words;\ ++i)\ \{\ out.w[i]\ =\ 0xFFFFFFFFFFFFFFFFul;\ \}\ \(\backslash\)}
+\DoxyCodeLine{\ \ \}\ \(\backslash\)}
+\DoxyCodeLine{\ \ out.w[dst\_words\ -\/\ 1]\ \&=\ dst\_last\_mask;\ \(\backslash\)}
+\DoxyCodeLine{\ \ \textcolor{keywordflow}{return}\ out;\ \(\backslash\)}
+\DoxyCodeLine{\}}
+
+\end{DoxyCode}
+
+
+Generate resize and sign-\/extend helpers between wide types. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em dst} & Destination width. \\
+\hline
+{\em src} & Source width. \\
+\hline
+{\em dst\+\_\+words} & Destination word count. \\
+\hline
+{\em src\+\_\+words} & Source word count. \\
+\hline
+{\em dst\+\_\+last\+\_\+mask} & Mask for the destination MS word. \\
+\hline
+{\em src\+\_\+mod} & Bit count in the source MS word (0 for full). \\
+\hline
+\end{DoxyParams}
+
+
+Definition at line \doxymbox{\hyperlink{gpga__wide_8h_source_l00396}{396}} of file \doxymbox{\hyperlink{gpga__wide_8h_source}{gpga\+\_\+wide.\+h}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00396\ \textcolor{preprocessor}{\#define\ GPGA\_WIDE\_DEFINE\_RESIZE(dst,\ src,\ dst\_words,\ src\_words,\ dst\_last\_mask,\ src\_mod)\ \(\backslash\)}}
+\DoxyCodeLine{00397\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00398\ \textcolor{preprocessor}{inline\ GpgaWide\#\#dst\ gpga\_wide\_resize\_\#\#dst\#\#\_from\_\#\#src(GpgaWide\#\#src\ v)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00399\ \textcolor{preprocessor}{\ \ GpgaWide\#\#dst\ out\ =\ gpga\_wide\_zero\_\#\#dst();\ \(\backslash\)}}
+\DoxyCodeLine{00400\ \textcolor{preprocessor}{\ \ uint\ count\ =\ (dst\_words\ <\ src\_words)\ ?\ dst\_words\ :\ src\_words;\ \(\backslash\)}}
+\DoxyCodeLine{00401\ \textcolor{preprocessor}{\ \ for\ (uint\ i\ =\ 0u;\ i\ <\ count;\ ++i)\ \{\ out.w[i]\ =\ v.w[i];\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00402\ \textcolor{preprocessor}{\ \ out.w[dst\_words\ -\/\ 1]\ \&=\ dst\_last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00403\ \textcolor{preprocessor}{\ \ return\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00404\ \textcolor{preprocessor}{\}\ \(\backslash\)}}
+\DoxyCodeLine{00405\ \textcolor{preprocessor}{}\textcolor{preprocessor}{\ \(\backslash\)}}
+\DoxyCodeLine{00406\ \textcolor{preprocessor}{inline\ GpgaWide\#\#dst\ gpga\_wide\_sext\_\#\#dst\#\#\_from\_\#\#src(GpgaWide\#\#src\ v)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00407\ \textcolor{preprocessor}{\ \ if\ (dst\ <=\ src)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00408\ \textcolor{preprocessor}{\ \ \ \ return\ gpga\_wide\_resize\_\#\#dst\#\#\_from\_\#\#src(v);\ \(\backslash\)}}
+\DoxyCodeLine{00409\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00410\ \textcolor{preprocessor}{\ \ GpgaWide\#\#dst\ out\ =\ gpga\_wide\_resize\_\#\#dst\#\#\_from\_\#\#src(v);\ \(\backslash\)}}
+\DoxyCodeLine{00411\ \textcolor{preprocessor}{\ \ uint\ sign\ =\ gpga\_wide\_get\_bit\_\#\#src(v,\ src\ -\/\ 1u);\ \(\backslash\)}}
+\DoxyCodeLine{00412\ \textcolor{preprocessor}{\ \ if\ (sign\ !=\ 0u)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00413\ \textcolor{preprocessor}{\ \ \ \ if\ (src\_mod\ !=\ 0)\ \{\ \(\backslash\)}}
+\DoxyCodeLine{00414\ \textcolor{preprocessor}{\ \ \ \ \ \ ulong\ upper\_mask\ =\ \string~((1ul\ <<\ src\_mod)\ -\/\ 1ul);\ \(\backslash\)}}
+\DoxyCodeLine{00415\ \textcolor{preprocessor}{\ \ \ \ \ \ out.w[src\_words\ -\/\ 1]\ |=\ upper\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00416\ \textcolor{preprocessor}{\ \ \ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00417\ \textcolor{preprocessor}{\ \ \ \ for\ (uint\ i\ =\ src\_words;\ i\ <\ dst\_words;\ ++i)\ \{\ out.w[i]\ =\ 0xFFFFFFFFFFFFFFFFul;\ \}\ \(\backslash\)}}
+\DoxyCodeLine{00418\ \textcolor{preprocessor}{\ \ \}\ \(\backslash\)}}
+\DoxyCodeLine{00419\ \textcolor{preprocessor}{\ \ out.w[dst\_words\ -\/\ 1]\ \&=\ dst\_last\_mask;\ \(\backslash\)}}
+\DoxyCodeLine{00420\ \textcolor{preprocessor}{\ \ return\ out;\ \(\backslash\)}}
+\DoxyCodeLine{00421\ \textcolor{preprocessor}{\}}}
+
+\end{DoxyCode}
+
+
+\label{doc-func-members}
+\Hypertarget{gpga__wide_8h_doc-func-members}
+\doxysubsection{Function Documentation}
+\Hypertarget{gpga__wide_8h_a165a9cf9c6a39c71e0e10f1bed2177ab_a165a9cf9c6a39c71e0e10f1bed2177ab}\index{gpga\_wide.h@{gpga\_wide.h}!popcount@{popcount}}
+\index{popcount@{popcount}!gpga\_wide.h@{gpga\_wide.h}}
+\doxysubsubsection{\texorpdfstring{popcount()}{popcount()}}
+{\footnotesize\ttfamily \label{gpga__wide_8h_a165a9cf9c6a39c71e0e10f1bed2177ab_a165a9cf9c6a39c71e0e10f1bed2177ab} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} popcount (\begin{DoxyParamCaption}\item[{\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}}}]{value}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__wide_8h_source_l00016}{16}} of file \doxymbox{\hyperlink{gpga__wide_8h_source}{gpga\+\_\+wide.\+h}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00016\ \{\ \textcolor{keywordflow}{return}\ \_\_builtin\_popcount(value);\ \}}
+
+\end{DoxyCode}

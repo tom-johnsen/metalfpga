@@ -1,0 +1,34 @@
+\doxysection{src/\+frontend/\+verilog\+\_\+parser.hh File Reference}
+\hypertarget{verilog__parser_8hh}{}\label{verilog__parser_8hh}\index{src/frontend/verilog\_parser.hh@{src/frontend/verilog\_parser.hh}}
+
+
+Verilog source parser entry points.  
+
+
+{\ttfamily \+\#include $<$string$>$}\newline
+{\ttfamily \+\#include "{}frontend/\+ast.\+hh"{}}\newline
+{\ttfamily \+\#include "{}utils/\+diagnostics.\+hh"{}}\newline
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_parse_options}{gpga::\+\+Parse\+Options}}
+\begin{DoxyCompactList}\small\item\em Parser configuration options. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \doxymbox{\hyperlink{namespacegpga}{gpga}}
+\begin{DoxyCompactList}\small\item\em Runtime, codegen, and frontend support types for metalfpga. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_a0c93b495adf475053a904d6fa6ee467d_a0c93b495adf475053a904d6fa6ee467d}{gpga::\+\+Parse\+Verilog\+File}} (const std::\+string \&path, \doxymbox{\hyperlink{structgpga_1_1_program}{Program}} \texorpdfstring{$\ast$}{*}out\+\_\+program, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, const \doxymbox{\hyperlink{structgpga_1_1_parse_options}{Parse\+Options}} \&options=\{\})
+\begin{DoxyCompactList}\small\item\em Parse a Verilog file into an AST program. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Verilog source parser entry points. 
+
+
+
+Definition in file \doxymbox{\hyperlink{verilog__parser_8hh_source}{verilog\+\_\+parser.\+hh}}.
+

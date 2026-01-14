@@ -1,0 +1,27 @@
+\doxysection{verilog\+\_\+parser.\+hh}
+\hypertarget{verilog__parser_8hh_source}{}\label{verilog__parser_8hh_source}\index{src/frontend/verilog\_parser.hh@{src/frontend/verilog\_parser.hh}}
+\doxymbox{\hyperlink{verilog__parser_8hh}{Go to the documentation of this file.}}
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00001}00001\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00005}00005\ \textcolor{preprocessor}{\#pragma\ once}}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00006}00006\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00007}00007\ \textcolor{preprocessor}{\#include\ <string>}}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00008}00008\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00009}00009\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{ast_8hh}{frontend/ast.hh}}"{}}}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00010}00010\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{diagnostics_8hh}{utils/diagnostics.hh}}"{}}}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00011}00011\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00012}00012\ \textcolor{keyword}{namespace\ }\doxymbox{\hyperlink{namespacegpga}{gpga}}\ \{}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00013}00013\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00015}\doxymbox{\hyperlink{structgpga_1_1_parse_options}{00015}}\ \textcolor{keyword}{struct\ }\doxymbox{\hyperlink{structgpga_1_1_parse_options}{ParseOptions}}\ \{}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00016}\doxymbox{\hyperlink{structgpga_1_1_parse_options_a93ba8cf0fbce456336ef8f42e1ea0e5c_a93ba8cf0fbce456336ef8f42e1ea0e5c}{00016}}\ \ \ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{structgpga_1_1_parse_options_a93ba8cf0fbce456336ef8f42e1ea0e5c_a93ba8cf0fbce456336ef8f42e1ea0e5c}{allow\_empty}}\ =\ \textcolor{keyword}{false};\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00017}\doxymbox{\hyperlink{structgpga_1_1_parse_options_a1b30294b017a0c1d9a456dc927f90570_a1b30294b017a0c1d9a456dc927f90570}{00017}}\ \ \ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{structgpga_1_1_parse_options_a1b30294b017a0c1d9a456dc927f90570_a1b30294b017a0c1d9a456dc927f90570}{enable\_4state}}\ =\ \textcolor{keyword}{false};\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00018}\doxymbox{\hyperlink{structgpga_1_1_parse_options_aa3b7ca1494d058e2a21a90c27f600463_aa3b7ca1494d058e2a21a90c27f600463}{00018}}\ \ \ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{structgpga_1_1_parse_options_aa3b7ca1494d058e2a21a90c27f600463_aa3b7ca1494d058e2a21a90c27f600463}{strict\_1364}}\ =\ \textcolor{keyword}{false};\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00019}00019\ \};}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00020}00020\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00030}00030\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_a0c93b495adf475053a904d6fa6ee467d_a0c93b495adf475053a904d6fa6ee467d}{ParseVerilogFile}}(\textcolor{keyword}{const}\ std::string\&\ path,\ \doxymbox{\hyperlink{structgpga_1_1_program}{Program}}*\ out\_program,}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00031}00031\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}}*\ diagnostics,}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00032}00032\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_parse_options}{ParseOptions}}\&\ options\ =\ \{\});}
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00033}00033\ }
+\DoxyCodeLine{\Hypertarget{verilog__parser_8hh_source_l00034}00034\ \}\ \ \textcolor{comment}{//\ namespace\ gpga}}
+
+\end{DoxyCode}

@@ -1,0 +1,271 @@
+\doxysection{gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+Scheduler\+Vm\+Emitter Struct Reference}
+\hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter}{}\label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a8b9e92a754f4196721f62c03b61c9b8a_a8b9e92a754f4196721f62c03b61c9b8a}{Create\+Label}} ()
+\item 
+void \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_aef3786d9499f8eb31194690f6fa5336c_aef3786d9499f8eb31194690f6fa5336c}{Bind\+Label}} (uint32\+\_\+t label)
+\item 
+void \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a5be6261e4372278ad3cca3e17a00bf2f_a5be6261e4372278ad3cca3e17a00bf2f}{Emit}} (\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56}{Scheduler\+Vm\+Op}} op, uint32\+\_\+t arg=0u)
+\item 
+void \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a8288b4a8a4e65837f930b5cb83a494b5_a8288b4a8a4e65837f930b5cb83a494b5}{Emit\+Word}} (uint32\+\_\+t word)
+\item 
+void \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_ac9f3120be393a8361e5d2d8c2658a517_ac9f3120be393a8361e5d2d8c2658a517}{Emit\+Label\+Word}} (uint32\+\_\+t label)
+\item 
+const std::\+vector$<$ uint32\+\_\+t $>$ \& \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a2a55c6ba55c3925a70e6afe300671f09_a2a55c6ba55c3925a70e6afe300671f09}{Label\+Offsets}} () const
+\item 
+void \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_aead2df803d1241b01ea81cd2f7bc71a6_aead2df803d1241b01ea81cd2f7bc71a6}{Emit\+Jump\+Label}} (uint32\+\_\+t label)
+\item 
+void \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_abc55b35c1742c6ae58808a33d7cdfafa_abc55b35c1742c6ae58808a33d7cdfafa}{Emit\+Jump\+If\+Label}} (uint32\+\_\+t cond\+\_\+id, uint32\+\_\+t label)
+\item 
+bool \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_adbda75b9bdcefdd660aa62a4d296bb9e_adbda75b9bdcefdd660aa62a4d296bb9e}{Patch\+Labels}} (std::\+string \texorpdfstring{$\ast$}{*}error)
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std::\+vector$<$ uint32\+\_\+t $>$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a515a2a48992d7d66a8570754d0b8c649_a515a2a48992d7d66a8570754d0b8c649}{words}}
+\item 
+std::\+vector$<$ uint32\+\_\+t $>$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a69f31323822e5889b6f8b661ba3fe907_a69f31323822e5889b6f8b661ba3fe907}{label\+\_\+offsets}}
+\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_patch}{Scheduler\+Vm\+Patch}} $>$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_afc6fb78b6cf895ec206b6b8795241cd6_afc6fb78b6cf895ec206b6b8795241cd6}{patches}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09721}{9721}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_aef3786d9499f8eb31194690f6fa5336c_aef3786d9499f8eb31194690f6fa5336c}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!BindLabel@{BindLabel}}
+\index{BindLabel@{BindLabel}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{BindLabel()}{BindLabel()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_aef3786d9499f8eb31194690f6fa5336c_aef3786d9499f8eb31194690f6fa5336c} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Bind\+Label (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{label}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09731}{9731}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09731\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09732\ \ \ \ \ \textcolor{keywordflow}{if}\ (label\ <\ label\_offsets.size())\ \{}
+\DoxyCodeLine{09733\ \ \ \ \ \ \ label\_offsets[label]\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(words.size());}
+\DoxyCodeLine{09734\ \ \ \ \ \}}
+\DoxyCodeLine{09735\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a8b9e92a754f4196721f62c03b61c9b8a_a8b9e92a754f4196721f62c03b61c9b8a}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!CreateLabel@{CreateLabel}}
+\index{CreateLabel@{CreateLabel}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{CreateLabel()}{CreateLabel()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a8b9e92a754f4196721f62c03b61c9b8a_a8b9e92a754f4196721f62c03b61c9b8a} 
+uint32\+\_\+t gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Create\+Label (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09726}{9726}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09726\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09727\ \ \ \ \ label\_offsets.push\_back(std::numeric\_limits<uint32\_t>::max());}
+\DoxyCodeLine{09728\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(label\_offsets.size()\ -\/\ 1u);}
+\DoxyCodeLine{09729\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a5be6261e4372278ad3cca3e17a00bf2f_a5be6261e4372278ad3cca3e17a00bf2f}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!Emit@{Emit}}
+\index{Emit@{Emit}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{Emit()}{Emit()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a5be6261e4372278ad3cca3e17a00bf2f_a5be6261e4372278ad3cca3e17a00bf2f} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Emit (\begin{DoxyParamCaption}\item[{\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56}{Scheduler\+Vm\+Op}}}]{op}{, }\item[{uint32\+\_\+t}]{arg}{ = {\ttfamily 0u}}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09737}{9737}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09737\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09738\ \ \ \ \ words.push\_back(\doxymbox{\hyperlink{namespacegpga_a765207f335e57963f4c5eddbc648bb13_a765207f335e57963f4c5eddbc648bb13}{MakeSchedulerVmInstr}}(op,\ arg));}
+\DoxyCodeLine{09739\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_abc55b35c1742c6ae58808a33d7cdfafa_abc55b35c1742c6ae58808a33d7cdfafa}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!EmitJumpIfLabel@{EmitJumpIfLabel}}
+\index{EmitJumpIfLabel@{EmitJumpIfLabel}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{EmitJumpIfLabel()}{EmitJumpIfLabel()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_abc55b35c1742c6ae58808a33d7cdfafa_abc55b35c1742c6ae58808a33d7cdfafa} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Emit\+Jump\+If\+Label (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{cond\+\_\+id}{, }\item[{uint32\+\_\+t}]{label}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09759}{9759}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09759\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09760\ \ \ \ \ words.push\_back(\doxymbox{\hyperlink{namespacegpga_a765207f335e57963f4c5eddbc648bb13_a765207f335e57963f4c5eddbc648bb13}{MakeSchedulerVmInstr}}(\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56ad73fff97e87bcb38bea31eb12c43a941}{SchedulerVmOp::kJumpIf}},\ cond\_id));}
+\DoxyCodeLine{09761\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{size\_t}\ word\_index\ =\ words.size();}
+\DoxyCodeLine{09762\ \ \ \ \ words.push\_back(0u);}
+\DoxyCodeLine{09763\ \ \ \ \ patches.push\_back(\{word\_index,\ label,\ \textcolor{keyword}{false},\ \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56ad73fff97e87bcb38bea31eb12c43a941}{SchedulerVmOp::kJumpIf}}\});}
+\DoxyCodeLine{09764\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_aead2df803d1241b01ea81cd2f7bc71a6_aead2df803d1241b01ea81cd2f7bc71a6}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!EmitJumpLabel@{EmitJumpLabel}}
+\index{EmitJumpLabel@{EmitJumpLabel}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{EmitJumpLabel()}{EmitJumpLabel()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_aead2df803d1241b01ea81cd2f7bc71a6_aead2df803d1241b01ea81cd2f7bc71a6} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Emit\+Jump\+Label (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{label}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09753}{9753}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09753\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09754\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{size\_t}\ word\_index\ =\ words.size();}
+\DoxyCodeLine{09755\ \ \ \ \ words.push\_back(\doxymbox{\hyperlink{namespacegpga_a765207f335e57963f4c5eddbc648bb13_a765207f335e57963f4c5eddbc648bb13}{MakeSchedulerVmInstr}}(\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56acd00bfbff81479d2c7c349bbb769fcd4}{SchedulerVmOp::kJump}},\ 0u));}
+\DoxyCodeLine{09756\ \ \ \ \ patches.push\_back(\{word\_index,\ label,\ \textcolor{keyword}{true},\ \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56acd00bfbff81479d2c7c349bbb769fcd4}{SchedulerVmOp::kJump}}\});}
+\DoxyCodeLine{09757\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_ac9f3120be393a8361e5d2d8c2658a517_ac9f3120be393a8361e5d2d8c2658a517}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!EmitLabelWord@{EmitLabelWord}}
+\index{EmitLabelWord@{EmitLabelWord}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{EmitLabelWord()}{EmitLabelWord()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_ac9f3120be393a8361e5d2d8c2658a517_ac9f3120be393a8361e5d2d8c2658a517} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Emit\+Label\+Word (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{label}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09745}{9745}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09745\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09746\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{size\_t}\ word\_index\ =\ words.size();}
+\DoxyCodeLine{09747\ \ \ \ \ words.push\_back(0u);}
+\DoxyCodeLine{09748\ \ \ \ \ patches.push\_back(\{word\_index,\ label,\ \textcolor{keyword}{false},\ \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56aaf8a4a35171ebfcc6229f08f587c2bb9}{SchedulerVmOp::kNoop}}\});}
+\DoxyCodeLine{09749\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a8288b4a8a4e65837f930b5cb83a494b5_a8288b4a8a4e65837f930b5cb83a494b5}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!EmitWord@{EmitWord}}
+\index{EmitWord@{EmitWord}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{EmitWord()}{EmitWord()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a8288b4a8a4e65837f930b5cb83a494b5_a8288b4a8a4e65837f930b5cb83a494b5} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Emit\+Word (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{word}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09741}{9741}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09741\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09742\ \ \ \ \ words.push\_back(word);}
+\DoxyCodeLine{09743\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a2a55c6ba55c3925a70e6afe300671f09_a2a55c6ba55c3925a70e6afe300671f09}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!LabelOffsets@{LabelOffsets}}
+\index{LabelOffsets@{LabelOffsets}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{LabelOffsets()}{LabelOffsets()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a2a55c6ba55c3925a70e6afe300671f09_a2a55c6ba55c3925a70e6afe300671f09} 
+const std::\+vector$<$ uint32\+\_\+t $>$ \& gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Label\+Offsets (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09751}{9751}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09751\ \{\ \textcolor{keywordflow}{return}\ label\_offsets;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_adbda75b9bdcefdd660aa62a4d296bb9e_adbda75b9bdcefdd660aa62a4d296bb9e}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!PatchLabels@{PatchLabels}}
+\index{PatchLabels@{PatchLabels}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{PatchLabels()}{PatchLabels()}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_adbda75b9bdcefdd660aa62a4d296bb9e_adbda75b9bdcefdd660aa62a4d296bb9e} 
+bool gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+\+Patch\+Labels (\begin{DoxyParamCaption}\item[{std::\+string \texorpdfstring{$\ast$}{*}}]{error}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09766}{9766}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09766\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09767\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ patch\ :\ patches)\ \{}
+\DoxyCodeLine{09768\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (patch.label\ >=\ label\_offsets.size())\ \{}
+\DoxyCodeLine{09769\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{09770\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}scheduler\ VM\ label\ patch\ out\ of\ range"{}};}
+\DoxyCodeLine{09771\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09772\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09773\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09774\ \ \ \ \ \ \ \textcolor{keyword}{const}\ uint32\_t\ target\ =\ label\_offsets[patch.label];}
+\DoxyCodeLine{09775\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (target\ ==\ std::numeric\_limits<uint32\_t>::max())\ \{}
+\DoxyCodeLine{09776\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{09777\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}scheduler\ VM\ label\ used\ before\ bound"{}};}
+\DoxyCodeLine{09778\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09779\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09780\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09781\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (patch.word\_index\ >=\ words.size())\ \{}
+\DoxyCodeLine{09782\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{09783\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}scheduler\ VM\ label\ patch\ out\ of\ bounds"{}};}
+\DoxyCodeLine{09784\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09785\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09786\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09787\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (patch.patch\_arg)\ \{}
+\DoxyCodeLine{09788\ \ \ \ \ \ \ \ \ words[patch.word\_index]\ =\ \doxymbox{\hyperlink{namespacegpga_a765207f335e57963f4c5eddbc648bb13_a765207f335e57963f4c5eddbc648bb13}{MakeSchedulerVmInstr}}(patch.op,\ target);}
+\DoxyCodeLine{09789\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{09790\ \ \ \ \ \ \ \ \ words[patch.word\_index]\ =\ target;}
+\DoxyCodeLine{09791\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09792\ \ \ \ \ \}}
+\DoxyCodeLine{09793\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09794\ \ \ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a69f31323822e5889b6f8b661ba3fe907_a69f31323822e5889b6f8b661ba3fe907}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!label\_offsets@{label\_offsets}}
+\index{label\_offsets@{label\_offsets}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{label\_offsets}{label\_offsets}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a69f31323822e5889b6f8b661ba3fe907_a69f31323822e5889b6f8b661ba3fe907} 
+std::\+vector$<$uint32\+\_\+t$>$ gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+label\+\_\+offsets}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09723}{9723}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_afc6fb78b6cf895ec206b6b8795241cd6_afc6fb78b6cf895ec206b6b8795241cd6}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!patches@{patches}}
+\index{patches@{patches}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{patches}{patches}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_afc6fb78b6cf895ec206b6b8795241cd6_afc6fb78b6cf895ec206b6b8795241cd6} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_patch}{Scheduler\+Vm\+Patch}}$>$ gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+patches}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09724}{9724}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+\Hypertarget{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a515a2a48992d7d66a8570754d0b8c649_a515a2a48992d7d66a8570754d0b8c649}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}!words@{words}}
+\index{words@{words}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::SchedulerVmEmitter}}
+\doxysubsubsection{\texorpdfstring{words}{words}}
+{\footnotesize\ttfamily \label{structgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_scheduler_vm_emitter_a515a2a48992d7d66a8570754d0b8c649_a515a2a48992d7d66a8570754d0b8c649} 
+std::\+vector$<$uint32\+\_\+t$>$ gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Scheduler\+Vm\+Emitter::\+words}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l09722}{9722}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+codegen/\+msl\+\_\+codegen.\+cc\end{DoxyCompactItemize}

@@ -1,0 +1,37 @@
+\doxysection{src/\+core/\+elaboration.hh File Reference}
+\hypertarget{elaboration_8hh}{}\label{elaboration_8hh}\index{src/core/elaboration.hh@{src/core/elaboration.hh}}
+
+
+Elaboration entry points and output data.  
+
+
+{\ttfamily \+\#include $<$string$>$}\newline
+{\ttfamily \+\#include $<$unordered\+\_\+map$>$}\newline
+{\ttfamily \+\#include "{}frontend/\+ast.\+hh"{}}\newline
+{\ttfamily \+\#include "{}utils/\+diagnostics.\+hh"{}}\newline
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_elaborated_design}{gpga::\+\+Elaborated\+Design}}
+\begin{DoxyCompactList}\small\item\em Result of elaborating a program into a single design. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \doxymbox{\hyperlink{namespacegpga}{gpga}}
+\begin{DoxyCompactList}\small\item\em Runtime, codegen, and frontend support types for metalfpga. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_a9ac6132eb3318de0fa94c811f6893939_a9ac6132eb3318de0fa94c811f6893939}{gpga::\+\+Elaborate}} (const \doxymbox{\hyperlink{structgpga_1_1_program}{Program}} \&program, \doxymbox{\hyperlink{structgpga_1_1_elaborated_design}{Elaborated\+Design}} \texorpdfstring{$\ast$}{*}out\+\_\+design, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, bool enable\+\_\+4state=false, bool verbose\+\_\+warnings=false)
+\begin{DoxyCompactList}\small\item\em Elaborate a program using its default top-\/level module. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{namespacegpga_a475f4424bf6f06de897844c3e9b24a1c_a475f4424bf6f06de897844c3e9b24a1c}{gpga::\+\+Elaborate}} (const \doxymbox{\hyperlink{structgpga_1_1_program}{Program}} \&program, const std::\+string \&top\+\_\+name, \doxymbox{\hyperlink{structgpga_1_1_elaborated_design}{Elaborated\+Design}} \texorpdfstring{$\ast$}{*}out\+\_\+design, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, bool enable\+\_\+4state=false, bool verbose\+\_\+warnings=false)
+\begin{DoxyCompactList}\small\item\em Elaborate a program with an explicit top-\/level module name. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Elaboration entry points and output data. 
+
+
+
+Definition in file \doxymbox{\hyperlink{elaboration_8hh_source}{elaboration.\+hh}}.
+

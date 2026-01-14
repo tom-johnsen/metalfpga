@@ -1,0 +1,89 @@
+\doxysection{gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+Parser Class Reference}
+\hypertarget{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser}{}\label{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_ab6b9c8ba4e436fba9f3417dbcc7f9567_ab6b9c8ba4e436fba9f3417dbcc7f9567}{Parser}} (std::\+string path, std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}} $>$ tokens, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, const \doxymbox{\hyperlink{structgpga_1_1_parse_options}{Parse\+Options}} \&options, std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}} $>$ directives)
+\item 
+bool \doxymbox{\hyperlink{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_afda4831f8d5790bb75fced2af10a12a4_afda4831f8d5790bb75fced2af10a12a4}{Parse\+Program}} (\doxymbox{\hyperlink{structgpga_1_1_program}{Program}} \texorpdfstring{$\ast$}{*}out\+\_\+program)
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l01050}{1050}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+
+\label{doc-constructors}
+\Hypertarget{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_doc-constructors}
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_ab6b9c8ba4e436fba9f3417dbcc7f9567_ab6b9c8ba4e436fba9f3417dbcc7f9567}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser}!Parser@{Parser}}
+\index{Parser@{Parser}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser}}
+\doxysubsubsection{\texorpdfstring{Parser()}{Parser()}}
+{\footnotesize\ttfamily \label{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_ab6b9c8ba4e436fba9f3417dbcc7f9567_ab6b9c8ba4e436fba9f3417dbcc7f9567} 
+gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Parser::\+\+Parser (\begin{DoxyParamCaption}\item[{std::\+string}]{path}{, }\item[{std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}} $>$}]{tokens}{, }\item[{\doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}}]{diagnostics}{, }\item[{const \doxymbox{\hyperlink{structgpga_1_1_parse_options}{Parse\+Options}} \&}]{options}{, }\item[{std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}} $>$}]{directives}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l01052}{1052}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{01055\ \ \ \ \ \ \ :\ path\_(std::move(path)),}
+\DoxyCodeLine{01056\ \ \ \ \ \ \ \ \ tokens\_(std::move(tokens)),}
+\DoxyCodeLine{01057\ \ \ \ \ \ \ \ \ diagnostics\_(diagnostics),}
+\DoxyCodeLine{01058\ \ \ \ \ \ \ \ \ options\_(options),}
+\DoxyCodeLine{01059\ \ \ \ \ \ \ \ \ directives\_(std::move(directives))\ \{\}}
+
+\end{DoxyCode}
+
+
+\label{doc-func-members}
+\Hypertarget{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_afda4831f8d5790bb75fced2af10a12a4_afda4831f8d5790bb75fced2af10a12a4}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser}!ParseProgram@{ParseProgram}}
+\index{ParseProgram@{ParseProgram}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}::Parser}}
+\doxysubsubsection{\texorpdfstring{ParseProgram()}{ParseProgram()}}
+{\footnotesize\ttfamily \label{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser_afda4831f8d5790bb75fced2af10a12a4_afda4831f8d5790bb75fced2af10a12a4} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Parser::\+\+Parse\+Program (\begin{DoxyParamCaption}\item[{\doxymbox{\hyperlink{structgpga_1_1_program}{Program}} \texorpdfstring{$\ast$}{*}}]{out\+\_\+program}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l01061}{1061}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{01061\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{01062\ \ \ \ \ \textcolor{keywordflow}{while}\ (!IsAtEnd())\ \{}
+\DoxyCodeLine{01063\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ApplyDirectivesUpTo(Peek().line))\ \{}
+\DoxyCodeLine{01064\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01065\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01066\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (MatchKeyword(\textcolor{stringliteral}{"{}module"{}}))\ \{}
+\DoxyCodeLine{01067\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ParseModule(out\_program))\ \{}
+\DoxyCodeLine{01068\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01069\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01070\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{01071\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01072\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (MatchKeyword(\textcolor{stringliteral}{"{}primitive"{}}))\ \{}
+\DoxyCodeLine{01073\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ParsePrimitive(out\_program))\ \{}
+\DoxyCodeLine{01074\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01075\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01076\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{01077\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01078\ \ \ \ \ \ \ \textcolor{keyword}{const}\ Token\&\ token\ =\ Peek();}
+\DoxyCodeLine{01079\ \ \ \ \ \ \ diagnostics\_-\/>Add(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{01080\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unexpected\ token\ '"{}}\ +\ token.text\ +\ \textcolor{stringliteral}{"{}'"{}},}
+\DoxyCodeLine{01081\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path\_,\ token.line,\ token.column\});}
+\DoxyCodeLine{01082\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01083\ \ \ \ \ \}}
+\DoxyCodeLine{01084\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{01085\ \ \ \}}
+
+\end{DoxyCode}
+
+
+The documentation for this class was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+verilog\+\_\+parser.\+cc\end{DoxyCompactItemize}

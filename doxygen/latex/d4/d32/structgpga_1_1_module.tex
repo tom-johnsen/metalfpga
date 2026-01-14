@@ -1,0 +1,319 @@
+\doxysection{gpga::\+Module Struct Reference}
+\hypertarget{structgpga_1_1_module}{}\label{structgpga_1_1_module}\index{gpga::Module@{gpga::Module}}
+
+
+\doxylink{structgpga_1_1_module}{Module} declaration and contents.  
+
+
+
+
+{\ttfamily \+\#include $<$ast.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe}{name}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_module}{Module} name. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_module_af68f1b7d3b2e5e521d2ed6817154b72f_af68f1b7d3b2e5e521d2ed6817154b72f}{timescale}}
+\begin{DoxyCompactList}\small\item\em Timescale directive. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_port}{Port}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_ab771dc84b298ead9bac1164458a6ba39_ab771dc84b298ead9bac1164458a6ba39}{ports}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_module}{Module} ports. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_net}{Net}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_ae41f9527ec7e90a0c022c73d5248d087_ae41f9527ec7e90a0c022c73d5248d087}{nets}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_net}{Net} declarations. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_assign}{Assign}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_a37c92e34890d62c72bbd782a6b8876a2_a37c92e34890d62c72bbd782a6b8876a2}{assigns}}
+\begin{DoxyCompactList}\small\item\em Continuous assignments. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_switch}{Switch}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_ad0cdbe846afa8d1c245391a4519767e3_ad0cdbe846afa8d1c245391a4519767e3}{switches}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_switch}{Switch} primitives. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_instance}{Instance}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_a6f8719f3bb7d216861467f61a4fdb66d_a6f8719f3bb7d216861467f61a4fdb66d}{instances}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_module}{Module} instances. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_always_block}{Always\+Block}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_af407e9c717188555a8e46b27a57b243c_af407e9c717188555a8e46b27a57b243c}{always\+\_\+blocks}}
+\begin{DoxyCompactList}\small\item\em Always/\+initial blocks. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_parameter}{Parameter}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_a47bcf0d0c45f5bf58830b6421e96c8e9_a47bcf0d0c45f5bf58830b6421e96c8e9}{parameters}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_parameter}{Parameter} declarations. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_function}{Function}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_ad3bf9ea509ede1982173a590e64da8a2_ad3bf9ea509ede1982173a590e64da8a2}{functions}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_function}{Function} declarations. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_task}{Task}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_a1e1411daa6e48b299fde93221f3e88e9_a1e1411daa6e48b299fde93221f3e88e9}{tasks}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_task}{Task} declarations. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_event_decl}{Event\+Decl}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_aed8bd0caef55e087f276e6a89a74e69d_aed8bd0caef55e087f276e6a89a74e69d}{events}}
+\begin{DoxyCompactList}\small\item\em Event declarations. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_def_param}{Def\+Param}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_af00b8ff06f77a14c24225c84dfdf3390_af00b8ff06f77a14c24225c84dfdf3390}{defparams}}
+\begin{DoxyCompactList}\small\item\em defparam overrides. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_timing_check}{Timing\+Check}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_ac4f512f2812b3f4cf2a0c11997aab8f7_ac4f512f2812b3f4cf2a0c11997aab8f7}{timing\+\_\+checks}}
+\begin{DoxyCompactList}\small\item\em Timing checks. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_specify_path}{Specify\+Path}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_af858f7daf1df81bc934182a2dffc3472_af858f7daf1df81bc934182a2dffc3472}{specify\+\_\+paths}}
+\begin{DoxyCompactList}\small\item\em Specify paths. \end{DoxyCompactList}\item 
+std::\+unordered\+\_\+map$<$ std::\+string, \doxymbox{\hyperlink{structgpga_1_1_path_pulse_spec}{Path\+Pulse\+Spec}} $>$ \doxymbox{\hyperlink{structgpga_1_1_module_aa7887ffb8a8d0c7e901b77ab8951b7db_aa7887ffb8a8d0c7e901b77ab8951b7db}{path\+\_\+pulses}}
+\begin{DoxyCompactList}\small\item\em Path pulse specs. \end{DoxyCompactList}\item 
+std::\+unordered\+\_\+set$<$ std::\+string $>$ \doxymbox{\hyperlink{structgpga_1_1_module_a188fc6af0b91309e9fb7fe2f9383637c_a188fc6af0b91309e9fb7fe2f9383637c}{generate\+\_\+labels}}
+\begin{DoxyCompactList}\small\item\em Generate block labels. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{namespacegpga_a2ce46514c2ab58f112754be963f899a4_a2ce46514c2ab58f112754be963f899a4}{Unconnected\+Drive}} \doxymbox{\hyperlink{structgpga_1_1_module_a8eb128da164c7b50f2095084878df0a1_a8eb128da164c7b50f2095084878df0a1}{unconnected\+\_\+drive}} = \doxymbox{\hyperlink{namespacegpga_a2ce46514c2ab58f112754be963f899a4_a2ce46514c2ab58f112754be963f899a4a35c3ace1970663a16e5c65baa5941b13}{Unconnected\+Drive::\+k\+None}}
+\begin{DoxyCompactList}\small\item\em Unconnected drive mode. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+\doxylink{structgpga_1_1_module}{Module} declaration and contents. 
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00543}{543}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_module_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_module_af407e9c717188555a8e46b27a57b243c_af407e9c717188555a8e46b27a57b243c}\index{gpga::Module@{gpga::Module}!always\_blocks@{always\_blocks}}
+\index{always\_blocks@{always\_blocks}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{always\_blocks}{always\_blocks}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_af407e9c717188555a8e46b27a57b243c_af407e9c717188555a8e46b27a57b243c} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_always_block}{Always\+Block}}$>$ gpga::\+\+Module::\+always\+\_\+blocks}
+
+
+
+Always/\+initial blocks. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00551}{551}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a37c92e34890d62c72bbd782a6b8876a2_a37c92e34890d62c72bbd782a6b8876a2}\index{gpga::Module@{gpga::Module}!assigns@{assigns}}
+\index{assigns@{assigns}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{assigns}{assigns}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a37c92e34890d62c72bbd782a6b8876a2_a37c92e34890d62c72bbd782a6b8876a2} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_assign}{Assign}}$>$ gpga::\+\+Module::\+assigns}
+
+
+
+Continuous assignments. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00548}{548}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_af00b8ff06f77a14c24225c84dfdf3390_af00b8ff06f77a14c24225c84dfdf3390}\index{gpga::Module@{gpga::Module}!defparams@{defparams}}
+\index{defparams@{defparams}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{defparams}{defparams}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_af00b8ff06f77a14c24225c84dfdf3390_af00b8ff06f77a14c24225c84dfdf3390} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_def_param}{Def\+Param}}$>$ gpga::\+\+Module::\+defparams}
+
+
+
+defparam overrides. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00556}{556}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_aed8bd0caef55e087f276e6a89a74e69d_aed8bd0caef55e087f276e6a89a74e69d}\index{gpga::Module@{gpga::Module}!events@{events}}
+\index{events@{events}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{events}{events}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_aed8bd0caef55e087f276e6a89a74e69d_aed8bd0caef55e087f276e6a89a74e69d} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_event_decl}{Event\+Decl}}$>$ gpga::\+\+Module::\+events}
+
+
+
+Event declarations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00555}{555}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_ad3bf9ea509ede1982173a590e64da8a2_ad3bf9ea509ede1982173a590e64da8a2}\index{gpga::Module@{gpga::Module}!functions@{functions}}
+\index{functions@{functions}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{functions}{functions}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_ad3bf9ea509ede1982173a590e64da8a2_ad3bf9ea509ede1982173a590e64da8a2} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_function}{Function}}$>$ gpga::\+\+Module::\+functions}
+
+
+
+\doxylink{structgpga_1_1_function}{Function} declarations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00553}{553}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a188fc6af0b91309e9fb7fe2f9383637c_a188fc6af0b91309e9fb7fe2f9383637c}\index{gpga::Module@{gpga::Module}!generate\_labels@{generate\_labels}}
+\index{generate\_labels@{generate\_labels}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{generate\_labels}{generate\_labels}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a188fc6af0b91309e9fb7fe2f9383637c_a188fc6af0b91309e9fb7fe2f9383637c} 
+std::\+unordered\+\_\+set$<$std::\+string$>$ gpga::\+\+Module::\+generate\+\_\+labels}
+
+
+
+Generate block labels. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00560}{560}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a6f8719f3bb7d216861467f61a4fdb66d_a6f8719f3bb7d216861467f61a4fdb66d}\index{gpga::Module@{gpga::Module}!instances@{instances}}
+\index{instances@{instances}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{instances}{instances}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a6f8719f3bb7d216861467f61a4fdb66d_a6f8719f3bb7d216861467f61a4fdb66d} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_instance}{Instance}}$>$ gpga::\+\+Module::\+instances}
+
+
+
+\doxylink{structgpga_1_1_module}{Module} instances. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00550}{550}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe}\index{gpga::Module@{gpga::Module}!name@{name}}
+\index{name@{name}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{name}{name}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe} 
+std::\+string gpga::\+\+Module::\+name}
+
+
+
+\doxylink{structgpga_1_1_module}{Module} name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00544}{544}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_ae41f9527ec7e90a0c022c73d5248d087_ae41f9527ec7e90a0c022c73d5248d087}\index{gpga::Module@{gpga::Module}!nets@{nets}}
+\index{nets@{nets}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{nets}{nets}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_ae41f9527ec7e90a0c022c73d5248d087_ae41f9527ec7e90a0c022c73d5248d087} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_net}{Net}}$>$ gpga::\+\+Module::\+nets}
+
+
+
+\doxylink{structgpga_1_1_net}{Net} declarations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00547}{547}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a47bcf0d0c45f5bf58830b6421e96c8e9_a47bcf0d0c45f5bf58830b6421e96c8e9}\index{gpga::Module@{gpga::Module}!parameters@{parameters}}
+\index{parameters@{parameters}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{parameters}{parameters}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a47bcf0d0c45f5bf58830b6421e96c8e9_a47bcf0d0c45f5bf58830b6421e96c8e9} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_parameter}{Parameter}}$>$ gpga::\+\+Module::\+parameters}
+
+
+
+\doxylink{structgpga_1_1_parameter}{Parameter} declarations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00552}{552}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_aa7887ffb8a8d0c7e901b77ab8951b7db_aa7887ffb8a8d0c7e901b77ab8951b7db}\index{gpga::Module@{gpga::Module}!path\_pulses@{path\_pulses}}
+\index{path\_pulses@{path\_pulses}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{path\_pulses}{path\_pulses}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_aa7887ffb8a8d0c7e901b77ab8951b7db_aa7887ffb8a8d0c7e901b77ab8951b7db} 
+std::\+unordered\+\_\+map$<$std::\+string, \doxymbox{\hyperlink{structgpga_1_1_path_pulse_spec}{Path\+Pulse\+Spec}}$>$ gpga::\+\+Module::\+path\+\_\+pulses}
+
+
+
+Path pulse specs. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00559}{559}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_ab771dc84b298ead9bac1164458a6ba39_ab771dc84b298ead9bac1164458a6ba39}\index{gpga::Module@{gpga::Module}!ports@{ports}}
+\index{ports@{ports}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{ports}{ports}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_ab771dc84b298ead9bac1164458a6ba39_ab771dc84b298ead9bac1164458a6ba39} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_port}{Port}}$>$ gpga::\+\+Module::\+ports}
+
+
+
+\doxylink{structgpga_1_1_module}{Module} ports. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00546}{546}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_af858f7daf1df81bc934182a2dffc3472_af858f7daf1df81bc934182a2dffc3472}\index{gpga::Module@{gpga::Module}!specify\_paths@{specify\_paths}}
+\index{specify\_paths@{specify\_paths}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{specify\_paths}{specify\_paths}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_af858f7daf1df81bc934182a2dffc3472_af858f7daf1df81bc934182a2dffc3472} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_specify_path}{Specify\+Path}}$>$ gpga::\+\+Module::\+specify\+\_\+paths}
+
+
+
+Specify paths. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00558}{558}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_ad0cdbe846afa8d1c245391a4519767e3_ad0cdbe846afa8d1c245391a4519767e3}\index{gpga::Module@{gpga::Module}!switches@{switches}}
+\index{switches@{switches}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{switches}{switches}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_ad0cdbe846afa8d1c245391a4519767e3_ad0cdbe846afa8d1c245391a4519767e3} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_switch}{Switch}}$>$ gpga::\+\+Module::\+switches}
+
+
+
+\doxylink{structgpga_1_1_switch}{Switch} primitives. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00549}{549}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a1e1411daa6e48b299fde93221f3e88e9_a1e1411daa6e48b299fde93221f3e88e9}\index{gpga::Module@{gpga::Module}!tasks@{tasks}}
+\index{tasks@{tasks}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{tasks}{tasks}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a1e1411daa6e48b299fde93221f3e88e9_a1e1411daa6e48b299fde93221f3e88e9} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_task}{Task}}$>$ gpga::\+\+Module::\+tasks}
+
+
+
+\doxylink{structgpga_1_1_task}{Task} declarations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00554}{554}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_af68f1b7d3b2e5e521d2ed6817154b72f_af68f1b7d3b2e5e521d2ed6817154b72f}\index{gpga::Module@{gpga::Module}!timescale@{timescale}}
+\index{timescale@{timescale}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{timescale}{timescale}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_af68f1b7d3b2e5e521d2ed6817154b72f_af68f1b7d3b2e5e521d2ed6817154b72f} 
+std::\+string gpga::\+\+Module::\+timescale}
+
+
+
+Timescale directive. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00545}{545}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_ac4f512f2812b3f4cf2a0c11997aab8f7_ac4f512f2812b3f4cf2a0c11997aab8f7}\index{gpga::Module@{gpga::Module}!timing\_checks@{timing\_checks}}
+\index{timing\_checks@{timing\_checks}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{timing\_checks}{timing\_checks}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_ac4f512f2812b3f4cf2a0c11997aab8f7_ac4f512f2812b3f4cf2a0c11997aab8f7} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_timing_check}{Timing\+Check}}$>$ gpga::\+\+Module::\+timing\+\_\+checks}
+
+
+
+Timing checks. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00557}{557}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_module_a8eb128da164c7b50f2095084878df0a1_a8eb128da164c7b50f2095084878df0a1}\index{gpga::Module@{gpga::Module}!unconnected\_drive@{unconnected\_drive}}
+\index{unconnected\_drive@{unconnected\_drive}!gpga::Module@{gpga::Module}}
+\doxysubsubsection{\texorpdfstring{unconnected\_drive}{unconnected\_drive}}
+{\footnotesize\ttfamily \label{structgpga_1_1_module_a8eb128da164c7b50f2095084878df0a1_a8eb128da164c7b50f2095084878df0a1} 
+\doxymbox{\hyperlink{namespacegpga_a2ce46514c2ab58f112754be963f899a4_a2ce46514c2ab58f112754be963f899a4}{Unconnected\+Drive}} gpga::\+\+Module::\+unconnected\+\_\+drive = \doxymbox{\hyperlink{namespacegpga_a2ce46514c2ab58f112754be963f899a4_a2ce46514c2ab58f112754be963f899a4a35c3ace1970663a16e5c65baa5941b13}{Unconnected\+Drive::\+k\+None}}}
+
+
+
+Unconnected drive mode. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00561}{561}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+\doxymbox{\hyperlink{ast_8hh}{ast.\+hh}}\end{DoxyCompactItemize}

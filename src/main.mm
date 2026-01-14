@@ -1,3 +1,5 @@
+#include "main.hh"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -9345,13 +9347,13 @@ int main(int argc, char** argv) {
       }
       run_dispatch_timeout_ms =
           static_cast<uint32_t>(std::stoul(argv[++i]));
-    } else if (arg == "--vcd-dir" || arg == "--vcr-dir") {
+    } else if (arg == "--vcd-dir") {
       if (i + 1 >= argc) {
         PrintUsage(argv[0]);
         return 2;
       }
       vcd_dir = argv[++i];
-    } else if (arg == "--vcd-steps" || arg == "--vcr-steps") {
+    } else if (arg == "--vcd-steps") {
       if (i + 1 >= argc) {
         PrintUsage(argv[0]);
         return 2;

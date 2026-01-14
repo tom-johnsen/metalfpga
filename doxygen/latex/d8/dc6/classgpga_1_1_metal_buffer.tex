@@ -1,0 +1,208 @@
+\doxysection{gpga::\+Metal\+Buffer Class Reference}
+\hypertarget{classgpga_1_1_metal_buffer}{}\label{classgpga_1_1_metal_buffer}\index{gpga::MetalBuffer@{gpga::MetalBuffer}}
+
+
+RAII wrapper for a Metal buffer.  
+
+
+
+
+{\ttfamily \+\#include $<$metal\+\_\+runtime.\+hh$>$}
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} ()=default
+\begin{DoxyCompactList}\small\item\em Construct an empty buffer handle. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a19aa812cbd6d7aea61bc64f071e0d0f0_a19aa812cbd6d7aea61bc64f071e0d0f0}{\texorpdfstring{$\sim$}{\string~}\+Metal\+Buffer}} ()
+\begin{DoxyCompactList}\small\item\em Release the underlying Metal buffer. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_ab6078fef3382346708f688fe2fe886c1_ab6078fef3382346708f688fe2fe886c1}{Metal\+Buffer}} (Metal\+Buffer \&\&other) noexcept
+\begin{DoxyCompactList}\small\item\em Move-\/construct a buffer handle. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} \& \doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a76884eaa642d5d7f6aec71dc544f08a1_a76884eaa642d5d7f6aec71dc544f08a1}{operator=}} (\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} \&\&other) noexcept
+\begin{DoxyCompactList}\small\item\em Move-\/assign a buffer handle. \end{DoxyCompactList}\item 
+\Hypertarget{classgpga_1_1_metal_buffer_a7e7e91b9e9b7e128129aa41a790f9fd4}\label{classgpga_1_1_metal_buffer_a7e7e91b9e9b7e128129aa41a790f9fd4} 
+{\bfseries Metal\+Buffer} (const Metal\+Buffer \&)=delete
+\item 
+\Hypertarget{classgpga_1_1_metal_buffer_ae1149e0df00e6aac7d84f03cbfee2be8}\label{classgpga_1_1_metal_buffer_ae1149e0df00e6aac7d84f03cbfee2be8} 
+\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} \& {\bfseries operator=} (const \doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} \&)=delete
+\item 
+void \texorpdfstring{$\ast$}{*} \doxymbox{\hyperlink{classgpga_1_1_metal_buffer_ae10f30cda85f8260a04b4d96d8145e4d_ae10f30cda85f8260a04b4d96d8145e4d}{contents}} () const
+\item 
+size\+\_\+t \doxymbox{\hyperlink{classgpga_1_1_metal_buffer_ad266da673e883bccc53be7d480145f04_ad266da673e883bccc53be7d480145f04}{length}} () const
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Friends}
+\begin{DoxyCompactItemize}
+\item 
+class \doxymbox{\hyperlink{classgpga_1_1_metal_buffer_aafe9731261ef47394c0e00bd67cba2da_aafe9731261ef47394c0e00bd67cba2da}{Metal\+Runtime}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+RAII wrapper for a Metal buffer. 
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00209}{209}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+
+
+\label{doc-constructors}
+\Hypertarget{classgpga_1_1_metal_buffer_doc-constructors}
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!MetalBuffer@{MetalBuffer}}
+\index{MetalBuffer@{MetalBuffer}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{MetalBuffer()}{MetalBuffer()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99} 
+gpga::\+\+Metal\+Buffer::\+\+Metal\+Buffer (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+
+
+Construct an empty buffer handle. 
+
+\Hypertarget{classgpga_1_1_metal_buffer_a19aa812cbd6d7aea61bc64f071e0d0f0_a19aa812cbd6d7aea61bc64f071e0d0f0}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!````~MetalBuffer@{\texorpdfstring{$\sim$}{\string~}MetalBuffer}}
+\index{````~MetalBuffer@{\texorpdfstring{$\sim$}{\string~}MetalBuffer}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}MetalBuffer()}{\string~MetalBuffer()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_a19aa812cbd6d7aea61bc64f071e0d0f0_a19aa812cbd6d7aea61bc64f071e0d0f0} 
+gpga::\+\+Metal\+Buffer::\+\texorpdfstring{$\sim$}{\string~}\+Metal\+Buffer (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})}
+
+
+
+Release the underlying Metal buffer. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8mm_source_l01647}{1647}} of file \doxymbox{\hyperlink{metal__runtime_8mm_source}{metal\+\_\+runtime.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{01647\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{01648\ \ \ \textcolor{keywordflow}{if}\ (handle\_)\ \{}
+\DoxyCodeLine{01649\ \ \ \ \ id<MTLBuffer>\ buffer\ =\ (id<MTLBuffer>)handle\_;}
+\DoxyCodeLine{01650\ \ \ \ \ [buffer\ release];}
+\DoxyCodeLine{01651\ \ \ \ \ handle\_\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{01652\ \ \ \ \ contents\_\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{01653\ \ \ \ \ length\_\ =\ 0;}
+\DoxyCodeLine{01654\ \ \ \}}
+\DoxyCodeLine{01655\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_metal_buffer_ab6078fef3382346708f688fe2fe886c1_ab6078fef3382346708f688fe2fe886c1}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!MetalBuffer@{MetalBuffer}}
+\index{MetalBuffer@{MetalBuffer}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{MetalBuffer()}{MetalBuffer()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_ab6078fef3382346708f688fe2fe886c1_ab6078fef3382346708f688fe2fe886c1} 
+gpga::\+\+Metal\+Buffer::\+\+Metal\+Buffer (\begin{DoxyParamCaption}\item[{Metal\+Buffer \&\&}]{other}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [noexcept]}}
+
+
+
+Move-\/construct a buffer handle. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8mm_source_l01657}{1657}} of file \doxymbox{\hyperlink{metal__runtime_8mm_source}{metal\+\_\+runtime.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{01657\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{01658\ \ \ handle\_\ =\ other.handle\_;}
+\DoxyCodeLine{01659\ \ \ contents\_\ =\ other.contents\_;}
+\DoxyCodeLine{01660\ \ \ length\_\ =\ other.length\_;}
+\DoxyCodeLine{01661\ \ \ other.handle\_\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{01662\ \ \ other.contents\_\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{01663\ \ \ other.length\_\ =\ 0;}
+\DoxyCodeLine{01664\ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-func-members}
+\Hypertarget{classgpga_1_1_metal_buffer_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classgpga_1_1_metal_buffer_ae10f30cda85f8260a04b4d96d8145e4d_ae10f30cda85f8260a04b4d96d8145e4d}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!contents@{contents}}
+\index{contents@{contents}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{contents()}{contents()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_ae10f30cda85f8260a04b4d96d8145e4d_ae10f30cda85f8260a04b4d96d8145e4d} 
+void \texorpdfstring{$\ast$}{*} gpga::\+\+Metal\+Buffer::\+contents (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\begin{DoxyReturn}{Returns}
+CPU-\/visible buffer contents (if mapped). 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00223}{223}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00223\ \{\ \textcolor{keywordflow}{return}\ contents\_;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_metal_buffer_ad266da673e883bccc53be7d480145f04_ad266da673e883bccc53be7d480145f04}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!length@{length}}
+\index{length@{length}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{length()}{length()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_ad266da673e883bccc53be7d480145f04_ad266da673e883bccc53be7d480145f04} 
+size\+\_\+t gpga::\+\+Metal\+Buffer::\+length (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\begin{DoxyReturn}{Returns}
+Buffer length in bytes. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00225}{225}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00225\ \{\ \textcolor{keywordflow}{return}\ length\_;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_metal_buffer_a76884eaa642d5d7f6aec71dc544f08a1_a76884eaa642d5d7f6aec71dc544f08a1}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!operator=@{operator=}}
+\index{operator=@{operator=}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{operator=()}{operator=()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_a76884eaa642d5d7f6aec71dc544f08a1_a76884eaa642d5d7f6aec71dc544f08a1} 
+\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} \& gpga::\+\+Metal\+Buffer::\+operator= (\begin{DoxyParamCaption}\item[{\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_a72edd5669eb03ea8718f7b304e8b8c99_a72edd5669eb03ea8718f7b304e8b8c99}{Metal\+Buffer}} \&\&}]{other}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [noexcept]}}
+
+
+
+Move-\/assign a buffer handle. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8mm_source_l01666}{1666}} of file \doxymbox{\hyperlink{metal__runtime_8mm_source}{metal\+\_\+runtime.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{01666\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{01667\ \ \ \textcolor{keywordflow}{if}\ (\textcolor{keyword}{this}\ ==\ \&other)\ \{}
+\DoxyCodeLine{01668\ \ \ \ \ \textcolor{keywordflow}{return}\ *\textcolor{keyword}{this};}
+\DoxyCodeLine{01669\ \ \ \}}
+\DoxyCodeLine{01670\ \ \ \textcolor{keywordflow}{if}\ (handle\_)\ \{}
+\DoxyCodeLine{01671\ \ \ \ \ id<MTLBuffer>\ buffer\ =\ (id<MTLBuffer>)handle\_;}
+\DoxyCodeLine{01672\ \ \ \ \ [buffer\ release];}
+\DoxyCodeLine{01673\ \ \ \}}
+\DoxyCodeLine{01674\ \ \ handle\_\ =\ other.handle\_;}
+\DoxyCodeLine{01675\ \ \ contents\_\ =\ other.contents\_;}
+\DoxyCodeLine{01676\ \ \ length\_\ =\ other.length\_;}
+\DoxyCodeLine{01677\ \ \ other.handle\_\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{01678\ \ \ other.contents\_\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{01679\ \ \ other.length\_\ =\ 0;}
+\DoxyCodeLine{01680\ \ \ \textcolor{keywordflow}{return}\ *\textcolor{keyword}{this};}
+\DoxyCodeLine{01681\ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-related-members}
+\Hypertarget{classgpga_1_1_metal_buffer_doc-related-members}
+\doxysubsection{Friends And Related Symbol Documentation}
+\Hypertarget{classgpga_1_1_metal_buffer_aafe9731261ef47394c0e00bd67cba2da_aafe9731261ef47394c0e00bd67cba2da}\index{gpga::MetalBuffer@{gpga::MetalBuffer}!MetalRuntime@{MetalRuntime}}
+\index{MetalRuntime@{MetalRuntime}!gpga::MetalBuffer@{gpga::MetalBuffer}}
+\doxysubsubsection{\texorpdfstring{MetalRuntime}{MetalRuntime}}
+{\footnotesize\ttfamily \label{classgpga_1_1_metal_buffer_aafe9731261ef47394c0e00bd67cba2da_aafe9731261ef47394c0e00bd67cba2da} 
+friend class Metal\+Runtime\hspace{0.3cm}{\ttfamily [friend]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00228}{228}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+
+
+The documentation for this class was generated from the following files:\+\begin{DoxyCompactItemize}
+\item 
+src/\+runtime/\+\doxymbox{\hyperlink{metal__runtime_8hh}{metal\+\_\+runtime.\+hh}}\item 
+src/\+runtime/\+metal\+\_\+runtime.\+mm\end{DoxyCompactItemize}

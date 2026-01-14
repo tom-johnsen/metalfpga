@@ -1,3 +1,7 @@
+/**
+ * @file msl_naming.hh
+ * @brief Helpers for generating Metal-safe identifiers.
+ */
 #pragma once
 
 #include <cctype>
@@ -8,16 +12,19 @@
 
 namespace gpga {
 
+/// Check if a character can start an MSL identifier.
 inline bool IsMslIdentStart(char c) {
   unsigned char uc = static_cast<unsigned char>(c);
   return std::isalpha(uc) != 0 || c == '_';
 }
 
+/// Check if a character can appear in an MSL identifier.
 inline bool IsMslIdentChar(char c) {
   unsigned char uc = static_cast<unsigned char>(c);
   return std::isalnum(uc) != 0 || c == '_';
 }
 
+/// Compute a 64-bit FNV-1a hash for a string.
 inline uint64_t Fnv1aHash64(std::string_view value) {
   uint64_t hash = 14695981039346656037ull;
   for (unsigned char c : value) {
@@ -27,6 +34,7 @@ inline uint64_t Fnv1aHash64(std::string_view value) {
   return hash;
 }
 
+/// Format a 64-bit value as 16 lowercase hex digits.
 inline std::string Hex64(uint64_t value) {
   static const char kHex[] = "0123456789abcdef";
   std::string out(16, '0');
@@ -37,6 +45,7 @@ inline std::string Hex64(uint64_t value) {
   return out;
 }
 
+/// Check if a name is reserved in Metal or C++.
 inline bool IsMslReservedIdentifier(std::string_view name) {
   static const std::unordered_set<std::string_view> kReserved = {
       "alignas", "alignof", "and", "and_eq", "asm", "atomic", "auto", "bitand",
@@ -57,11 +66,18 @@ inline bool IsMslReservedIdentifier(std::string_view name) {
   return kReserved.find(name) != kReserved.end();
 }
 
+/// Check if a string starts with a prefix.
 inline bool StartsWith(std::string_view value, std::string_view prefix) {
   return value.size() >= prefix.size() &&
          value.compare(0, prefix.size(), prefix) == 0;
 }
 
+/**
+ * @brief Mangle an identifier into an MSL-safe symbol.
+ *
+ * @param name Original identifier.
+ * @return MSL-safe identifier string.
+ */
 inline std::string MslMangleIdentifier(std::string_view name) {
   bool needs_escape = name.empty();
   if (!needs_escape) {

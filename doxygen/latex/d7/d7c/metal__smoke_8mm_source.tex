@@ -1,0 +1,89 @@
+\doxysection{metal\+\_\+smoke.\+mm}
+\hypertarget{metal__smoke_8mm_source}{}\label{metal__smoke_8mm_source}\index{src/tools/metal\_smoke.mm@{src/tools/metal\_smoke.mm}}
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00001}00001\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{metal__runtime_8hh}{runtime/metal\_runtime.hh}}"{}}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00002}00002\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00003}00003\ \textcolor{preprocessor}{\#include\ <cstdint>}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00004}00004\ \textcolor{preprocessor}{\#include\ <iostream>}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00005}00005\ \textcolor{preprocessor}{\#include\ <string>}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00006}00006\ \textcolor{preprocessor}{\#include\ <vector>}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00007}00007\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00008}\doxymbox{\hyperlink{namespaceanonymous__namespace_02metal__smoke_8mm_03}{00008}}\ \textcolor{keyword}{namespace\ }\{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00009}00009\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00010}00010\ \textcolor{keyword}{constexpr}\ \textcolor{keyword}{const}\ \textcolor{keywordtype}{char}*\ kSmokeSource\ =\ R\textcolor{stringliteral}{"{}msl(}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00011}00011\ \textcolor{stringliteral}{\#include\ <metal\_stdlib>}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00012}00012\ \textcolor{stringliteral}{using\ namespace\ metal;}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00013}00013\ \textcolor{stringliteral}{}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00014}00014\ \textcolor{stringliteral}{struct\ GpgaParams\ \{\ uint\ count;\ \};}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00015}00015\ \textcolor{stringliteral}{}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00016}00016\ \textcolor{stringliteral}{kernel\ void\ gpga\_smoke(device\ uint*\ data\ [[buffer(0)]],}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00017}00017\ \textcolor{stringliteral}{\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ constant\ GpgaParams\&\ params\ [[buffer(1)]],}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00018}00018\ \textcolor{stringliteral}{\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ uint\ gid\ [[thread\_position\_in\_grid]])\ \{}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00019}00019\ \textcolor{stringliteral}{\ \ if\ (gid\ >=\ params.count)\ \{}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00020}00020\ \textcolor{stringliteral}{\ \ \ \ return;}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00021}00021\ \textcolor{stringliteral}{\ \ \}}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00022}00022\ \textcolor{stringliteral}{\ \ data[gid]\ =\ data[gid]\ +\ 1u;}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00023}00023\ \textcolor{stringliteral}{\}}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00024}00024\ \textcolor{stringliteral}{)msl"{};}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00025}00025\ \textcolor{stringliteral}{}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00026}00026\ \textcolor{stringliteral}{\}\ \ }\textcolor{comment}{//\ namespace}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00027}00027\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00028}00028\ \textcolor{keywordtype}{int}\ \doxymbox{\hyperlink{main_8hh_a3c04138a5bfe5d72780bb7e82a18e627_a3c04138a5bfe5d72780bb7e82a18e627}{main}}(\textcolor{keywordtype}{int}\ argc,\ \textcolor{keywordtype}{char}**\ argv)\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00029}00029\ \ \ uint32\_t\ count\ =\ 16u;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00030}00030\ \ \ \textcolor{keywordflow}{if}\ (argc\ >=\ 2)\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00031}00031\ \ \ \ \ count\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[1]));}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00032}00032\ \ \ \ \ \textcolor{keywordflow}{if}\ (count\ ==\ 0u)\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00033}00033\ \ \ \ \ \ \ count\ =\ 16u;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00034}00034\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00035}00035\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00036}00036\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00037}00037\ \ \ \doxymbox{\hyperlink{classgpga_1_1_metal_runtime}{gpga::MetalRuntime}}\ runtime;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00038}00038\ \ \ std::string\ error;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00039}00039\ \ \ \textcolor{keywordflow}{if}\ (!runtime.\doxymbox{\hyperlink{classgpga_1_1_metal_runtime_a7c0dae37c7675f4910d69aa7a276cb36_a7c0dae37c7675f4910d69aa7a276cb36}{CompileSource}}(kSmokeSource,\ \{\},\ \&error))\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00040}00040\ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Metal\ compile\ failed:\ "{}}\ <<\ error\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00041}00041\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00042}00042\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00043}00043\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00044}00044\ \ \ \doxymbox{\hyperlink{classgpga_1_1_metal_kernel}{gpga::MetalKernel}}\ kernel;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00045}00045\ \ \ \textcolor{keywordflow}{if}\ (!runtime.\doxymbox{\hyperlink{classgpga_1_1_metal_runtime_abcb654691b2af3930e2b395033182ae2_abcb654691b2af3930e2b395033182ae2}{CreateKernel}}(\textcolor{stringliteral}{"{}gpga\_smoke"{}},\ \&kernel,\ \&error))\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00046}00046\ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Kernel\ creation\ failed:\ "{}}\ <<\ error\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00047}00047\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00048}00048\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00049}00049\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00050}00050\ \ \ std::vector<uint32\_t>\ data(count);}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00051}00051\ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ i\ =\ 0;\ i\ <\ count;\ ++i)\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00052}00052\ \ \ \ \ data[i]\ =\ i;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00053}00053\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00054}00054\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00055}00055\ \ \ \doxymbox{\hyperlink{classgpga_1_1_metal_buffer}{gpga::MetalBuffer}}\ data\_buf\ =}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00056}00056\ \ \ \ \ \ \ runtime.\doxymbox{\hyperlink{classgpga_1_1_metal_runtime_ab12fef577a67fa68108b48d7aa55e32e_ab12fef577a67fa68108b48d7aa55e32e}{CreateBuffer}}(data.size()\ *\ \textcolor{keyword}{sizeof}(uint32\_t),\ data.data());}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00057}00057\ \ \ \doxymbox{\hyperlink{structgpga_1_1_gpga_params}{gpga::GpgaParams}}\ params\{\};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00058}00058\ \ \ params.\doxymbox{\hyperlink{structgpga_1_1_gpga_params_a91d1aa9284e4e1899ff83ba51933d241_a91d1aa9284e4e1899ff83ba51933d241}{count}}\ =\ count;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00059}00059\ \ \ \doxymbox{\hyperlink{classgpga_1_1_metal_buffer}{gpga::MetalBuffer}}\ params\_buf\ =}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00060}00060\ \ \ \ \ \ \ runtime.\doxymbox{\hyperlink{classgpga_1_1_metal_runtime_ab12fef577a67fa68108b48d7aa55e32e_ab12fef577a67fa68108b48d7aa55e32e}{CreateBuffer}}(\textcolor{keyword}{sizeof}(params),\ \&params);}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00061}00061\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00062}00062\ \ \ std::vector<gpga::MetalBufferBinding>\ bindings;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00063}00063\ \ \ bindings.push\_back(\{kernel.\doxymbox{\hyperlink{classgpga_1_1_metal_kernel_a4d45fb55884fcdfe9a36484af55f1d7f_a4d45fb55884fcdfe9a36484af55f1d7f}{BufferIndex}}(\textcolor{stringliteral}{"{}data"{}}),\ \&data\_buf,\ 0\});}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00064}00064\ \ \ bindings.push\_back(\{kernel.\doxymbox{\hyperlink{classgpga_1_1_metal_kernel_a4d45fb55884fcdfe9a36484af55f1d7f_a4d45fb55884fcdfe9a36484af55f1d7f}{BufferIndex}}(\textcolor{stringliteral}{"{}params"{}}),\ \&params\_buf,\ 0\});}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00065}00065\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00066}00066\ \ \ \textcolor{keywordflow}{if}\ (!runtime.\doxymbox{\hyperlink{classgpga_1_1_metal_runtime_a157f2cb524b5ef7ef25895159dac4be6_a157f2cb524b5ef7ef25895159dac4be6}{Dispatch}}(kernel,\ bindings,\ count,\ \&error))\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00067}00067\ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Dispatch\ failed:\ "{}}\ <<\ error\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00068}00068\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00069}00069\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00070}00070\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00071}00071\ \ \ \textcolor{keyword}{auto}*\ out\ =\ \textcolor{keyword}{static\_cast<}uint32\_t*\textcolor{keyword}{>}(data\_buf.\doxymbox{\hyperlink{classgpga_1_1_metal_buffer_ae10f30cda85f8260a04b4d96d8145e4d_ae10f30cda85f8260a04b4d96d8145e4d}{contents}}());}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00072}00072\ \ \ \textcolor{keywordflow}{if}\ (!out)\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00073}00073\ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Failed\ to\ map\ output\ buffer\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00074}00074\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00075}00075\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00076}00076\ }
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00077}00077\ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Smoke\ output:"{}};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00078}00078\ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ i\ =\ 0;\ i\ <\ std::min<uint32\_t>(count,\ 8u);\ ++i)\ \{}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00079}00079\ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}\ "{}}\ <<\ out[i];}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00080}00080\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00081}00081\ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00082}00082\ \ \ \textcolor{keywordflow}{return}\ 0;}
+\DoxyCodeLine{\Hypertarget{metal__smoke_8mm_source_l00083}00083\ \}}
+
+\end{DoxyCode}

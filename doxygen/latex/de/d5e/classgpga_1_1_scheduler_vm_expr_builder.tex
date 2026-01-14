@@ -1,0 +1,183 @@
+\doxysection{gpga::\+Scheduler\+Vm\+Expr\+Builder Class Reference}
+\hypertarget{classgpga_1_1_scheduler_vm_expr_builder}{}\label{classgpga_1_1_scheduler_vm_expr_builder}\index{gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}}
+
+
+Builds scheduler VM expression bytecode and literal pools.  
+
+
+
+
+{\ttfamily \+\#include $<$scheduler\+\_\+vm.\+hh$>$}
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+uint32\+\_\+t \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_aac75c4c938c0b728ea55db696df8a471_aac75c4c938c0b728ea55db696df8a471}{Emit\+Op}} (\doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77}{Scheduler\+Vm\+Expr\+Op}} op, uint32\+\_\+t arg=0u, uint32\+\_\+t extra=\doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}})
+\begin{DoxyCompactList}\small\item\em Emit an expression opcode. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_aa4e0148040d09d6e4e4f146778d2f68b_aa4e0148040d09d6e4e4f146778d2f68b}{Emit\+Imm\+Table}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&\doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2}{words}})
+\begin{DoxyCompactList}\small\item\em Append words to the literal pool. \end{DoxyCompactList}\item 
+const std::\+vector$<$ uint32\+\_\+t $>$ \& \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2}{words}} () const
+\begin{DoxyCompactList}\small\item\em Return the expression bytecode stream. \end{DoxyCompactList}\item 
+const std::\+vector$<$ uint32\+\_\+t $>$ \& \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_acbef3e0ca1c3bc3aeb435c28014e45fc_acbef3e0ca1c3bc3aeb435c28014e45fc}{imm\+\_\+words}} () const
+\begin{DoxyCompactList}\small\item\em Return the literal pool words. \end{DoxyCompactList}\item 
+void \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_a50c8eea3f4f3f44184d77243576d19c2_a50c8eea3f4f3f44184d77243576d19c2}{Truncate}} (size\+\_\+t word\+\_\+size, size\+\_\+t imm\+\_\+size)
+\begin{DoxyCompactList}\small\item\em Truncate expression and literal tables to the given sizes. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Builds scheduler VM expression bytecode and literal pools. 
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00476}{476}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{classgpga_1_1_scheduler_vm_expr_builder_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classgpga_1_1_scheduler_vm_expr_builder_aa4e0148040d09d6e4e4f146778d2f68b_aa4e0148040d09d6e4e4f146778d2f68b}\index{gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}!EmitImmTable@{EmitImmTable}}
+\index{EmitImmTable@{EmitImmTable}!gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}}
+\doxysubsubsection{\texorpdfstring{EmitImmTable()}{EmitImmTable()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_scheduler_vm_expr_builder_aa4e0148040d09d6e4e4f146778d2f68b_aa4e0148040d09d6e4e4f146778d2f68b} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Expr\+Builder::\+\+Emit\+Imm\+Table (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{words}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Append words to the literal pool. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em \doxylink{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2}{words}} & Literal words to append. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+Base offset of the appended literal data. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00502}{502}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00502\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00503\ \ \ \ \ \textcolor{keyword}{const}\ uint32\_t\ base\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(imm\_words\_.size());}
+\DoxyCodeLine{00504\ \ \ \ \ imm\_words\_.insert(imm\_words\_.end(),\ \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2}{words}}.begin(),\ \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2}{words}}.end());}
+\DoxyCodeLine{00505\ \ \ \ \ \textcolor{keywordflow}{return}\ base;}
+\DoxyCodeLine{00506\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_scheduler_vm_expr_builder_aac75c4c938c0b728ea55db696df8a471_aac75c4c938c0b728ea55db696df8a471}\index{gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}!EmitOp@{EmitOp}}
+\index{EmitOp@{EmitOp}!gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}}
+\doxysubsubsection{\texorpdfstring{EmitOp()}{EmitOp()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_scheduler_vm_expr_builder_aac75c4c938c0b728ea55db696df8a471_aac75c4c938c0b728ea55db696df8a471} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Expr\+Builder::\+\+Emit\+Op (\begin{DoxyParamCaption}\item[{\doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77}{Scheduler\+Vm\+Expr\+Op}}}]{op}{, }\item[{uint32\+\_\+t}]{arg}{ = {\ttfamily 0u}, }\item[{uint32\+\_\+t}]{extra}{ = {\ttfamily \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}}}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Emit an expression opcode. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em op} & Expression opcode. \\
+\hline
+{\em arg} & Opcode argument. \\
+\hline
+{\em extra} & Optional extra word for op-\/specific payload. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+Offset of the emitted instruction. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00486}{486}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00487\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00488\ \ \ \ \ \textcolor{keyword}{const}\ uint32\_t\ offset\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(words\_.size());}
+\DoxyCodeLine{00489\ \ \ \ \ words\_.push\_back(\doxymbox{\hyperlink{namespacegpga_a2a031a323a40b928dae33d819d4b2fe1_a2a031a323a40b928dae33d819d4b2fe1}{MakeSchedulerVmExprInstr}}(op,\ arg));}
+\DoxyCodeLine{00490\ \ \ \ \ \textcolor{keywordflow}{if}\ (extra\ !=\ \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{kSchedulerVmExprNoExtra}})\ \{}
+\DoxyCodeLine{00491\ \ \ \ \ \ \ words\_.push\_back(extra);}
+\DoxyCodeLine{00492\ \ \ \ \ \}}
+\DoxyCodeLine{00493\ \ \ \ \ \textcolor{keywordflow}{return}\ offset;}
+\DoxyCodeLine{00494\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_scheduler_vm_expr_builder_acbef3e0ca1c3bc3aeb435c28014e45fc_acbef3e0ca1c3bc3aeb435c28014e45fc}\index{gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}!imm\_words@{imm\_words}}
+\index{imm\_words@{imm\_words}!gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}}
+\doxysubsubsection{\texorpdfstring{imm\_words()}{imm\_words()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_scheduler_vm_expr_builder_acbef3e0ca1c3bc3aeb435c28014e45fc_acbef3e0ca1c3bc3aeb435c28014e45fc} 
+const std::\+vector$<$ uint32\+\_\+t $>$ \& gpga::\+\+Scheduler\+Vm\+Expr\+Builder::\+imm\+\_\+words (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Return the literal pool words. 
+
+\begin{DoxyReturn}{Returns}
+Literal pool words. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00519}{519}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00519\ \{\ \textcolor{keywordflow}{return}\ imm\_words\_;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_scheduler_vm_expr_builder_a50c8eea3f4f3f44184d77243576d19c2_a50c8eea3f4f3f44184d77243576d19c2}\index{gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}!Truncate@{Truncate}}
+\index{Truncate@{Truncate}!gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}}
+\doxysubsubsection{\texorpdfstring{Truncate()}{Truncate()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_scheduler_vm_expr_builder_a50c8eea3f4f3f44184d77243576d19c2_a50c8eea3f4f3f44184d77243576d19c2} 
+void gpga::\+\+Scheduler\+Vm\+Expr\+Builder::\+\+Truncate (\begin{DoxyParamCaption}\item[{size\+\_\+t}]{word\+\_\+size}{, }\item[{size\+\_\+t}]{imm\+\_\+size}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Truncate expression and literal tables to the given sizes. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em word\+\_\+size} & Considered size of the expression bytecode stream. \\
+\hline
+{\em imm\+\_\+size} & Considered size of the literal pool. \\
+\hline
+\end{DoxyParams}
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00526}{526}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00526\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00527\ \ \ \ \ words\_.resize(word\_size);}
+\DoxyCodeLine{00528\ \ \ \ \ imm\_words\_.resize(imm\_size);}
+\DoxyCodeLine{00529\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2}\index{gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}!words@{words}}
+\index{words@{words}!gpga::SchedulerVmExprBuilder@{gpga::SchedulerVmExprBuilder}}
+\doxysubsubsection{\texorpdfstring{words()}{words()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_scheduler_vm_expr_builder_a0eca9a89c4cb5ee7e4982019c24cb8b2_a0eca9a89c4cb5ee7e4982019c24cb8b2} 
+const std::\+vector$<$ uint32\+\_\+t $>$ \& gpga::\+\+Scheduler\+Vm\+Expr\+Builder::\+words (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Return the expression bytecode stream. 
+
+\begin{DoxyReturn}{Returns}
+Expression bytecode words. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00513}{513}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00513\ \{\ \textcolor{keywordflow}{return}\ words\_;\ \}}
+
+\end{DoxyCode}
+
+
+The documentation for this class was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+core/\+\doxymbox{\hyperlink{scheduler__vm_8hh}{scheduler\+\_\+vm.\+hh}}\end{DoxyCompactItemize}

@@ -1,0 +1,1419 @@
+\doxysection{Simulator::\+Wires\+\_\+2\+State Struct Reference}
+\hypertarget{struct_simulator_1_1_wires__2_state}{}\label{struct_simulator_1_1_wires__2_state}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_l_a_t_c_h___reset___state}{DLATCH\+\_\+\+Reset\+\_\+\+State}}
+\item 
+struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_s_r_l_a_t_c_h___reset___state}{SRLATCH\+\_\+\+Reset\+\_\+\+State}}
+\item 
+struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_t_f_f___reset___state}{TFF\+\_\+\+Reset\+\_\+\+State}}
+\item 
+struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_f_f___reset___state}{DFF\+\_\+\+Reset\+\_\+\+State}}
+\item 
+struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_j_k_f_f___reset___state}{JKFF\+\_\+\+Reset\+\_\+\+State}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ad3aabcde440aa45da918ab4ddfc72d07_ad3aabcde440aa45da918ab4ddfc72d07}{Wires\+\_\+2\+State}} (uint32\+\_\+t wires)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a8440adfa1e3248778be1350baf357061_a8440adfa1e3248778be1350baf357061}{set\+Wire}} (size\+\_\+t index, bool value)
+\item 
+bool \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_adc5638326f1fab3bc8527cb175e00977_adc5638326f1fab3bc8527cb175e00977}{get\+Wire}} (size\+\_\+t index) const
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_af5bb6dac6f3aed2486c74c8694ab9da0_af5bb6dac6f3aed2486c74c8694ab9da0}{reset}} ()
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a82bad21ccdd28fb8c441eafd3a2fc45e_a82bad21ccdd28fb8c441eafd3a2fc45e}{set\+All}} ()
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_abdfa014eb1aada43fc06920886a4c501_abdfa014eb1aada43fc06920886a4c501}{and\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a16cf86d03332e382e39983288d893f5c_a16cf86d03332e382e39983288d893f5c}{and\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ae80319d78ca8feace425d254aaf748df_ae80319d78ca8feace425d254aaf748df}{and\+Wires}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&input\+Wires, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_adae9725fbe4afd30d648a8258b82052a_adae9725fbe4afd30d648a8258b82052a}{or\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_aee33276e7729e158063701b8b6d21781_aee33276e7729e158063701b8b6d21781}{or\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a3a6892ab920c97f0128951b3cfa9ec0c_a3a6892ab920c97f0128951b3cfa9ec0c}{or\+Wires}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&input\+Wires, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a71a2dc091161eef0f9c361051865e5a9_a71a2dc091161eef0f9c361051865e5a9}{not\+Wire}} (uint32\+\_\+t wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_aa8d3f89db6e04068e42a33cf9fd2a52e_aa8d3f89db6e04068e42a33cf9fd2a52e}{not\+Wire}} (uint32\+\_\+t wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_aa171898a1983da6eb8b8c08904920faa_aa171898a1983da6eb8b8c08904920faa}{xor\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a6e747340f4d86b2e6600f05dd790d681_a6e747340f4d86b2e6600f05dd790d681}{xor\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_af792fb5b5427ec0b0bd0bdb1af5e91ed_af792fb5b5427ec0b0bd0bdb1af5e91ed}{xor\+Wires}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&input\+Wires, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_af1db7fde1de9bb5f35e65806caa9117c_af1db7fde1de9bb5f35e65806caa9117c}{nand\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a10fe8243ecfe83e902f356c6053bad8a_a10fe8243ecfe83e902f356c6053bad8a}{nand\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_aab339dd93f109f4f16190b75caeca7d1_aab339dd93f109f4f16190b75caeca7d1}{nand\+Wires}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&input\+Wires, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ae6358b4ef6b41f63491603346896112c_ae6358b4ef6b41f63491603346896112c}{nor\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ac616ab804fa73298f7943090f266975f_ac616ab804fa73298f7943090f266975f}{nor\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a0335932b76d5d61480fc3015ab9d86ee_a0335932b76d5d61480fc3015ab9d86ee}{nor\+Wires}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&input\+Wires, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a0a0f9bdf1aa2272dfe263093f633a406_a0a0f9bdf1aa2272dfe263093f633a406}{xnor\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a1edbd2638587c1f8d28c0fa7f7aec343_a1edbd2638587c1f8d28c0fa7f7aec343}{xnor\+Wires}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, uint32\+\_\+t next\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ac811ee98b095112d1aa03cbdd1ae9def_ac811ee98b095112d1aa03cbdd1ae9def}{xnor\+Wires}} (const std::\+vector$<$ uint32\+\_\+t $>$ \&input\+Wires, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a4abb9d8f31ef241143913d2bfdbdbbe2_a4abb9d8f31ef241143913d2bfdbdbbe2}{buf\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a830c2325fe753f96488b296bac5fc019_a830c2325fe753f96488b296bac5fc019}{bufinv\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a9cb3d063a442f25cade43ef06c671c43_a9cb3d063a442f25cade43ef06c671c43}{bufif0\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, bool control)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a50ae63d51134afd638fd66fb3443c2cd_a50ae63d51134afd638fd66fb3443c2cd}{bufif1\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, bool control)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a7f86a705aa0f00e177434494819cebb7_a7f86a705aa0f00e177434494819cebb7}{notif0\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, bool control)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a1d0eca736f2d1342ed30616936a07e74_a1d0eca736f2d1342ed30616936a07e74}{notif1\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, bool control)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ae14d5ad26042c855777e6f268eda55ad_ae14d5ad26042c855777e6f268eda55ad}{dlatch\+Reset\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, bool enable, bool reset)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a2344b6e425ad8e8ad7df9fc5f063f099_a2344b6e425ad8e8ad7df9fc5f063f099}{sr\+Latch\+Reset\+Wire}} (uint32\+\_\+t parent\+Wire, bool set\+Input, bool reset\+Input, bool reset)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a30e564284101f4fb5f3631a820ff5622_a30e564284101f4fb5f3631a820ff5622}{tff\+Reset\+Wire}} (uint32\+\_\+t parent\+Wire, bool t\+Input, bool reset)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a1f6c08506ffa3e6e469757ded9b21f39_a1f6c08506ffa3e6e469757ded9b21f39}{dff\+Reset\+Wire}} (uint32\+\_\+t parent\+Wire, uint32\+\_\+t child\+Wire, bool reset)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a5bd52d8e0ccd0859f16298bf0d052815_a5bd52d8e0ccd0859f16298bf0d052815}{jkff\+Reset\+Wire}} (uint32\+\_\+t parent\+Wire, bool j\+Input, bool k\+Input, bool reset)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a2fb6672b59a1c01bd87341510e830a45_a2fb6672b59a1c01bd87341510e830a45}{dlatch\+Reset\+Wire\+\_\+\+Sequential}} (uint32\+\_\+t child\+Wire, bool enable, bool reset, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_l_a_t_c_h___reset___state}{DLATCH\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a2228219c4eb03e87a998207af937262a_a2228219c4eb03e87a998207af937262a}{dlatch\+Reset\+Wire\+\_\+\+Commit}} (uint32\+\_\+t parent\+Wire, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_l_a_t_c_h___reset___state}{DLATCH\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a90540049048b4039b6062fb4b883a51f_a90540049048b4039b6062fb4b883a51f}{sr\+Latch\+Reset\+Wire\+\_\+\+Sequential}} (bool set\+Input, bool reset\+Input, bool reset, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_s_r_l_a_t_c_h___reset___state}{SRLATCH\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ac31da3bb9377c65abb86feebf61a84d5_ac31da3bb9377c65abb86feebf61a84d5}{sr\+Latch\+Reset\+Wire\+\_\+\+Commit}} (uint32\+\_\+t parent\+Wire, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_s_r_l_a_t_c_h___reset___state}{SRLATCH\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a53815380c0b9a3d7f5f8286c4ecbce97_a53815380c0b9a3d7f5f8286c4ecbce97}{tff\+Reset\+Wire\+\_\+\+Sequential}} (bool t\+Input, bool reset, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_t_f_f___reset___state}{TFF\+\_\+\+Reset\+\_\+\+State}} \&state, uint32\+\_\+t current\+Wire\+Value)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_af64ad25359729890dfebad2e80f4867f_af64ad25359729890dfebad2e80f4867f}{tff\+Reset\+Wire\+\_\+\+Commit}} (uint32\+\_\+t parent\+Wire, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_t_f_f___reset___state}{TFF\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a16b8f164bbd223029a114701f9d81b16_a16b8f164bbd223029a114701f9d81b16}{dff\+Reset\+Wire\+\_\+\+Sequential}} (uint32\+\_\+t child\+Wire, bool reset, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_f_f___reset___state}{DFF\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a81a30bd87530d326bb7baf52b61313ee_a81a30bd87530d326bb7baf52b61313ee}{dff\+Reset\+Wire\+\_\+\+Commit}} (uint32\+\_\+t parent\+Wire, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_f_f___reset___state}{DFF\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a6b071bac2bf6c3bf6718be1f4d394c11_a6b071bac2bf6c3bf6718be1f4d394c11}{jkff\+Reset\+Wire\+\_\+\+Sequential}} (bool j\+Input, bool k\+Input, bool reset, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_j_k_f_f___reset___state}{JKFF\+\_\+\+Reset\+\_\+\+State}} \&state, uint32\+\_\+t current\+Wire\+Value)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a9f14037370382275806e74b0fecabc94_a9f14037370382275806e74b0fecabc94}{jkff\+Reset\+Wire\+\_\+\+Commit}} (uint32\+\_\+t parent\+Wire, struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_j_k_f_f___reset___state}{JKFF\+\_\+\+Reset\+\_\+\+State}} \&state)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_af6207619115251ad2e13a7a5dceb7000_af6207619115251ad2e13a7a5dceb7000}{nmos\+Primitive}} (uint32\+\_\+t data\+Wire, uint32\+\_\+t control\+Wire, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a8f414804cf9bc64c0eaa5e74680986b0_a8f414804cf9bc64c0eaa5e74680986b0}{nmos\+Primitive}} (bool source, bool control, bool \&drain)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_abd87912329c953e081105e5c6f6b1c28_abd87912329c953e081105e5c6f6b1c28}{pmos\+Primitive}} (uint32\+\_\+t data\+Wire, uint32\+\_\+t control\+Wire, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ac94f707f1875addcf83ed012d027bbda_ac94f707f1875addcf83ed012d027bbda}{pmos\+Primitive}} (bool source, bool control, bool \&drain)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ad364a97b2c0f49a4b8d230c65468260e_ad364a97b2c0f49a4b8d230c65468260e}{cmos\+Primitive}} (uint32\+\_\+t data\+Wire, uint32\+\_\+t n\+Control\+Wire, uint32\+\_\+t p\+Control\+Wire, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ad510394611beb5e799e912ba28112749_ad510394611beb5e799e912ba28112749}{cmos\+Primitive}} (bool source, bool n\+Control, bool p\+Control, bool \&drain)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_aa30743558db7ff3de297acf0ba069823_aa30743558db7ff3de297acf0ba069823}{tran\+Primitive}} (uint32\+\_\+t input, uint32\+\_\+t output)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_abdd6eb4cb517ff90732eb386d86ea0be_abdd6eb4cb517ff90732eb386d86ea0be}{tran\+Primitive}} (bool \&input, bool \&output)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_adbbf4539ff236d73972ec71852e9379b_adbbf4539ff236d73972ec71852e9379b}{tranif0\+Primitive}} (uint32\+\_\+t control\+Wire, uint32\+\_\+t input\+Wire, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_ad6ca5dae6cf51d3d80961b05b40b5122_ad6ca5dae6cf51d3d80961b05b40b5122}{tranif0\+Primitive}} (bool control, bool \&input, bool \&output)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a5a59dd2dde89c537058a099a18ea817a_a5a59dd2dde89c537058a099a18ea817a}{tranif1\+Primitive}} (uint32\+\_\+t control\+Wire, uint32\+\_\+t input\+Wire, uint32\+\_\+t output\+Wire)
+\item 
+void \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a56b385cbd8229087f2be2212175651a7_a56b385cbd8229087f2be2212175651a7}{tranif1\+Primitive}} (bool control, bool \&input, bool \&output)
+\item 
+bool \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a59b123b89495d27f15f7d7ef4dc4221b_a59b123b89495d27f15f7d7ef4dc4221b}{supply1\+Primitive}} ()
+\item 
+bool \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a25e7bc834803f89405c7f63ec2d294ac_a25e7bc834803f89405c7f63ec2d294ac}{supply0\+Primitive}} ()
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+uint32\+\_\+t \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_af70947865c74efadea08c38b2cf8228b_af70947865c74efadea08c38b2cf8228b}{wire\+\_\+count}}
+\item 
+std::\+vector$<$ std::\+byte $>$ \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_a41273d47d74573cf16734dfa4f9e5654_a41273d47d74573cf16734dfa4f9e5654}{\+\_\+wires}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00026}{26}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+
+\label{doc-constructors}
+\Hypertarget{struct_simulator_1_1_wires__2_state_doc-constructors}
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ad3aabcde440aa45da918ab4ddfc72d07_ad3aabcde440aa45da918ab4ddfc72d07}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!Wires\_2State@{Wires\_2State}}
+\index{Wires\_2State@{Wires\_2State}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{Wires\_2State()}{Wires\_2State()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ad3aabcde440aa45da918ab4ddfc72d07_ad3aabcde440aa45da918ab4ddfc72d07} 
+GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+\+Wires\+\_\+2\+State (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{wires}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [explicit]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00031}{31}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00032\ \ \ \ \ \ \ \ \ \ \ \ \ :\ wire\_count(wires),\ \_wires((wires\ +\ 7)\ /\ 8,\ std::byte(0))\ \{\}}
+
+\end{DoxyCode}
+
+
+\label{doc-func-members}
+\Hypertarget{struct_simulator_1_1_wires__2_state_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ae80319d78ca8feace425d254aaf748df_ae80319d78ca8feace425d254aaf748df}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!andWires@{andWires}}
+\index{andWires@{andWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{andWires()}{andWires()}\hspace{0.1cm}{\footnotesize\ttfamily [1/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ae80319d78ca8feace425d254aaf748df_ae80319d78ca8feace425d254aaf748df} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+and\+Wires (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{input\+Wires}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00092}{92}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00092\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00093\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputWires.empty())\ \{}
+\DoxyCodeLine{00094\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00095\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00096\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00097\ \ \ \ \ \ \ \ \ \ \ \ \ }
+\DoxyCodeLine{00098\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ wire\ :\ inputWires)\ \{}
+\DoxyCodeLine{00099\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!getWire(wire))\ \{}
+\DoxyCodeLine{00100\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00101\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00102\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00103\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00104\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00105\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_abdfa014eb1aada43fc06920886a4c501_abdfa014eb1aada43fc06920886a4c501}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!andWires@{andWires}}
+\index{andWires@{andWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{andWires()}{andWires()}\hspace{0.1cm}{\footnotesize\ttfamily [2/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_abdfa014eb1aada43fc06920886a4c501_abdfa014eb1aada43fc06920886a4c501} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+and\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00084}{84}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00084\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00085\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(parentWire)\ \&\ getWire(childWire));}
+\DoxyCodeLine{00086\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a16cf86d03332e382e39983288d893f5c_a16cf86d03332e382e39983288d893f5c}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!andWires@{andWires}}
+\index{andWires@{andWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{andWires()}{andWires()}\hspace{0.1cm}{\footnotesize\ttfamily [3/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a16cf86d03332e382e39983288d893f5c_a16cf86d03332e382e39983288d893f5c} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+and\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00088}{88}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00088\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00089\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ getWire(parentWire)\ \&\ getWire(childWire));}
+\DoxyCodeLine{00090\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a9cb3d063a442f25cade43ef06c671c43_a9cb3d063a442f25cade43ef06c671c43}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!bufif0Wire@{bufif0Wire}}
+\index{bufif0Wire@{bufif0Wire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{bufif0Wire()}{bufif0Wire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a9cb3d063a442f25cade43ef06c671c43_a9cb3d063a442f25cade43ef06c671c43} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+bufif0\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{control}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00331}{331}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00331\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00332\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!control)\ \{}
+\DoxyCodeLine{00333\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(childWire));}
+\DoxyCodeLine{00334\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00335\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a50ae63d51134afd638fd66fb3443c2cd_a50ae63d51134afd638fd66fb3443c2cd}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!bufif1Wire@{bufif1Wire}}
+\index{bufif1Wire@{bufif1Wire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{bufif1Wire()}{bufif1Wire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a50ae63d51134afd638fd66fb3443c2cd_a50ae63d51134afd638fd66fb3443c2cd} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+bufif1\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{control}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00348}{348}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00348\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00349\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (control)\ \{}
+\DoxyCodeLine{00350\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(childWire));}
+\DoxyCodeLine{00351\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00352\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a830c2325fe753f96488b296bac5fc019_a830c2325fe753f96488b296bac5fc019}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!bufinvWire@{bufinvWire}}
+\index{bufinvWire@{bufinvWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{bufinvWire()}{bufinvWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a830c2325fe753f96488b296bac5fc019_a830c2325fe753f96488b296bac5fc019} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+bufinv\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00316}{316}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00316\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00317\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !getWire(childWire));}
+\DoxyCodeLine{00318\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a4abb9d8f31ef241143913d2bfdbdbbe2_a4abb9d8f31ef241143913d2bfdbdbbe2}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!bufWire@{bufWire}}
+\index{bufWire@{bufWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{bufWire()}{bufWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a4abb9d8f31ef241143913d2bfdbdbbe2_a4abb9d8f31ef241143913d2bfdbdbbe2} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+buf\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00301}{301}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00301\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00302\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(childWire));}
+\DoxyCodeLine{00303\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ad510394611beb5e799e912ba28112749_ad510394611beb5e799e912ba28112749}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!cmosPrimitive@{cmosPrimitive}}
+\index{cmosPrimitive@{cmosPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{cmosPrimitive()}{cmosPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ad510394611beb5e799e912ba28112749_ad510394611beb5e799e912ba28112749} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+cmos\+Primitive (\begin{DoxyParamCaption}\item[{bool}]{source}{, }\item[{bool}]{n\+Control}{, }\item[{bool}]{p\+Control}{, }\item[{bool \&}]{drain}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00790}{790}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00790\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00791\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (nControl\ \&\&\ !pControl)\ \{}
+\DoxyCodeLine{00792\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ drain\ =\ source;}
+\DoxyCodeLine{00793\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00794\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ad364a97b2c0f49a4b8d230c65468260e_ad364a97b2c0f49a4b8d230c65468260e}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!cmosPrimitive@{cmosPrimitive}}
+\index{cmosPrimitive@{cmosPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{cmosPrimitive()}{cmosPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ad364a97b2c0f49a4b8d230c65468260e_ad364a97b2c0f49a4b8d230c65468260e} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+cmos\+Primitive (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{data\+Wire}{, }\item[{uint32\+\_\+t}]{n\+Control\+Wire}{, }\item[{uint32\+\_\+t}]{p\+Control\+Wire}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00781}{781}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00781\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00782\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ nControl\ =\ getWire(nControlWire);}
+\DoxyCodeLine{00783\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ pControl\ =\ getWire(pControlWire);}
+\DoxyCodeLine{00784\ }
+\DoxyCodeLine{00785\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (nControl\ \&\&\ !pControl)\ \{}
+\DoxyCodeLine{00786\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ getWire(dataWire));}
+\DoxyCodeLine{00787\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00788\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a1f6c08506ffa3e6e469757ded9b21f39_a1f6c08506ffa3e6e469757ded9b21f39}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!dffResetWire@{dffResetWire}}
+\index{dffResetWire@{dffResetWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{dffResetWire()}{dffResetWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a1f6c08506ffa3e6e469757ded9b21f39_a1f6c08506ffa3e6e469757ded9b21f39} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+dff\+Reset\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{reset}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00474}{474}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00474\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00475\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00476\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00477\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00478\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(childWire));}
+\DoxyCodeLine{00479\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00480\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a81a30bd87530d326bb7baf52b61313ee_a81a30bd87530d326bb7baf52b61313ee}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!dffResetWire\_Commit@{dffResetWire\_Commit}}
+\index{dffResetWire\_Commit@{dffResetWire\_Commit}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{dffResetWire\_Commit()}{dffResetWire\_Commit()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a81a30bd87530d326bb7baf52b61313ee_a81a30bd87530d326bb7baf52b61313ee} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+dff\+Reset\+Wire\+\_\+\+Commit (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_f_f___reset___state}{DFF\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00661}{661}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00661\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00662\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.has\_temp\_state)\ \{}
+\DoxyCodeLine{00663\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ state.temp\_state);}
+\DoxyCodeLine{00664\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00665\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00666\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a16b8f164bbd223029a114701f9d81b16_a16b8f164bbd223029a114701f9d81b16}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!dffResetWire\_Sequential@{dffResetWire\_Sequential}}
+\index{dffResetWire\_Sequential@{dffResetWire\_Sequential}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{dffResetWire\_Sequential()}{dffResetWire\_Sequential()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a16b8f164bbd223029a114701f9d81b16_a16b8f164bbd223029a114701f9d81b16} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+dff\+Reset\+Wire\+\_\+\+Sequential (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{reset}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_f_f___reset___state}{DFF\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00652}{652}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00652\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00653\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00654\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00655\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00656\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00657\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ getWire(childWire);}
+\DoxyCodeLine{00658\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00659\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00660\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ae14d5ad26042c855777e6f268eda55ad_ae14d5ad26042c855777e6f268eda55ad}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!dlatchResetWire@{dlatchResetWire}}
+\index{dlatchResetWire@{dlatchResetWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{dlatchResetWire()}{dlatchResetWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ae14d5ad26042c855777e6f268eda55ad_ae14d5ad26042c855777e6f268eda55ad} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+dlatch\+Reset\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{enable}{, }\item[{bool}]{reset}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00405}{405}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00405\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00406\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00407\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00408\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (enable)\ \{}
+\DoxyCodeLine{00409\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(childWire));}
+\DoxyCodeLine{00410\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00411\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a2228219c4eb03e87a998207af937262a_a2228219c4eb03e87a998207af937262a}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!dlatchResetWire\_Commit@{dlatchResetWire\_Commit}}
+\index{dlatchResetWire\_Commit@{dlatchResetWire\_Commit}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{dlatchResetWire\_Commit()}{dlatchResetWire\_Commit()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a2228219c4eb03e87a998207af937262a_a2228219c4eb03e87a998207af937262a} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+dlatch\+Reset\+Wire\+\_\+\+Commit (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_l_a_t_c_h___reset___state}{DLATCH\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00542}{542}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00542\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00543\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.has\_temp\_state)\ \{}
+\DoxyCodeLine{00544\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ state.temp\_state);}
+\DoxyCodeLine{00545\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00546\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00547\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a2fb6672b59a1c01bd87341510e830a45_a2fb6672b59a1c01bd87341510e830a45}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!dlatchResetWire\_Sequential@{dlatchResetWire\_Sequential}}
+\index{dlatchResetWire\_Sequential@{dlatchResetWire\_Sequential}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{dlatchResetWire\_Sequential()}{dlatchResetWire\_Sequential()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a2fb6672b59a1c01bd87341510e830a45_a2fb6672b59a1c01bd87341510e830a45} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+dlatch\+Reset\+Wire\+\_\+\+Sequential (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{enable}{, }\item[{bool}]{reset}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_d_l_a_t_c_h___reset___state}{DLATCH\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00533}{533}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00533\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00534\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00535\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00536\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00537\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (enable)\ \{}
+\DoxyCodeLine{00538\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ getWire(childWire);}
+\DoxyCodeLine{00539\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00540\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00541\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_adc5638326f1fab3bc8527cb175e00977_adc5638326f1fab3bc8527cb175e00977}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!getWire@{getWire}}
+\index{getWire@{getWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{getWire()}{getWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_adc5638326f1fab3bc8527cb175e00977_adc5638326f1fab3bc8527cb175e00977} 
+bool GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+get\+Wire (\begin{DoxyParamCaption}\item[{size\+\_\+t}]{index}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00046}{46}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00046\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00047\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (index\ >=\ wire\_count)\ \{}
+\DoxyCodeLine{00048\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{throw}\ std::out\_of\_range(\textcolor{stringliteral}{"{}Wire\ index\ out\ of\ range"{}});}
+\DoxyCodeLine{00049\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00050\ }
+\DoxyCodeLine{00051\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ (\textcolor{keyword}{static\_cast<}uint8\_t\textcolor{keyword}{>}(\_wires[index\ /\ 8])\ >>\ (index\ \%\ 8))\ \&\ 1;}
+\DoxyCodeLine{00052\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a5bd52d8e0ccd0859f16298bf0d052815_a5bd52d8e0ccd0859f16298bf0d052815}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!jkffResetWire@{jkffResetWire}}
+\index{jkffResetWire@{jkffResetWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{jkffResetWire()}{jkffResetWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a5bd52d8e0ccd0859f16298bf0d052815_a5bd52d8e0ccd0859f16298bf0d052815} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+jkff\+Reset\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{bool}]{j\+Input}{, }\item[{bool}]{k\+Input}{, }\item[{bool}]{reset}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00496}{496}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00496\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00497\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00498\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00499\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (jInput\ \&\&\ !kInput)\ \{}
+\DoxyCodeLine{00500\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 1);}
+\DoxyCodeLine{00501\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (!jInput\ \&\&\ kInput)\ \{}
+\DoxyCodeLine{00502\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00503\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (jInput\ \&\&\ kInput)\ \{}
+\DoxyCodeLine{00504\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !getWire(parentWire));}
+\DoxyCodeLine{00505\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00506\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a9f14037370382275806e74b0fecabc94_a9f14037370382275806e74b0fecabc94}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!jkffResetWire\_Commit@{jkffResetWire\_Commit}}
+\index{jkffResetWire\_Commit@{jkffResetWire\_Commit}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{jkffResetWire\_Commit()}{jkffResetWire\_Commit()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a9f14037370382275806e74b0fecabc94_a9f14037370382275806e74b0fecabc94} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+jkff\+Reset\+Wire\+\_\+\+Commit (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_j_k_f_f___reset___state}{JKFF\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00705}{705}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00705\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00706\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.has\_temp\_state)\ \{}
+\DoxyCodeLine{00707\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ state.temp\_state);}
+\DoxyCodeLine{00708\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00709\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00710\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a6b071bac2bf6c3bf6718be1f4d394c11_a6b071bac2bf6c3bf6718be1f4d394c11}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!jkffResetWire\_Sequential@{jkffResetWire\_Sequential}}
+\index{jkffResetWire\_Sequential@{jkffResetWire\_Sequential}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{jkffResetWire\_Sequential()}{jkffResetWire\_Sequential()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a6b071bac2bf6c3bf6718be1f4d394c11_a6b071bac2bf6c3bf6718be1f4d394c11} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+jkff\+Reset\+Wire\+\_\+\+Sequential (\begin{DoxyParamCaption}\item[{bool}]{j\+Input}{, }\item[{bool}]{k\+Input}{, }\item[{bool}]{reset}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_j_k_f_f___reset___state}{JKFF\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{, }\item[{uint32\+\_\+t}]{current\+Wire\+Value}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00690}{690}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00690\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00691\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00692\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00693\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00694\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (jInput\ \&\&\ !kInput)\ \{}
+\DoxyCodeLine{00695\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 1;}
+\DoxyCodeLine{00696\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00697\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (!jInput\ \&\&\ kInput)\ \{}
+\DoxyCodeLine{00698\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00699\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00700\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (jInput\ \&\&\ kInput)\ \{}
+\DoxyCodeLine{00701\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ !currentWireValue;}
+\DoxyCodeLine{00702\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00703\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00704\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_aab339dd93f109f4f16190b75caeca7d1_aab339dd93f109f4f16190b75caeca7d1}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!nandWires@{nandWires}}
+\index{nandWires@{nandWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{nandWires()}{nandWires()}\hspace{0.1cm}{\footnotesize\ttfamily [1/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_aab339dd93f109f4f16190b75caeca7d1_aab339dd93f109f4f16190b75caeca7d1} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nand\+Wires (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{input\+Wires}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00210}{210}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00210\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00211\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputWires.empty())\ \{}
+\DoxyCodeLine{00212\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00213\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00214\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00215\ \ \ \ \ \ \ \ \ \ \ \ \ }
+\DoxyCodeLine{00216\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ wire\ :\ inputWires)\ \{}
+\DoxyCodeLine{00217\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!getWire(wire))\ \{}
+\DoxyCodeLine{00218\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00219\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00220\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00221\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00222\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00223\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_af1db7fde1de9bb5f35e65806caa9117c_af1db7fde1de9bb5f35e65806caa9117c}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!nandWires@{nandWires}}
+\index{nandWires@{nandWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{nandWires()}{nandWires()}\hspace{0.1cm}{\footnotesize\ttfamily [2/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_af1db7fde1de9bb5f35e65806caa9117c_af1db7fde1de9bb5f35e65806caa9117c} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nand\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00202}{202}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00202\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00203\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !(getWire(parentWire)\ \&\ getWire(childWire)));}
+\DoxyCodeLine{00204\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a10fe8243ecfe83e902f356c6053bad8a_a10fe8243ecfe83e902f356c6053bad8a}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!nandWires@{nandWires}}
+\index{nandWires@{nandWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{nandWires()}{nandWires()}\hspace{0.1cm}{\footnotesize\ttfamily [3/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a10fe8243ecfe83e902f356c6053bad8a_a10fe8243ecfe83e902f356c6053bad8a} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nand\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00206}{206}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00206\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00207\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ !(getWire(parentWire)\ \&\ getWire(childWire)));}
+\DoxyCodeLine{00208\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a8f414804cf9bc64c0eaa5e74680986b0_a8f414804cf9bc64c0eaa5e74680986b0}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!nmosPrimitive@{nmosPrimitive}}
+\index{nmosPrimitive@{nmosPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{nmosPrimitive()}{nmosPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a8f414804cf9bc64c0eaa5e74680986b0_a8f414804cf9bc64c0eaa5e74680986b0} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nmos\+Primitive (\begin{DoxyParamCaption}\item[{bool}]{source}{, }\item[{bool}]{control}{, }\item[{bool \&}]{drain}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00733}{733}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00733\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00734\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (control)\ \{}
+\DoxyCodeLine{00735\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ drain\ =\ source;}
+\DoxyCodeLine{00736\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00737\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_af6207619115251ad2e13a7a5dceb7000_af6207619115251ad2e13a7a5dceb7000}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!nmosPrimitive@{nmosPrimitive}}
+\index{nmosPrimitive@{nmosPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{nmosPrimitive()}{nmosPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_af6207619115251ad2e13a7a5dceb7000_af6207619115251ad2e13a7a5dceb7000} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nmos\+Primitive (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{data\+Wire}{, }\item[{uint32\+\_\+t}]{control\+Wire}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00727}{727}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00727\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00728\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (getWire(controlWire))\ \{}
+\DoxyCodeLine{00729\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ getWire(dataWire));}
+\DoxyCodeLine{00730\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00731\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a0335932b76d5d61480fc3015ab9d86ee_a0335932b76d5d61480fc3015ab9d86ee}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!norWires@{norWires}}
+\index{norWires@{norWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{norWires()}{norWires()}\hspace{0.1cm}{\footnotesize\ttfamily [1/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a0335932b76d5d61480fc3015ab9d86ee_a0335932b76d5d61480fc3015ab9d86ee} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nor\+Wires (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{input\+Wires}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00244}{244}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00244\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00245\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputWires.empty())\ \{}
+\DoxyCodeLine{00246\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00247\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00248\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00249\ \ \ \ \ \ \ \ \ \ \ \ \ }
+\DoxyCodeLine{00250\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ wire\ :\ inputWires)\ \{}
+\DoxyCodeLine{00251\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (getWire(wire))\ \{}
+\DoxyCodeLine{00252\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00253\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00254\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00255\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00256\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00257\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ae6358b4ef6b41f63491603346896112c_ae6358b4ef6b41f63491603346896112c}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!norWires@{norWires}}
+\index{norWires@{norWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{norWires()}{norWires()}\hspace{0.1cm}{\footnotesize\ttfamily [2/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ae6358b4ef6b41f63491603346896112c_ae6358b4ef6b41f63491603346896112c} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nor\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00236}{236}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00236\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00237\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !(getWire(parentWire)\ |\ getWire(childWire)));}
+\DoxyCodeLine{00238\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ac616ab804fa73298f7943090f266975f_ac616ab804fa73298f7943090f266975f}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!norWires@{norWires}}
+\index{norWires@{norWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{norWires()}{norWires()}\hspace{0.1cm}{\footnotesize\ttfamily [3/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ac616ab804fa73298f7943090f266975f_ac616ab804fa73298f7943090f266975f} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+nor\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00240}{240}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00240\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00241\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ !(getWire(parentWire)\ |\ getWire(childWire)));}
+\DoxyCodeLine{00242\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a7f86a705aa0f00e177434494819cebb7_a7f86a705aa0f00e177434494819cebb7}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!notif0Wire@{notif0Wire}}
+\index{notif0Wire@{notif0Wire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{notif0Wire()}{notif0Wire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a7f86a705aa0f00e177434494819cebb7_a7f86a705aa0f00e177434494819cebb7} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+notif0\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{control}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00365}{365}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00365\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00366\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!control)\ \{}
+\DoxyCodeLine{00367\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !getWire(childWire));}
+\DoxyCodeLine{00368\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00369\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a1d0eca736f2d1342ed30616936a07e74_a1d0eca736f2d1342ed30616936a07e74}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!notif1Wire@{notif1Wire}}
+\index{notif1Wire@{notif1Wire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{notif1Wire()}{notif1Wire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a1d0eca736f2d1342ed30616936a07e74_a1d0eca736f2d1342ed30616936a07e74} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+notif1\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{bool}]{control}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00382}{382}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00382\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00383\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (control)\ \{}
+\DoxyCodeLine{00384\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !getWire(childWire));}
+\DoxyCodeLine{00385\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00386\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a71a2dc091161eef0f9c361051865e5a9_a71a2dc091161eef0f9c361051865e5a9}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!notWire@{notWire}}
+\index{notWire@{notWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{notWire()}{notWire()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a71a2dc091161eef0f9c361051865e5a9_a71a2dc091161eef0f9c361051865e5a9} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+not\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00151}{151}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00151\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00152\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(wire,\ !getWire(wire));}
+\DoxyCodeLine{00153\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_aa8d3f89db6e04068e42a33cf9fd2a52e_aa8d3f89db6e04068e42a33cf9fd2a52e}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!notWire@{notWire}}
+\index{notWire@{notWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{notWire()}{notWire()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_aa8d3f89db6e04068e42a33cf9fd2a52e_aa8d3f89db6e04068e42a33cf9fd2a52e} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+not\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00155}{155}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00155\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00156\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ !getWire(wire));}
+\DoxyCodeLine{00157\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a3a6892ab920c97f0128951b3cfa9ec0c_a3a6892ab920c97f0128951b3cfa9ec0c}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!orWires@{orWires}}
+\index{orWires@{orWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{orWires()}{orWires()}\hspace{0.1cm}{\footnotesize\ttfamily [1/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a3a6892ab920c97f0128951b3cfa9ec0c_a3a6892ab920c97f0128951b3cfa9ec0c} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+or\+Wires (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{input\+Wires}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00126}{126}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00126\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00127\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputWires.empty())\ \{}
+\DoxyCodeLine{00128\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00129\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00130\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00131\ \ \ \ \ \ \ \ \ \ \ \ \ }
+\DoxyCodeLine{00132\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ wire\ :\ inputWires)\ \{}
+\DoxyCodeLine{00133\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (getWire(wire))\ \{}
+\DoxyCodeLine{00134\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00135\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00136\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00137\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00138\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00139\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_adae9725fbe4afd30d648a8258b82052a_adae9725fbe4afd30d648a8258b82052a}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!orWires@{orWires}}
+\index{orWires@{orWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{orWires()}{orWires()}\hspace{0.1cm}{\footnotesize\ttfamily [2/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_adae9725fbe4afd30d648a8258b82052a_adae9725fbe4afd30d648a8258b82052a} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+or\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00118}{118}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00118\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00119\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(parentWire)\ |\ getWire(childWire));}
+\DoxyCodeLine{00120\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_aee33276e7729e158063701b8b6d21781_aee33276e7729e158063701b8b6d21781}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!orWires@{orWires}}
+\index{orWires@{orWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{orWires()}{orWires()}\hspace{0.1cm}{\footnotesize\ttfamily [3/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_aee33276e7729e158063701b8b6d21781_aee33276e7729e158063701b8b6d21781} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+or\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00122}{122}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00122\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00123\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ getWire(parentWire)\ |\ getWire(childWire));}
+\DoxyCodeLine{00124\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ac94f707f1875addcf83ed012d027bbda_ac94f707f1875addcf83ed012d027bbda}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!pmosPrimitive@{pmosPrimitive}}
+\index{pmosPrimitive@{pmosPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{pmosPrimitive()}{pmosPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ac94f707f1875addcf83ed012d027bbda_ac94f707f1875addcf83ed012d027bbda} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+pmos\+Primitive (\begin{DoxyParamCaption}\item[{bool}]{source}{, }\item[{bool}]{control}{, }\item[{bool \&}]{drain}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00758}{758}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00758\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00759\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!control)\ \{}
+\DoxyCodeLine{00760\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ drain\ =\ source;}
+\DoxyCodeLine{00761\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00762\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_abd87912329c953e081105e5c6f6b1c28_abd87912329c953e081105e5c6f6b1c28}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!pmosPrimitive@{pmosPrimitive}}
+\index{pmosPrimitive@{pmosPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{pmosPrimitive()}{pmosPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_abd87912329c953e081105e5c6f6b1c28_abd87912329c953e081105e5c6f6b1c28} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+pmos\+Primitive (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{data\+Wire}{, }\item[{uint32\+\_\+t}]{control\+Wire}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00752}{752}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00752\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00753\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!getWire(controlWire))\ \{}
+\DoxyCodeLine{00754\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ getWire(dataWire));}
+\DoxyCodeLine{00755\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00756\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_af5bb6dac6f3aed2486c74c8694ab9da0_af5bb6dac6f3aed2486c74c8694ab9da0}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!reset@{reset}}
+\index{reset@{reset}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{reset()}{reset()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_af5bb6dac6f3aed2486c74c8694ab9da0_af5bb6dac6f3aed2486c74c8694ab9da0} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+reset (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00055}{55}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00055\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00056\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ \_wires.size();\ i++)\ \{}
+\DoxyCodeLine{00057\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \_wires[i]\ =\ std::byte(0);}
+\DoxyCodeLine{00058\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00059\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a82bad21ccdd28fb8c441eafd3a2fc45e_a82bad21ccdd28fb8c441eafd3a2fc45e}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!setAll@{setAll}}
+\index{setAll@{setAll}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{setAll()}{setAll()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a82bad21ccdd28fb8c441eafd3a2fc45e_a82bad21ccdd28fb8c441eafd3a2fc45e} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+set\+All (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00062}{62}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00062\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00063\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ \_wires.size();\ i++)\ \{}
+\DoxyCodeLine{00064\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \_wires[i]\ =\ std::byte(0xFF);}
+\DoxyCodeLine{00065\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00066\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a8440adfa1e3248778be1350baf357061_a8440adfa1e3248778be1350baf357061}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!setWire@{setWire}}
+\index{setWire@{setWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{setWire()}{setWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a8440adfa1e3248778be1350baf357061_a8440adfa1e3248778be1350baf357061} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+set\+Wire (\begin{DoxyParamCaption}\item[{size\+\_\+t}]{index}{, }\item[{bool}]{value}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00035}{35}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00035\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00036\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (index\ >=\ wire\_count)\ \{}
+\DoxyCodeLine{00037\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{throw}\ std::out\_of\_range(\textcolor{stringliteral}{"{}Wire\ index\ out\ of\ range"{}});}
+\DoxyCodeLine{00038\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00039\ }
+\DoxyCodeLine{00040\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (value)\ \{}
+\DoxyCodeLine{00041\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \_wires[index\ /\ 8]\ |=\ std::byte(1\ <<\ (index\ \%\ 8));}
+\DoxyCodeLine{00042\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00043\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \_wires[index\ /\ 8]\ \&=\ std::byte(\string~(1\ <<\ (index\ \%\ 8)));}
+\DoxyCodeLine{00044\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00045\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a2344b6e425ad8e8ad7df9fc5f063f099_a2344b6e425ad8e8ad7df9fc5f063f099}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!srLatchResetWire@{srLatchResetWire}}
+\index{srLatchResetWire@{srLatchResetWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{srLatchResetWire()}{srLatchResetWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a2344b6e425ad8e8ad7df9fc5f063f099_a2344b6e425ad8e8ad7df9fc5f063f099} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+sr\+Latch\+Reset\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{bool}]{set\+Input}{, }\item[{bool}]{reset\+Input}{, }\item[{bool}]{reset}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00427}{427}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00427\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00428\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00429\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00430\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (setInput\ \&\&\ !resetInput)\ \{}
+\DoxyCodeLine{00431\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 1);}
+\DoxyCodeLine{00432\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (!setInput\ \&\&\ resetInput)\ \{}
+\DoxyCodeLine{00433\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00434\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (setInput\ \&\&\ resetInput)\ \{}
+\DoxyCodeLine{00435\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Warning:\ SR\ Latch\ invalid\ state\ (S=1,\ R=1).\ Output\ set\ to\ 0"{}}\ <<\ std::endl;}
+\DoxyCodeLine{00436\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);\ \ \textcolor{comment}{//\ Reset\ line\ priority\ over\ set\ line}}
+\DoxyCodeLine{00437\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00438\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ac31da3bb9377c65abb86feebf61a84d5_ac31da3bb9377c65abb86feebf61a84d5}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!srLatchResetWire\_Commit@{srLatchResetWire\_Commit}}
+\index{srLatchResetWire\_Commit@{srLatchResetWire\_Commit}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{srLatchResetWire\_Commit()}{srLatchResetWire\_Commit()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ac31da3bb9377c65abb86feebf61a84d5_ac31da3bb9377c65abb86feebf61a84d5} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+sr\+Latch\+Reset\+Wire\+\_\+\+Commit (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_s_r_l_a_t_c_h___reset___state}{SRLATCH\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00587}{587}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00587\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00588\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.has\_temp\_state)\ \{}
+\DoxyCodeLine{00589\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ state.temp\_state);}
+\DoxyCodeLine{00590\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00591\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00592\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a90540049048b4039b6062fb4b883a51f_a90540049048b4039b6062fb4b883a51f}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!srLatchResetWire\_Sequential@{srLatchResetWire\_Sequential}}
+\index{srLatchResetWire\_Sequential@{srLatchResetWire\_Sequential}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{srLatchResetWire\_Sequential()}{srLatchResetWire\_Sequential()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a90540049048b4039b6062fb4b883a51f_a90540049048b4039b6062fb4b883a51f} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+sr\+Latch\+Reset\+Wire\+\_\+\+Sequential (\begin{DoxyParamCaption}\item[{bool}]{set\+Input}{, }\item[{bool}]{reset\+Input}{, }\item[{bool}]{reset}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_s_r_l_a_t_c_h___reset___state}{SRLATCH\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00571}{571}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00571\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00572\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00573\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00574\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00575\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (setInput\ \&\&\ !resetInput)\ \{}
+\DoxyCodeLine{00576\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 1;}
+\DoxyCodeLine{00577\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00578\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (!setInput\ \&\&\ resetInput)\ \{}
+\DoxyCodeLine{00579\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00580\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00581\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (setInput\ \&\&\ resetInput)\ \{}
+\DoxyCodeLine{00582\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Warning:\ SR\ Latch\ invalid\ state\ (S=1,\ R=1).\ Output\ set\ to\ 0"{}}\ <<\ std::endl;}
+\DoxyCodeLine{00583\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00584\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};\ \ \textcolor{comment}{//\ Reset\ line\ priority\ over\ set\ line}}
+\DoxyCodeLine{00585\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00586\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a25e7bc834803f89405c7f63ec2d294ac_a25e7bc834803f89405c7f63ec2d294ac}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!supply0Primitive@{supply0Primitive}}
+\index{supply0Primitive@{supply0Primitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{supply0Primitive()}{supply0Primitive()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a25e7bc834803f89405c7f63ec2d294ac_a25e7bc834803f89405c7f63ec2d294ac} 
+bool GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+supply0\+Primitive (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00883}{883}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00883\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00884\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00885\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a59b123b89495d27f15f7d7ef4dc4221b_a59b123b89495d27f15f7d7ef4dc4221b}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!supply1Primitive@{supply1Primitive}}
+\index{supply1Primitive@{supply1Primitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{supply1Primitive()}{supply1Primitive()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a59b123b89495d27f15f7d7ef4dc4221b_a59b123b89495d27f15f7d7ef4dc4221b} 
+bool GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+supply1\+Primitive (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00879}{879}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00879\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00880\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00881\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a30e564284101f4fb5f3631a820ff5622_a30e564284101f4fb5f3631a820ff5622}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tffResetWire@{tffResetWire}}
+\index{tffResetWire@{tffResetWire}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tffResetWire()}{tffResetWire()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a30e564284101f4fb5f3631a820ff5622_a30e564284101f4fb5f3631a820ff5622} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tff\+Reset\+Wire (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{bool}]{t\+Input}{, }\item[{bool}]{reset}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00453}{453}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00453\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00454\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00455\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ 0);}
+\DoxyCodeLine{00456\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (tInput)\ \{}
+\DoxyCodeLine{00457\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !getWire(parentWire));}
+\DoxyCodeLine{00458\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00459\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_af64ad25359729890dfebad2e80f4867f_af64ad25359729890dfebad2e80f4867f}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tffResetWire\_Commit@{tffResetWire\_Commit}}
+\index{tffResetWire\_Commit@{tffResetWire\_Commit}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tffResetWire\_Commit()}{tffResetWire\_Commit()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_af64ad25359729890dfebad2e80f4867f_af64ad25359729890dfebad2e80f4867f} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tff\+Reset\+Wire\+\_\+\+Commit (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_t_f_f___reset___state}{TFF\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00624}{624}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00624\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00625\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.has\_temp\_state)\ \{}
+\DoxyCodeLine{00626\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ state.temp\_state);}
+\DoxyCodeLine{00627\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00628\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00629\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a53815380c0b9a3d7f5f8286c4ecbce97_a53815380c0b9a3d7f5f8286c4ecbce97}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tffResetWire\_Sequential@{tffResetWire\_Sequential}}
+\index{tffResetWire\_Sequential@{tffResetWire\_Sequential}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tffResetWire\_Sequential()}{tffResetWire\_Sequential()}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a53815380c0b9a3d7f5f8286c4ecbce97_a53815380c0b9a3d7f5f8286c4ecbce97} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tff\+Reset\+Wire\+\_\+\+Sequential (\begin{DoxyParamCaption}\item[{bool}]{t\+Input}{, }\item[{bool}]{reset}{, }\item[{struct \doxymbox{\hyperlink{struct_simulator_1_1_wires__2_state_1_1_t_f_f___reset___state}{TFF\+\_\+\+Reset\+\_\+\+State}} \&}]{state}{, }\item[{uint32\+\_\+t}]{current\+Wire\+Value}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00615}{615}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00615\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00616\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (reset)\ \{}
+\DoxyCodeLine{00617\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ 0;}
+\DoxyCodeLine{00618\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00619\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (tInput)\ \{}
+\DoxyCodeLine{00620\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.temp\_state\ =\ !currentWireValue;}
+\DoxyCodeLine{00621\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ state.has\_temp\_state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00622\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00623\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ad6ca5dae6cf51d3d80961b05b40b5122_ad6ca5dae6cf51d3d80961b05b40b5122}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tranif0Primitive@{tranif0Primitive}}
+\index{tranif0Primitive@{tranif0Primitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tranif0Primitive()}{tranif0Primitive()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ad6ca5dae6cf51d3d80961b05b40b5122_ad6ca5dae6cf51d3d80961b05b40b5122} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tranif0\+Primitive (\begin{DoxyParamCaption}\item[{bool}]{control}{, }\item[{bool \&}]{input}{, }\item[{bool \&}]{output}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00847}{847}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00847\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00848\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!control)\ \{}
+\DoxyCodeLine{00849\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ tranPrimitive(input,\ output);}
+\DoxyCodeLine{00850\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00851\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_adbbf4539ff236d73972ec71852e9379b_adbbf4539ff236d73972ec71852e9379b}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tranif0Primitive@{tranif0Primitive}}
+\index{tranif0Primitive@{tranif0Primitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tranif0Primitive()}{tranif0Primitive()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_adbbf4539ff236d73972ec71852e9379b_adbbf4539ff236d73972ec71852e9379b} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tranif0\+Primitive (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{control\+Wire}{, }\item[{uint32\+\_\+t}]{input\+Wire}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00841}{841}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00841\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00842\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!getWire(controlWire))\ \{}
+\DoxyCodeLine{00843\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ tranPrimitive(inputWire,\ outputWire);}
+\DoxyCodeLine{00844\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00845\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a56b385cbd8229087f2be2212175651a7_a56b385cbd8229087f2be2212175651a7}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tranif1Primitive@{tranif1Primitive}}
+\index{tranif1Primitive@{tranif1Primitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tranif1Primitive()}{tranif1Primitive()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a56b385cbd8229087f2be2212175651a7_a56b385cbd8229087f2be2212175651a7} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tranif1\+Primitive (\begin{DoxyParamCaption}\item[{bool}]{control}{, }\item[{bool \&}]{input}{, }\item[{bool \&}]{output}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00872}{872}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00872\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00873\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (control)\ \{}
+\DoxyCodeLine{00874\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ tranPrimitive(input,\ output);}
+\DoxyCodeLine{00875\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00876\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a5a59dd2dde89c537058a099a18ea817a_a5a59dd2dde89c537058a099a18ea817a}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tranif1Primitive@{tranif1Primitive}}
+\index{tranif1Primitive@{tranif1Primitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tranif1Primitive()}{tranif1Primitive()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a5a59dd2dde89c537058a099a18ea817a_a5a59dd2dde89c537058a099a18ea817a} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tranif1\+Primitive (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{control\+Wire}{, }\item[{uint32\+\_\+t}]{input\+Wire}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00866}{866}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00866\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00867\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (getWire(controlWire))\ \{}
+\DoxyCodeLine{00868\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ tranPrimitive(inputWire,\ outputWire);}
+\DoxyCodeLine{00869\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00870\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_abdd6eb4cb517ff90732eb386d86ea0be_abdd6eb4cb517ff90732eb386d86ea0be}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tranPrimitive@{tranPrimitive}}
+\index{tranPrimitive@{tranPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tranPrimitive()}{tranPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [1/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_abdd6eb4cb517ff90732eb386d86ea0be_abdd6eb4cb517ff90732eb386d86ea0be} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tran\+Primitive (\begin{DoxyParamCaption}\item[{bool \&}]{input}{, }\item[{bool \&}]{output}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00821}{821}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00821\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00822\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (input\ ==\ output)\ \{}
+\DoxyCodeLine{00823\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};\ \textcolor{comment}{//\ No\ change\ needed}}
+\DoxyCodeLine{00824\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00825\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ resolvedValue\ =\ input;}
+\DoxyCodeLine{00826\ \ \ \ \ \ \ \ \ \ \ \ \ input\ =\ resolvedValue;}
+\DoxyCodeLine{00827\ \ \ \ \ \ \ \ \ \ \ \ \ output\ =\ resolvedValue;}
+\DoxyCodeLine{00828\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_aa30743558db7ff3de297acf0ba069823_aa30743558db7ff3de297acf0ba069823}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!tranPrimitive@{tranPrimitive}}
+\index{tranPrimitive@{tranPrimitive}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{tranPrimitive()}{tranPrimitive()}\hspace{0.1cm}{\footnotesize\ttfamily [2/2]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_aa30743558db7ff3de297acf0ba069823_aa30743558db7ff3de297acf0ba069823} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+tran\+Primitive (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{input}{, }\item[{uint32\+\_\+t}]{output}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00809}{809}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00809\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00810\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ inputValue\ =\ getWire(input);}
+\DoxyCodeLine{00811\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ outputValue\ =\ getWire(output);}
+\DoxyCodeLine{00812\ }
+\DoxyCodeLine{00813\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputValue\ ==\ outputValue)\ \{}
+\DoxyCodeLine{00814\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};\ \textcolor{comment}{//\ No\ change\ needed}}
+\DoxyCodeLine{00815\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00816\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ resolvedValue\ =\ outputValue;\ \textcolor{comment}{//\ Resolve\ to\ output's\ current\ value}}
+\DoxyCodeLine{00817\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(input,\ resolvedValue);}
+\DoxyCodeLine{00818\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(output,\ resolvedValue);}
+\DoxyCodeLine{00819\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_ac811ee98b095112d1aa03cbdd1ae9def_ac811ee98b095112d1aa03cbdd1ae9def}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!xnorWires@{xnorWires}}
+\index{xnorWires@{xnorWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{xnorWires()}{xnorWires()}\hspace{0.1cm}{\footnotesize\ttfamily [1/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_ac811ee98b095112d1aa03cbdd1ae9def_ac811ee98b095112d1aa03cbdd1ae9def} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+xnor\+Wires (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{input\+Wires}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00278}{278}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00278\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00279\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputWires.empty())\ \{}
+\DoxyCodeLine{00280\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{00281\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00282\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00283\ }
+\DoxyCodeLine{00284\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ result\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00285\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ wire\ :\ inputWires)\ \{}
+\DoxyCodeLine{00286\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ result\ \string^=\ getWire(wire);}
+\DoxyCodeLine{00287\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00288\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ !result);}
+\DoxyCodeLine{00289\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a0a0f9bdf1aa2272dfe263093f633a406_a0a0f9bdf1aa2272dfe263093f633a406}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!xnorWires@{xnorWires}}
+\index{xnorWires@{xnorWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{xnorWires()}{xnorWires()}\hspace{0.1cm}{\footnotesize\ttfamily [2/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a0a0f9bdf1aa2272dfe263093f633a406_a0a0f9bdf1aa2272dfe263093f633a406} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+xnor\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00270}{270}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00270\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00271\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ !(getWire(parentWire)\ \string^\ getWire(childWire)));}
+\DoxyCodeLine{00272\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a1edbd2638587c1f8d28c0fa7f7aec343_a1edbd2638587c1f8d28c0fa7f7aec343}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!xnorWires@{xnorWires}}
+\index{xnorWires@{xnorWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{xnorWires()}{xnorWires()}\hspace{0.1cm}{\footnotesize\ttfamily [3/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a1edbd2638587c1f8d28c0fa7f7aec343_a1edbd2638587c1f8d28c0fa7f7aec343} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+xnor\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00274}{274}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00274\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00275\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ !(getWire(parentWire)\ \string^\ getWire(childWire)));}
+\DoxyCodeLine{00276\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_af792fb5b5427ec0b0bd0bdb1af5e91ed_af792fb5b5427ec0b0bd0bdb1af5e91ed}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!xorWires@{xorWires}}
+\index{xorWires@{xorWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{xorWires()}{xorWires()}\hspace{0.1cm}{\footnotesize\ttfamily [1/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_af792fb5b5427ec0b0bd0bdb1af5e91ed_af792fb5b5427ec0b0bd0bdb1af5e91ed} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+xor\+Wires (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ uint32\+\_\+t $>$ \&}]{input\+Wires}{, }\item[{uint32\+\_\+t}]{output\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00178}{178}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00178\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00179\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (inputWires.empty())\ \{}
+\DoxyCodeLine{00180\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{00181\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00182\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00183\ }
+\DoxyCodeLine{00184\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ result\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00185\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ wire\ :\ inputWires)\ \{}
+\DoxyCodeLine{00186\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ result\ \string^=\ getWire(wire);}
+\DoxyCodeLine{00187\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00188\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(outputWire,\ result);}
+\DoxyCodeLine{00189\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_aa171898a1983da6eb8b8c08904920faa_aa171898a1983da6eb8b8c08904920faa}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!xorWires@{xorWires}}
+\index{xorWires@{xorWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{xorWires()}{xorWires()}\hspace{0.1cm}{\footnotesize\ttfamily [2/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_aa171898a1983da6eb8b8c08904920faa_aa171898a1983da6eb8b8c08904920faa} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+xor\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00170}{170}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00170\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00171\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(parentWire,\ getWire(parentWire)\ \string^\ getWire(childWire));}
+\DoxyCodeLine{00172\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a6e747340f4d86b2e6600f05dd790d681_a6e747340f4d86b2e6600f05dd790d681}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!xorWires@{xorWires}}
+\index{xorWires@{xorWires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{xorWires()}{xorWires()}\hspace{0.1cm}{\footnotesize\ttfamily [3/3]}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a6e747340f4d86b2e6600f05dd790d681_a6e747340f4d86b2e6600f05dd790d681} 
+void GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+xor\+Wires (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{parent\+Wire}{, }\item[{uint32\+\_\+t}]{child\+Wire}{, }\item[{uint32\+\_\+t}]{next\+Wire}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00174}{174}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00174\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00175\ \ \ \ \ \ \ \ \ \ \ \ \ setWire(nextWire,\ getWire(parentWire)\ \string^\ getWire(childWire));}
+\DoxyCodeLine{00176\ \ \ \ \ \ \ \ \ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-variable-members}
+\Hypertarget{struct_simulator_1_1_wires__2_state_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{struct_simulator_1_1_wires__2_state_a41273d47d74573cf16734dfa4f9e5654_a41273d47d74573cf16734dfa4f9e5654}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!\_wires@{\_wires}}
+\index{\_wires@{\_wires}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{\_wires}{\_wires}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_a41273d47d74573cf16734dfa4f9e5654_a41273d47d74573cf16734dfa4f9e5654} 
+std::\+vector$<$std::\+byte$>$ GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+\+\_\+wires}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00028}{28}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+\Hypertarget{struct_simulator_1_1_wires__2_state_af70947865c74efadea08c38b2cf8228b_af70947865c74efadea08c38b2cf8228b}\index{Simulator::Wires\_2State@{Simulator::Wires\_2State}!wire\_count@{wire\_count}}
+\index{wire\_count@{wire\_count}!Simulator::Wires\_2State@{Simulator::Wires\_2State}}
+\doxysubsubsection{\texorpdfstring{wire\_count}{wire\_count}}
+{\footnotesize\ttfamily \label{struct_simulator_1_1_wires__2_state_af70947865c74efadea08c38b2cf8228b_af70947865c74efadea08c38b2cf8228b} 
+uint32\+\_\+t GPGA\+\_\+2\+STATE\+\_\+\+SIM::\+\+Wires\+\_\+2\+State::\+wire\+\_\+count}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastsimulator_8mm_source_l00027}{27}} of file \doxymbox{\hyperlink{fastsimulator_8mm_source}{fastsimulator.\+mm}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+fastsim/\+fastsimulator.\+mm\end{DoxyCompactItemize}

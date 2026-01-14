@@ -1,0 +1,207 @@
+\doxysection{gpga::\+Scheduler\+Vm\+Delay\+Assign\+Entry Struct Reference}
+\hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry}{}\label{structgpga_1_1_scheduler_vm_delay_assign_entry}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+
+
+Delayed assignment entry record.  
+
+
+
+
+{\ttfamily \+\#include $<$scheduler\+\_\+vm.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_a1c505a839a66c776cbb9aade92bf0e2b_a1c505a839a66c776cbb9aade92bf0e2b}{flags}} = 0u
+\begin{DoxyCompactList}\small\item\em Assignment flags. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_ac47eb6e272ad456b53dd093f756e9e25_ac47eb6e272ad456b53dd093f756e9e25}{signal\+\_\+id}} = 0u
+\begin{DoxyCompactList}\small\item\em Target signal id. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_a9f2edf6e29a83f063bee68eb2d8bcabe_a9f2edf6e29a83f063bee68eb2d8bcabe}{rhs\+\_\+expr}} = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}
+\begin{DoxyCompactList}\small\item\em RHS expression offset. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_a4023abd4b32ab9a7e6c5f8aeb886fb1c_a4023abd4b32ab9a7e6c5f8aeb886fb1c}{delay\+\_\+expr}} = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}
+\begin{DoxyCompactList}\small\item\em Delay expression offset. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_a35b33d3fe85d905aba5d7d302bdc7f3e_a35b33d3fe85d905aba5d7d302bdc7f3e}{idx\+\_\+expr}} = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}
+\begin{DoxyCompactList}\small\item\em Index expression offset. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_ab66bb3858b7755804b623c7f8cb21892_ab66bb3858b7755804b623c7f8cb21892}{width}} = 0u
+\begin{DoxyCompactList}\small\item\em Assignment width. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_a28b5068a3880bdc0ac085bd96f58cbd1_a28b5068a3880bdc0ac085bd96f58cbd1}{base\+\_\+width}} = 0u
+\begin{DoxyCompactList}\small\item\em Base signal width. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_af37fcde841570e5ea3bfed0a70b34f03_af37fcde841570e5ea3bfed0a70b34f03}{range\+\_\+lsb}} = 0u
+\begin{DoxyCompactList}\small\item\em Range LSB. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_af89cd48c934b235dbb49b65e776c6369_af89cd48c934b235dbb49b65e776c6369}{array\+\_\+size}} = 0u
+\begin{DoxyCompactList}\small\item\em Array size. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_a6b0fdaeb129596625862cbe97b81bf84_a6b0fdaeb129596625862cbe97b81bf84}{pulse\+\_\+reject\+\_\+expr}} = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}
+\begin{DoxyCompactList}\small\item\em Pulse reject expr. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry_abe22685f054ee46e7d379663ee145aac_abe22685f054ee46e7d379663ee145aac}{pulse\+\_\+error\+\_\+expr}} = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}
+\begin{DoxyCompactList}\small\item\em Pulse error expr. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Delayed assignment entry record. 
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00360}{360}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_af89cd48c934b235dbb49b65e776c6369_af89cd48c934b235dbb49b65e776c6369}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!array\_size@{array\_size}}
+\index{array\_size@{array\_size}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{array\_size}{array\_size}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_af89cd48c934b235dbb49b65e776c6369_af89cd48c934b235dbb49b65e776c6369} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+array\+\_\+size = 0u}
+
+
+
+Array size. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00369}{369}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_a28b5068a3880bdc0ac085bd96f58cbd1_a28b5068a3880bdc0ac085bd96f58cbd1}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!base\_width@{base\_width}}
+\index{base\_width@{base\_width}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{base\_width}{base\_width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_a28b5068a3880bdc0ac085bd96f58cbd1_a28b5068a3880bdc0ac085bd96f58cbd1} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+base\+\_\+width = 0u}
+
+
+
+Base signal width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00367}{367}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_a4023abd4b32ab9a7e6c5f8aeb886fb1c_a4023abd4b32ab9a7e6c5f8aeb886fb1c}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!delay\_expr@{delay\_expr}}
+\index{delay\_expr@{delay\_expr}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{delay\_expr}{delay\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_a4023abd4b32ab9a7e6c5f8aeb886fb1c_a4023abd4b32ab9a7e6c5f8aeb886fb1c} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+delay\+\_\+expr = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}}
+
+
+
+Delay expression offset. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00364}{364}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_a1c505a839a66c776cbb9aade92bf0e2b_a1c505a839a66c776cbb9aade92bf0e2b}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!flags@{flags}}
+\index{flags@{flags}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{flags}{flags}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_a1c505a839a66c776cbb9aade92bf0e2b_a1c505a839a66c776cbb9aade92bf0e2b} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+flags = 0u}
+
+
+
+Assignment flags. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00361}{361}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_a35b33d3fe85d905aba5d7d302bdc7f3e_a35b33d3fe85d905aba5d7d302bdc7f3e}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!idx\_expr@{idx\_expr}}
+\index{idx\_expr@{idx\_expr}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{idx\_expr}{idx\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_a35b33d3fe85d905aba5d7d302bdc7f3e_a35b33d3fe85d905aba5d7d302bdc7f3e} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+idx\+\_\+expr = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}}
+
+
+
+Index expression offset. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00365}{365}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_abe22685f054ee46e7d379663ee145aac_abe22685f054ee46e7d379663ee145aac}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!pulse\_error\_expr@{pulse\_error\_expr}}
+\index{pulse\_error\_expr@{pulse\_error\_expr}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{pulse\_error\_expr}{pulse\_error\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_abe22685f054ee46e7d379663ee145aac_abe22685f054ee46e7d379663ee145aac} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+pulse\+\_\+error\+\_\+expr = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}}
+
+
+
+Pulse error expr. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00371}{371}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_a6b0fdaeb129596625862cbe97b81bf84_a6b0fdaeb129596625862cbe97b81bf84}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!pulse\_reject\_expr@{pulse\_reject\_expr}}
+\index{pulse\_reject\_expr@{pulse\_reject\_expr}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{pulse\_reject\_expr}{pulse\_reject\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_a6b0fdaeb129596625862cbe97b81bf84_a6b0fdaeb129596625862cbe97b81bf84} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+pulse\+\_\+reject\+\_\+expr = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}}
+
+
+
+Pulse reject expr. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00370}{370}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_af37fcde841570e5ea3bfed0a70b34f03_af37fcde841570e5ea3bfed0a70b34f03}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!range\_lsb@{range\_lsb}}
+\index{range\_lsb@{range\_lsb}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{range\_lsb}{range\_lsb}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_af37fcde841570e5ea3bfed0a70b34f03_af37fcde841570e5ea3bfed0a70b34f03} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+range\+\_\+lsb = 0u}
+
+
+
+Range LSB. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00368}{368}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_a9f2edf6e29a83f063bee68eb2d8bcabe_a9f2edf6e29a83f063bee68eb2d8bcabe}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!rhs\_expr@{rhs\_expr}}
+\index{rhs\_expr@{rhs\_expr}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{rhs\_expr}{rhs\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_a9f2edf6e29a83f063bee68eb2d8bcabe_a9f2edf6e29a83f063bee68eb2d8bcabe} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+rhs\+\_\+expr = \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{k\+Scheduler\+Vm\+Expr\+No\+Extra}}}
+
+
+
+RHS expression offset. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00363}{363}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_ac47eb6e272ad456b53dd093f756e9e25_ac47eb6e272ad456b53dd093f756e9e25}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!signal\_id@{signal\_id}}
+\index{signal\_id@{signal\_id}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{signal\_id}{signal\_id}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_ac47eb6e272ad456b53dd093f756e9e25_ac47eb6e272ad456b53dd093f756e9e25} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+signal\+\_\+id = 0u}
+
+
+
+Target signal id. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00362}{362}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_delay_assign_entry_ab66bb3858b7755804b623c7f8cb21892_ab66bb3858b7755804b623c7f8cb21892}\index{gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}!width@{width}}
+\index{width@{width}!gpga::SchedulerVmDelayAssignEntry@{gpga::SchedulerVmDelayAssignEntry}}
+\doxysubsubsection{\texorpdfstring{width}{width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_delay_assign_entry_ab66bb3858b7755804b623c7f8cb21892_ab66bb3858b7755804b623c7f8cb21892} 
+uint32\+\_\+t gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry::\+width = 0u}
+
+
+
+Assignment width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{scheduler__vm_8hh_source_l00366}{366}} of file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+core/\+\doxymbox{\hyperlink{scheduler__vm_8hh}{scheduler\+\_\+vm.\+hh}}\end{DoxyCompactItemize}

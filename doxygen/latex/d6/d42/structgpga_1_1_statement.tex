@@ -1,0 +1,639 @@
+\doxysection{gpga::\+Statement Struct Reference}
+\hypertarget{structgpga_1_1_statement}{}\label{structgpga_1_1_statement}\index{gpga::Statement@{gpga::Statement}}
+
+
+\doxylink{structgpga_1_1_statement}{Statement} node.  
+
+
+
+
+{\ttfamily \+\#include $<$ast.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{namespacegpga_ad55126d5d8d544f901ec553875afdeac_ad55126d5d8d544f901ec553875afdeac}{Statement\+Kind}} \doxymbox{\hyperlink{structgpga_1_1_statement_a2ea1b252103f8f989abc38c0838bc950_a2ea1b252103f8f989abc38c0838bc950}{kind}} = \doxymbox{\hyperlink{namespacegpga_ad55126d5d8d544f901ec553875afdeac_ad55126d5d8d544f901ec553875afdeaca4bf03a5b9add1cfbbc9bd41c2155f568}{Statement\+Kind::\+k\+Assign}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_statement}{Statement} kind. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{namespacegpga_adaac558f3fe4d30cc221099c2850c0ea_adaac558f3fe4d30cc221099c2850c0ea}{Case\+Kind}} \doxymbox{\hyperlink{structgpga_1_1_statement_a3269e680e8dfb5dc47e0f8451a9325cd_a3269e680e8dfb5dc47e0f8451a9325cd}{case\+\_\+kind}} = \doxymbox{\hyperlink{namespacegpga_adaac558f3fe4d30cc221099c2850c0ea_adaac558f3fe4d30cc221099c2850c0eaad6a88e272e2adb0cf6e34009c73914de}{Case\+Kind::\+k\+Case}}
+\begin{DoxyCompactList}\small\item\em Case variant. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{structgpga_1_1_sequential_assign}{Sequential\+Assign}} \doxymbox{\hyperlink{structgpga_1_1_statement_ad7c1e93bd6dd5bf24dcfa3d014302b8a_ad7c1e93bd6dd5bf24dcfa3d014302b8a}{assign}}
+\begin{DoxyCompactList}\small\item\em Assignment payload. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_statement_a8779f696521a0479c9a119c27ef5c269_a8779f696521a0479c9a119c27ef5c269}{is\+\_\+procedural}} = false
+\begin{DoxyCompactList}\small\item\em True for procedural assignments. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_ab1a7cdb546c429885137fc830bca0aae_ab1a7cdb546c429885137fc830bca0aae}{for\+\_\+init\+\_\+lhs}}
+\begin{DoxyCompactList}\small\item\em LHS for for-\/loop init. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a5742b6f25773f6cce0a25f2c5619ab69_a5742b6f25773f6cce0a25f2c5619ab69}{for\+\_\+init\+\_\+rhs}}
+\begin{DoxyCompactList}\small\item\em RHS for for-\/loop init. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_afb52bff561535c119d974ec26ed481d5_afb52bff561535c119d974ec26ed481d5}{for\+\_\+condition}}
+\begin{DoxyCompactList}\small\item\em For-\/loop condition. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_a4b266edc4b42eaa18fe9a6cc0068e563_a4b266edc4b42eaa18fe9a6cc0068e563}{for\+\_\+step\+\_\+lhs}}
+\begin{DoxyCompactList}\small\item\em LHS for for-\/loop step. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a9c45c7f547c57b69efa3f96d88256dc1_a9c45c7f547c57b69efa3f96d88256dc1}{for\+\_\+step\+\_\+rhs}}
+\begin{DoxyCompactList}\small\item\em RHS for for-\/loop step. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a62e33db8bccdd6cc026de505113d05d5_a62e33db8bccdd6cc026de505113d05d5}{for\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em For-\/loop body. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a0b713e792df8379de4ccc6d5a0a7c119_a0b713e792df8379de4ccc6d5a0a7c119}{while\+\_\+condition}}
+\begin{DoxyCompactList}\small\item\em While-\/loop condition. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_ad3fc52392ed0fe259f904bb9d6cf966a_ad3fc52392ed0fe259f904bb9d6cf966a}{while\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em While-\/loop body. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_aad22142d4b898f7de6901a686e00cd78_aad22142d4b898f7de6901a686e00cd78}{repeat\+\_\+count}}
+\begin{DoxyCompactList}\small\item\em Repeat count expression. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a1eb6310797323f580dd435d009cefb2f_a1eb6310797323f580dd435d009cefb2f}{repeat\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em Repeat-\/loop body. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_aeccd747b6e3a1efd07c149f8924b6e2c_aeccd747b6e3a1efd07c149f8924b6e2c}{delay}}
+\begin{DoxyCompactList}\small\item\em Delay expression. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a1a350995dea62a2baa0621848a42c4d6_a1a350995dea62a2baa0621848a42c4d6}{delay\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em Body after delay. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{namespacegpga_a02efc712a8e06781fc9d34ee4bd5156e_a02efc712a8e06781fc9d34ee4bd5156e}{Event\+Edge\+Kind}} \doxymbox{\hyperlink{structgpga_1_1_statement_aa4488549566c0b777ed4fc4d793f5560_aa4488549566c0b777ed4fc4d793f5560}{event\+\_\+edge}} = \doxymbox{\hyperlink{namespacegpga_a02efc712a8e06781fc9d34ee4bd5156e_a02efc712a8e06781fc9d34ee4bd5156ea198158a4155a179dc73ad4bea1159c1d}{Event\+Edge\+Kind::\+k\+Any}}
+\begin{DoxyCompactList}\small\item\em Event edge qualifier. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_acd806dd682d2fcf92e794bc4ed80e84c_acd806dd682d2fcf92e794bc4ed80e84c}{event\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em Single event expression. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_event_item}{Event\+Item}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_aa6f5eb81654d52b29ec590e288cec83b_aa6f5eb81654d52b29ec590e288cec83b}{event\+\_\+items}}
+\begin{DoxyCompactList}\small\item\em Event control list. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a6fe24a8521048d3ac20ee4f5c194c371_a6fe24a8521048d3ac20ee4f5c194c371}{event\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em Body after event control. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a2243c0576013b5d73f10d1022c3817f4_a2243c0576013b5d73f10d1022c3817f4}{wait\+\_\+condition}}
+\begin{DoxyCompactList}\small\item\em Wait condition. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a8eef4732df6f8a425b02289d014cd983_a8eef4732df6f8a425b02289d014cd983}{wait\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em Wait body. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a48fca3b36418b3554fe66dcb6692df87_a48fca3b36418b3554fe66dcb6692df87}{forever\+\_\+body}}
+\begin{DoxyCompactList}\small\item\em Forever-\/loop body. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_ab9cc30fefc9287a7bc8948066dd3f5be_ab9cc30fefc9287a7bc8948066dd3f5be}{fork\+\_\+branches}}
+\begin{DoxyCompactList}\small\item\em Forked branches. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_a41d4dd42a231b752844ece302badb248_a41d4dd42a231b752844ece302badb248}{disable\+\_\+target}}
+\begin{DoxyCompactList}\small\item\em Disable target name. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_a7c5b9fa1e0f8f4e6b20538479beb823e_a7c5b9fa1e0f8f4e6b20538479beb823e}{task\+\_\+name}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_task}{Task} name for calls. \end{DoxyCompactList}\item 
+std::\+vector$<$ std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_ada64b459798d6c37977449cbcc652ee3_ada64b459798d6c37977449cbcc652ee3}{task\+\_\+args}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_task}{Task} call arguments. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_a5e9484e2254348e69986c2ebd1a07543_a5e9484e2254348e69986c2ebd1a07543}{trigger\+\_\+target}}
+\begin{DoxyCompactList}\small\item\em Event trigger target. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_afb02299128cf8e4648e99b91d1d6a334_afb02299128cf8e4648e99b91d1d6a334}{force\+\_\+target}}
+\begin{DoxyCompactList}\small\item\em Force target name. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_a4c76261e6721355cdd0eecc70fa52355_a4c76261e6721355cdd0eecc70fa52355}{release\+\_\+target}}
+\begin{DoxyCompactList}\small\item\em Release target name. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_af3d3c5aaddcc48b7224c9f515e3a81c3_af3d3c5aaddcc48b7224c9f515e3a81c3}{condition}}
+\begin{DoxyCompactList}\small\item\em If/\+ternary condition. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_adb38a4ad549bd9a9ecaa03b552bef035_adb38a4ad549bd9a9ecaa03b552bef035}{then\+\_\+branch}}
+\begin{DoxyCompactList}\small\item\em Then-\/branch statements. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a1c3a8ef08aebda48bc85d78ff8417d20_a1c3a8ef08aebda48bc85d78ff8417d20}{else\+\_\+branch}}
+\begin{DoxyCompactList}\small\item\em Else-\/branch statements. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_adda6ff5d3406a1d55520dfeaaed0ce38_adda6ff5d3406a1d55520dfeaaed0ce38}{block}}
+\begin{DoxyCompactList}\small\item\em Block statements. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_statement_aa08d8e7a229cce9b195f5fdfe9b9a315_aa08d8e7a229cce9b195f5fdfe9b9a315}{block\+\_\+label}}
+\begin{DoxyCompactList}\small\item\em Optional block label. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a7e17f74cd80c72e29476e49d5f86f044_a7e17f74cd80c72e29476e49d5f86f044}{case\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em Case expression. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_case_item}{Case\+Item}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a59a406aeaaa7de57dbaba7b7c83bac04_a59a406aeaaa7de57dbaba7b7c83bac04}{case\+\_\+items}}
+\begin{DoxyCompactList}\small\item\em Case item list. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_statement_a9629c9698716e09e82a6588bdb0b346b_a9629c9698716e09e82a6588bdb0b346b}{default\+\_\+branch}}
+\begin{DoxyCompactList}\small\item\em Default case branch. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+\doxylink{structgpga_1_1_statement}{Statement} node. 
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00367}{367}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_statement_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_statement_ad7c1e93bd6dd5bf24dcfa3d014302b8a_ad7c1e93bd6dd5bf24dcfa3d014302b8a}\index{gpga::Statement@{gpga::Statement}!assign@{assign}}
+\index{assign@{assign}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{assign}{assign}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_ad7c1e93bd6dd5bf24dcfa3d014302b8a_ad7c1e93bd6dd5bf24dcfa3d014302b8a} 
+\doxymbox{\hyperlink{structgpga_1_1_sequential_assign}{Sequential\+Assign}} gpga::\+\+Statement::\+assign}
+
+
+
+Assignment payload. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00370}{370}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_adda6ff5d3406a1d55520dfeaaed0ce38_adda6ff5d3406a1d55520dfeaaed0ce38}\index{gpga::Statement@{gpga::Statement}!block@{block}}
+\index{block@{block}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{block}{block}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_adda6ff5d3406a1d55520dfeaaed0ce38_adda6ff5d3406a1d55520dfeaaed0ce38} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+block}
+
+
+
+Block statements. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00401}{401}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_aa08d8e7a229cce9b195f5fdfe9b9a315_aa08d8e7a229cce9b195f5fdfe9b9a315}\index{gpga::Statement@{gpga::Statement}!block\_label@{block\_label}}
+\index{block\_label@{block\_label}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{block\_label}{block\_label}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_aa08d8e7a229cce9b195f5fdfe9b9a315_aa08d8e7a229cce9b195f5fdfe9b9a315} 
+std::\+string gpga::\+\+Statement::\+block\+\_\+label}
+
+
+
+Optional block label. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00402}{402}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a7e17f74cd80c72e29476e49d5f86f044_a7e17f74cd80c72e29476e49d5f86f044}\index{gpga::Statement@{gpga::Statement}!case\_expr@{case\_expr}}
+\index{case\_expr@{case\_expr}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{case\_expr}{case\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a7e17f74cd80c72e29476e49d5f86f044_a7e17f74cd80c72e29476e49d5f86f044} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+case\+\_\+expr}
+
+
+
+Case expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00403}{403}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a59a406aeaaa7de57dbaba7b7c83bac04_a59a406aeaaa7de57dbaba7b7c83bac04}\index{gpga::Statement@{gpga::Statement}!case\_items@{case\_items}}
+\index{case\_items@{case\_items}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{case\_items}{case\_items}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a59a406aeaaa7de57dbaba7b7c83bac04_a59a406aeaaa7de57dbaba7b7c83bac04} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_case_item}{Case\+Item}}$>$ gpga::\+\+Statement::\+case\+\_\+items}
+
+
+
+Case item list. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00404}{404}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a3269e680e8dfb5dc47e0f8451a9325cd_a3269e680e8dfb5dc47e0f8451a9325cd}\index{gpga::Statement@{gpga::Statement}!case\_kind@{case\_kind}}
+\index{case\_kind@{case\_kind}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{case\_kind}{case\_kind}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a3269e680e8dfb5dc47e0f8451a9325cd_a3269e680e8dfb5dc47e0f8451a9325cd} 
+\doxymbox{\hyperlink{namespacegpga_adaac558f3fe4d30cc221099c2850c0ea_adaac558f3fe4d30cc221099c2850c0ea}{Case\+Kind}} gpga::\+\+Statement::\+case\+\_\+kind = \doxymbox{\hyperlink{namespacegpga_adaac558f3fe4d30cc221099c2850c0ea_adaac558f3fe4d30cc221099c2850c0eaad6a88e272e2adb0cf6e34009c73914de}{Case\+Kind::\+k\+Case}}}
+
+
+
+Case variant. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00369}{369}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_af3d3c5aaddcc48b7224c9f515e3a81c3_af3d3c5aaddcc48b7224c9f515e3a81c3}\index{gpga::Statement@{gpga::Statement}!condition@{condition}}
+\index{condition@{condition}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{condition}{condition}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_af3d3c5aaddcc48b7224c9f515e3a81c3_af3d3c5aaddcc48b7224c9f515e3a81c3} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+condition}
+
+
+
+If/\+ternary condition. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00398}{398}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a9629c9698716e09e82a6588bdb0b346b_a9629c9698716e09e82a6588bdb0b346b}\index{gpga::Statement@{gpga::Statement}!default\_branch@{default\_branch}}
+\index{default\_branch@{default\_branch}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{default\_branch}{default\_branch}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a9629c9698716e09e82a6588bdb0b346b_a9629c9698716e09e82a6588bdb0b346b} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+default\+\_\+branch}
+
+
+
+Default case branch. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00405}{405}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_aeccd747b6e3a1efd07c149f8924b6e2c_aeccd747b6e3a1efd07c149f8924b6e2c}\index{gpga::Statement@{gpga::Statement}!delay@{delay}}
+\index{delay@{delay}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{delay}{delay}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_aeccd747b6e3a1efd07c149f8924b6e2c_aeccd747b6e3a1efd07c149f8924b6e2c} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+delay}
+
+
+
+Delay expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00382}{382}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a1a350995dea62a2baa0621848a42c4d6_a1a350995dea62a2baa0621848a42c4d6}\index{gpga::Statement@{gpga::Statement}!delay\_body@{delay\_body}}
+\index{delay\_body@{delay\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{delay\_body}{delay\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a1a350995dea62a2baa0621848a42c4d6_a1a350995dea62a2baa0621848a42c4d6} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+delay\+\_\+body}
+
+
+
+Body after delay. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00383}{383}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a41d4dd42a231b752844ece302badb248_a41d4dd42a231b752844ece302badb248}\index{gpga::Statement@{gpga::Statement}!disable\_target@{disable\_target}}
+\index{disable\_target@{disable\_target}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{disable\_target}{disable\_target}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a41d4dd42a231b752844ece302badb248_a41d4dd42a231b752844ece302badb248} 
+std::\+string gpga::\+\+Statement::\+disable\+\_\+target}
+
+
+
+Disable target name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00392}{392}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a1c3a8ef08aebda48bc85d78ff8417d20_a1c3a8ef08aebda48bc85d78ff8417d20}\index{gpga::Statement@{gpga::Statement}!else\_branch@{else\_branch}}
+\index{else\_branch@{else\_branch}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{else\_branch}{else\_branch}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a1c3a8ef08aebda48bc85d78ff8417d20_a1c3a8ef08aebda48bc85d78ff8417d20} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+else\+\_\+branch}
+
+
+
+Else-\/branch statements. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00400}{400}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a6fe24a8521048d3ac20ee4f5c194c371_a6fe24a8521048d3ac20ee4f5c194c371}\index{gpga::Statement@{gpga::Statement}!event\_body@{event\_body}}
+\index{event\_body@{event\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{event\_body}{event\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a6fe24a8521048d3ac20ee4f5c194c371_a6fe24a8521048d3ac20ee4f5c194c371} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+event\+\_\+body}
+
+
+
+Body after event control. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00387}{387}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_aa4488549566c0b777ed4fc4d793f5560_aa4488549566c0b777ed4fc4d793f5560}\index{gpga::Statement@{gpga::Statement}!event\_edge@{event\_edge}}
+\index{event\_edge@{event\_edge}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{event\_edge}{event\_edge}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_aa4488549566c0b777ed4fc4d793f5560_aa4488549566c0b777ed4fc4d793f5560} 
+\doxymbox{\hyperlink{namespacegpga_a02efc712a8e06781fc9d34ee4bd5156e_a02efc712a8e06781fc9d34ee4bd5156e}{Event\+Edge\+Kind}} gpga::\+\+Statement::\+event\+\_\+edge = \doxymbox{\hyperlink{namespacegpga_a02efc712a8e06781fc9d34ee4bd5156e_a02efc712a8e06781fc9d34ee4bd5156ea198158a4155a179dc73ad4bea1159c1d}{Event\+Edge\+Kind::\+k\+Any}}}
+
+
+
+Event edge qualifier. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00384}{384}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_acd806dd682d2fcf92e794bc4ed80e84c_acd806dd682d2fcf92e794bc4ed80e84c}\index{gpga::Statement@{gpga::Statement}!event\_expr@{event\_expr}}
+\index{event\_expr@{event\_expr}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{event\_expr}{event\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_acd806dd682d2fcf92e794bc4ed80e84c_acd806dd682d2fcf92e794bc4ed80e84c} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+event\+\_\+expr}
+
+
+
+Single event expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00385}{385}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_aa6f5eb81654d52b29ec590e288cec83b_aa6f5eb81654d52b29ec590e288cec83b}\index{gpga::Statement@{gpga::Statement}!event\_items@{event\_items}}
+\index{event\_items@{event\_items}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{event\_items}{event\_items}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_aa6f5eb81654d52b29ec590e288cec83b_aa6f5eb81654d52b29ec590e288cec83b} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_event_item}{Event\+Item}}$>$ gpga::\+\+Statement::\+event\+\_\+items}
+
+
+
+Event control list. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00386}{386}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a62e33db8bccdd6cc026de505113d05d5_a62e33db8bccdd6cc026de505113d05d5}\index{gpga::Statement@{gpga::Statement}!for\_body@{for\_body}}
+\index{for\_body@{for\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{for\_body}{for\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a62e33db8bccdd6cc026de505113d05d5_a62e33db8bccdd6cc026de505113d05d5} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+for\+\_\+body}
+
+
+
+For-\/loop body. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00377}{377}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_afb52bff561535c119d974ec26ed481d5_afb52bff561535c119d974ec26ed481d5}\index{gpga::Statement@{gpga::Statement}!for\_condition@{for\_condition}}
+\index{for\_condition@{for\_condition}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{for\_condition}{for\_condition}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_afb52bff561535c119d974ec26ed481d5_afb52bff561535c119d974ec26ed481d5} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+for\+\_\+condition}
+
+
+
+For-\/loop condition. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00374}{374}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_ab1a7cdb546c429885137fc830bca0aae_ab1a7cdb546c429885137fc830bca0aae}\index{gpga::Statement@{gpga::Statement}!for\_init\_lhs@{for\_init\_lhs}}
+\index{for\_init\_lhs@{for\_init\_lhs}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{for\_init\_lhs}{for\_init\_lhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_ab1a7cdb546c429885137fc830bca0aae_ab1a7cdb546c429885137fc830bca0aae} 
+std::\+string gpga::\+\+Statement::\+for\+\_\+init\+\_\+lhs}
+
+
+
+LHS for for-\/loop init. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00372}{372}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a5742b6f25773f6cce0a25f2c5619ab69_a5742b6f25773f6cce0a25f2c5619ab69}\index{gpga::Statement@{gpga::Statement}!for\_init\_rhs@{for\_init\_rhs}}
+\index{for\_init\_rhs@{for\_init\_rhs}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{for\_init\_rhs}{for\_init\_rhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a5742b6f25773f6cce0a25f2c5619ab69_a5742b6f25773f6cce0a25f2c5619ab69} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+for\+\_\+init\+\_\+rhs}
+
+
+
+RHS for for-\/loop init. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00373}{373}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a4b266edc4b42eaa18fe9a6cc0068e563_a4b266edc4b42eaa18fe9a6cc0068e563}\index{gpga::Statement@{gpga::Statement}!for\_step\_lhs@{for\_step\_lhs}}
+\index{for\_step\_lhs@{for\_step\_lhs}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{for\_step\_lhs}{for\_step\_lhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a4b266edc4b42eaa18fe9a6cc0068e563_a4b266edc4b42eaa18fe9a6cc0068e563} 
+std::\+string gpga::\+\+Statement::\+for\+\_\+step\+\_\+lhs}
+
+
+
+LHS for for-\/loop step. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00375}{375}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a9c45c7f547c57b69efa3f96d88256dc1_a9c45c7f547c57b69efa3f96d88256dc1}\index{gpga::Statement@{gpga::Statement}!for\_step\_rhs@{for\_step\_rhs}}
+\index{for\_step\_rhs@{for\_step\_rhs}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{for\_step\_rhs}{for\_step\_rhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a9c45c7f547c57b69efa3f96d88256dc1_a9c45c7f547c57b69efa3f96d88256dc1} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+for\+\_\+step\+\_\+rhs}
+
+
+
+RHS for for-\/loop step. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00376}{376}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_afb02299128cf8e4648e99b91d1d6a334_afb02299128cf8e4648e99b91d1d6a334}\index{gpga::Statement@{gpga::Statement}!force\_target@{force\_target}}
+\index{force\_target@{force\_target}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{force\_target}{force\_target}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_afb02299128cf8e4648e99b91d1d6a334_afb02299128cf8e4648e99b91d1d6a334} 
+std::\+string gpga::\+\+Statement::\+force\+\_\+target}
+
+
+
+Force target name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00396}{396}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a48fca3b36418b3554fe66dcb6692df87_a48fca3b36418b3554fe66dcb6692df87}\index{gpga::Statement@{gpga::Statement}!forever\_body@{forever\_body}}
+\index{forever\_body@{forever\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{forever\_body}{forever\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a48fca3b36418b3554fe66dcb6692df87_a48fca3b36418b3554fe66dcb6692df87} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+forever\+\_\+body}
+
+
+
+Forever-\/loop body. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00390}{390}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_ab9cc30fefc9287a7bc8948066dd3f5be_ab9cc30fefc9287a7bc8948066dd3f5be}\index{gpga::Statement@{gpga::Statement}!fork\_branches@{fork\_branches}}
+\index{fork\_branches@{fork\_branches}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{fork\_branches}{fork\_branches}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_ab9cc30fefc9287a7bc8948066dd3f5be_ab9cc30fefc9287a7bc8948066dd3f5be} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+fork\+\_\+branches}
+
+
+
+Forked branches. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00391}{391}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a8779f696521a0479c9a119c27ef5c269_a8779f696521a0479c9a119c27ef5c269}\index{gpga::Statement@{gpga::Statement}!is\_procedural@{is\_procedural}}
+\index{is\_procedural@{is\_procedural}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{is\_procedural}{is\_procedural}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a8779f696521a0479c9a119c27ef5c269_a8779f696521a0479c9a119c27ef5c269} 
+bool gpga::\+\+Statement::\+is\+\_\+procedural = false}
+
+
+
+True for procedural assignments. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00371}{371}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a2ea1b252103f8f989abc38c0838bc950_a2ea1b252103f8f989abc38c0838bc950}\index{gpga::Statement@{gpga::Statement}!kind@{kind}}
+\index{kind@{kind}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{kind}{kind}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a2ea1b252103f8f989abc38c0838bc950_a2ea1b252103f8f989abc38c0838bc950} 
+\doxymbox{\hyperlink{namespacegpga_ad55126d5d8d544f901ec553875afdeac_ad55126d5d8d544f901ec553875afdeac}{Statement\+Kind}} gpga::\+\+Statement::\+kind = \doxymbox{\hyperlink{namespacegpga_ad55126d5d8d544f901ec553875afdeac_ad55126d5d8d544f901ec553875afdeaca4bf03a5b9add1cfbbc9bd41c2155f568}{Statement\+Kind::\+k\+Assign}}}
+
+
+
+\doxylink{structgpga_1_1_statement}{Statement} kind. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00368}{368}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a4c76261e6721355cdd0eecc70fa52355_a4c76261e6721355cdd0eecc70fa52355}\index{gpga::Statement@{gpga::Statement}!release\_target@{release\_target}}
+\index{release\_target@{release\_target}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{release\_target}{release\_target}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a4c76261e6721355cdd0eecc70fa52355_a4c76261e6721355cdd0eecc70fa52355} 
+std::\+string gpga::\+\+Statement::\+release\+\_\+target}
+
+
+
+Release target name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00397}{397}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a1eb6310797323f580dd435d009cefb2f_a1eb6310797323f580dd435d009cefb2f}\index{gpga::Statement@{gpga::Statement}!repeat\_body@{repeat\_body}}
+\index{repeat\_body@{repeat\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{repeat\_body}{repeat\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a1eb6310797323f580dd435d009cefb2f_a1eb6310797323f580dd435d009cefb2f} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+repeat\+\_\+body}
+
+
+
+Repeat-\/loop body. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00381}{381}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_aad22142d4b898f7de6901a686e00cd78_aad22142d4b898f7de6901a686e00cd78}\index{gpga::Statement@{gpga::Statement}!repeat\_count@{repeat\_count}}
+\index{repeat\_count@{repeat\_count}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{repeat\_count}{repeat\_count}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_aad22142d4b898f7de6901a686e00cd78_aad22142d4b898f7de6901a686e00cd78} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+repeat\+\_\+count}
+
+
+
+Repeat count expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00380}{380}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_ada64b459798d6c37977449cbcc652ee3_ada64b459798d6c37977449cbcc652ee3}\index{gpga::Statement@{gpga::Statement}!task\_args@{task\_args}}
+\index{task\_args@{task\_args}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{task\_args}{task\_args}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_ada64b459798d6c37977449cbcc652ee3_ada64b459798d6c37977449cbcc652ee3} 
+std::\+vector$<$std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ $>$ gpga::\+\+Statement::\+task\+\_\+args}
+
+
+
+\doxylink{structgpga_1_1_task}{Task} call arguments. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00394}{394}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a7c5b9fa1e0f8f4e6b20538479beb823e_a7c5b9fa1e0f8f4e6b20538479beb823e}\index{gpga::Statement@{gpga::Statement}!task\_name@{task\_name}}
+\index{task\_name@{task\_name}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{task\_name}{task\_name}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a7c5b9fa1e0f8f4e6b20538479beb823e_a7c5b9fa1e0f8f4e6b20538479beb823e} 
+std::\+string gpga::\+\+Statement::\+task\+\_\+name}
+
+
+
+\doxylink{structgpga_1_1_task}{Task} name for calls. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00393}{393}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_adb38a4ad549bd9a9ecaa03b552bef035_adb38a4ad549bd9a9ecaa03b552bef035}\index{gpga::Statement@{gpga::Statement}!then\_branch@{then\_branch}}
+\index{then\_branch@{then\_branch}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{then\_branch}{then\_branch}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_adb38a4ad549bd9a9ecaa03b552bef035_adb38a4ad549bd9a9ecaa03b552bef035} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+then\+\_\+branch}
+
+
+
+Then-\/branch statements. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00399}{399}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a5e9484e2254348e69986c2ebd1a07543_a5e9484e2254348e69986c2ebd1a07543}\index{gpga::Statement@{gpga::Statement}!trigger\_target@{trigger\_target}}
+\index{trigger\_target@{trigger\_target}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{trigger\_target}{trigger\_target}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a5e9484e2254348e69986c2ebd1a07543_a5e9484e2254348e69986c2ebd1a07543} 
+std::\+string gpga::\+\+Statement::\+trigger\+\_\+target}
+
+
+
+Event trigger target. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00395}{395}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a8eef4732df6f8a425b02289d014cd983_a8eef4732df6f8a425b02289d014cd983}\index{gpga::Statement@{gpga::Statement}!wait\_body@{wait\_body}}
+\index{wait\_body@{wait\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{wait\_body}{wait\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a8eef4732df6f8a425b02289d014cd983_a8eef4732df6f8a425b02289d014cd983} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+wait\+\_\+body}
+
+
+
+Wait body. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00389}{389}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a2243c0576013b5d73f10d1022c3817f4_a2243c0576013b5d73f10d1022c3817f4}\index{gpga::Statement@{gpga::Statement}!wait\_condition@{wait\_condition}}
+\index{wait\_condition@{wait\_condition}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{wait\_condition}{wait\_condition}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a2243c0576013b5d73f10d1022c3817f4_a2243c0576013b5d73f10d1022c3817f4} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+wait\+\_\+condition}
+
+
+
+Wait condition. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00388}{388}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_ad3fc52392ed0fe259f904bb9d6cf966a_ad3fc52392ed0fe259f904bb9d6cf966a}\index{gpga::Statement@{gpga::Statement}!while\_body@{while\_body}}
+\index{while\_body@{while\_body}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{while\_body}{while\_body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_ad3fc52392ed0fe259f904bb9d6cf966a_ad3fc52392ed0fe259f904bb9d6cf966a} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Statement::\+while\+\_\+body}
+
+
+
+While-\/loop body. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00379}{379}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_statement_a0b713e792df8379de4ccc6d5a0a7c119_a0b713e792df8379de4ccc6d5a0a7c119}\index{gpga::Statement@{gpga::Statement}!while\_condition@{while\_condition}}
+\index{while\_condition@{while\_condition}!gpga::Statement@{gpga::Statement}}
+\doxysubsubsection{\texorpdfstring{while\_condition}{while\_condition}}
+{\footnotesize\ttfamily \label{structgpga_1_1_statement_a0b713e792df8379de4ccc6d5a0a7c119_a0b713e792df8379de4ccc6d5a0a7c119} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Statement::\+while\+\_\+condition}
+
+
+
+While-\/loop condition. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00378}{378}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+\doxymbox{\hyperlink{ast_8hh}{ast.\+hh}}\end{DoxyCompactItemize}

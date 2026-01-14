@@ -1,0 +1,92 @@
+\doxysection{gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+Conditional\+String\+Buf Class Reference}
+\hypertarget{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf}{}\label{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}}
+Inheritance diagram for gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+Conditional\+String\+Buf:\+\begin{figure}[H]
+\begin{center}
+\leavevmode
+\includegraphics[height=2.000000cm]{db/d93/classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf}
+\end{center}
+\end{figure}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+void \doxymbox{\hyperlink{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_a4ef02601f3fe3766409acc0d11fd30b5_a4ef02601f3fe3766409acc0d11fd30b5}{set\+\_\+enabled}} (bool enabled)
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Protected Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+int \doxymbox{\hyperlink{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_a963d155951c8e44ac5c6342ea1019b84_a963d155951c8e44ac5c6342ea1019b84}{overflow}} (int ch) override
+\item 
+std::\+streamsize \doxymbox{\hyperlink{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_aa2ed1994b341fc2007848771c81f6840_aa2ed1994b341fc2007848771c81f6840}{xsputn}} (const char \texorpdfstring{$\ast$}{*}s, std::\+streamsize n) override
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l00024}{24}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_a963d155951c8e44ac5c6342ea1019b84_a963d155951c8e44ac5c6342ea1019b84}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}!overflow@{overflow}}
+\index{overflow@{overflow}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}}
+\doxysubsubsection{\texorpdfstring{overflow()}{overflow()}}
+{\footnotesize\ttfamily \label{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_a963d155951c8e44ac5c6342ea1019b84_a963d155951c8e44ac5c6342ea1019b84} 
+int gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Conditional\+String\+Buf::\+overflow (\begin{DoxyParamCaption}\item[{int}]{ch}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [override]}, {\ttfamily [protected]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l00029}{29}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00029\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00030\ \ \ \ \ \textcolor{keywordflow}{if}\ (!enabled\_)\ \{}
+\DoxyCodeLine{00031\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ traits\_type::not\_eof(ch);}
+\DoxyCodeLine{00032\ \ \ \ \ \}}
+\DoxyCodeLine{00033\ \ \ \ \ \textcolor{keywordflow}{return}\ std::stringbuf::overflow(ch);}
+\DoxyCodeLine{00034\ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_a4ef02601f3fe3766409acc0d11fd30b5_a4ef02601f3fe3766409acc0d11fd30b5}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}!set\_enabled@{set\_enabled}}
+\index{set\_enabled@{set\_enabled}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}}
+\doxysubsubsection{\texorpdfstring{set\_enabled()}{set\_enabled()}}
+{\footnotesize\ttfamily \label{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_a4ef02601f3fe3766409acc0d11fd30b5_a4ef02601f3fe3766409acc0d11fd30b5} 
+void gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Conditional\+String\+Buf::\+set\+\_\+enabled (\begin{DoxyParamCaption}\item[{bool}]{enabled}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l00026}{26}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00026\ \{\ enabled\_\ =\ enabled;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_aa2ed1994b341fc2007848771c81f6840_aa2ed1994b341fc2007848771c81f6840}\index{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}!xsputn@{xsputn}}
+\index{xsputn@{xsputn}!gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf@{gpga::anonymous\_namespace\lcurly{}msl\_codegen.cc\rcurly{}::ConditionalStringBuf}}
+\doxysubsubsection{\texorpdfstring{xsputn()}{xsputn()}}
+{\footnotesize\ttfamily \label{classgpga_1_1anonymous__namespace_02msl__codegen_8cc_03_1_1_conditional_string_buf_aa2ed1994b341fc2007848771c81f6840_aa2ed1994b341fc2007848771c81f6840} 
+std::\+streamsize gpga::\+anonymous\+\_\+namespace\{msl\+\_\+codegen.\+cc\}::\+\+Conditional\+String\+Buf::\+xsputn (\begin{DoxyParamCaption}\item[{const char \texorpdfstring{$\ast$}{*}}]{s}{, }\item[{std::\+streamsize}]{n}{}\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [override]}, {\ttfamily [protected]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8cc_source_l00036}{36}} of file \doxymbox{\hyperlink{msl__codegen_8cc_source}{msl\+\_\+codegen.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00036\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00037\ \ \ \ \ \textcolor{keywordflow}{if}\ (!enabled\_)\ \{}
+\DoxyCodeLine{00038\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ n;}
+\DoxyCodeLine{00039\ \ \ \ \ \}}
+\DoxyCodeLine{00040\ \ \ \ \ \textcolor{keywordflow}{return}\ std::stringbuf::xsputn(s,\ n);}
+\DoxyCodeLine{00041\ \ \ \}}
+
+\end{DoxyCode}
+
+
+The documentation for this class was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+codegen/\+msl\+\_\+codegen.\+cc\end{DoxyCompactItemize}

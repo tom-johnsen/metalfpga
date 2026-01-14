@@ -1,0 +1,110 @@
+\doxysection{msl\+\_\+naming.\+hh}
+\hypertarget{msl__naming_8hh_source}{}\label{msl__naming_8hh_source}\index{src/utils/msl\_naming.hh@{src/utils/msl\_naming.hh}}
+\doxymbox{\hyperlink{msl__naming_8hh}{Go to the documentation of this file.}}
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00001}00001\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00005}00005\ \textcolor{preprocessor}{\#pragma\ once}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00006}00006\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00007}00007\ \textcolor{preprocessor}{\#include\ <cctype>}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00008}00008\ \textcolor{preprocessor}{\#include\ <cstdint>}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00009}00009\ \textcolor{preprocessor}{\#include\ <string>}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00010}00010\ \textcolor{preprocessor}{\#include\ <string\_view>}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00011}00011\ \textcolor{preprocessor}{\#include\ <unordered\_set>}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00012}00012\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00013}00013\ \textcolor{keyword}{namespace\ }\doxymbox{\hyperlink{namespacegpga}{gpga}}\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00014}00014\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00016}\doxymbox{\hyperlink{namespacegpga_a905f6dc4fd41d6907be55da291b9bbee_a905f6dc4fd41d6907be55da291b9bbee}{00016}}\ \textcolor{keyword}{inline}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_a905f6dc4fd41d6907be55da291b9bbee_a905f6dc4fd41d6907be55da291b9bbee}{IsMslIdentStart}}(\textcolor{keywordtype}{char}\ c)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00017}00017\ \ \ \textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\ uc\ =\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(c);}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00018}00018\ \ \ \textcolor{keywordflow}{return}\ std::isalpha(uc)\ !=\ 0\ ||\ c\ ==\ \textcolor{charliteral}{'\_'};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00019}00019\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00020}00020\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00022}\doxymbox{\hyperlink{namespacegpga_a045b0a856128de86d6954df558d917f7_a045b0a856128de86d6954df558d917f7}{00022}}\ \textcolor{keyword}{inline}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_a045b0a856128de86d6954df558d917f7_a045b0a856128de86d6954df558d917f7}{IsMslIdentChar}}(\textcolor{keywordtype}{char}\ c)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00023}00023\ \ \ \textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\ uc\ =\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(c);}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00024}00024\ \ \ \textcolor{keywordflow}{return}\ std::isalnum(uc)\ !=\ 0\ ||\ c\ ==\ \textcolor{charliteral}{'\_'};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00025}00025\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00026}00026\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00028}\doxymbox{\hyperlink{namespacegpga_a13534303a6b82fb7292cd1de723d8d0b_a13534303a6b82fb7292cd1de723d8d0b}{00028}}\ \textcolor{keyword}{inline}\ uint64\_t\ \doxymbox{\hyperlink{namespacegpga_a13534303a6b82fb7292cd1de723d8d0b_a13534303a6b82fb7292cd1de723d8d0b}{Fnv1aHash64}}(std::string\_view\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00029}00029\ \ \ uint64\_t\ hash\ =\ 14695981039346656037ull;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00030}00030\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\ c\ :\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00031}00031\ \ \ \ \ hash\ \string^=\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(c);}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00032}00032\ \ \ \ \ hash\ *=\ 1099511628211ull;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00033}00033\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00034}00034\ \ \ \textcolor{keywordflow}{return}\ hash;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00035}00035\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00036}00036\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00038}\doxymbox{\hyperlink{namespacegpga_adb45b82c05c3e9fb86a4e0b05a294c54_adb45b82c05c3e9fb86a4e0b05a294c54}{00038}}\ \textcolor{keyword}{inline}\ std::string\ \doxymbox{\hyperlink{namespacegpga_adb45b82c05c3e9fb86a4e0b05a294c54_adb45b82c05c3e9fb86a4e0b05a294c54}{Hex64}}(uint64\_t\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00039}00039\ \ \ \textcolor{keyword}{static}\ \textcolor{keyword}{const}\ \textcolor{keywordtype}{char}\ kHex[]\ =\ \textcolor{stringliteral}{"{}0123456789abcdef"{}};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00040}00040\ \ \ std::string\ out(16,\ \textcolor{charliteral}{'0'});}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00041}00041\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{int}\ i\ =\ 15;\ i\ >=\ 0;\ -\/-\/i)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00042}00042\ \ \ \ \ out[\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{size\_t}\textcolor{keyword}{>}(i)]\ =\ kHex[value\ \&\ 0xfull];}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00043}00043\ \ \ \ \ value\ >>=\ 4;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00044}00044\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00045}00045\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00046}00046\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00047}00047\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00049}\doxymbox{\hyperlink{namespacegpga_a84a70b4070c3694773ea3b5fac88b7c2_a84a70b4070c3694773ea3b5fac88b7c2}{00049}}\ \textcolor{keyword}{inline}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_a84a70b4070c3694773ea3b5fac88b7c2_a84a70b4070c3694773ea3b5fac88b7c2}{IsMslReservedIdentifier}}(std::string\_view\ name)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00050}00050\ \ \ \textcolor{keyword}{static}\ \textcolor{keyword}{const}\ std::unordered\_set<std::string\_view>\ kReserved\ =\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00051}00051\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}alignas"{}},\ \textcolor{stringliteral}{"{}alignof"{}},\ \textcolor{stringliteral}{"{}and"{}},\ \textcolor{stringliteral}{"{}and\_eq"{}},\ \textcolor{stringliteral}{"{}asm"{}},\ \textcolor{stringliteral}{"{}atomic"{}},\ \textcolor{stringliteral}{"{}auto"{}},\ \textcolor{stringliteral}{"{}bitand"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00052}00052\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}bitor"{}},\ \textcolor{stringliteral}{"{}bool"{}},\ \textcolor{stringliteral}{"{}break"{}},\ \textcolor{stringliteral}{"{}case"{}},\ \textcolor{stringliteral}{"{}catch"{}},\ \textcolor{stringliteral}{"{}char"{}},\ \textcolor{stringliteral}{"{}char16\_t"{}},\ \textcolor{stringliteral}{"{}char32\_t"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00053}00053\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}class"{}},\ \textcolor{stringliteral}{"{}compl"{}},\ \textcolor{stringliteral}{"{}const"{}},\ \textcolor{stringliteral}{"{}constant"{}},\ \textcolor{stringliteral}{"{}constexpr"{}},\ \textcolor{stringliteral}{"{}const\_cast"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00054}00054\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}continue"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00055}00055\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}decltype"{}},\ \textcolor{stringliteral}{"{}default"{}},\ \textcolor{stringliteral}{"{}delete"{}},\ \textcolor{stringliteral}{"{}device"{}},\ \textcolor{stringliteral}{"{}do"{}},\ \textcolor{stringliteral}{"{}double"{}},\ \textcolor{stringliteral}{"{}dynamic\_cast"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00056}00056\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}else"{}},\ \textcolor{stringliteral}{"{}enum"{}},\ \textcolor{stringliteral}{"{}explicit"{}},\ \textcolor{stringliteral}{"{}export"{}},\ \textcolor{stringliteral}{"{}extern"{}},\ \textcolor{stringliteral}{"{}false"{}},\ \textcolor{stringliteral}{"{}float"{}},\ \textcolor{stringliteral}{"{}for"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00057}00057\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}friend"{}},\ \textcolor{stringliteral}{"{}goto"{}},\ \textcolor{stringliteral}{"{}half"{}},\ \textcolor{stringliteral}{"{}if"{}},\ \textcolor{stringliteral}{"{}inline"{}},\ \textcolor{stringliteral}{"{}int"{}},\ \textcolor{stringliteral}{"{}kernel"{}},\ \textcolor{stringliteral}{"{}long"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00058}00058\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}mutable"{}},\ \textcolor{stringliteral}{"{}namespace"{}},\ \textcolor{stringliteral}{"{}new"{}},\ \textcolor{stringliteral}{"{}noexcept"{}},\ \textcolor{stringliteral}{"{}not"{}},\ \textcolor{stringliteral}{"{}not\_eq"{}},\ \textcolor{stringliteral}{"{}nullptr"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00059}00059\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}operator"{}},\ \textcolor{stringliteral}{"{}or"{}},\ \textcolor{stringliteral}{"{}or\_eq"{}},\ \textcolor{stringliteral}{"{}private"{}},\ \textcolor{stringliteral}{"{}protected"{}},\ \textcolor{stringliteral}{"{}public"{}},\ \textcolor{stringliteral}{"{}register"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00060}00060\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}reinterpret\_cast"{}},\ \textcolor{stringliteral}{"{}return"{}},\ \textcolor{stringliteral}{"{}sampler"{}},\ \textcolor{stringliteral}{"{}short"{}},\ \textcolor{stringliteral}{"{}signed"{}},\ \textcolor{stringliteral}{"{}sizeof"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00061}00061\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}static"{}},\ \textcolor{stringliteral}{"{}static\_assert"{}},\ \textcolor{stringliteral}{"{}static\_cast"{}},\ \textcolor{stringliteral}{"{}struct"{}},\ \textcolor{stringliteral}{"{}switch"{}},\ \textcolor{stringliteral}{"{}template"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00062}00062\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}texture"{}},\ \textcolor{stringliteral}{"{}this"{}},\ \textcolor{stringliteral}{"{}thread"{}},\ \textcolor{stringliteral}{"{}threadgroup"{}},\ \textcolor{stringliteral}{"{}threadgroup\_imageblock"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00063}00063\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}typedef"{}},\ \textcolor{stringliteral}{"{}typeid"{}},\ \textcolor{stringliteral}{"{}typename"{}},\ \textcolor{stringliteral}{"{}uint"{}},\ \textcolor{stringliteral}{"{}ulong"{}},\ \textcolor{stringliteral}{"{}union"{}},\ \textcolor{stringliteral}{"{}unsigned"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00064}00064\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}using"{}},\ \textcolor{stringliteral}{"{}vertex"{}},\ \textcolor{stringliteral}{"{}fragment"{}},\ \textcolor{stringliteral}{"{}stage\_in"{}},\ \textcolor{stringliteral}{"{}buffer"{}},\ \textcolor{stringliteral}{"{}virtual"{}},\ \textcolor{stringliteral}{"{}void"{}},}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00065}00065\ \ \ \ \ \ \ \textcolor{stringliteral}{"{}volatile"{}},\ \textcolor{stringliteral}{"{}wchar\_t"{}},\ \textcolor{stringliteral}{"{}while"{}},\ \textcolor{stringliteral}{"{}xor"{}},\ \textcolor{stringliteral}{"{}xor\_eq"{}}\};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00066}00066\ \ \ \textcolor{keywordflow}{return}\ kReserved.find(name)\ !=\ kReserved.end();}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00067}00067\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00068}00068\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00070}\doxymbox{\hyperlink{namespacegpga_a008d38ba8c80b53cbbd92ad9bbae3a6e_a008d38ba8c80b53cbbd92ad9bbae3a6e}{00070}}\ \textcolor{keyword}{inline}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_a008d38ba8c80b53cbbd92ad9bbae3a6e_a008d38ba8c80b53cbbd92ad9bbae3a6e}{StartsWith}}(std::string\_view\ value,\ std::string\_view\ prefix)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00071}00071\ \ \ \textcolor{keywordflow}{return}\ value.size()\ >=\ prefix.size()\ \&\&}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00072}00072\ \ \ \ \ \ \ \ \ \ value.compare(0,\ prefix.size(),\ prefix)\ ==\ 0;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00073}00073\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00074}00074\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00081}\doxymbox{\hyperlink{namespacegpga_aaf62ba507897f642fb969b5197aa404c_aaf62ba507897f642fb969b5197aa404c}{00081}}\ \textcolor{keyword}{inline}\ std::string\ \doxymbox{\hyperlink{namespacegpga_aaf62ba507897f642fb969b5197aa404c_aaf62ba507897f642fb969b5197aa404c}{MslMangleIdentifier}}(std::string\_view\ name)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00082}00082\ \ \ \textcolor{keywordtype}{bool}\ needs\_escape\ =\ name.empty();}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00083}00083\ \ \ \textcolor{keywordflow}{if}\ (!needs\_escape)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00084}00084\ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_a905f6dc4fd41d6907be55da291b9bbee_a905f6dc4fd41d6907be55da291b9bbee}{IsMslIdentStart}}(name.front()))\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00085}00085\ \ \ \ \ \ \ needs\_escape\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00086}00086\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00087}00087\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{char}\ c\ :\ name)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00088}00088\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_a045b0a856128de86d6954df558d917f7_a045b0a856128de86d6954df558d917f7}{IsMslIdentChar}}(c))\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00089}00089\ \ \ \ \ \ \ \ \ \ \ needs\_escape\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00090}00090\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00091}00091\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00092}00092\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00093}00093\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00094}00094\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00095}00095\ \ \ \textcolor{keywordflow}{if}\ (!needs\_escape)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00096}00096\ \ \ \ \ \textcolor{keywordflow}{if}\ (\doxymbox{\hyperlink{namespacegpga_a84a70b4070c3694773ea3b5fac88b7c2_a84a70b4070c3694773ea3b5fac88b7c2}{IsMslReservedIdentifier}}(name)\ ||\ \doxymbox{\hyperlink{namespacegpga_a008d38ba8c80b53cbbd92ad9bbae3a6e_a008d38ba8c80b53cbbd92ad9bbae3a6e}{StartsWith}}(name,\ \textcolor{stringliteral}{"{}\_\_gpga\_"{}})\ ||}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00097}00097\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{namespacegpga_a008d38ba8c80b53cbbd92ad9bbae3a6e_a008d38ba8c80b53cbbd92ad9bbae3a6e}{StartsWith}}(name,\ \textcolor{stringliteral}{"{}gpga\_"{}}))\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00098}00098\ \ \ \ \ \ \ needs\_escape\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00099}00099\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00100}00100\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00101}00101\ \ \ \textcolor{keywordflow}{if}\ (!needs\_escape)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00102}00102\ \ \ \ \ \textcolor{keywordflow}{return}\ std::string(name);}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00103}00103\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00104}00104\ \ \ std::string\ sanitized;}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00105}00105\ \ \ sanitized.reserve(name.size());}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00106}00106\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{char}\ c\ :\ name)\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00107}00107\ \ \ \ \ sanitized.push\_back(\doxymbox{\hyperlink{namespacegpga_a045b0a856128de86d6954df558d917f7_a045b0a856128de86d6954df558d917f7}{IsMslIdentChar}}(c)\ ?\ c\ :\ \textcolor{charliteral}{'\_'});}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00108}00108\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00109}00109\ \ \ \textcolor{keywordflow}{if}\ (sanitized.empty())\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00110}00110\ \ \ \ \ sanitized\ =\ \textcolor{stringliteral}{"{}id"{}};}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00111}00111\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00112}00112\ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_a905f6dc4fd41d6907be55da291b9bbee_a905f6dc4fd41d6907be55da291b9bbee}{IsMslIdentStart}}(sanitized.front()))\ \{}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00113}00113\ \ \ \ \ sanitized.insert(sanitized.begin(),\ \textcolor{charliteral}{'\_'});}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00114}00114\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00115}00115\ \ \ uint64\_t\ hash\ =\ \doxymbox{\hyperlink{namespacegpga_a13534303a6b82fb7292cd1de723d8d0b_a13534303a6b82fb7292cd1de723d8d0b}{Fnv1aHash64}}(name);}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00116}00116\ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}\_\_gpga\_u\_"{}}\ +\ sanitized\ +\ \textcolor{stringliteral}{"{}\_"{}}\ +\ \doxymbox{\hyperlink{namespacegpga_adb45b82c05c3e9fb86a4e0b05a294c54_adb45b82c05c3e9fb86a4e0b05a294c54}{Hex64}}(hash);}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00117}00117\ \}}
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00118}00118\ }
+\DoxyCodeLine{\Hypertarget{msl__naming_8hh_source_l00119}00119\ \}\ \ \textcolor{comment}{//\ namespace\ gpga}}
+
+\end{DoxyCode}

@@ -1,0 +1,303 @@
+\doxysection{gpga::\+Scheduler\+Vm\+Assign\+Fallback\+Info Struct Reference}
+\hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info}{}\label{structgpga_1_1_scheduler_vm_assign_fallback_info}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+
+
+Details for an assignment that fell back to a slower path.  
+
+
+
+
+{\ttfamily \+\#include $<$msl\+\_\+codegen.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+size\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_ad729f35ed8775c327adf89f2c33aaeea_ad729f35ed8775c327adf89f2c33aaeea}{index}} = 0
+\begin{DoxyCompactList}\small\item\em Index in the fallback list. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a9f23cff4d679568c8487d171b565e035_a9f23cff4d679568c8487d171b565e035}{stmt\+\_\+text}}
+\begin{DoxyCompactList}\small\item\em Source text for the statement. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a6c9b2e52973a0bd6fc8deae276ee437e_a6c9b2e52973a0bd6fc8deae276ee437e}{lhs}}
+\begin{DoxyCompactList}\small\item\em LHS signal name. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a587ef73ecbd917e8682f6e6d581bae79_a587ef73ecbd917e8682f6e6d581bae79}{lhs\+\_\+text}}
+\begin{DoxyCompactList}\small\item\em LHS expression text. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a55b37905082f302b874ed6fb904f1957_a55b37905082f302b874ed6fb904f1957}{rhs\+\_\+text}}
+\begin{DoxyCompactList}\small\item\em RHS expression text. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a4894027b01ed132e03b4390dd1e5c1f1_a4894027b01ed132e03b4390dd1e5c1f1}{nonblocking}} = false
+\begin{DoxyCompactList}\small\item\em Assignment is nonblocking. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_ad4d3347b864e1e3a26ad0edcc00bf8db_ad4d3347b864e1e3a26ad0edcc00bf8db}{lhs\+\_\+has\+\_\+index}} = false
+\begin{DoxyCompactList}\small\item\em LHS includes array indexing. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a8f535f56bcf472b38e4d4620af32e48e_a8f535f56bcf472b38e4d4620af32e48e}{lhs\+\_\+has\+\_\+range}} = false
+\begin{DoxyCompactList}\small\item\em LHS includes a range select. \end{DoxyCompactList}\item 
+size\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a659d5b59eb282918592665f0d3c77366_a659d5b59eb282918592665f0d3c77366}{lhs\+\_\+index\+\_\+count}} = 0
+\begin{DoxyCompactList}\small\item\em Index count on LHS. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_af87bdf2319e06d7287c40a74a7852639_af87bdf2319e06d7287c40a74a7852639}{override\+\_\+target}} = false
+\begin{DoxyCompactList}\small\item\em Target is overridden. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a1f7f7cb4b00a77cb0f3e179c59c8c515_a1f7f7cb4b00a77cb0f3e179c59c8c515}{lhs\+\_\+real}} = false
+\begin{DoxyCompactList}\small\item\em LHS is real-\/typed. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a5a43df70df5cd27c8d750b3cb51c88c5_a5a43df70df5cd27c8d750b3cb51c88c5}{lhs\+\_\+width}} = 0
+\begin{DoxyCompactList}\small\item\em LHS bit width. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a0b74346b160caebe547b7d6400d8fcd3_a0b74346b160caebe547b7d6400d8fcd3}{missing\+\_\+signal}} = false
+\begin{DoxyCompactList}\small\item\em LHS signal could not be resolved. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_ae9b1906cc3caad0b9760b0ed4372f635_ae9b1906cc3caad0b9760b0ed4372f635}{rhs\+\_\+missing}} = false
+\begin{DoxyCompactList}\small\item\em RHS expression missing. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a6c23f6728f49155cae4ca81183000e5b_a6c23f6728f49155cae4ca81183000e5b}{rhs\+\_\+unencodable}} = false
+\begin{DoxyCompactList}\small\item\em RHS could not be encoded. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features}{Scheduler\+Vm\+Expr\+Features}} \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a7faaeded4dc694ce95f57cee8b92afd7_a7faaeded4dc694ce95f57cee8b92afd7}{rhs\+\_\+features}}
+\begin{DoxyCompactList}\small\item\em Detected RHS features. \end{DoxyCompactList}\item 
+std::\+vector$<$ std::\+string $>$ \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info_a23d1932f9ac63752fd090f72fe25f5c4_a23d1932f9ac63752fd090f72fe25f5c4}{reasons}}
+\begin{DoxyCompactList}\small\item\em Human-\/readable reasons. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Details for an assignment that fell back to a slower path. 
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00030}{30}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_ad729f35ed8775c327adf89f2c33aaeea_ad729f35ed8775c327adf89f2c33aaeea}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!index@{index}}
+\index{index@{index}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{index}{index}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_ad729f35ed8775c327adf89f2c33aaeea_ad729f35ed8775c327adf89f2c33aaeea} 
+size\+\_\+t gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+index = 0}
+
+
+
+Index in the fallback list. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00031}{31}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a6c9b2e52973a0bd6fc8deae276ee437e_a6c9b2e52973a0bd6fc8deae276ee437e}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs@{lhs}}
+\index{lhs@{lhs}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs}{lhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a6c9b2e52973a0bd6fc8deae276ee437e_a6c9b2e52973a0bd6fc8deae276ee437e} 
+std::\+string gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs}
+
+
+
+LHS signal name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00033}{33}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_ad4d3347b864e1e3a26ad0edcc00bf8db_ad4d3347b864e1e3a26ad0edcc00bf8db}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs\_has\_index@{lhs\_has\_index}}
+\index{lhs\_has\_index@{lhs\_has\_index}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs\_has\_index}{lhs\_has\_index}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_ad4d3347b864e1e3a26ad0edcc00bf8db_ad4d3347b864e1e3a26ad0edcc00bf8db} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs\+\_\+has\+\_\+index = false}
+
+
+
+LHS includes array indexing. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00037}{37}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a8f535f56bcf472b38e4d4620af32e48e_a8f535f56bcf472b38e4d4620af32e48e}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs\_has\_range@{lhs\_has\_range}}
+\index{lhs\_has\_range@{lhs\_has\_range}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs\_has\_range}{lhs\_has\_range}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a8f535f56bcf472b38e4d4620af32e48e_a8f535f56bcf472b38e4d4620af32e48e} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs\+\_\+has\+\_\+range = false}
+
+
+
+LHS includes a range select. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00038}{38}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a659d5b59eb282918592665f0d3c77366_a659d5b59eb282918592665f0d3c77366}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs\_index\_count@{lhs\_index\_count}}
+\index{lhs\_index\_count@{lhs\_index\_count}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs\_index\_count}{lhs\_index\_count}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a659d5b59eb282918592665f0d3c77366_a659d5b59eb282918592665f0d3c77366} 
+size\+\_\+t gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs\+\_\+index\+\_\+count = 0}
+
+
+
+Index count on LHS. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00039}{39}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a1f7f7cb4b00a77cb0f3e179c59c8c515_a1f7f7cb4b00a77cb0f3e179c59c8c515}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs\_real@{lhs\_real}}
+\index{lhs\_real@{lhs\_real}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs\_real}{lhs\_real}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a1f7f7cb4b00a77cb0f3e179c59c8c515_a1f7f7cb4b00a77cb0f3e179c59c8c515} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs\+\_\+real = false}
+
+
+
+LHS is real-\/typed. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00041}{41}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a587ef73ecbd917e8682f6e6d581bae79_a587ef73ecbd917e8682f6e6d581bae79}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs\_text@{lhs\_text}}
+\index{lhs\_text@{lhs\_text}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs\_text}{lhs\_text}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a587ef73ecbd917e8682f6e6d581bae79_a587ef73ecbd917e8682f6e6d581bae79} 
+std::\+string gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs\+\_\+text}
+
+
+
+LHS expression text. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00034}{34}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a5a43df70df5cd27c8d750b3cb51c88c5_a5a43df70df5cd27c8d750b3cb51c88c5}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!lhs\_width@{lhs\_width}}
+\index{lhs\_width@{lhs\_width}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{lhs\_width}{lhs\_width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a5a43df70df5cd27c8d750b3cb51c88c5_a5a43df70df5cd27c8d750b3cb51c88c5} 
+int gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+lhs\+\_\+width = 0}
+
+
+
+LHS bit width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00042}{42}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a0b74346b160caebe547b7d6400d8fcd3_a0b74346b160caebe547b7d6400d8fcd3}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!missing\_signal@{missing\_signal}}
+\index{missing\_signal@{missing\_signal}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{missing\_signal}{missing\_signal}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a0b74346b160caebe547b7d6400d8fcd3_a0b74346b160caebe547b7d6400d8fcd3} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+missing\+\_\+signal = false}
+
+
+
+LHS signal could not be resolved. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00043}{43}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a4894027b01ed132e03b4390dd1e5c1f1_a4894027b01ed132e03b4390dd1e5c1f1}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!nonblocking@{nonblocking}}
+\index{nonblocking@{nonblocking}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{nonblocking}{nonblocking}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a4894027b01ed132e03b4390dd1e5c1f1_a4894027b01ed132e03b4390dd1e5c1f1} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+nonblocking = false}
+
+
+
+Assignment is nonblocking. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00036}{36}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_af87bdf2319e06d7287c40a74a7852639_af87bdf2319e06d7287c40a74a7852639}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!override\_target@{override\_target}}
+\index{override\_target@{override\_target}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{override\_target}{override\_target}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_af87bdf2319e06d7287c40a74a7852639_af87bdf2319e06d7287c40a74a7852639} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+override\+\_\+target = false}
+
+
+
+Target is overridden. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00040}{40}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a23d1932f9ac63752fd090f72fe25f5c4_a23d1932f9ac63752fd090f72fe25f5c4}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!reasons@{reasons}}
+\index{reasons@{reasons}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{reasons}{reasons}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a23d1932f9ac63752fd090f72fe25f5c4_a23d1932f9ac63752fd090f72fe25f5c4} 
+std::\+vector$<$std::\+string$>$ gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+reasons}
+
+
+
+Human-\/readable reasons. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00047}{47}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a7faaeded4dc694ce95f57cee8b92afd7_a7faaeded4dc694ce95f57cee8b92afd7}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!rhs\_features@{rhs\_features}}
+\index{rhs\_features@{rhs\_features}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{rhs\_features}{rhs\_features}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a7faaeded4dc694ce95f57cee8b92afd7_a7faaeded4dc694ce95f57cee8b92afd7} 
+\doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features}{Scheduler\+Vm\+Expr\+Features}} gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+rhs\+\_\+features}
+
+
+
+Detected RHS features. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00046}{46}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_ae9b1906cc3caad0b9760b0ed4372f635_ae9b1906cc3caad0b9760b0ed4372f635}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!rhs\_missing@{rhs\_missing}}
+\index{rhs\_missing@{rhs\_missing}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{rhs\_missing}{rhs\_missing}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_ae9b1906cc3caad0b9760b0ed4372f635_ae9b1906cc3caad0b9760b0ed4372f635} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+rhs\+\_\+missing = false}
+
+
+
+RHS expression missing. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00044}{44}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a55b37905082f302b874ed6fb904f1957_a55b37905082f302b874ed6fb904f1957}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!rhs\_text@{rhs\_text}}
+\index{rhs\_text@{rhs\_text}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{rhs\_text}{rhs\_text}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a55b37905082f302b874ed6fb904f1957_a55b37905082f302b874ed6fb904f1957} 
+std::\+string gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+rhs\+\_\+text}
+
+
+
+RHS expression text. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00035}{35}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a6c23f6728f49155cae4ca81183000e5b_a6c23f6728f49155cae4ca81183000e5b}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!rhs\_unencodable@{rhs\_unencodable}}
+\index{rhs\_unencodable@{rhs\_unencodable}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{rhs\_unencodable}{rhs\_unencodable}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a6c23f6728f49155cae4ca81183000e5b_a6c23f6728f49155cae4ca81183000e5b} 
+bool gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+rhs\+\_\+unencodable = false}
+
+
+
+RHS could not be encoded. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00045}{45}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_assign_fallback_info_a9f23cff4d679568c8487d171b565e035_a9f23cff4d679568c8487d171b565e035}\index{gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}!stmt\_text@{stmt\_text}}
+\index{stmt\_text@{stmt\_text}!gpga::SchedulerVmAssignFallbackInfo@{gpga::SchedulerVmAssignFallbackInfo}}
+\doxysubsubsection{\texorpdfstring{stmt\_text}{stmt\_text}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_assign_fallback_info_a9f23cff4d679568c8487d171b565e035_a9f23cff4d679568c8487d171b565e035} 
+std::\+string gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info::\+stmt\+\_\+text}
+
+
+
+Source text for the statement. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00032}{32}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+codegen/\+\doxymbox{\hyperlink{msl__codegen_8hh}{msl\+\_\+codegen.\+hh}}\end{DoxyCompactItemize}

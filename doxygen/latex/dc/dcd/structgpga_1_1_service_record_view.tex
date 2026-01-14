@@ -1,0 +1,95 @@
+\doxysection{gpga::\+Service\+Record\+View Struct Reference}
+\hypertarget{structgpga_1_1_service_record_view}{}\label{structgpga_1_1_service_record_view}\index{gpga::ServiceRecordView@{gpga::ServiceRecordView}}
+
+
+Decoded service record from the scheduler buffer.  
+
+
+
+
+{\ttfamily \+\#include $<$metal\+\_\+runtime.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{namespacegpga_a71a5a1efe150aac015a4263771b2daa1_a71a5a1efe150aac015a4263771b2daa1}{Service\+Kind}} \doxymbox{\hyperlink{structgpga_1_1_service_record_view_a2f7641fb862228e0207d5ab23923d1dc_a2f7641fb862228e0207d5ab23923d1dc}{kind}} = \doxymbox{\hyperlink{namespacegpga_a71a5a1efe150aac015a4263771b2daa1_a71a5a1efe150aac015a4263771b2daa1acac1f0f007798c3cdcdc5f676634471e}{Service\+Kind::\+k\+Display}}
+\begin{DoxyCompactList}\small\item\em Service kind. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_service_record_view_a6291f5b162969ff393cd5b2116112451_a6291f5b162969ff393cd5b2116112451}{pid}} = 0
+\begin{DoxyCompactList}\small\item\em Process id. \end{DoxyCompactList}\item 
+uint32\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_service_record_view_ac3e779875e921e54351f4276a474399e_ac3e779875e921e54351f4276a474399e}{format\+\_\+id}} = 0x\+FFFFFFFFu
+\begin{DoxyCompactList}\small\item\em Format string id. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_service_arg_view}{Service\+Arg\+View}} $>$ \doxymbox{\hyperlink{structgpga_1_1_service_record_view_a113e403e817f7db2ec6fa368d4e72517_a113e403e817f7db2ec6fa368d4e72517}{args}}
+\begin{DoxyCompactList}\small\item\em Argument list. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Decoded service record from the scheduler buffer. 
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00093}{93}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_service_record_view_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_service_record_view_a113e403e817f7db2ec6fa368d4e72517_a113e403e817f7db2ec6fa368d4e72517}\index{gpga::ServiceRecordView@{gpga::ServiceRecordView}!args@{args}}
+\index{args@{args}!gpga::ServiceRecordView@{gpga::ServiceRecordView}}
+\doxysubsubsection{\texorpdfstring{args}{args}}
+{\footnotesize\ttfamily \label{structgpga_1_1_service_record_view_a113e403e817f7db2ec6fa368d4e72517_a113e403e817f7db2ec6fa368d4e72517} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_service_arg_view}{Service\+Arg\+View}}$>$ gpga::\+\+Service\+Record\+View::\+args}
+
+
+
+Argument list. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00097}{97}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+\Hypertarget{structgpga_1_1_service_record_view_ac3e779875e921e54351f4276a474399e_ac3e779875e921e54351f4276a474399e}\index{gpga::ServiceRecordView@{gpga::ServiceRecordView}!format\_id@{format\_id}}
+\index{format\_id@{format\_id}!gpga::ServiceRecordView@{gpga::ServiceRecordView}}
+\doxysubsubsection{\texorpdfstring{format\_id}{format\_id}}
+{\footnotesize\ttfamily \label{structgpga_1_1_service_record_view_ac3e779875e921e54351f4276a474399e_ac3e779875e921e54351f4276a474399e} 
+uint32\+\_\+t gpga::\+\+Service\+Record\+View::\+format\+\_\+id = 0x\+FFFFFFFFu}
+
+
+
+Format string id. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00096}{96}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+\Hypertarget{structgpga_1_1_service_record_view_a2f7641fb862228e0207d5ab23923d1dc_a2f7641fb862228e0207d5ab23923d1dc}\index{gpga::ServiceRecordView@{gpga::ServiceRecordView}!kind@{kind}}
+\index{kind@{kind}!gpga::ServiceRecordView@{gpga::ServiceRecordView}}
+\doxysubsubsection{\texorpdfstring{kind}{kind}}
+{\footnotesize\ttfamily \label{structgpga_1_1_service_record_view_a2f7641fb862228e0207d5ab23923d1dc_a2f7641fb862228e0207d5ab23923d1dc} 
+\doxymbox{\hyperlink{namespacegpga_a71a5a1efe150aac015a4263771b2daa1_a71a5a1efe150aac015a4263771b2daa1}{Service\+Kind}} gpga::\+\+Service\+Record\+View::\+kind = \doxymbox{\hyperlink{namespacegpga_a71a5a1efe150aac015a4263771b2daa1_a71a5a1efe150aac015a4263771b2daa1acac1f0f007798c3cdcdc5f676634471e}{Service\+Kind::\+k\+Display}}}
+
+
+
+Service kind. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00094}{94}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+\Hypertarget{structgpga_1_1_service_record_view_a6291f5b162969ff393cd5b2116112451_a6291f5b162969ff393cd5b2116112451}\index{gpga::ServiceRecordView@{gpga::ServiceRecordView}!pid@{pid}}
+\index{pid@{pid}!gpga::ServiceRecordView@{gpga::ServiceRecordView}}
+\doxysubsubsection{\texorpdfstring{pid}{pid}}
+{\footnotesize\ttfamily \label{structgpga_1_1_service_record_view_a6291f5b162969ff393cd5b2116112451_a6291f5b162969ff393cd5b2116112451} 
+uint32\+\_\+t gpga::\+\+Service\+Record\+View::\+pid = 0}
+
+
+
+Process id. 
+
+
+
+Definition at line \doxymbox{\hyperlink{metal__runtime_8hh_source_l00095}{95}} of file \doxymbox{\hyperlink{metal__runtime_8hh_source}{metal\+\_\+runtime.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+runtime/\+\doxymbox{\hyperlink{metal__runtime_8hh}{metal\+\_\+runtime.\+hh}}\end{DoxyCompactItemize}

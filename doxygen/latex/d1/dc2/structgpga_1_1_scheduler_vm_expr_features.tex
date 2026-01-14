@@ -1,0 +1,191 @@
+\doxysection{gpga::\+Scheduler\+Vm\+Expr\+Features Struct Reference}
+\hypertarget{structgpga_1_1_scheduler_vm_expr_features}{}\label{structgpga_1_1_scheduler_vm_expr_features}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+
+
+Features detected while encoding an expression for the scheduler VM.  
+
+
+
+
+{\ttfamily \+\#include $<$msl\+\_\+codegen.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+int \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_a73414df92dc2c55a355a0d3f62584859_a73414df92dc2c55a355a0d3f62584859}{width}} = 0
+\begin{DoxyCompactList}\small\item\em Expression bit width. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_a7dc6741d9e9eda1b35c190a27209b847_a7dc6741d9e9eda1b35c190a27209b847}{is\+\_\+real}} = false
+\begin{DoxyCompactList}\small\item\em Expression evaluates to real. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_a134a62479a3530f93c7cef8bb5d11d51_a134a62479a3530f93c7cef8bb5d11d51}{has\+\_\+call}} = false
+\begin{DoxyCompactList}\small\item\em Contains a function call. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_af61c9d923bb9d54571a1cb92ad8a3452_af61c9d923bb9d54571a1cb92ad8a3452}{has\+\_\+select}} = false
+\begin{DoxyCompactList}\small\item\em Contains bit/\+part select. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_adac67d4bc98a41a8936dfc8db65b9f69_adac67d4bc98a41a8936dfc8db65b9f69}{has\+\_\+index}} = false
+\begin{DoxyCompactList}\small\item\em Contains array indexing. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_a90cb958216e6173a318172b031d9cb0f_a90cb958216e6173a318172b031d9cb0f}{has\+\_\+concat}} = false
+\begin{DoxyCompactList}\small\item\em Contains concatenation. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_a6d01166dc48696d2e563402faec0cfdb_a6d01166dc48696d2e563402faec0cfdb}{has\+\_\+repeat}} = false
+\begin{DoxyCompactList}\small\item\em Contains replication. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_ab6afe37ad0ae1ffffca743707b2f0566_ab6afe37ad0ae1ffffca743707b2f0566}{has\+\_\+ternary}} = false
+\begin{DoxyCompactList}\small\item\em Contains ternary operator. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_a00cb861c0125dbd058a7b8097486b730_a00cb861c0125dbd058a7b8097486b730}{has\+\_\+xz}} = false
+\begin{DoxyCompactList}\small\item\em Requires X/\+Z tracking. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features_aa8ef233c936d7ecf155107eafae8f5e7_aa8ef233c936d7ecf155107eafae8f5e7}{has\+\_\+real\+\_\+literal}} = false
+\begin{DoxyCompactList}\small\item\em Contains a real literal. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Features detected while encoding an expression for the scheduler VM. 
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00016}{16}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_a134a62479a3530f93c7cef8bb5d11d51_a134a62479a3530f93c7cef8bb5d11d51}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_call@{has\_call}}
+\index{has\_call@{has\_call}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_call}{has\_call}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_a134a62479a3530f93c7cef8bb5d11d51_a134a62479a3530f93c7cef8bb5d11d51} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+call = false}
+
+
+
+Contains a function call. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00019}{19}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_a90cb958216e6173a318172b031d9cb0f_a90cb958216e6173a318172b031d9cb0f}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_concat@{has\_concat}}
+\index{has\_concat@{has\_concat}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_concat}{has\_concat}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_a90cb958216e6173a318172b031d9cb0f_a90cb958216e6173a318172b031d9cb0f} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+concat = false}
+
+
+
+Contains concatenation. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00022}{22}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_adac67d4bc98a41a8936dfc8db65b9f69_adac67d4bc98a41a8936dfc8db65b9f69}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_index@{has\_index}}
+\index{has\_index@{has\_index}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_index}{has\_index}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_adac67d4bc98a41a8936dfc8db65b9f69_adac67d4bc98a41a8936dfc8db65b9f69} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+index = false}
+
+
+
+Contains array indexing. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00021}{21}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_aa8ef233c936d7ecf155107eafae8f5e7_aa8ef233c936d7ecf155107eafae8f5e7}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_real\_literal@{has\_real\_literal}}
+\index{has\_real\_literal@{has\_real\_literal}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_real\_literal}{has\_real\_literal}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_aa8ef233c936d7ecf155107eafae8f5e7_aa8ef233c936d7ecf155107eafae8f5e7} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+real\+\_\+literal = false}
+
+
+
+Contains a real literal. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00026}{26}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_a6d01166dc48696d2e563402faec0cfdb_a6d01166dc48696d2e563402faec0cfdb}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_repeat@{has\_repeat}}
+\index{has\_repeat@{has\_repeat}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_repeat}{has\_repeat}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_a6d01166dc48696d2e563402faec0cfdb_a6d01166dc48696d2e563402faec0cfdb} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+repeat = false}
+
+
+
+Contains replication. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00023}{23}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_af61c9d923bb9d54571a1cb92ad8a3452_af61c9d923bb9d54571a1cb92ad8a3452}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_select@{has\_select}}
+\index{has\_select@{has\_select}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_select}{has\_select}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_af61c9d923bb9d54571a1cb92ad8a3452_af61c9d923bb9d54571a1cb92ad8a3452} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+select = false}
+
+
+
+Contains bit/\+part select. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00020}{20}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_ab6afe37ad0ae1ffffca743707b2f0566_ab6afe37ad0ae1ffffca743707b2f0566}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_ternary@{has\_ternary}}
+\index{has\_ternary@{has\_ternary}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_ternary}{has\_ternary}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_ab6afe37ad0ae1ffffca743707b2f0566_ab6afe37ad0ae1ffffca743707b2f0566} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+ternary = false}
+
+
+
+Contains ternary operator. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00024}{24}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_a00cb861c0125dbd058a7b8097486b730_a00cb861c0125dbd058a7b8097486b730}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!has\_xz@{has\_xz}}
+\index{has\_xz@{has\_xz}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{has\_xz}{has\_xz}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_a00cb861c0125dbd058a7b8097486b730_a00cb861c0125dbd058a7b8097486b730} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+has\+\_\+xz = false}
+
+
+
+Requires X/\+Z tracking. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00025}{25}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_a7dc6741d9e9eda1b35c190a27209b847_a7dc6741d9e9eda1b35c190a27209b847}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!is\_real@{is\_real}}
+\index{is\_real@{is\_real}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{is\_real}{is\_real}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_a7dc6741d9e9eda1b35c190a27209b847_a7dc6741d9e9eda1b35c190a27209b847} 
+bool gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+is\+\_\+real = false}
+
+
+
+Expression evaluates to real. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00018}{18}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+\Hypertarget{structgpga_1_1_scheduler_vm_expr_features_a73414df92dc2c55a355a0d3f62584859_a73414df92dc2c55a355a0d3f62584859}\index{gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}!width@{width}}
+\index{width@{width}!gpga::SchedulerVmExprFeatures@{gpga::SchedulerVmExprFeatures}}
+\doxysubsubsection{\texorpdfstring{width}{width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_scheduler_vm_expr_features_a73414df92dc2c55a355a0d3f62584859_a73414df92dc2c55a355a0d3f62584859} 
+int gpga::\+\+Scheduler\+Vm\+Expr\+Features::\+width = 0}
+
+
+
+Expression bit width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{msl__codegen_8hh_source_l00017}{17}} of file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+codegen/\+\doxymbox{\hyperlink{msl__codegen_8hh}{msl\+\_\+codegen.\+hh}}\end{DoxyCompactItemize}

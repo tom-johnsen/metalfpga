@@ -1,0 +1,159 @@
+\doxysection{gpga::\+Port Struct Reference}
+\hypertarget{structgpga_1_1_port}{}\label{structgpga_1_1_port}\index{gpga::Port@{gpga::Port}}
+
+
+\doxylink{structgpga_1_1_port}{Port} declaration in a module header or body.  
+
+
+
+
+{\ttfamily \+\#include $<$ast.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{namespacegpga_a51d66b9ee820d38918765596af27d20f_a51d66b9ee820d38918765596af27d20f}{Port\+Dir}} \doxymbox{\hyperlink{structgpga_1_1_port_aac4dfaa2824fb1e8477a5e7204a663d7_aac4dfaa2824fb1e8477a5e7204a663d7}{dir}} = \doxymbox{\hyperlink{namespacegpga_a51d66b9ee820d38918765596af27d20f_a51d66b9ee820d38918765596af27d20fae22aedaa9915a19ef49578764f6dea64}{Port\+Dir::\+k\+Input}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_port}{Port} direction. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_port_a93105e20d26b2b4986f2ea1390d00ad3_a93105e20d26b2b4986f2ea1390d00ad3}{name}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_port}{Port} name. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_port_a4896172d56bdb2abe7f7c3717287cb9f_a4896172d56bdb2abe7f7c3717287cb9f}{width}} = 1
+\begin{DoxyCompactList}\small\item\em Declared width in bits. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_port_ad93adeecd1e7c476275f61e6cfaeffbb_ad93adeecd1e7c476275f61e6cfaeffbb}{is\+\_\+signed}} = false
+\begin{DoxyCompactList}\small\item\em Signedness flag. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_port_a391ca2686ea63a3e794dd69de515de74_a391ca2686ea63a3e794dd69de515de74}{is\+\_\+real}} = false
+\begin{DoxyCompactList}\small\item\em True for real-\/typed ports. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_port_a93132af8783042ed9a5c32593615946e_a93132af8783042ed9a5c32593615946e}{is\+\_\+declared}} = false
+\begin{DoxyCompactList}\small\item\em True if explicitly declared. \end{DoxyCompactList}\item 
+std::\+shared\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_port_a05d9fe762059b20c333fe93929bd6265_a05d9fe762059b20c333fe93929bd6265}{msb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em MSB expression for parametric widths. \end{DoxyCompactList}\item 
+std::\+shared\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_port_a1876d908d635f402b0398e0e807ed2dc_a1876d908d635f402b0398e0e807ed2dc}{lsb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em LSB expression for parametric widths. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+\doxylink{structgpga_1_1_port}{Port} declaration in a module header or body. 
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00026}{26}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_port_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_port_aac4dfaa2824fb1e8477a5e7204a663d7_aac4dfaa2824fb1e8477a5e7204a663d7}\index{gpga::Port@{gpga::Port}!dir@{dir}}
+\index{dir@{dir}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{dir}{dir}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_aac4dfaa2824fb1e8477a5e7204a663d7_aac4dfaa2824fb1e8477a5e7204a663d7} 
+\doxymbox{\hyperlink{namespacegpga_a51d66b9ee820d38918765596af27d20f_a51d66b9ee820d38918765596af27d20f}{Port\+Dir}} gpga::\+\+Port::\+dir = \doxymbox{\hyperlink{namespacegpga_a51d66b9ee820d38918765596af27d20f_a51d66b9ee820d38918765596af27d20fae22aedaa9915a19ef49578764f6dea64}{Port\+Dir::\+k\+Input}}}
+
+
+
+\doxylink{structgpga_1_1_port}{Port} direction. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00027}{27}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_a93132af8783042ed9a5c32593615946e_a93132af8783042ed9a5c32593615946e}\index{gpga::Port@{gpga::Port}!is\_declared@{is\_declared}}
+\index{is\_declared@{is\_declared}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{is\_declared}{is\_declared}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_a93132af8783042ed9a5c32593615946e_a93132af8783042ed9a5c32593615946e} 
+bool gpga::\+\+Port::\+is\+\_\+declared = false}
+
+
+
+True if explicitly declared. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00032}{32}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_a391ca2686ea63a3e794dd69de515de74_a391ca2686ea63a3e794dd69de515de74}\index{gpga::Port@{gpga::Port}!is\_real@{is\_real}}
+\index{is\_real@{is\_real}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{is\_real}{is\_real}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_a391ca2686ea63a3e794dd69de515de74_a391ca2686ea63a3e794dd69de515de74} 
+bool gpga::\+\+Port::\+is\+\_\+real = false}
+
+
+
+True for real-\/typed ports. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00031}{31}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_ad93adeecd1e7c476275f61e6cfaeffbb_ad93adeecd1e7c476275f61e6cfaeffbb}\index{gpga::Port@{gpga::Port}!is\_signed@{is\_signed}}
+\index{is\_signed@{is\_signed}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{is\_signed}{is\_signed}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_ad93adeecd1e7c476275f61e6cfaeffbb_ad93adeecd1e7c476275f61e6cfaeffbb} 
+bool gpga::\+\+Port::\+is\+\_\+signed = false}
+
+
+
+Signedness flag. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00030}{30}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_a1876d908d635f402b0398e0e807ed2dc_a1876d908d635f402b0398e0e807ed2dc}\index{gpga::Port@{gpga::Port}!lsb\_expr@{lsb\_expr}}
+\index{lsb\_expr@{lsb\_expr}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{lsb\_expr}{lsb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_a1876d908d635f402b0398e0e807ed2dc_a1876d908d635f402b0398e0e807ed2dc} 
+std::\+shared\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Port::\+lsb\+\_\+expr}
+
+
+
+LSB expression for parametric widths. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00034}{34}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_a05d9fe762059b20c333fe93929bd6265_a05d9fe762059b20c333fe93929bd6265}\index{gpga::Port@{gpga::Port}!msb\_expr@{msb\_expr}}
+\index{msb\_expr@{msb\_expr}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{msb\_expr}{msb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_a05d9fe762059b20c333fe93929bd6265_a05d9fe762059b20c333fe93929bd6265} 
+std::\+shared\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Port::\+msb\+\_\+expr}
+
+
+
+MSB expression for parametric widths. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00033}{33}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_a93105e20d26b2b4986f2ea1390d00ad3_a93105e20d26b2b4986f2ea1390d00ad3}\index{gpga::Port@{gpga::Port}!name@{name}}
+\index{name@{name}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{name}{name}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_a93105e20d26b2b4986f2ea1390d00ad3_a93105e20d26b2b4986f2ea1390d00ad3} 
+std::\+string gpga::\+\+Port::\+name}
+
+
+
+\doxylink{structgpga_1_1_port}{Port} name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00028}{28}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_port_a4896172d56bdb2abe7f7c3717287cb9f_a4896172d56bdb2abe7f7c3717287cb9f}\index{gpga::Port@{gpga::Port}!width@{width}}
+\index{width@{width}!gpga::Port@{gpga::Port}}
+\doxysubsubsection{\texorpdfstring{width}{width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_port_a4896172d56bdb2abe7f7c3717287cb9f_a4896172d56bdb2abe7f7c3717287cb9f} 
+int gpga::\+\+Port::\+width = 1}
+
+
+
+Declared width in bits. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00029}{29}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+\doxymbox{\hyperlink{ast_8hh}{ast.\+hh}}\end{DoxyCompactItemize}

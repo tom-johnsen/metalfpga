@@ -1,0 +1,41 @@
+\doxysection{src/\+utils/\+diagnostics.hh File Reference}
+\hypertarget{diagnostics_8hh}{}\label{diagnostics_8hh}\index{src/utils/diagnostics.hh@{src/utils/diagnostics.hh}}
+
+
+Diagnostic reporting utilities.  
+
+
+{\ttfamily \+\#include $<$iosfwd$>$}\newline
+{\ttfamily \+\#include $<$string$>$}\newline
+{\ttfamily \+\#include $<$vector$>$}\newline
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_source_location}{gpga::\+\+Source\+Location}}
+\begin{DoxyCompactList}\small\item\em Source location for diagnostics. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_diagnostic}{gpga::\+\+Diagnostic}}
+\begin{DoxyCompactList}\small\item\em Single diagnostic message. \end{DoxyCompactList}\item 
+class \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{gpga::\+\+Diagnostics}}
+\begin{DoxyCompactList}\small\item\em Collects diagnostics emitted during compilation. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \doxymbox{\hyperlink{namespacegpga}{gpga}}
+\begin{DoxyCompactList}\small\item\em Runtime, codegen, and frontend support types for metalfpga. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641f}{gpga::\+\+Severity}} \{ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fafea4f62c88b0689240f8b7ba4b7fc5fc}{gpga::\+k\+Note}}
+, \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641faec0da41f4e48b52c362303eb27ed5dee}{gpga::\+k\+Warning}}
+, \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{gpga::\+k\+Error}}
+ \}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_diagnostic}{Diagnostic} severity level. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Diagnostic reporting utilities. 
+
+
+
+Definition in file \doxymbox{\hyperlink{diagnostics_8hh_source}{diagnostics.\+hh}}.
+

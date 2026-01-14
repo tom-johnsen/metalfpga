@@ -1,0 +1,106 @@
+\doxysection{Fast\+Elaborator Namespace Reference}
+\hypertarget{namespace_fast_elaborator}{}\label{namespace_fast_elaborator}\index{FastElaborator@{FastElaborator}}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_elaborator_aa544f8c651da66c5a041dba644e89b65_aa544f8c651da66c5a041dba644e89b65}{add\+Words}} (const std::\+vector$<$ std::\+string $>$ \&collected\+Words)
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_elaborator_a0d74d8ddfd49288d4b629d96d84702c6_a0d74d8ddfd49288d4b629d96d84702c6}{init}} ()
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Variables}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_elaborator_aa5a8dfcff41f1d382da7992caa70cfb9_aa5a8dfcff41f1d382da7992caa70cfb9}{success}} = false
+\item 
+auto \doxymbox{\hyperlink{namespace_fast_elaborator_a5cdc19b66bbd32866245cc86bbc0357d_a5cdc19b66bbd32866245cc86bbc0357d}{words}} = std::\+vector$<$std::\+string$>$\{\}
+\end{DoxyCompactItemize}
+
+
+\label{doc-func-members}
+\Hypertarget{namespace_fast_elaborator_doc-func-members}
+\doxysubsection{Function Documentation}
+\Hypertarget{namespace_fast_elaborator_aa544f8c651da66c5a041dba644e89b65_aa544f8c651da66c5a041dba644e89b65}\index{FastElaborator@{FastElaborator}!addWords@{addWords}}
+\index{addWords@{addWords}!FastElaborator@{FastElaborator}}
+\doxysubsubsection{\texorpdfstring{addWords()}{addWords()}}
+{\footnotesize\ttfamily \label{namespace_fast_elaborator_aa544f8c651da66c5a041dba644e89b65_aa544f8c651da66c5a041dba644e89b65} 
+bool Fast\+Elaborator::\+add\+Words (\begin{DoxyParamCaption}\item[{const std::\+vector$<$ std::\+string $>$ \&}]{collected\+Words}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00139}{139}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00139\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00140\ \ \ \ \ \ \ \ \ words.insert(words.end(),\ collectedWords.begin(),\ collectedWords.end());}
+\DoxyCodeLine{00141\ }
+\DoxyCodeLine{00142\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (words.empty())\ \{}
+\DoxyCodeLine{00143\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00144\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00145\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00146\ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespace_fast_elaborator_a0d74d8ddfd49288d4b629d96d84702c6_a0d74d8ddfd49288d4b629d96d84702c6}\index{FastElaborator@{FastElaborator}!init@{init}}
+\index{init@{init}!FastElaborator@{FastElaborator}}
+\doxysubsubsection{\texorpdfstring{init()}{init()}}
+{\footnotesize\ttfamily \label{namespace_fast_elaborator_a0d74d8ddfd49288d4b629d96d84702c6_a0d74d8ddfd49288d4b629d96d84702c6} 
+bool Fast\+Elaborator::\+init (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00119}{119}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00119\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00120\ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Elaborating\ design..."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00121\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Placeholder\ for\ elaboration\ logic}}
+\DoxyCodeLine{00122\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!FastParsedDesign::has\_program)\ \{}
+\DoxyCodeLine{00123\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ No\ parsed\ design\ available\ for\ elaboration."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00124\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00125\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00126\ }
+\DoxyCodeLine{00127\ \ \ \ \ \ \ \ \ success\ =\ \doxymbox{\hyperlink{namespacegpga_a9ac6132eb3318de0fa94c811f6893939_a9ac6132eb3318de0fa94c811f6893939}{gpga::Elaborate}}(FastParsedDesign::program,}
+\DoxyCodeLine{00128\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \&FastParsedDesign::design,}
+\DoxyCodeLine{00129\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \&FastParsedDesign::diagnostics);}
+\DoxyCodeLine{00130\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (FastParsedDesign::diagnostics.HasErrors())\ \{}
+\DoxyCodeLine{00131\ \ \ \ \ \ \ \ \ \ \ \ \ FastParsedDesign::diagnostics.RenderTo(std::cerr);}
+\DoxyCodeLine{00132\ \ \ \ \ \ \ \ \ \ \ \ \ success\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00133\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00134\ \ \ \ \ \ \ \ \ FastParsedDesign::has\_design\ =\ success;}
+\DoxyCodeLine{00135\ }
+\DoxyCodeLine{00136\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ success;\ \textcolor{comment}{//\ Indicate\ elaboration\ success\ or\ failure}}
+\DoxyCodeLine{00137\ \ \ \ \ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-var-members}
+\Hypertarget{namespace_fast_elaborator_doc-var-members}
+\doxysubsection{Variable Documentation}
+\Hypertarget{namespace_fast_elaborator_aa5a8dfcff41f1d382da7992caa70cfb9_aa5a8dfcff41f1d382da7992caa70cfb9}\index{FastElaborator@{FastElaborator}!success@{success}}
+\index{success@{success}!FastElaborator@{FastElaborator}}
+\doxysubsubsection{\texorpdfstring{success}{success}}
+{\footnotesize\ttfamily \label{namespace_fast_elaborator_aa5a8dfcff41f1d382da7992caa70cfb9_aa5a8dfcff41f1d382da7992caa70cfb9} 
+bool Fast\+Elaborator::\+success = false}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00115}{115}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+\Hypertarget{namespace_fast_elaborator_a5cdc19b66bbd32866245cc86bbc0357d_a5cdc19b66bbd32866245cc86bbc0357d}\index{FastElaborator@{FastElaborator}!words@{words}}
+\index{words@{words}!FastElaborator@{FastElaborator}}
+\doxysubsubsection{\texorpdfstring{words}{words}}
+{\footnotesize\ttfamily \label{namespace_fast_elaborator_a5cdc19b66bbd32866245cc86bbc0357d_a5cdc19b66bbd32866245cc86bbc0357d} 
+auto Fast\+Elaborator::\+words = std::\+vector$<$std::\+string$>$\{\}}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00116}{116}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00116\ \{\};}
+
+\end{DoxyCode}

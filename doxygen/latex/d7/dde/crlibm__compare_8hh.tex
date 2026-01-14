@@ -1,0 +1,808 @@
+\doxysection{src/\+tools/\+crlibm\+\_\+compare.hh File Reference}
+\hypertarget{crlibm__compare_8hh}{}\label{crlibm__compare_8hh}\index{src/tools/crlibm\_compare.hh@{src/tools/crlibm\_compare.hh}}
+
+
+Entry point for the CRLibm comparison tool.  
+
+
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+int \doxymbox{\hyperlink{crlibm__compare_8hh_a3c04138a5bfe5d72780bb7e82a18e627_a3c04138a5bfe5d72780bb7e82a18e627}{main}} (int argc, char \texorpdfstring{$\ast$}{*}\texorpdfstring{$\ast$}{*}argv)
+\begin{DoxyCompactList}\small\item\em Run the CRLibm vs GPGA real ULP comparison tool. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Entry point for the CRLibm comparison tool. 
+
+
+
+Definition in file \doxymbox{\hyperlink{crlibm__compare_8hh_source}{crlibm\+\_\+compare.\+hh}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{crlibm__compare_8hh_doc-func-members}
+\doxysubsection{Function Documentation}
+\Hypertarget{crlibm__compare_8hh_a3c04138a5bfe5d72780bb7e82a18e627_a3c04138a5bfe5d72780bb7e82a18e627}\index{crlibm\_compare.hh@{crlibm\_compare.hh}!main@{main}}
+\index{main@{main}!crlibm\_compare.hh@{crlibm\_compare.hh}}
+\doxysubsubsection{\texorpdfstring{main()}{main()}}
+{\footnotesize\ttfamily \label{crlibm__compare_8hh_a3c04138a5bfe5d72780bb7e82a18e627_a3c04138a5bfe5d72780bb7e82a18e627} 
+int main (\begin{DoxyParamCaption}\item[{int}]{argc}{, }\item[{char \texorpdfstring{$\ast$}{*}\texorpdfstring{$\ast$}{*}}]{argv}{}\end{DoxyParamCaption})}
+
+
+
+Run the CRLibm vs GPGA real ULP comparison tool. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em argc} & Argument count. \\
+\hline
+{\em argv} & Argument values. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+Process exit code.
+\end{DoxyReturn}
+Run the CRLibm vs GPGA real ULP comparison tool.
+
+
+\begin{DoxyParams}{Parameters}
+{\em argc} & Argument count. \\
+\hline
+{\em argv} & Argument vector. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+Process exit status. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{main_8mm_source_l09223}{9223}} of file \doxymbox{\hyperlink{main_8mm_source}{main.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{09223\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{09224\ \ \ \textcolor{keywordflow}{if}\ (argc\ <\ 2)\ \{}
+\DoxyCodeLine{09225\ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09226\ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09227\ \ \ \}}
+\DoxyCodeLine{09228\ }
+\DoxyCodeLine{09229\ \textcolor{preprocessor}{\#ifndef\ NDEBUG}}
+\DoxyCodeLine{09230\ \ \ LoadDotEnvIfDebug();}
+\DoxyCodeLine{09231\ \textcolor{preprocessor}{\#endif}}
+\DoxyCodeLine{09232\ }
+\DoxyCodeLine{09233\ \ \ std::vector<std::string>\ input\_paths;}
+\DoxyCodeLine{09234\ \ \ std::string\ msl\_out;}
+\DoxyCodeLine{09235\ \ \ std::string\ host\_out;}
+\DoxyCodeLine{09236\ \ \ std::string\ flat\_out;}
+\DoxyCodeLine{09237\ \ \ std::string\ top\_name;}
+\DoxyCodeLine{09238\ \ \ std::string\ sdf\_path;}
+\DoxyCodeLine{09239\ \ \ \textcolor{keywordtype}{bool}\ dump\_flat\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09240\ \ \ \textcolor{keywordtype}{bool}\ enable\_4state\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09241\ \ \ \textcolor{keywordtype}{bool}\ sched\_vm\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09242\ \ \ \textcolor{keywordtype}{bool}\ fallback\_diag\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09243\ \ \ \textcolor{keywordtype}{bool}\ auto\_discover\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09244\ \ \ \textcolor{keywordtype}{bool}\ strict\_1364\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09245\ \ \ \textcolor{keywordtype}{bool}\ verbose\_warnings\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09246\ \ \ \textcolor{keywordtype}{bool}\ run\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09247\ \ \ \textcolor{keywordtype}{bool}\ run\_verbose\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09248\ \ \ \textcolor{keywordtype}{bool}\ run\_source\_bindings\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09249\ \ \ uint32\_t\ run\_count\ =\ 1u;}
+\DoxyCodeLine{09250\ \ \ uint32\_t\ run\_service\_capacity\ =\ 32u;}
+\DoxyCodeLine{09251\ \ \ uint32\_t\ run\_max\_steps\ =\ 1024u;}
+\DoxyCodeLine{09252\ \ \ uint32\_t\ run\_max\_proc\_steps\ =\ 64u;}
+\DoxyCodeLine{09253\ \ \ uint32\_t\ run\_dispatch\_timeout\_ms\ =\ 0u;}
+\DoxyCodeLine{09254\ \ \ std::string\ vcd\_dir;}
+\DoxyCodeLine{09255\ \ \ uint32\_t\ vcd\_steps\ =\ 0u;}
+\DoxyCodeLine{09256\ \ \ std::vector<std::string>\ plusargs;}
+\DoxyCodeLine{09257\ }
+\DoxyCodeLine{09258\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{int}\ i\ =\ 1;\ i\ <\ argc;\ ++i)\ \{}
+\DoxyCodeLine{09259\ \ \ \ \ std::string\ arg\ =\ argv[i];}
+\DoxyCodeLine{09260\ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/emit-\/msl"{}})\ \{}
+\DoxyCodeLine{09261\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09262\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09263\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09264\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09265\ \ \ \ \ \ \ msl\_out\ =\ argv[++i];}
+\DoxyCodeLine{09266\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/emit-\/flat"{}})\ \{}
+\DoxyCodeLine{09267\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09268\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09269\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09270\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09271\ \ \ \ \ \ \ flat\_out\ =\ argv[++i];}
+\DoxyCodeLine{09272\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/dump-\/flat"{}})\ \{}
+\DoxyCodeLine{09273\ \ \ \ \ \ \ dump\_flat\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09274\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/top"{}})\ \{}
+\DoxyCodeLine{09275\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09276\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09277\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09278\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09279\ \ \ \ \ \ \ top\_name\ =\ argv[++i];}
+\DoxyCodeLine{09280\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/emit-\/host"{}})\ \{}
+\DoxyCodeLine{09281\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09282\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09283\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09284\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09285\ \ \ \ \ \ \ host\_out\ =\ argv[++i];}
+\DoxyCodeLine{09286\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/sdf"{}})\ \{}
+\DoxyCodeLine{09287\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09288\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09289\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09290\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09291\ \ \ \ \ \ \ sdf\_path\ =\ argv[++i];}
+\DoxyCodeLine{09292\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/4state"{}})\ \{}
+\DoxyCodeLine{09293\ \ \ \ \ \ \ enable\_4state\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09294\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/sched-\/vm"{}})\ \{}
+\DoxyCodeLine{09295\ \ \ \ \ \ \ sched\_vm\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09296\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/fallback-\/diag"{}})\ \{}
+\DoxyCodeLine{09297\ \ \ \ \ \ \ fallback\_diag\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09298\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/auto"{}})\ \{}
+\DoxyCodeLine{09299\ \ \ \ \ \ \ auto\_discover\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09300\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/strict-\/1364"{}})\ \{}
+\DoxyCodeLine{09301\ \ \ \ \ \ \ strict\_1364\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09302\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/verbose"{}}\ ||\ arg\ ==\ \textcolor{stringliteral}{"{}-\/v"{}})\ \{}
+\DoxyCodeLine{09303\ \ \ \ \ \ \ verbose\_warnings\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09304\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/version"{}})\ \{}
+\DoxyCodeLine{09305\ \ \ \ \ \ \ PrintVersion();}
+\DoxyCodeLine{09306\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 0;}
+\DoxyCodeLine{09307\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/run"{}})\ \{}
+\DoxyCodeLine{09308\ \ \ \ \ \ \ run\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09309\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/run-\/verbose"{}})\ \{}
+\DoxyCodeLine{09310\ \ \ \ \ \ \ run\_verbose\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09311\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/source-\/bindings"{}})\ \{}
+\DoxyCodeLine{09312\ \ \ \ \ \ \ run\_source\_bindings\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09313\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/count"{}})\ \{}
+\DoxyCodeLine{09314\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09315\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09316\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09317\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09318\ \ \ \ \ \ \ run\_count\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[++i]));}
+\DoxyCodeLine{09319\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (run\_count\ ==\ 0u)\ \{}
+\DoxyCodeLine{09320\ \ \ \ \ \ \ \ \ run\_count\ =\ 1u;}
+\DoxyCodeLine{09321\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09322\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/service-\/capacity"{}})\ \{}
+\DoxyCodeLine{09323\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09324\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09325\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09326\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09327\ \ \ \ \ \ \ run\_service\_capacity\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[++i]));}
+\DoxyCodeLine{09328\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (run\_service\_capacity\ ==\ 0u)\ \{}
+\DoxyCodeLine{09329\ \ \ \ \ \ \ \ \ run\_service\_capacity\ =\ 1u;}
+\DoxyCodeLine{09330\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09331\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/max-\/steps"{}})\ \{}
+\DoxyCodeLine{09332\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09333\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09334\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09335\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09336\ \ \ \ \ \ \ run\_max\_steps\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[++i]));}
+\DoxyCodeLine{09337\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/max-\/proc-\/steps"{}})\ \{}
+\DoxyCodeLine{09338\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09339\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09340\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09341\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09342\ \ \ \ \ \ \ run\_max\_proc\_steps\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[++i]));}
+\DoxyCodeLine{09343\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/dispatch-\/timeout-\/ms"{}})\ \{}
+\DoxyCodeLine{09344\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09345\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09346\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09347\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09348\ \ \ \ \ \ \ run\_dispatch\_timeout\_ms\ =}
+\DoxyCodeLine{09349\ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[++i]));}
+\DoxyCodeLine{09350\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/vcd-\/dir"{}})\ \{}
+\DoxyCodeLine{09351\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09352\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09353\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09354\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09355\ \ \ \ \ \ \ vcd\_dir\ =\ argv[++i];}
+\DoxyCodeLine{09356\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/vcd-\/steps"{}})\ \{}
+\DoxyCodeLine{09357\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ +\ 1\ >=\ argc)\ \{}
+\DoxyCodeLine{09358\ \ \ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09359\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09360\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09361\ \ \ \ \ \ \ vcd\_steps\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(std::stoul(argv[++i]));}
+\DoxyCodeLine{09362\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (!arg.empty()\ \&\&\ arg[0]\ ==\ \textcolor{charliteral}{'+'})\ \{}
+\DoxyCodeLine{09363\ \ \ \ \ \ \ plusargs.push\_back(arg.substr(1));}
+\DoxyCodeLine{09364\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (!arg.empty()\ \&\&\ arg[0]\ ==\ \textcolor{charliteral}{'-\/'})\ \{}
+\DoxyCodeLine{09365\ \ \ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09366\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09367\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{09368\ \ \ \ \ \ \ input\_paths.push\_back(arg);}
+\DoxyCodeLine{09369\ \ \ \ \ \}}
+\DoxyCodeLine{09370\ \ \ \}}
+\DoxyCodeLine{09371\ }
+\DoxyCodeLine{09372\ \ \ \textcolor{keywordflow}{if}\ (input\_paths.empty())\ \{}
+\DoxyCodeLine{09373\ \ \ \ \ PrintUsage(argv[0]);}
+\DoxyCodeLine{09374\ \ \ \ \ \textcolor{keywordflow}{return}\ 2;}
+\DoxyCodeLine{09375\ \ \ \}}
+\DoxyCodeLine{09376\ }
+\DoxyCodeLine{09377\ \ \ \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{gpga::Diagnostics}}\ diagnostics;}
+\DoxyCodeLine{09378\ \ \ \doxymbox{\hyperlink{structgpga_1_1_program}{gpga::Program}}\ program;}
+\DoxyCodeLine{09379\ \ \ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.clear();}
+\DoxyCodeLine{09380\ \ \ \doxymbox{\hyperlink{structgpga_1_1_parse_options}{gpga::ParseOptions}}\ parse\_options;}
+\DoxyCodeLine{09381\ \ \ parse\_options.\doxymbox{\hyperlink{structgpga_1_1_parse_options_a1b30294b017a0c1d9a456dc927f90570_a1b30294b017a0c1d9a456dc927f90570}{enable\_4state}}\ =\ enable\_4state;}
+\DoxyCodeLine{09382\ \ \ parse\_options.\doxymbox{\hyperlink{structgpga_1_1_parse_options_aa3b7ca1494d058e2a21a90c27f600463_aa3b7ca1494d058e2a21a90c27f600463}{strict\_1364}}\ =\ strict\_1364;}
+\DoxyCodeLine{09383\ \ \ std::unordered\_set<size\_t>\ explicit\_module\_indices;}
+\DoxyCodeLine{09384\ \ \ std::unordered\_set<std::string>\ active\_module\_names;}
+\DoxyCodeLine{09385\ \ \ \textcolor{keywordtype}{bool}\ have\_active\_modules\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09386\ }
+\DoxyCodeLine{09387\ \ \ \textcolor{keyword}{struct\ }ParseItem\ \{}
+\DoxyCodeLine{09388\ \ \ \ \ std::string\ path;}
+\DoxyCodeLine{09389\ \ \ \ \ \textcolor{keywordtype}{bool}\ explicit\_input\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09390\ \ \ \};}
+\DoxyCodeLine{09391\ }
+\DoxyCodeLine{09392\ \ \ std::vector<ParseItem>\ parse\_queue;}
+\DoxyCodeLine{09393\ \ \ parse\_queue.reserve(input\_paths.size());}
+\DoxyCodeLine{09394\ \ \ std::unordered\_map<std::string,\ size\_t>\ seen\_paths;}
+\DoxyCodeLine{09395\ \ \ \textcolor{keyword}{auto}\ add\_path\ =\ [\&](\textcolor{keyword}{const}\ std::string\&\ path,\ \textcolor{keywordtype}{bool}\ explicit\_input)\ \{}
+\DoxyCodeLine{09396\ \ \ \ \ std::error\_code\ ec;}
+\DoxyCodeLine{09397\ \ \ \ \ std::filesystem::path\ fs\_path(path);}
+\DoxyCodeLine{09398\ \ \ \ \ std::filesystem::path\ normalized\ =}
+\DoxyCodeLine{09399\ \ \ \ \ \ \ \ \ std::filesystem::weakly\_canonical(fs\_path,\ ec);}
+\DoxyCodeLine{09400\ \ \ \ \ std::string\ key\ =\ ec\ ?\ fs\_path.lexically\_normal().string()}
+\DoxyCodeLine{09401\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ normalized.string();}
+\DoxyCodeLine{09402\ \ \ \ \ \textcolor{keyword}{auto}\ it\ =\ seen\_paths.find(key);}
+\DoxyCodeLine{09403\ \ \ \ \ \textcolor{keywordflow}{if}\ (it\ ==\ seen\_paths.end())\ \{}
+\DoxyCodeLine{09404\ \ \ \ \ \ \ seen\_paths[key]\ =\ parse\_queue.size();}
+\DoxyCodeLine{09405\ \ \ \ \ \ \ parse\_queue.push\_back(ParseItem\{path,\ explicit\_input\});}
+\DoxyCodeLine{09406\ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{09407\ \ \ \ \ \}}
+\DoxyCodeLine{09408\ \ \ \ \ \textcolor{keywordflow}{if}\ (explicit\_input)\ \{}
+\DoxyCodeLine{09409\ \ \ \ \ \ \ parse\_queue[it-\/>second].explicit\_input\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09410\ \ \ \ \ \}}
+\DoxyCodeLine{09411\ \ \ \};}
+\DoxyCodeLine{09412\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ path\ :\ input\_paths)\ \{}
+\DoxyCodeLine{09413\ \ \ \ \ add\_path(path,\ \textcolor{keyword}{true});}
+\DoxyCodeLine{09414\ \ \ \}}
+\DoxyCodeLine{09415\ \ \ \textcolor{keywordflow}{if}\ (auto\_discover)\ \{}
+\DoxyCodeLine{09416\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ path\ :\ input\_paths)\ \{}
+\DoxyCodeLine{09417\ \ \ \ \ \ \ std::error\_code\ ec;}
+\DoxyCodeLine{09418\ \ \ \ \ \ \ std::filesystem::path\ root\ =\ std::filesystem::path(path).parent\_path();}
+\DoxyCodeLine{09419\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (root.empty())\ \{}
+\DoxyCodeLine{09420\ \ \ \ \ \ \ \ \ root\ =\ \textcolor{stringliteral}{"{}."{}};}
+\DoxyCodeLine{09421\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09422\ \ \ \ \ \ \ std::vector<std::string>\ discovered;}
+\DoxyCodeLine{09423\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{auto}\ it\ =}
+\DoxyCodeLine{09424\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::filesystem::recursive\_directory\_iterator(root,\ ec);}
+\DoxyCodeLine{09425\ \ \ \ \ \ \ \ \ \ \ \ it\ !=\ std::filesystem::recursive\_directory\_iterator();}
+\DoxyCodeLine{09426\ \ \ \ \ \ \ \ \ \ \ \ it.increment(ec))\ \{}
+\DoxyCodeLine{09427\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ec)\ \{}
+\DoxyCodeLine{09428\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{09429\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09430\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!it-\/>is\_regular\_file())\ \{}
+\DoxyCodeLine{09431\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09432\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09433\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (it-\/>path().extension()\ ==\ \textcolor{stringliteral}{"{}.v"{}})\ \{}
+\DoxyCodeLine{09434\ \ \ \ \ \ \ \ \ \ \ discovered.push\_back(it-\/>path().string());}
+\DoxyCodeLine{09435\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09436\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09437\ \ \ \ \ \ \ std::sort(discovered.begin(),\ discovered.end());}
+\DoxyCodeLine{09438\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ candidate\ :\ discovered)\ \{}
+\DoxyCodeLine{09439\ \ \ \ \ \ \ \ \ add\_path(candidate,\ \textcolor{keyword}{false});}
+\DoxyCodeLine{09440\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09441\ \ \ \ \ \}}
+\DoxyCodeLine{09442\ \ \ \}}
+\DoxyCodeLine{09443\ }
+\DoxyCodeLine{09444\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ item\ :\ parse\_queue)\ \{}
+\DoxyCodeLine{09445\ \ \ \ \ \textcolor{keywordflow}{if}\ (item.explicit\_input)\ \{}
+\DoxyCodeLine{09446\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ before\_count\ =\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.size();}
+\DoxyCodeLine{09447\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_a0c93b495adf475053a904d6fa6ee467d_a0c93b495adf475053a904d6fa6ee467d}{gpga::ParseVerilogFile}}(item.path,\ \&program,\ \&diagnostics,}
+\DoxyCodeLine{09448\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ parse\_options))\ \{}
+\DoxyCodeLine{09449\ \ \ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09450\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09451\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09452\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{HasErrors}}())\ \{}
+\DoxyCodeLine{09453\ \ \ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09454\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09455\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09456\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ after\_count\ =\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.size();}
+\DoxyCodeLine{09457\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ before\_count;\ i\ <\ after\_count;\ ++i)\ \{}
+\DoxyCodeLine{09458\ \ \ \ \ \ \ \ \ explicit\_module\_indices.insert(i);}
+\DoxyCodeLine{09459\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09460\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09461\ \ \ \ \ \}}
+\DoxyCodeLine{09462\ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_program}{gpga::Program}}\ temp\_program;}
+\DoxyCodeLine{09463\ \ \ \ \ \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{gpga::Diagnostics}}\ temp\_diag;}
+\DoxyCodeLine{09464\ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_a0c93b495adf475053a904d6fa6ee467d_a0c93b495adf475053a904d6fa6ee467d}{gpga::ParseVerilogFile}}(item.path,\ \&temp\_program,\ \&temp\_diag,}
+\DoxyCodeLine{09465\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ parse\_options))\ \{}
+\DoxyCodeLine{09466\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09467\ \ \ \ \ \}}
+\DoxyCodeLine{09468\ \ \ \ \ \textcolor{keywordflow}{if}\ (temp\_diag.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{HasErrors}}())\ \{}
+\DoxyCodeLine{09469\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09470\ \ \ \ \ \}}
+\DoxyCodeLine{09471\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{auto}\&\ module\ :\ temp\_program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}})\ \{}
+\DoxyCodeLine{09472\ \ \ \ \ \ \ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.push\_back(std::move(module));}
+\DoxyCodeLine{09473\ \ \ \ \ \}}
+\DoxyCodeLine{09474\ \ \ \}}
+\DoxyCodeLine{09475\ }
+\DoxyCodeLine{09476\ \ \ \textcolor{keywordflow}{if}\ (auto\_discover\ \&\&\ !explicit\_module\_indices.empty())\ \{}
+\DoxyCodeLine{09477\ \ \ \ \ std::unordered\_map<std::string,\ std::vector<std::string>>\ graph;}
+\DoxyCodeLine{09478\ \ \ \ \ graph.reserve(program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.size());}
+\DoxyCodeLine{09479\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ module\ :\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}})\ \{}
+\DoxyCodeLine{09480\ \ \ \ \ \ \ \textcolor{keyword}{auto}\&\ edges\ =\ graph[module.name];}
+\DoxyCodeLine{09481\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ instance\ :\ module.instances)\ \{}
+\DoxyCodeLine{09482\ \ \ \ \ \ \ \ \ edges.push\_back(instance.module\_name);}
+\DoxyCodeLine{09483\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09484\ \ \ \ \ \}}
+\DoxyCodeLine{09485\ \ \ \ \ active\_module\_names.clear();}
+\DoxyCodeLine{09486\ \ \ \ \ active\_module\_names.reserve(program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.size());}
+\DoxyCodeLine{09487\ \ \ \ \ have\_active\_modules\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09488\ \ \ \ \ std::vector<std::string>\ stack;}
+\DoxyCodeLine{09489\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ idx\ :\ explicit\_module\_indices)\ \{}
+\DoxyCodeLine{09490\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (idx\ >=\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.size())\ \{}
+\DoxyCodeLine{09491\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09492\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09493\ \ \ \ \ \ \ \textcolor{keyword}{const}\ std::string\&\ name\ =\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}[idx].name;}
+\DoxyCodeLine{09494\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\_module\_names.insert(name).second)\ \{}
+\DoxyCodeLine{09495\ \ \ \ \ \ \ \ \ stack.push\_back(name);}
+\DoxyCodeLine{09496\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09497\ \ \ \ \ \}}
+\DoxyCodeLine{09498\ \ \ \ \ \textcolor{keywordflow}{while}\ (!stack.empty())\ \{}
+\DoxyCodeLine{09499\ \ \ \ \ \ \ std::string\ name\ =\ std::move(stack.back());}
+\DoxyCodeLine{09500\ \ \ \ \ \ \ stack.pop\_back();}
+\DoxyCodeLine{09501\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ it\ =\ graph.find(name);}
+\DoxyCodeLine{09502\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (it\ ==\ graph.end())\ \{}
+\DoxyCodeLine{09503\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09504\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09505\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ child\ :\ it-\/>second)\ \{}
+\DoxyCodeLine{09506\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\_module\_names.insert(child).second)\ \{}
+\DoxyCodeLine{09507\ \ \ \ \ \ \ \ \ \ \ stack.push\_back(child);}
+\DoxyCodeLine{09508\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09509\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09510\ \ \ \ \ \}}
+\DoxyCodeLine{09511\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{auto}\&\ module\ :\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}})\ \{}
+\DoxyCodeLine{09512\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\_module\_names.count(module.name)\ ==\ 0)\ \{}
+\DoxyCodeLine{09513\ \ \ \ \ \ \ \ \ \textcolor{keyword}{module}.defparams.clear();}
+\DoxyCodeLine{09514\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09515\ \ \ \ \ \}}
+\DoxyCodeLine{09516\ \ \ \}}
+\DoxyCodeLine{09517\ }
+\DoxyCodeLine{09518\ \ \ \textcolor{keywordflow}{if}\ (!sdf\_path.empty())\ \{}
+\DoxyCodeLine{09519\ \ \ \ \ std::vector<SdfTimingCheck>\ sdf\_checks;}
+\DoxyCodeLine{09520\ \ \ \ \ \textcolor{keywordflow}{if}\ (!LoadSdfTimingChecks(sdf\_path,\ \&sdf\_checks,\ \&diagnostics))\ \{}
+\DoxyCodeLine{09521\ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09522\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09523\ \ \ \ \ \}}
+\DoxyCodeLine{09524\ \ \ \ \ ApplySdfTimingChecks(sdf\_path,\ sdf\_checks,\ \&program,\ \&diagnostics);}
+\DoxyCodeLine{09525\ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{HasErrors}}())\ \{}
+\DoxyCodeLine{09526\ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09527\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09528\ \ \ \ \ \}}
+\DoxyCodeLine{09529\ \ \ \}}
+\DoxyCodeLine{09530\ }
+\DoxyCodeLine{09531\ \ \ \doxymbox{\hyperlink{structgpga_1_1_elaborated_design}{gpga::ElaboratedDesign}}\ design;}
+\DoxyCodeLine{09532\ \ \ \textcolor{keywordtype}{bool}\ elaborated\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09533\ \ \ \textcolor{keywordflow}{if}\ (top\_name.empty()\ \&\&\ auto\_discover\ \&\&}
+\DoxyCodeLine{09534\ \ \ \ \ \ \ !explicit\_module\_indices.empty())\ \{}
+\DoxyCodeLine{09535\ \ \ \ \ \textcolor{keyword}{auto}\ is\_active\ =\ [\&](\textcolor{keyword}{const}\ std::string\&\ name)\ -\/>\ \textcolor{keywordtype}{bool}\ \{}
+\DoxyCodeLine{09536\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ !have\_active\_modules\ ||\ active\_module\_names.count(name)\ >\ 0;}
+\DoxyCodeLine{09537\ \ \ \ \ \};}
+\DoxyCodeLine{09538\ \ \ \ \ std::unordered\_set<std::string>\ instantiated;}
+\DoxyCodeLine{09539\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ module\ :\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}})\ \{}
+\DoxyCodeLine{09540\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!is\_active(module.name))\ \{}
+\DoxyCodeLine{09541\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09542\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09543\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ instance\ :\ module.instances)\ \{}
+\DoxyCodeLine{09544\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (is\_active(instance.module\_name))\ \{}
+\DoxyCodeLine{09545\ \ \ \ \ \ \ \ \ \ \ instantiated.insert(instance.module\_name);}
+\DoxyCodeLine{09546\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09547\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09548\ \ \ \ \ \}}
+\DoxyCodeLine{09549\ \ \ \ \ std::vector<const\ gpga::Module*>\ roots;}
+\DoxyCodeLine{09550\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ program.\doxymbox{\hyperlink{structgpga_1_1_program_a36d60a7930b69c633d0bc96067c1eeee_a36d60a7930b69c633d0bc96067c1eeee}{modules}}.size();\ ++i)\ \{}
+\DoxyCodeLine{09551\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (explicit\_module\_indices.count(i)\ ==\ 0)\ \{}
+\DoxyCodeLine{09552\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09553\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09554\ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ \textcolor{keyword}{module}\ =\ program.modules[i];}
+\DoxyCodeLine{09555\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!is\_active(module.name))\ \{}
+\DoxyCodeLine{09556\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09557\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09558\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (instantiated.count(module.name)\ ==\ 0)\ \{}
+\DoxyCodeLine{09559\ \ \ \ \ \ \ \ \ roots.push\_back(\&module);}
+\DoxyCodeLine{09560\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09561\ \ \ \ \ \}}
+\DoxyCodeLine{09562\ \ \ \ \ \textcolor{keywordflow}{if}\ (!roots.empty())\ \{}
+\DoxyCodeLine{09563\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ has\_initial\ =\ [](\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_module}{gpga::Module}}\&\ module)\ -\/>\ \textcolor{keywordtype}{bool}\ \{}
+\DoxyCodeLine{09564\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ block\ :\ module.always\_blocks)\ \{}
+\DoxyCodeLine{09565\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (block.edge\ ==\ \doxymbox{\hyperlink{namespacegpga_a4f3c72daf2d3a33b3dfe9fa4349369f3_a4f3c72daf2d3a33b3dfe9fa4349369f3a8288d748256799a5aab9847a6c354ce7}{gpga::EdgeKind::kInitial}})\ \{}
+\DoxyCodeLine{09566\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09567\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09568\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09569\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09570\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09571\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ is\_test\ =\ [](\textcolor{keyword}{const}\ std::string\&\ name)\ -\/>\ \textcolor{keywordtype}{bool}\ \{}
+\DoxyCodeLine{09572\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ name.rfind(\textcolor{stringliteral}{"{}test\_"{}},\ 0)\ ==\ 0;}
+\DoxyCodeLine{09573\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09574\ \ \ \ \ \ \ \textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_module}{gpga::Module}}*\ chosen\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{09575\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}*\ module\ :\ roots)\ \{}
+\DoxyCodeLine{09576\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (has\_initial(*module)\ \&\&\ is\_test(module-\/>name))\ \{}
+\DoxyCodeLine{09577\ \ \ \ \ \ \ \ \ \ \ chosen\ =\ \textcolor{keyword}{module};}
+\DoxyCodeLine{09578\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{09579\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09580\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09581\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!chosen)\ \{}
+\DoxyCodeLine{09582\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}*\ module\ :\ roots)\ \{}
+\DoxyCodeLine{09583\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (has\_initial(*module))\ \{}
+\DoxyCodeLine{09584\ \ \ \ \ \ \ \ \ \ \ \ \ chosen\ =\ \textcolor{keyword}{module};}
+\DoxyCodeLine{09585\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{09586\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09587\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09588\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09589\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!chosen)\ \{}
+\DoxyCodeLine{09590\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}*\ module\ :\ roots)\ \{}
+\DoxyCodeLine{09591\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (is\_test(module-\/>name))\ \{}
+\DoxyCodeLine{09592\ \ \ \ \ \ \ \ \ \ \ \ \ chosen\ =\ \textcolor{keyword}{module};}
+\DoxyCodeLine{09593\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{09594\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09595\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09596\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09597\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!chosen)\ \{}
+\DoxyCodeLine{09598\ \ \ \ \ \ \ \ \ chosen\ =\ roots.front();}
+\DoxyCodeLine{09599\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09600\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (roots.size()\ >\ 1)\ \{}
+\DoxyCodeLine{09601\ \ \ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641faec0da41f4e48b52c362303eb27ed5dee}{gpga::Severity::kWarning}},}
+\DoxyCodeLine{09602\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}multiple\ top-\/level\ modules\ found;\ using\ '"{}}\ +}
+\DoxyCodeLine{09603\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ chosen-\/>\doxymbox{\hyperlink{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe}{name}}\ +}
+\DoxyCodeLine{09604\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}'\ (use\ -\/-\/top\ <name>\ to\ override)"{}});}
+\DoxyCodeLine{09605\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09606\ \ \ \ \ \ \ top\_name\ =\ chosen-\/>\doxymbox{\hyperlink{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe}{name}};}
+\DoxyCodeLine{09607\ \ \ \ \ \}}
+\DoxyCodeLine{09608\ \ \ \}}
+\DoxyCodeLine{09609\ \ \ \textcolor{keywordflow}{if}\ (!top\_name.empty())\ \{}
+\DoxyCodeLine{09610\ \ \ \ \ elaborated\ =}
+\DoxyCodeLine{09611\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{namespacegpga_a9ac6132eb3318de0fa94c811f6893939_a9ac6132eb3318de0fa94c811f6893939}{gpga::Elaborate}}(program,\ top\_name,\ \&design,\ \&diagnostics,}
+\DoxyCodeLine{09612\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ enable\_4state,\ verbose\_warnings);}
+\DoxyCodeLine{09613\ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{09614\ \ \ \ \ elaborated\ =}
+\DoxyCodeLine{09615\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{namespacegpga_a9ac6132eb3318de0fa94c811f6893939_a9ac6132eb3318de0fa94c811f6893939}{gpga::Elaborate}}(program,\ \&design,\ \&diagnostics,\ enable\_4state,}
+\DoxyCodeLine{09616\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ verbose\_warnings);}
+\DoxyCodeLine{09617\ \ \ \}}
+\DoxyCodeLine{09618\ \ \ \textcolor{keywordflow}{if}\ (!elaborated\ ||\ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{HasErrors}}())\ \{}
+\DoxyCodeLine{09619\ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09620\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09621\ \ \ \}}
+\DoxyCodeLine{09622\ \ \ \textcolor{keywordflow}{if}\ (!diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a52df70398e16d9400e52a55fb1482288_a52df70398e16d9400e52a55fb1482288}{Items}}().empty())\ \{}
+\DoxyCodeLine{09623\ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09624\ \ \ \}}
+\DoxyCodeLine{09625\ }
+\DoxyCodeLine{09626\ \ \ \textcolor{keywordflow}{if}\ (fallback\_diag)\ \{}
+\DoxyCodeLine{09627\ \ \ \ \ std::ostringstream\ report;}
+\DoxyCodeLine{09628\ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}Scheduler\ VM\ fallback\ diagnostics\(\backslash\)n"{}};}
+\DoxyCodeLine{09629\ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}module:\ "{}}\ <<\ design.\doxymbox{\hyperlink{structgpga_1_1_elaborated_design_a1171d769aaf737e28ba92cebcbf841ea_a1171d769aaf737e28ba92cebcbf841ea}{top}}.\doxymbox{\hyperlink{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe}{name}}\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09630\ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}four\_state:\ "{}}\ <<\ (enable\_4state\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09631\ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}sched\_vm\_flag:\ "{}}\ <<\ (sched\_vm\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09632\ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_layout}{gpga::SchedulerVmLayout}}\ diag\_layout;}
+\DoxyCodeLine{09633\ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics}{gpga::SchedulerVmFallbackDiagnostics}}\ fallback\_diag\_info;}
+\DoxyCodeLine{09634\ \ \ \ \ std::string\ diag\_error;}
+\DoxyCodeLine{09635\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{bool}\ diag\_ok\ =\ \doxymbox{\hyperlink{namespacegpga_abd60051a452668bb5a1e8d485e7785ba_abd60051a452668bb5a1e8d485e7785ba}{gpga::BuildSchedulerVmLayoutFromModuleWithDiag}}(}
+\DoxyCodeLine{09636\ \ \ \ \ \ \ \ \ design.\doxymbox{\hyperlink{structgpga_1_1_elaborated_design_a1171d769aaf737e28ba92cebcbf841ea_a1171d769aaf737e28ba92cebcbf841ea}{top}},\ \&diag\_layout,\ \&diag\_error,\ enable\_4state,}
+\DoxyCodeLine{09637\ \ \ \ \ \ \ \ \ \&fallback\_diag\_info);}
+\DoxyCodeLine{09638\ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}layout:\ "{}}\ <<\ (diag\_ok\ ?\ \textcolor{stringliteral}{"{}ok"{}}\ :\ \textcolor{stringliteral}{"{}failed"{}})\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09639\ \ \ \ \ \textcolor{keywordflow}{if}\ (!diag\_ok)\ \{}
+\DoxyCodeLine{09640\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}error:\ "{}}\ <<\ diag\_error\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09641\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{09642\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}layout\_summary:\(\backslash\)n"{}};}
+\DoxyCodeLine{09643\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ proc\_count:\ "{}}\ <<\ diag\_layout.proc\_count\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09644\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ words\_per\_proc:\ "{}}\ <<\ diag\_layout.words\_per\_proc\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09645\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ bytecode\_words:\ "{}}\ <<\ diag\_layout.bytecode.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09646\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ cond\_entries:\ "{}}\ <<\ diag\_layout.cond\_entries.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09647\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ signal\_entries:\ "{}}\ <<\ diag\_layout.signal\_entries.size()}
+\DoxyCodeLine{09648\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09649\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ case\_headers:\ "{}}\ <<\ diag\_layout.case\_headers.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09650\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ case\_entries:\ "{}}\ <<\ diag\_layout.case\_entries.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09651\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ case\_words:\ "{}}\ <<\ diag\_layout.case\_words.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09652\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ assign\_entries:\ "{}}\ <<\ diag\_layout.assign\_entries.size()}
+\DoxyCodeLine{09653\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09654\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ delay\_assign\_entries:\ "{}}}
+\DoxyCodeLine{09655\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ diag\_layout.delay\_assign\_entries.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09656\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ force\_entries:\ "{}}\ <<\ diag\_layout.force\_entries.size()}
+\DoxyCodeLine{09657\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09658\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ release\_entries:\ "{}}\ <<\ diag\_layout.release\_entries.size()}
+\DoxyCodeLine{09659\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09660\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ service\_entries:\ "{}}\ <<\ diag\_layout.service\_entries.size()}
+\DoxyCodeLine{09661\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09662\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ service\_args:\ "{}}\ <<\ diag\_layout.service\_args.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09663\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ service\_ret\_entries:\ "{}}}
+\DoxyCodeLine{09664\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ diag\_layout.service\_ret\_entries.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09665\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ expr\_words:\ "{}}\ <<\ diag\_layout.expr\_table.words.size()}
+\DoxyCodeLine{09666\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09667\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ expr\_imm\_words:\ "{}}\ <<\ diag\_layout.expr\_table.imm\_words.size()}
+\DoxyCodeLine{09668\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09669\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ edge\_item\_expr\_offsets:\ "{}}}
+\DoxyCodeLine{09670\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ diag\_layout.edge\_item\_expr\_offsets.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09671\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ edge\_star\_expr\_offsets:\ "{}}}
+\DoxyCodeLine{09672\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ diag\_layout.edge\_star\_expr\_offsets.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09673\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ repeat\_expr\_offsets:\ "{}}}
+\DoxyCodeLine{09674\ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ diag\_layout.repeat\_expr\_offsets.size()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09675\ }
+\DoxyCodeLine{09676\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ callgroup\_procs\ =\ 0u;}
+\DoxyCodeLine{09677\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ empty\_procs\ =\ 0u;}
+\DoxyCodeLine{09678\ \ \ \ \ \ \ std::vector<uint32\_t>\ callgroup\_pids;}
+\DoxyCodeLine{09679\ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{size\_t}\ proc\_count\ =}
+\DoxyCodeLine{09680\ \ \ \ \ \ \ \ \ \ \ std::min(diag\_layout.proc\_offsets.size(),}
+\DoxyCodeLine{09681\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ diag\_layout.proc\_lengths.size());}
+\DoxyCodeLine{09682\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ pid\ =\ 0;\ pid\ <\ proc\_count;\ ++pid)\ \{}
+\DoxyCodeLine{09683\ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ uint32\_t\ len\ =\ diag\_layout.proc\_lengths[pid];}
+\DoxyCodeLine{09684\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (len\ ==\ 0u)\ \{}
+\DoxyCodeLine{09685\ \ \ \ \ \ \ \ \ \ \ empty\_procs\ +=\ 1u;}
+\DoxyCodeLine{09686\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09687\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09688\ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{size\_t}\ offset\ =\ diag\_layout.proc\_offsets[pid];}
+\DoxyCodeLine{09689\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (offset\ >=\ diag\_layout.bytecode.size())\ \{}
+\DoxyCodeLine{09690\ \ \ \ \ \ \ \ \ \ \ callgroup\_procs\ +=\ 1u;}
+\DoxyCodeLine{09691\ \ \ \ \ \ \ \ \ \ \ callgroup\_pids.push\_back(\textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(pid));}
+\DoxyCodeLine{09692\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09693\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09694\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (\doxymbox{\hyperlink{namespacegpga_ad6a595a1dab420c1d1cbfb805c941b48_ad6a595a1dab420c1d1cbfb805c941b48}{gpga::DecodeSchedulerVmOp}}(diag\_layout.bytecode[offset])\ ==}
+\DoxyCodeLine{09695\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a4351a9cd70a8f139bcc9b3af2cb402a8}{gpga::SchedulerVmOp::kCallGroup}})\ \{}
+\DoxyCodeLine{09696\ \ \ \ \ \ \ \ \ \ \ callgroup\_procs\ +=\ 1u;}
+\DoxyCodeLine{09697\ \ \ \ \ \ \ \ \ \ \ callgroup\_pids.push\_back(\textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(pid));}
+\DoxyCodeLine{09698\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09699\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09700\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}callgroup\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09701\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ count:\ "{}}\ <<\ callgroup\_procs\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09702\ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ empty\_procs:\ "{}}\ <<\ empty\_procs\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09703\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (callgroup\_pids.empty())\ \{}
+\DoxyCodeLine{09704\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ pids:\ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09705\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{09706\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ pids:"{}};}
+\DoxyCodeLine{09707\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint32\_t\ pid\ :\ callgroup\_pids)\ \{}
+\DoxyCodeLine{09708\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ "{}}\ <<\ pid;}
+\DoxyCodeLine{09709\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09710\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09711\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09712\ }
+\DoxyCodeLine{09713\ \ \ \ \ \ \ std::unordered\_map<std::string,\ size\_t>\ reason\_counts;}
+\DoxyCodeLine{09714\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ bump\_reason\ =\ [\&](\textcolor{keyword}{const}\ std::string\&\ reason)\ \{}
+\DoxyCodeLine{09715\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!reason.empty())\ \{}
+\DoxyCodeLine{09716\ \ \ \ \ \ \ \ \ \ \ reason\_counts[reason]\ +=\ 1u;}
+\DoxyCodeLine{09717\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09718\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09719\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ append\_indented\_lines\ =\ [\&](\textcolor{keyword}{const}\ std::string\&\ text,}
+\DoxyCodeLine{09720\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ std::string\&\ indent)\ \{}
+\DoxyCodeLine{09721\ \ \ \ \ \ \ \ \ std::istringstream\ in(text);}
+\DoxyCodeLine{09722\ \ \ \ \ \ \ \ \ std::string\ line;}
+\DoxyCodeLine{09723\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ wrote\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{09724\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (std::getline(in,\ line))\ \{}
+\DoxyCodeLine{09725\ \ \ \ \ \ \ \ \ \ \ report\ <<\ indent\ <<\ line\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09726\ \ \ \ \ \ \ \ \ \ \ wrote\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{09727\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09728\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!wrote)\ \{}
+\DoxyCodeLine{09729\ \ \ \ \ \ \ \ \ \ \ report\ <<\ indent\ <<\ \textcolor{stringliteral}{"{}<empty>\(\backslash\)n"{}};}
+\DoxyCodeLine{09730\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09731\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09732\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ dump\_assign\_fallbacks\ =\ [\&]()\ \{}
+\DoxyCodeLine{09733\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}assign\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09734\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (fallback\_diag\_info.\doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics_ac033e7cc7dde00613c2a7ad9ed338be4_ac033e7cc7dde00613c2a7ad9ed338be4}{assign\_fallbacks}}.empty())\ \{}
+\DoxyCodeLine{09735\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09736\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{09737\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09738\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ info\ :\ fallback\_diag\_info.\doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics_ac033e7cc7dde00613c2a7ad9ed338be4_ac033e7cc7dde00613c2a7ad9ed338be4}{assign\_fallbacks}})\ \{}
+\DoxyCodeLine{09739\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ assign["{}}\ <<\ info.index\ <<\ \textcolor{stringliteral}{"{}]:\(\backslash\)n"{}};}
+\DoxyCodeLine{09740\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ stmt:\(\backslash\)n"{}};}
+\DoxyCodeLine{09741\ \ \ \ \ \ \ \ \ \ \ append\_indented\_lines(}
+\DoxyCodeLine{09742\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ info.stmt\_text.empty()\ ?\ \textcolor{stringliteral}{"{}<missing>"{}}\ :\ info.stmt\_text,\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ "{}});}
+\DoxyCodeLine{09743\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!info.lhs\_text.empty())\ \{}
+\DoxyCodeLine{09744\ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ lhs:\ "{}}\ <<\ info.lhs\_text\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09745\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09746\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!info.rhs\_text.empty())\ \{}
+\DoxyCodeLine{09747\ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ rhs:\ "{}}\ <<\ info.rhs\_text\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09748\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09749\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ nonblocking:\ "{}}}
+\DoxyCodeLine{09750\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ (info.nonblocking\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09751\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ lhs\_index:\ "{}}\ <<\ (info.lhs\_has\_index\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})}
+\DoxyCodeLine{09752\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ lhs\_range:\ "{}}\ <<\ (info.lhs\_has\_range\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})}
+\DoxyCodeLine{09753\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ lhs\_indices:\ "{}}\ <<\ info.lhs\_index\_count\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09754\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ override\_target:\ "{}}}
+\DoxyCodeLine{09755\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ (info.override\_target\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})}
+\DoxyCodeLine{09756\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ lhs\_real:\ "{}}\ <<\ (info.lhs\_real\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})}
+\DoxyCodeLine{09757\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ lhs\_width:\ "{}}\ <<\ info.lhs\_width\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09758\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ missing\_signal:\ "{}}}
+\DoxyCodeLine{09759\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ (info.missing\_signal\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})}
+\DoxyCodeLine{09760\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ rhs\_missing:\ "{}}\ <<\ (info.rhs\_missing\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})}
+\DoxyCodeLine{09761\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ rhs\_unencodable:\ "{}}}
+\DoxyCodeLine{09762\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ (info.rhs\_unencodable\ ?\ \textcolor{stringliteral}{"{}true"{}}\ :\ \textcolor{stringliteral}{"{}false"{}})\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09763\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!info.rhs\_text.empty())\ \{}
+\DoxyCodeLine{09764\ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ rhs\_features:\ "{}}}
+\DoxyCodeLine{09765\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ FormatExprFeaturesForDiag(info.rhs\_features)\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09766\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09767\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!info.reasons.empty())\ \{}
+\DoxyCodeLine{09768\ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ reasons:\(\backslash\)n"{}};}
+\DoxyCodeLine{09769\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ reason\ :\ info.reasons)\ \{}
+\DoxyCodeLine{09770\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ -\/\ "{}}\ <<\ reason\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09771\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ bump\_reason(reason);}
+\DoxyCodeLine{09772\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09773\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09774\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09775\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09776\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ dump\_delay\_fallbacks\ =\ [\&]()\ \{}
+\DoxyCodeLine{09777\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ count\ =\ 0u;}
+\DoxyCodeLine{09778\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}delay\_assign\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09779\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ diag\_layout.delay\_assign\_entries.size();\ ++i)\ \{}
+\DoxyCodeLine{09780\ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ entry\ =\ diag\_layout.delay\_assign\_entries[i];}
+\DoxyCodeLine{09781\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ ((entry.flags\ \&\ \doxymbox{\hyperlink{namespacegpga_a02ab5f96ad28be2e6fd01e907d431cb0_a02ab5f96ad28be2e6fd01e907d431cb0}{gpga::kSchedulerVmDelayAssignFlagFallback}})\ ==\ 0u)\ \{}
+\DoxyCodeLine{09782\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09783\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09784\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ delay["{}}\ <<\ i\ <<\ \textcolor{stringliteral}{"{}]:\ signal\_id="{}}\ <<\ entry.signal\_id}
+\DoxyCodeLine{09785\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ width="{}}\ <<\ entry.width}
+\DoxyCodeLine{09786\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ base\_width="{}}\ <<\ entry.base\_width}
+\DoxyCodeLine{09787\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ range\_lsb="{}}\ <<\ entry.range\_lsb}
+\DoxyCodeLine{09788\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ array\_size="{}}\ <<\ entry.array\_size}
+\DoxyCodeLine{09789\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ rhs\_expr="{}}\ <<\ entry.rhs\_expr}
+\DoxyCodeLine{09790\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ delay\_expr="{}}\ <<\ entry.delay\_expr}
+\DoxyCodeLine{09791\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ idx\_expr="{}}\ <<\ entry.idx\_expr}
+\DoxyCodeLine{09792\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ flags=0x"{}}\ <<\ std::hex\ <<\ entry.flags\ <<\ std::dec\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09793\ \ \ \ \ \ \ \ \ \ \ count\ +=\ 1u;}
+\DoxyCodeLine{09794\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09795\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (count\ ==\ 0u)\ \{}
+\DoxyCodeLine{09796\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09797\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09798\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09799\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ dump\_force\_fallbacks\ =\ [\&]()\ \{}
+\DoxyCodeLine{09800\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ count\ =\ 0u;}
+\DoxyCodeLine{09801\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}force\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09802\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ diag\_layout.force\_entries.size();\ ++i)\ \{}
+\DoxyCodeLine{09803\ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ entry\ =\ diag\_layout.force\_entries[i];}
+\DoxyCodeLine{09804\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ ((entry.flags\ \&\ \doxymbox{\hyperlink{namespacegpga_a077eb7297a807e5a43215cae2394eeee_a077eb7297a807e5a43215cae2394eeee}{gpga::kSchedulerVmForceFlagFallback}})\ ==\ 0u)\ \{}
+\DoxyCodeLine{09805\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09806\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09807\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ force["{}}\ <<\ i\ <<\ \textcolor{stringliteral}{"{}]:\ signal\_id="{}}\ <<\ entry.signal\_id}
+\DoxyCodeLine{09808\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ rhs\_expr="{}}\ <<\ entry.rhs\_expr}
+\DoxyCodeLine{09809\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ force\_id="{}}\ <<\ entry.force\_id}
+\DoxyCodeLine{09810\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ force\_slot="{}}\ <<\ entry.force\_slot}
+\DoxyCodeLine{09811\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ passign\_slot="{}}\ <<\ entry.passign\_slot}
+\DoxyCodeLine{09812\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ flags=0x"{}}\ <<\ std::hex\ <<\ entry.flags\ <<\ std::dec\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09813\ \ \ \ \ \ \ \ \ \ \ count\ +=\ 1u;}
+\DoxyCodeLine{09814\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09815\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (count\ ==\ 0u)\ \{}
+\DoxyCodeLine{09816\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09817\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09818\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09819\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ dump\_release\_fallbacks\ =\ [\&]()\ \{}
+\DoxyCodeLine{09820\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ count\ =\ 0u;}
+\DoxyCodeLine{09821\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}release\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09822\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ diag\_layout.release\_entries.size();\ ++i)\ \{}
+\DoxyCodeLine{09823\ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ entry\ =\ diag\_layout.release\_entries[i];}
+\DoxyCodeLine{09824\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ ((entry.flags\ \&\ \doxymbox{\hyperlink{namespacegpga_a077eb7297a807e5a43215cae2394eeee_a077eb7297a807e5a43215cae2394eeee}{gpga::kSchedulerVmForceFlagFallback}})\ ==\ 0u)\ \{}
+\DoxyCodeLine{09825\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09826\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09827\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ release["{}}\ <<\ i\ <<\ \textcolor{stringliteral}{"{}]:\ signal\_id="{}}\ <<\ entry.signal\_id}
+\DoxyCodeLine{09828\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ force\_slot="{}}\ <<\ entry.force\_slot}
+\DoxyCodeLine{09829\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ passign\_slot="{}}\ <<\ entry.passign\_slot}
+\DoxyCodeLine{09830\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ flags=0x"{}}\ <<\ std::hex\ <<\ entry.flags\ <<\ std::dec\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09831\ \ \ \ \ \ \ \ \ \ \ count\ +=\ 1u;}
+\DoxyCodeLine{09832\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09833\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (count\ ==\ 0u)\ \{}
+\DoxyCodeLine{09834\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09835\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09836\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09837\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ dump\_service\_fallbacks\ =\ [\&]()\ \{}
+\DoxyCodeLine{09838\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}service\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09839\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (fallback\_diag\_info.\doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics_af8381d68166ecacce7a98f41c63cc7da_af8381d68166ecacce7a98f41c63cc7da}{service\_fallbacks}}.empty())\ \{}
+\DoxyCodeLine{09840\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09841\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{09842\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09843\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ info\ :\ fallback\_diag\_info.\doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics_af8381d68166ecacce7a98f41c63cc7da_af8381d68166ecacce7a98f41c63cc7da}{service\_fallbacks}})\ \{}
+\DoxyCodeLine{09844\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ service["{}}\ <<\ info.index\ <<\ \textcolor{stringliteral}{"{}]:\ name="{}}\ <<\ info.name}
+\DoxyCodeLine{09845\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ kind="{}}\ <<\ (info.is\_syscall\ ?\ \textcolor{stringliteral}{"{}syscall"{}}\ :\ \textcolor{stringliteral}{"{}task"{}})\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09846\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ call:\ "{}}\ <<\ info.call\_text\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09847\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ arg\_count:\ "{}}\ <<\ info.arg\_count\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09848\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!info.reasons.empty())\ \{}
+\DoxyCodeLine{09849\ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ reasons:\(\backslash\)n"{}};}
+\DoxyCodeLine{09850\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ reason\ :\ info.reasons)\ \{}
+\DoxyCodeLine{09851\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ -\/\ "{}}\ <<\ reason\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09852\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ bump\_reason(reason);}
+\DoxyCodeLine{09853\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09854\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09855\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09856\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09857\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ dump\_service\_ret\_fallbacks\ =\ [\&]()\ \{}
+\DoxyCodeLine{09858\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ count\ =\ 0u;}
+\DoxyCodeLine{09859\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}service\_ret\_assign\_fallbacks:\(\backslash\)n"{}};}
+\DoxyCodeLine{09860\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ diag\_layout.service\_ret\_entries.size();\ ++i)\ \{}
+\DoxyCodeLine{09861\ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ entry\ =\ diag\_layout.service\_ret\_entries[i];}
+\DoxyCodeLine{09862\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ ((entry.flags\ \&\ \doxymbox{\hyperlink{namespacegpga_ad614cc969ec81148780420853f4bd9e5_ad614cc969ec81148780420853f4bd9e5}{gpga::kSchedulerVmServiceRetAssignFlagFallback}})\ ==}
+\DoxyCodeLine{09863\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ 0u)\ \{}
+\DoxyCodeLine{09864\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{09865\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09866\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ service\_ret["{}}\ <<\ i}
+\DoxyCodeLine{09867\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}]:\ signal\_id="{}}\ <<\ entry.signal\_id}
+\DoxyCodeLine{09868\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ width="{}}\ <<\ entry.width}
+\DoxyCodeLine{09869\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ force\_slot="{}}\ <<\ entry.force\_slot}
+\DoxyCodeLine{09870\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ passign\_slot="{}}\ <<\ entry.passign\_slot}
+\DoxyCodeLine{09871\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\ flags=0x"{}}\ <<\ std::hex\ <<\ entry.flags\ <<\ std::dec\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09872\ \ \ \ \ \ \ \ \ \ \ count\ +=\ 1u;}
+\DoxyCodeLine{09873\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09874\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (count\ ==\ 0u)\ \{}
+\DoxyCodeLine{09875\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ none\(\backslash\)n"{}};}
+\DoxyCodeLine{09876\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09877\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{09878\ \ \ \ \ \ \ dump\_assign\_fallbacks();}
+\DoxyCodeLine{09879\ \ \ \ \ \ \ dump\_delay\_fallbacks();}
+\DoxyCodeLine{09880\ \ \ \ \ \ \ dump\_force\_fallbacks();}
+\DoxyCodeLine{09881\ \ \ \ \ \ \ dump\_release\_fallbacks();}
+\DoxyCodeLine{09882\ \ \ \ \ \ \ dump\_service\_fallbacks();}
+\DoxyCodeLine{09883\ \ \ \ \ \ \ dump\_service\_ret\_fallbacks();}
+\DoxyCodeLine{09884\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!reason\_counts.empty())\ \{}
+\DoxyCodeLine{09885\ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}fallback\_reason\_counts:\(\backslash\)n"{}};}
+\DoxyCodeLine{09886\ \ \ \ \ \ \ \ \ std::vector<std::pair<std::string,\ size\_t>>\ sorted\_reasons(}
+\DoxyCodeLine{09887\ \ \ \ \ \ \ \ \ \ \ \ \ reason\_counts.begin(),\ reason\_counts.end());}
+\DoxyCodeLine{09888\ \ \ \ \ \ \ \ \ std::sort(sorted\_reasons.begin(),\ sorted\_reasons.end(),}
+\DoxyCodeLine{09889\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ [](\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ a,\ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ b)\ \{}
+\DoxyCodeLine{09890\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ if\ (a.second\ !=\ b.second)\ \{}
+\DoxyCodeLine{09891\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ return\ a.second\ >\ b.second;}
+\DoxyCodeLine{09892\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09893\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ a.first\ <\ b.first;}
+\DoxyCodeLine{09894\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \});}
+\DoxyCodeLine{09895\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ entry\ :\ sorted\_reasons)\ \{}
+\DoxyCodeLine{09896\ \ \ \ \ \ \ \ \ \ \ report\ <<\ \textcolor{stringliteral}{"{}\ \ "{}}\ <<\ entry.first\ <<\ \textcolor{stringliteral}{"{}:\ "{}}\ <<\ entry.second\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09897\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09898\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09899\ \ \ \ \ \}}
+\DoxyCodeLine{09900\ }
+\DoxyCodeLine{09901\ \ \ \ \ std::filesystem::path\ diag\_path\ =}
+\DoxyCodeLine{09902\ \ \ \ \ \ \ \ \ std::filesystem::current\_path()\ /\ \textcolor{stringliteral}{"{}sched\_vm\_fallback\_diag.txt"{}};}
+\DoxyCodeLine{09903\ \ \ \ \ \textcolor{keywordflow}{if}\ (!WriteFile(diag\_path.string(),\ report.str(),\ \&diagnostics))\ \{}
+\DoxyCodeLine{09904\ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09905\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09906\ \ \ \ \ \}}
+\DoxyCodeLine{09907\ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}wrote\ fallback\ diag\ to\ "{}}\ <<\ diag\_path.string()\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09908\ \ \ \}}
+\DoxyCodeLine{09909\ }
+\DoxyCodeLine{09910\ \ \ std::string\ msl;}
+\DoxyCodeLine{09911\ \ \ \textcolor{keywordflow}{if}\ (!msl\_out.empty()\ ||\ run)\ \{}
+\DoxyCodeLine{09912\ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_msl_emit_options}{gpga::MslEmitOptions}}\ msl\_options;}
+\DoxyCodeLine{09913\ \ \ \ \ msl\_options.\doxymbox{\hyperlink{structgpga_1_1_msl_emit_options_a05bb5eb95aca753aae981a9ac8426f82_a05bb5eb95aca753aae981a9ac8426f82}{four\_state}}\ =\ enable\_4state;}
+\DoxyCodeLine{09914\ \ \ \ \ msl\_options.\doxymbox{\hyperlink{structgpga_1_1_msl_emit_options_add6e338d9a259b65fc2827f48a6781b3_add6e338d9a259b65fc2827f48a6781b3}{sched\_vm}}\ =\ sched\_vm;}
+\DoxyCodeLine{09915\ \ \ \ \ msl\ =\ \doxymbox{\hyperlink{namespacegpga_a29ef8ffffe4e7aef3147514e1a711d19_a29ef8ffffe4e7aef3147514e1a711d19}{gpga::EmitMSLStub}}(design.\doxymbox{\hyperlink{structgpga_1_1_elaborated_design_a1171d769aaf737e28ba92cebcbf841ea_a1171d769aaf737e28ba92cebcbf841ea}{top}},\ msl\_options);}
+\DoxyCodeLine{09916\ \ \ \ \ \textcolor{keywordflow}{if}\ (!msl\_out.empty())\ \{}
+\DoxyCodeLine{09917\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!WriteFile(msl\_out,\ msl,\ \&diagnostics))\ \{}
+\DoxyCodeLine{09918\ \ \ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09919\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09920\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09921\ \ \ \ \ \}}
+\DoxyCodeLine{09922\ \ \ \}}
+\DoxyCodeLine{09923\ }
+\DoxyCodeLine{09924\ \ \ \textcolor{keywordflow}{if}\ (!host\_out.empty())\ \{}
+\DoxyCodeLine{09925\ \ \ \ \ std::string\ host\ =\ \doxymbox{\hyperlink{namespacegpga_a35fe07001c86f012dee1784be6c4e1d6_a35fe07001c86f012dee1784be6c4e1d6}{gpga::EmitHostStub}}(design.\doxymbox{\hyperlink{structgpga_1_1_elaborated_design_a1171d769aaf737e28ba92cebcbf841ea_a1171d769aaf737e28ba92cebcbf841ea}{top}});}
+\DoxyCodeLine{09926\ \ \ \ \ \textcolor{keywordflow}{if}\ (!WriteFile(host\_out,\ host,\ \&diagnostics))\ \{}
+\DoxyCodeLine{09927\ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09928\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09929\ \ \ \ \ \}}
+\DoxyCodeLine{09930\ \ \ \}}
+\DoxyCodeLine{09931\ }
+\DoxyCodeLine{09932\ \ \ \textcolor{keywordflow}{if}\ (run)\ \{}
+\DoxyCodeLine{09933\ \ \ \ \ std::string\ error;}
+\DoxyCodeLine{09934\ \ \ \ \ \textcolor{keywordflow}{if}\ (!RunMetal(design.\doxymbox{\hyperlink{structgpga_1_1_elaborated_design_a1171d769aaf737e28ba92cebcbf841ea_a1171d769aaf737e28ba92cebcbf841ea}{top}},\ msl,\ design.flat\_to\_hier,\ enable\_4state,}
+\DoxyCodeLine{09935\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ run\_count,}
+\DoxyCodeLine{09936\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ run\_service\_capacity,\ run\_max\_steps,\ run\_max\_proc\_steps,}
+\DoxyCodeLine{09937\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ run\_dispatch\_timeout\_ms,\ run\_verbose,\ run\_source\_bindings,}
+\DoxyCodeLine{09938\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ vcd\_dir,\ vcd\_steps,\ plusargs,\ \&error))\ \{}
+\DoxyCodeLine{09939\ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Run\ failed:\ "{}}\ <<\ error\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{09940\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09941\ \ \ \ \ \}}
+\DoxyCodeLine{09942\ \ \ \}}
+\DoxyCodeLine{09943\ }
+\DoxyCodeLine{09944\ \ \ \textcolor{keywordflow}{if}\ (msl\_out.empty()\ \&\&\ host\_out.empty()\ \&\&\ !run)\ \{}
+\DoxyCodeLine{09945\ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Elaborated\ top\ module\ '"{}}\ <<\ design.\doxymbox{\hyperlink{structgpga_1_1_elaborated_design_a1171d769aaf737e28ba92cebcbf841ea_a1171d769aaf737e28ba92cebcbf841ea}{top}}.\doxymbox{\hyperlink{structgpga_1_1_module_a47ad548c45caa2fc1302c3960292edbe_a47ad548c45caa2fc1302c3960292edbe}{name}}}
+\DoxyCodeLine{09946\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}'.\ Use\ -\/-\/emit-\/msl/-\/-\/emit-\/host\ to\ write\ stubs.\(\backslash\)n"{}};}
+\DoxyCodeLine{09947\ \ \ \}}
+\DoxyCodeLine{09948\ \ \ \textcolor{keywordflow}{if}\ (dump\_flat\ ||\ !flat\_out.empty())\ \{}
+\DoxyCodeLine{09949\ \ \ \ \ std::ostringstream\ os;}
+\DoxyCodeLine{09950\ \ \ \ \ DumpFlat(design,\ os);}
+\DoxyCodeLine{09951\ \ \ \ \ \textcolor{keyword}{const}\ std::string\ flat\_text\ =\ os.str();}
+\DoxyCodeLine{09952\ \ \ \ \ \textcolor{keywordflow}{if}\ (dump\_flat)\ \{}
+\DoxyCodeLine{09953\ \ \ \ \ \ \ std::cout\ <<\ flat\_text;}
+\DoxyCodeLine{09954\ \ \ \ \ \}}
+\DoxyCodeLine{09955\ \ \ \ \ \textcolor{keywordflow}{if}\ (!flat\_out.empty())\ \{}
+\DoxyCodeLine{09956\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!WriteFile(flat\_out,\ flat\_text,\ \&diagnostics))\ \{}
+\DoxyCodeLine{09957\ \ \ \ \ \ \ \ \ diagnostics.\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{RenderTo}}(std::cerr);}
+\DoxyCodeLine{09958\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{09959\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{09960\ \ \ \ \ \}}
+\DoxyCodeLine{09961\ \ \ \}}
+\DoxyCodeLine{09962\ }
+\DoxyCodeLine{09963\ \ \ \textcolor{keywordflow}{return}\ 0;}
+\DoxyCodeLine{09964\ \}}
+
+\end{DoxyCode}

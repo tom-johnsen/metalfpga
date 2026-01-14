@@ -1,0 +1,190 @@
+\doxysection{gpga::\+Diagnostics Class Reference}
+\hypertarget{classgpga_1_1_diagnostics}{}\label{classgpga_1_1_diagnostics}\index{gpga::Diagnostics@{gpga::Diagnostics}}
+
+
+Collects diagnostics emitted during compilation.  
+
+
+
+
+{\ttfamily \+\#include $<$diagnostics.\+hh$>$}
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+void \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}} (\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641f}{Severity}} severity, std::\+string message, \doxymbox{\hyperlink{structgpga_1_1_source_location}{Source\+Location}} location=\{\})
+\begin{DoxyCompactList}\small\item\em Add a diagnostic entry. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{Has\+Errors}} () const
+\begin{DoxyCompactList}\small\item\em Check whether any errors have been recorded. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a900926b963924a38aaa7e1b3e2de54e0_a900926b963924a38aaa7e1b3e2de54e0}{Error\+Count}} () const
+\begin{DoxyCompactList}\small\item\em Count errors in the diagnostic list. \end{DoxyCompactList}\item 
+const std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_diagnostic}{Diagnostic}} $>$ \& \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a52df70398e16d9400e52a55fb1482288_a52df70398e16d9400e52a55fb1482288}{Items}} () const
+\item 
+void \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{Render\+To}} (std::\+ostream \&os) const
+\begin{DoxyCompactList}\small\item\em Render diagnostics to a stream. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Collects diagnostics emitted during compilation. 
+
+Definition at line \doxymbox{\hyperlink{diagnostics_8hh_source_l00035}{35}} of file \doxymbox{\hyperlink{diagnostics_8hh_source}{diagnostics.\+hh}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{classgpga_1_1_diagnostics_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}\index{gpga::Diagnostics@{gpga::Diagnostics}!Add@{Add}}
+\index{Add@{Add}!gpga::Diagnostics@{gpga::Diagnostics}}
+\doxysubsubsection{\texorpdfstring{Add()}{Add()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b} 
+void gpga::\+\+Diagnostics::\+\+Add (\begin{DoxyParamCaption}\item[{\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641f}{Severity}}}]{severity}{, }\item[{std::\+string}]{message}{, }\item[{\doxymbox{\hyperlink{structgpga_1_1_source_location}{Source\+Location}}}]{location}{ = {\ttfamily \{\}}}\end{DoxyParamCaption})}
+
+
+
+Add a diagnostic entry. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em severity} & \doxylink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641f}{Severity} of the diagnostic. \\
+\hline
+{\em message} & \doxylink{structgpga_1_1_diagnostic}{Diagnostic} message. \\
+\hline
+{\em location} & Source location (optional). \\
+\hline
+\end{DoxyParams}
+
+
+Definition at line \doxymbox{\hyperlink{diagnostics_8cc_source_l00024}{24}} of file \doxymbox{\hyperlink{diagnostics_8cc_source}{diagnostics.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00025\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00026\ \ \ items\_.push\_back(Diagnostic\{severity,\ std::move(message),}
+\DoxyCodeLine{00027\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::move(location)\});}
+\DoxyCodeLine{00028\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_diagnostics_a900926b963924a38aaa7e1b3e2de54e0_a900926b963924a38aaa7e1b3e2de54e0}\index{gpga::Diagnostics@{gpga::Diagnostics}!ErrorCount@{ErrorCount}}
+\index{ErrorCount@{ErrorCount}!gpga::Diagnostics@{gpga::Diagnostics}}
+\doxysubsubsection{\texorpdfstring{ErrorCount()}{ErrorCount()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_diagnostics_a900926b963924a38aaa7e1b3e2de54e0_a900926b963924a38aaa7e1b3e2de54e0} 
+int gpga::\+\+Diagnostics::\+\+Error\+Count (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const}
+
+
+
+Count errors in the diagnostic list. 
+
+\begin{DoxyReturn}{Returns}
+Number of error diagnostics. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{diagnostics_8cc_source_l00039}{39}} of file \doxymbox{\hyperlink{diagnostics_8cc_source}{diagnostics.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00039\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00040\ \ \ \textcolor{keywordtype}{int}\ count\ =\ 0;}
+\DoxyCodeLine{00041\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ diagnostic\ :\ items\_)\ \{}
+\DoxyCodeLine{00042\ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostic.severity\ ==\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}})\ \{}
+\DoxyCodeLine{00043\ \ \ \ \ \ \ ++count;}
+\DoxyCodeLine{00044\ \ \ \ \ \}}
+\DoxyCodeLine{00045\ \ \ \}}
+\DoxyCodeLine{00046\ \ \ \textcolor{keywordflow}{return}\ count;}
+\DoxyCodeLine{00047\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}\index{gpga::Diagnostics@{gpga::Diagnostics}!HasErrors@{HasErrors}}
+\index{HasErrors@{HasErrors}!gpga::Diagnostics@{gpga::Diagnostics}}
+\doxysubsubsection{\texorpdfstring{HasErrors()}{HasErrors()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602} 
+bool gpga::\+\+Diagnostics::\+\+Has\+Errors (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const}
+
+
+
+Check whether any errors have been recorded. 
+
+\begin{DoxyReturn}{Returns}
+True if at least one error exists. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{diagnostics_8cc_source_l00030}{30}} of file \doxymbox{\hyperlink{diagnostics_8cc_source}{diagnostics.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00030\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00031\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ diagnostic\ :\ items\_)\ \{}
+\DoxyCodeLine{00032\ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostic.severity\ ==\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}})\ \{}
+\DoxyCodeLine{00033\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00034\ \ \ \ \ \}}
+\DoxyCodeLine{00035\ \ \ \}}
+\DoxyCodeLine{00036\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00037\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_diagnostics_a52df70398e16d9400e52a55fb1482288_a52df70398e16d9400e52a55fb1482288}\index{gpga::Diagnostics@{gpga::Diagnostics}!Items@{Items}}
+\index{Items@{Items}!gpga::Diagnostics@{gpga::Diagnostics}}
+\doxysubsubsection{\texorpdfstring{Items()}{Items()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_diagnostics_a52df70398e16d9400e52a55fb1482288_a52df70398e16d9400e52a55fb1482288} 
+const std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_diagnostic}{Diagnostic}} $>$ \& gpga::\+\+Diagnostics::\+\+Items (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\begin{DoxyReturn}{Returns}
+All diagnostic items. 
+\end{DoxyReturn}
+
+
+Definition at line \doxymbox{\hyperlink{diagnostics_8hh_source_l00059}{59}} of file \doxymbox{\hyperlink{diagnostics_8hh_source}{diagnostics.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00059\ \{\ \textcolor{keywordflow}{return}\ items\_;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}\index{gpga::Diagnostics@{gpga::Diagnostics}!RenderTo@{RenderTo}}
+\index{RenderTo@{RenderTo}!gpga::Diagnostics@{gpga::Diagnostics}}
+\doxysubsubsection{\texorpdfstring{RenderTo()}{RenderTo()}}
+{\footnotesize\ttfamily \label{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a} 
+void gpga::\+\+Diagnostics::\+\+Render\+To (\begin{DoxyParamCaption}\item[{std::\+ostream \&}]{os}{}\end{DoxyParamCaption}) const}
+
+
+
+Render diagnostics to a stream. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em os} & Output stream to receive formatted messages. \\
+\hline
+\end{DoxyParams}
+
+
+Definition at line \doxymbox{\hyperlink{diagnostics_8cc_source_l00049}{49}} of file \doxymbox{\hyperlink{diagnostics_8cc_source}{diagnostics.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00049\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00050\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ diagnostic\ :\ items\_)\ \{}
+\DoxyCodeLine{00051\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ loc\ =\ diagnostic.location;}
+\DoxyCodeLine{00052\ \ \ \ \ \textcolor{keywordflow}{if}\ (!loc.file.empty())\ \{}
+\DoxyCodeLine{00053\ \ \ \ \ \ \ os\ <<\ loc.file;}
+\DoxyCodeLine{00054\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (loc.line\ >\ 0)\ \{}
+\DoxyCodeLine{00055\ \ \ \ \ \ \ \ \ os\ <<\ \textcolor{stringliteral}{"{}:"{}}\ <<\ loc.line;}
+\DoxyCodeLine{00056\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (loc.column\ >\ 0)\ \{}
+\DoxyCodeLine{00057\ \ \ \ \ \ \ \ \ \ \ os\ <<\ \textcolor{stringliteral}{"{}:"{}}\ <<\ loc.column;}
+\DoxyCodeLine{00058\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00059\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00060\ \ \ \ \ \ \ os\ <<\ \textcolor{stringliteral}{"{}:\ "{}};}
+\DoxyCodeLine{00061\ \ \ \ \ \}}
+\DoxyCodeLine{00062\ \ \ \ \ os\ <<\ SeverityLabel(diagnostic.severity)\ <<\ \textcolor{stringliteral}{"{}:\ "{}}}
+\DoxyCodeLine{00063\ \ \ \ \ \ \ \ <<\ diagnostic.message\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00064\ \ \ \}}
+\DoxyCodeLine{00065\ \}}
+
+\end{DoxyCode}
+
+
+The documentation for this class was generated from the following files:\+\begin{DoxyCompactItemize}
+\item 
+src/\+utils/\+\doxymbox{\hyperlink{diagnostics_8hh}{diagnostics.\+hh}}\item 
+src/\+utils/\+diagnostics.\+cc\end{DoxyCompactItemize}

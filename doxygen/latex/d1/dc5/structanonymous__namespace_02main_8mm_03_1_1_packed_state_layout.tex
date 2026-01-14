@@ -1,0 +1,65 @@
+\doxysection{anonymous\+\_\+namespace\{main.\+mm\}::\+Packed\+State\+Layout Struct Reference}
+\hypertarget{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout}{}\label{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout}\index{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout@{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+const \doxymbox{\hyperlink{structanonymous__namespace_02main_8mm_03_1_1_packed_signal_offsets}{Packed\+Signal\+Offsets}} \texorpdfstring{$\ast$}{*} \doxymbox{\hyperlink{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_a3fcba233f364fe33a22b3b44075ae26b_a3fcba233f364fe33a22b3b44075ae26b}{Find}} (const std::\+string \&name) const
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std::\+unordered\+\_\+map$<$ std::\+string, \doxymbox{\hyperlink{structanonymous__namespace_02main_8mm_03_1_1_packed_signal_offsets}{Packed\+Signal\+Offsets}} $>$ \doxymbox{\hyperlink{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_ae584377b040814c5ebfab4369d1034a8_ae584377b040814c5ebfab4369d1034a8}{offsets}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+
+
+Definition at line \doxymbox{\hyperlink{main_8mm_source_l03507}{3507}} of file \doxymbox{\hyperlink{main_8mm_source}{main.\+mm}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_a3fcba233f364fe33a22b3b44075ae26b_a3fcba233f364fe33a22b3b44075ae26b}\index{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout@{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout}!Find@{Find}}
+\index{Find@{Find}!anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout@{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout}}
+\doxysubsubsection{\texorpdfstring{Find()}{Find()}}
+{\footnotesize\ttfamily \label{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_a3fcba233f364fe33a22b3b44075ae26b_a3fcba233f364fe33a22b3b44075ae26b} 
+const \doxymbox{\hyperlink{structanonymous__namespace_02main_8mm_03_1_1_packed_signal_offsets}{Packed\+Signal\+Offsets}} \texorpdfstring{$\ast$}{*} anonymous\+\_\+namespace\{main.\+mm\}::\+\+Packed\+State\+Layout::\+\+Find (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{name}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{main_8mm_source_l03510}{3510}} of file \doxymbox{\hyperlink{main_8mm_source}{main.\+mm}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{03510\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{03511\ \ \ \ \ \textcolor{keyword}{auto}\ it\ =\ offsets.find(name);}
+\DoxyCodeLine{03512\ \ \ \ \ \textcolor{keywordflow}{if}\ (it\ ==\ offsets.end())\ \{}
+\DoxyCodeLine{03513\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{03514\ \ \ \ \ \}}
+\DoxyCodeLine{03515\ \ \ \ \ \textcolor{keywordflow}{return}\ \&it-\/>second;}
+\DoxyCodeLine{03516\ \ \ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-variable-members}
+\Hypertarget{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_ae584377b040814c5ebfab4369d1034a8_ae584377b040814c5ebfab4369d1034a8}\index{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout@{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout}!offsets@{offsets}}
+\index{offsets@{offsets}!anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout@{anonymous\_namespace\lcurly{}main.mm\rcurly{}::PackedStateLayout}}
+\doxysubsubsection{\texorpdfstring{offsets}{offsets}}
+{\footnotesize\ttfamily \label{structanonymous__namespace_02main_8mm_03_1_1_packed_state_layout_ae584377b040814c5ebfab4369d1034a8_ae584377b040814c5ebfab4369d1034a8} 
+std::\+unordered\+\_\+map$<$std::\+string, \doxymbox{\hyperlink{structanonymous__namespace_02main_8mm_03_1_1_packed_signal_offsets}{Packed\+Signal\+Offsets}}$>$ anonymous\+\_\+namespace\{main.\+mm\}::\+\+Packed\+State\+Layout::\+offsets}
+
+
+
+Definition at line \doxymbox{\hyperlink{main_8mm_source_l03508}{3508}} of file \doxymbox{\hyperlink{main_8mm_source}{main.\+mm}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+main.\+mm\end{DoxyCompactItemize}

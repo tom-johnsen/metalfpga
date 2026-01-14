@@ -1,0 +1,265 @@
+\doxysection{Fast\+Verilog\+Parser Namespace Reference}
+\hypertarget{namespace_fast_verilog_parser}{}\label{namespace_fast_verilog_parser}\index{FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+void \doxymbox{\hyperlink{namespace_fast_verilog_parser_a4028d13d7aebd7acfd6a98779c634a50_a4028d13d7aebd7acfd6a98779c634a50}{set\+Did\+Contain\+Words}} (bool did\+Contain)
+\item 
+const \doxymbox{\hyperlink{structgpga_1_1_elaborated_design}{gpga::\+\+Elaborated\+Design}} \texorpdfstring{$\ast$}{*} \doxymbox{\hyperlink{namespace_fast_verilog_parser_a919691aa347c607719f038acbc99583f_a919691aa347c607719f038acbc99583f}{get\+Elaborated\+Design}} ()
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_verilog_parser_a034c23d56d3f74e97e392fd255b42eb4_a034c23d56d3f74e97e392fd255b42eb4}{has\+Elaborated\+Design}} ()
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_verilog_parser_af3eabed527be8e00f9b5691e6130c7f5_af3eabed527be8e00f9b5691e6130c7f5}{startup}} (const std::\+string \&filename)
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_verilog_parser_aef7ff360c06e20c06a8365ebc07ab247_aef7ff360c06e20c06a8365ebc07ab247}{start\+Simulator}} ()
+\item 
+void \doxymbox{\hyperlink{namespace_fast_verilog_parser_aadf2b54daca7e051404e920cd3780c35_aadf2b54daca7e051404e920cd3780c35}{run}} (int argc, char \texorpdfstring{$\ast$}{*}argv\+[$\,$]\+)
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Variables}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_verilog_parser_a0a3524b6e6afb59217cca9e47e7f4eaf_a0a3524b6e6afb59217cca9e47e7f4eaf}{can\+Start\+Simulator}} = false
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_verilog_parser_ae348180bdb369ec5b06b3387a23f4d12_ae348180bdb369ec5b06b3387a23f4d12}{can\+Parse\+Design}} = false
+\item 
+bool \doxymbox{\hyperlink{namespace_fast_verilog_parser_aa97c980a6d695cead6693a0ea6037cc1_aa97c980a6d695cead6693a0ea6037cc1}{did\+Contain\+Words}} = true
+\end{DoxyCompactItemize}
+
+
+\label{doc-func-members}
+\Hypertarget{namespace_fast_verilog_parser_doc-func-members}
+\doxysubsection{Function Documentation}
+\Hypertarget{namespace_fast_verilog_parser_a919691aa347c607719f038acbc99583f_a919691aa347c607719f038acbc99583f}\index{FastVerilogParser@{FastVerilogParser}!getElaboratedDesign@{getElaboratedDesign}}
+\index{getElaboratedDesign@{getElaboratedDesign}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{getElaboratedDesign()}{getElaboratedDesign()}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_a919691aa347c607719f038acbc99583f_a919691aa347c607719f038acbc99583f} 
+const \doxymbox{\hyperlink{structgpga_1_1_elaborated_design}{gpga::\+\+Elaborated\+Design}} \texorpdfstring{$\ast$}{*} Fast\+Verilog\+Parser::\+get\+Elaborated\+Design (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00214}{214}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00214\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00215\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!FastParsedDesign::has\_design)\ \{}
+\DoxyCodeLine{00216\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{00217\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00218\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \&FastParsedDesign::design;}
+\DoxyCodeLine{00219\ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespace_fast_verilog_parser_a034c23d56d3f74e97e392fd255b42eb4_a034c23d56d3f74e97e392fd255b42eb4}\index{FastVerilogParser@{FastVerilogParser}!hasElaboratedDesign@{hasElaboratedDesign}}
+\index{hasElaboratedDesign@{hasElaboratedDesign}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{hasElaboratedDesign()}{hasElaboratedDesign()}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_a034c23d56d3f74e97e392fd255b42eb4_a034c23d56d3f74e97e392fd255b42eb4} 
+bool Fast\+Verilog\+Parser::\+has\+Elaborated\+Design (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00221}{221}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00221\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00222\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ FastParsedDesign::has\_design;}
+\DoxyCodeLine{00223\ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespace_fast_verilog_parser_aadf2b54daca7e051404e920cd3780c35_aadf2b54daca7e051404e920cd3780c35}\index{FastVerilogParser@{FastVerilogParser}!run@{run}}
+\index{run@{run}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{run()}{run()}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_aadf2b54daca7e051404e920cd3780c35_aadf2b54daca7e051404e920cd3780c35} 
+void Fast\+Verilog\+Parser::\+run (\begin{DoxyParamCaption}\item[{int}]{argc}{, }\item[{char \texorpdfstring{$\ast$}{*}}]{argv}{\+[$\,$]\+}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00285}{285}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00285\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00286\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Check\ if\ a\ Verilog\ file\ path\ was\ provided}}
+\DoxyCodeLine{00287\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (argc\ <\ 2)\ \{}
+\DoxyCodeLine{00288\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Usage:\ "{}}\ <<\ (argc\ >\ 0\ ?\ argv[0]\ :\ \textcolor{stringliteral}{"{}fastsim"{}})\ <<\ \textcolor{stringliteral}{"{}\ <verilog\_file.v>"{}}\ <<\ std::endl;}
+\DoxyCodeLine{00289\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ No\ Verilog\ file\ specified."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00290\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00291\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00292\ }
+\DoxyCodeLine{00293\ \ \ \ \ \ \ \ \ std::string\ verilog\_file\ =\ argv[1];}
+\DoxyCodeLine{00294\ }
+\DoxyCodeLine{00295\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (verilog\_file.empty())\ \{}
+\DoxyCodeLine{00296\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Verilog\ file\ path\ is\ empty."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00297\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00298\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00299\ }
+\DoxyCodeLine{00300\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ dot\ =\ verilog\_file.find\_last\_of(\textcolor{stringliteral}{"{}."{}});}
+\DoxyCodeLine{00301\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (dot\ ==\ std::string::npos\ ||\ dot\ +\ 1\ >=\ verilog\_file.size())\ \{}
+\DoxyCodeLine{00302\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Invalid\ file\ name.\ Please\ provide\ a\ .v\ Verilog\ file."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00303\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00304\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00305\ }
+\DoxyCodeLine{00306\ \ \ \ \ \ \ \ \ std::string\ ext\ =\ verilog\_file.substr(dot\ +\ 1);}
+\DoxyCodeLine{00307\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ext\ ==\ \textcolor{stringliteral}{"{}sv"{}})\ \{}
+\DoxyCodeLine{00308\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Unsupported\ file\ extension.\ SystemVerilog\ (.sv)\ files\ are\ not\ supported\ in\ this\ version."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00309\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00310\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (ext\ !=\ \textcolor{stringliteral}{"{}v"{}})\ \{}
+\DoxyCodeLine{00311\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Invalid\ file\ extension.\ Please\ provide\ a\ .v\ Verilog\ file."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00312\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{00313\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00314\ \ \ \ \ \ \ \ \ }
+\DoxyCodeLine{00315\ \ \ \ \ \ \ \ \ canParseDesign\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00316\ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}FastVerilogParser:\ Processing\ file:\ "{}}\ <<\ verilog\_file\ <<\ std::endl;}
+\DoxyCodeLine{00317\ }
+\DoxyCodeLine{00318\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (canParseDesign\ \&\&\ startup(verilog\_file))\ \{}
+\DoxyCodeLine{00319\ \ \ \ \ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Verilog\ design\ successfully\ deconstructed."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00320\ \ \ \ \ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}"{}}\ <<\ std::endl;}
+\DoxyCodeLine{00321\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (startSimulator())\ \{}
+\DoxyCodeLine{00322\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Simulator\ started\ successfully."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00323\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00324\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Failed\ to\ start\ the\ simulator."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00325\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00326\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00327\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Failed\ to\ parse\ and\ elaborate\ Verilog\ design."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00328\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00329\ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Simulation\ initialization\ complete."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00330\ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespace_fast_verilog_parser_a4028d13d7aebd7acfd6a98779c634a50_a4028d13d7aebd7acfd6a98779c634a50}\index{FastVerilogParser@{FastVerilogParser}!setDidContainWords@{setDidContainWords}}
+\index{setDidContainWords@{setDidContainWords}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{setDidContainWords()}{setDidContainWords()}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_a4028d13d7aebd7acfd6a98779c634a50_a4028d13d7aebd7acfd6a98779c634a50} 
+void Fast\+Verilog\+Parser::\+set\+Did\+Contain\+Words (\begin{DoxyParamCaption}\item[{bool}]{did\+Contain}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00210}{210}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00210\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00211\ \ \ \ \ \ \ \ \ didContainWords\ =\ didContain;}
+\DoxyCodeLine{00212\ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespace_fast_verilog_parser_aef7ff360c06e20c06a8365ebc07ab247_aef7ff360c06e20c06a8365ebc07ab247}\index{FastVerilogParser@{FastVerilogParser}!startSimulator@{startSimulator}}
+\index{startSimulator@{startSimulator}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{startSimulator()}{startSimulator()}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_aef7ff360c06e20c06a8365ebc07ab247_aef7ff360c06e20c06a8365ebc07ab247} 
+bool Fast\+Verilog\+Parser::\+start\+Simulator (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00275}{275}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00275\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00276\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!canStartSimulator)\ \{}
+\DoxyCodeLine{00277\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Simulator\ cannot\ be\ started.\ Initialization\ incomplete."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00278\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00279\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00280\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Placeholder\ for\ starting\ the\ simulator}}
+\DoxyCodeLine{00281\ \ \ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Starting\ the\ simulator..."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00282\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};\ \textcolor{comment}{//\ Indicate\ simulator\ started\ successfully}}
+\DoxyCodeLine{00283\ \ \ \ \ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespace_fast_verilog_parser_af3eabed527be8e00f9b5691e6130c7f5_af3eabed527be8e00f9b5691e6130c7f5}\index{FastVerilogParser@{FastVerilogParser}!startup@{startup}}
+\index{startup@{startup}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{startup()}{startup()}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_af3eabed527be8e00f9b5691e6130c7f5_af3eabed527be8e00f9b5691e6130c7f5} 
+bool Fast\+Verilog\+Parser::\+startup (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{filename}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00226}{226}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00226\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00227\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Step\ 1:\ Parse\ the\ verilog\ file}}
+\DoxyCodeLine{00228\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ parsed\ =\ FastParser::init(filename);}
+\DoxyCodeLine{00229\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!parsed)\ \{}
+\DoxyCodeLine{00230\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Failed\ to\ parse\ Verilog\ file."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00231\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00232\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00233\ }
+\DoxyCodeLine{00234\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Step\ 2:\ Elaborate\ the\ parsed\ design}}
+\DoxyCodeLine{00235\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ elaborated\ =\ FastElaborator::init();}
+\DoxyCodeLine{00236\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!elaborated)\ \{}
+\DoxyCodeLine{00237\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Failed\ to\ elaborate\ Verilog\ design."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00238\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00239\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00240\ }
+\DoxyCodeLine{00241\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Step\ 3:\ Construct\ wires}}
+\DoxyCodeLine{00242\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ wires\_constructed\ =\ WireConstructor::init();}
+\DoxyCodeLine{00243\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!wires\_constructed)\ \{}
+\DoxyCodeLine{00244\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Failed\ to\ construct\ wires."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00245\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00246\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00247\ }
+\DoxyCodeLine{00248\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Step\ 4:\ Construct\ logic\ gates}}
+\DoxyCodeLine{00249\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ logic\_constructed\ =\ LogicConstructor::init();}
+\DoxyCodeLine{00250\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!logic\_constructed)\ \{}
+\DoxyCodeLine{00251\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Failed\ to\ construct\ logic\ gates."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00252\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00253\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00254\ }
+\DoxyCodeLine{00255\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Step\ 5:\ Finalize\ the\ design\ representation}}
+\DoxyCodeLine{00256\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ finalized\ =\ FinalizedDesign::init();}
+\DoxyCodeLine{00257\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!finalized)\ \{}
+\DoxyCodeLine{00258\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Failed\ to\ finalize\ design\ representation."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00259\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00260\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00261\ }
+\DoxyCodeLine{00262\ \ \ \ \ \ \ \ \ \textcolor{comment}{//\ Step\ 6:\ Initialize\ simulator\ with\ the\ finalized\ design}}
+\DoxyCodeLine{00263\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ simulator\_initialized\ =\ InitializeSimulator::init();}
+\DoxyCodeLine{00264\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!simulator\_initialized)\ \{}
+\DoxyCodeLine{00265\ \ \ \ \ \ \ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}Error:\ Failed\ to\ initialize\ simulator."{}}\ <<\ std::endl;}
+\DoxyCodeLine{00266\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00267\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00268\ }
+\DoxyCodeLine{00269\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ overall\_success\ =\ parsed\ \&\&\ elaborated\ \&\&\ wires\_constructed\ \&\&}
+\DoxyCodeLine{00270\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ logic\_constructed\ \&\&\ finalized\ \&\&\ simulator\_initialized;}
+\DoxyCodeLine{00271\ }
+\DoxyCodeLine{00272\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ overall\_success;\ \textcolor{comment}{//\ Indicate\ overall\ success\ or\ failure}}
+\DoxyCodeLine{00273\ \ \ \ \ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-var-members}
+\Hypertarget{namespace_fast_verilog_parser_doc-var-members}
+\doxysubsection{Variable Documentation}
+\Hypertarget{namespace_fast_verilog_parser_ae348180bdb369ec5b06b3387a23f4d12_ae348180bdb369ec5b06b3387a23f4d12}\index{FastVerilogParser@{FastVerilogParser}!canParseDesign@{canParseDesign}}
+\index{canParseDesign@{canParseDesign}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{canParseDesign}{canParseDesign}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_ae348180bdb369ec5b06b3387a23f4d12_ae348180bdb369ec5b06b3387a23f4d12} 
+bool Fast\+Verilog\+Parser::\+can\+Parse\+Design = false}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00207}{207}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+\Hypertarget{namespace_fast_verilog_parser_a0a3524b6e6afb59217cca9e47e7f4eaf_a0a3524b6e6afb59217cca9e47e7f4eaf}\index{FastVerilogParser@{FastVerilogParser}!canStartSimulator@{canStartSimulator}}
+\index{canStartSimulator@{canStartSimulator}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{canStartSimulator}{canStartSimulator}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_a0a3524b6e6afb59217cca9e47e7f4eaf_a0a3524b6e6afb59217cca9e47e7f4eaf} 
+bool Fast\+Verilog\+Parser::\+can\+Start\+Simulator = false}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00206}{206}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+
+\Hypertarget{namespace_fast_verilog_parser_aa97c980a6d695cead6693a0ea6037cc1_aa97c980a6d695cead6693a0ea6037cc1}\index{FastVerilogParser@{FastVerilogParser}!didContainWords@{didContainWords}}
+\index{didContainWords@{didContainWords}!FastVerilogParser@{FastVerilogParser}}
+\doxysubsubsection{\texorpdfstring{didContainWords}{didContainWords}}
+{\footnotesize\ttfamily \label{namespace_fast_verilog_parser_aa97c980a6d695cead6693a0ea6037cc1_aa97c980a6d695cead6693a0ea6037cc1} 
+bool Fast\+Verilog\+Parser::\+did\+Contain\+Words = true}
+
+
+
+Definition at line \doxymbox{\hyperlink{fastverilogparser_8cc_source_l00208}{208}} of file \doxymbox{\hyperlink{fastverilogparser_8cc_source}{fastverilogparser.\+cc}}.
+

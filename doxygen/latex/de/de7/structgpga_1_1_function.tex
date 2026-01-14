@@ -1,0 +1,191 @@
+\doxysection{gpga::\+Function Struct Reference}
+\hypertarget{structgpga_1_1_function}{}\label{structgpga_1_1_function}\index{gpga::Function@{gpga::Function}}
+
+
+\doxylink{structgpga_1_1_function}{Function} declaration and body.  
+
+
+
+
+{\ttfamily \+\#include $<$ast.\+hh$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_function_a02059e9ba1c85f697e86b062f7b6c05f_a02059e9ba1c85f697e86b062f7b6c05f}{name}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_function}{Function} name. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_function_a555be63940c3b0485ba21a009d6aea74_a555be63940c3b0485ba21a009d6aea74}{width}} = 1
+\begin{DoxyCompactList}\small\item\em Return width in bits. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_function_a2dc1b2ddfb0a31f4374ca5a8fb16419a_a2dc1b2ddfb0a31f4374ca5a8fb16419a}{is\+\_\+signed}} = false
+\begin{DoxyCompactList}\small\item\em Return signedness. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_function_a1477c60d0e317193f6d25308d5db9ecb_a1477c60d0e317193f6d25308d5db9ecb}{is\+\_\+real}} = false
+\begin{DoxyCompactList}\small\item\em True if return type is real. \end{DoxyCompactList}\item 
+std::\+shared\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_function_ac753271d3687a689b0a0500b3ff09400_ac753271d3687a689b0a0500b3ff09400}{msb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em MSB expression for parametric width. \end{DoxyCompactList}\item 
+std::\+shared\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_function_acc85493a9f09a132d5739597349da889_acc85493a9f09a132d5739597349da889}{lsb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em LSB expression for parametric width. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_function_arg}{Function\+Arg}} $>$ \doxymbox{\hyperlink{structgpga_1_1_function_aeec7250966cf334bee9f57108a61066b_aeec7250966cf334bee9f57108a61066b}{args}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_function}{Function} arguments. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_local_var}{Local\+Var}} $>$ \doxymbox{\hyperlink{structgpga_1_1_function_a915b546e8acc86b4a6f663c9511e9a2c_a915b546e8acc86b4a6f663c9511e9a2c}{locals}}
+\begin{DoxyCompactList}\small\item\em Local variables. \end{DoxyCompactList}\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}} $>$ \doxymbox{\hyperlink{structgpga_1_1_function_afb1deb96bf672614a3421861d4765f5b_afb1deb96bf672614a3421861d4765f5b}{body}}
+\begin{DoxyCompactList}\small\item\em \doxylink{structgpga_1_1_statement}{Statement} body. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_function_a83557f64db7510454e246fe323bcad15_a83557f64db7510454e246fe323bcad15}{body\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em Expression body for simple functions. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+\doxylink{structgpga_1_1_function}{Function} declaration and body. 
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00208}{208}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_function_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_function_aeec7250966cf334bee9f57108a61066b_aeec7250966cf334bee9f57108a61066b}\index{gpga::Function@{gpga::Function}!args@{args}}
+\index{args@{args}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{args}{args}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_aeec7250966cf334bee9f57108a61066b_aeec7250966cf334bee9f57108a61066b} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_function_arg}{Function\+Arg}}$>$ gpga::\+\+Function::\+args}
+
+
+
+\doxylink{structgpga_1_1_function}{Function} arguments. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00215}{215}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_afb1deb96bf672614a3421861d4765f5b_afb1deb96bf672614a3421861d4765f5b}\index{gpga::Function@{gpga::Function}!body@{body}}
+\index{body@{body}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{body}{body}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_afb1deb96bf672614a3421861d4765f5b_afb1deb96bf672614a3421861d4765f5b} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_statement}{Statement}}$>$ gpga::\+\+Function::\+body}
+
+
+
+\doxylink{structgpga_1_1_statement}{Statement} body. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00217}{217}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_a83557f64db7510454e246fe323bcad15_a83557f64db7510454e246fe323bcad15}\index{gpga::Function@{gpga::Function}!body\_expr@{body\_expr}}
+\index{body\_expr@{body\_expr}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{body\_expr}{body\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_a83557f64db7510454e246fe323bcad15_a83557f64db7510454e246fe323bcad15} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Function::\+body\+\_\+expr}
+
+
+
+Expression body for simple functions. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00218}{218}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_a1477c60d0e317193f6d25308d5db9ecb_a1477c60d0e317193f6d25308d5db9ecb}\index{gpga::Function@{gpga::Function}!is\_real@{is\_real}}
+\index{is\_real@{is\_real}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{is\_real}{is\_real}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_a1477c60d0e317193f6d25308d5db9ecb_a1477c60d0e317193f6d25308d5db9ecb} 
+bool gpga::\+\+Function::\+is\+\_\+real = false}
+
+
+
+True if return type is real. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00212}{212}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_a2dc1b2ddfb0a31f4374ca5a8fb16419a_a2dc1b2ddfb0a31f4374ca5a8fb16419a}\index{gpga::Function@{gpga::Function}!is\_signed@{is\_signed}}
+\index{is\_signed@{is\_signed}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{is\_signed}{is\_signed}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_a2dc1b2ddfb0a31f4374ca5a8fb16419a_a2dc1b2ddfb0a31f4374ca5a8fb16419a} 
+bool gpga::\+\+Function::\+is\+\_\+signed = false}
+
+
+
+Return signedness. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00211}{211}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_a915b546e8acc86b4a6f663c9511e9a2c_a915b546e8acc86b4a6f663c9511e9a2c}\index{gpga::Function@{gpga::Function}!locals@{locals}}
+\index{locals@{locals}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{locals}{locals}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_a915b546e8acc86b4a6f663c9511e9a2c_a915b546e8acc86b4a6f663c9511e9a2c} 
+std::\+vector$<$\doxymbox{\hyperlink{structgpga_1_1_local_var}{Local\+Var}}$>$ gpga::\+\+Function::\+locals}
+
+
+
+Local variables. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00216}{216}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_acc85493a9f09a132d5739597349da889_acc85493a9f09a132d5739597349da889}\index{gpga::Function@{gpga::Function}!lsb\_expr@{lsb\_expr}}
+\index{lsb\_expr@{lsb\_expr}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{lsb\_expr}{lsb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_acc85493a9f09a132d5739597349da889_acc85493a9f09a132d5739597349da889} 
+std::\+shared\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Function::\+lsb\+\_\+expr}
+
+
+
+LSB expression for parametric width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00214}{214}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_ac753271d3687a689b0a0500b3ff09400_ac753271d3687a689b0a0500b3ff09400}\index{gpga::Function@{gpga::Function}!msb\_expr@{msb\_expr}}
+\index{msb\_expr@{msb\_expr}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{msb\_expr}{msb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_ac753271d3687a689b0a0500b3ff09400_ac753271d3687a689b0a0500b3ff09400} 
+std::\+shared\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Function::\+msb\+\_\+expr}
+
+
+
+MSB expression for parametric width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00213}{213}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_a02059e9ba1c85f697e86b062f7b6c05f_a02059e9ba1c85f697e86b062f7b6c05f}\index{gpga::Function@{gpga::Function}!name@{name}}
+\index{name@{name}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{name}{name}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_a02059e9ba1c85f697e86b062f7b6c05f_a02059e9ba1c85f697e86b062f7b6c05f} 
+std::\+string gpga::\+\+Function::\+name}
+
+
+
+\doxylink{structgpga_1_1_function}{Function} name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00209}{209}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_function_a555be63940c3b0485ba21a009d6aea74_a555be63940c3b0485ba21a009d6aea74}\index{gpga::Function@{gpga::Function}!width@{width}}
+\index{width@{width}!gpga::Function@{gpga::Function}}
+\doxysubsubsection{\texorpdfstring{width}{width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_function_a555be63940c3b0485ba21a009d6aea74_a555be63940c3b0485ba21a009d6aea74} 
+int gpga::\+\+Function::\+width = 1}
+
+
+
+Return width in bits. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00210}{210}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+\doxymbox{\hyperlink{ast_8hh}{ast.\+hh}}\end{DoxyCompactItemize}

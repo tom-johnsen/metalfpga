@@ -1,0 +1,47 @@
+\doxysection{src/\+codegen/\+msl\+\_\+codegen.hh File Reference}
+\hypertarget{msl__codegen_8hh}{}\label{msl__codegen_8hh}\index{src/codegen/msl\_codegen.hh@{src/codegen/msl\_codegen.hh}}
+
+
+MSL codegen entry points and scheduler VM diagnostics.  
+
+
+{\ttfamily \+\#include $<$string$>$}\newline
+{\ttfamily \+\#include $<$vector$>$}\newline
+{\ttfamily \+\#include "{}core/\+scheduler\+\_\+vm.\+hh"{}}\newline
+{\ttfamily \+\#include "{}frontend/\+ast.\+hh"{}}\newline
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_features}{gpga::\+\+Scheduler\+Vm\+Expr\+Features}}
+\begin{DoxyCompactList}\small\item\em Features detected while encoding an expression for the scheduler VM. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_fallback_info}{gpga::\+\+Scheduler\+Vm\+Assign\+Fallback\+Info}}
+\begin{DoxyCompactList}\small\item\em Details for an assignment that fell back to a slower path. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_service_fallback_info}{gpga::\+\+Scheduler\+Vm\+Service\+Fallback\+Info}}
+\begin{DoxyCompactList}\small\item\em Details for a service call that fell back to a slower path. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics}{gpga::\+\+Scheduler\+Vm\+Fallback\+Diagnostics}}
+\begin{DoxyCompactList}\small\item\em Aggregated fallback diagnostics for scheduler VM lowering. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_msl_emit_options}{gpga::\+\+Msl\+Emit\+Options}}
+\begin{DoxyCompactList}\small\item\em Options for emitting MSL stubs. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \doxymbox{\hyperlink{namespacegpga}{gpga}}
+\begin{DoxyCompactList}\small\item\em Runtime, codegen, and frontend support types for metalfpga. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+std::\+string \doxymbox{\hyperlink{namespacegpga_a29ef8ffffe4e7aef3147514e1a711d19_a29ef8ffffe4e7aef3147514e1a711d19}{gpga::\+\+Emit\+MSLStub}} (const \doxymbox{\hyperlink{structgpga_1_1_module}{Module}} \&module, const \doxymbox{\hyperlink{structgpga_1_1_msl_emit_options}{Msl\+Emit\+Options}} \&options=\{\})
+\begin{DoxyCompactList}\small\item\em Emit a Metal Shading Language stub for a module. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{namespacegpga_a5d51a7d87d4c39cb0d28d6969cea182f_a5d51a7d87d4c39cb0d28d6969cea182f}{gpga::\+\+Build\+Scheduler\+Vm\+Layout\+From\+Module}} (const \doxymbox{\hyperlink{structgpga_1_1_module}{Module}} \&module, \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_layout}{Scheduler\+Vm\+Layout}} \texorpdfstring{$\ast$}{*}out, std::\+string \texorpdfstring{$\ast$}{*}error, bool four\+\_\+state, std::\+vector$<$ std::\+string $>$ \texorpdfstring{$\ast$}{*}extra\+\_\+signal\+\_\+names=nullptr)
+\begin{DoxyCompactList}\small\item\em Build a scheduler VM layout for a module. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{namespacegpga_abd60051a452668bb5a1e8d485e7785ba_abd60051a452668bb5a1e8d485e7785ba}{gpga::\+\+Build\+Scheduler\+Vm\+Layout\+From\+Module\+With\+Diag}} (const \doxymbox{\hyperlink{structgpga_1_1_module}{Module}} \&module, \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_layout}{Scheduler\+Vm\+Layout}} \texorpdfstring{$\ast$}{*}out, std::\+string \texorpdfstring{$\ast$}{*}error, bool four\+\_\+state, \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_fallback_diagnostics}{Scheduler\+Vm\+Fallback\+Diagnostics}} \texorpdfstring{$\ast$}{*}diag, std::\+vector$<$ std::\+string $>$ \texorpdfstring{$\ast$}{*}extra\+\_\+signal\+\_\+names=nullptr)
+\begin{DoxyCompactList}\small\item\em Build a scheduler VM layout with fallback diagnostics. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+MSL codegen entry points and scheduler VM diagnostics. 
+
+
+
+Definition in file \doxymbox{\hyperlink{msl__codegen_8hh_source}{msl\+\_\+codegen.\+hh}}.
+

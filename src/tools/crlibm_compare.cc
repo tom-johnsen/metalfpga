@@ -1,3 +1,5 @@
+#include "crlibm_compare.hh"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

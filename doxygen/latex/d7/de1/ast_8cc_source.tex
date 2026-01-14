@@ -1,0 +1,1109 @@
+\doxysection{ast.\+cc}
+\hypertarget{ast_8cc_source}{}\label{ast_8cc_source}\index{src/frontend/ast.cc@{src/frontend/ast.cc}}
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00001}00001\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{ast_8hh}{frontend/ast.hh}}"{}}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00002}00002\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00003}00003\ \textcolor{preprocessor}{\#include\ <algorithm>}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00004}00004\ \textcolor{preprocessor}{\#include\ <limits>}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00005}00005\ \textcolor{preprocessor}{\#include\ <utility>}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00006}00006\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00007}00007\ \textcolor{keyword}{namespace\ }\doxymbox{\hyperlink{namespacegpga}{gpga}}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00008}00008\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00009}\doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02ast_8cc_03}{00009}}\ \textcolor{keyword}{namespace\ }\{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00010}00010\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00011}00011\ uint64\_t\ MaskForWidth(\textcolor{keywordtype}{int}\ width)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00012}00012\ \ \ \textcolor{keywordflow}{if}\ (width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00013}00013\ \ \ \ \ \textcolor{keywordflow}{return}\ 0ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00014}00014\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00015}00015\ \ \ \textcolor{keywordflow}{if}\ (width\ >=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00016}00016\ \ \ \ \ \textcolor{keywordflow}{return}\ 0xFFFFFFFFFFFFFFFFull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00017}00017\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00018}00018\ \ \ \textcolor{keywordflow}{return}\ (1ull\ <<\ width)\ -\/\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00019}00019\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00020}00020\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00021}00021\ \textcolor{keywordtype}{int}\ MinimalWidth(uint64\_t\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00022}00022\ \ \ \textcolor{keywordflow}{if}\ (value\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00023}00023\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00024}00024\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00025}00025\ \ \ \textcolor{keywordtype}{int}\ width\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00026}00026\ \ \ \textcolor{keywordflow}{while}\ (value\ >\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00027}00027\ \ \ \ \ value\ >>=\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00028}00028\ \ \ \ \ ++width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00029}00029\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00030}00030\ \ \ \textcolor{keywordflow}{return}\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00031}00031\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00032}00032\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00033}00033\ \textcolor{keywordtype}{int}\ ValueWidth(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00034}00034\ \ \ \textcolor{keywordflow}{return}\ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ >\ 0\ ?\ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ :\ 64;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00035}00035\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00036}00036\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00037}00037\ \textcolor{keywordtype}{bool}\ ExprIsSigned(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}\&\ expr)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00038}00038\ \ \ \textcolor{keywordflow}{switch}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ab80053df86026837eea2f74b4fd04e67_ab80053df86026837eea2f74b4fd04e67}{kind}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00039}00039\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4a4e9edac25c0c24f1d9c30088f4f554}{ExprKind::kIdentifier}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00040}00040\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00041}00041\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a5a7ab0ccb8bc2cc772c1552d08cb7d2f}{ExprKind::kNumber}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00042}00042\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad39c4a33a3f50a003c9d520449dccf38_ad39c4a33a3f50a003c9d520449dccf38}{is\_signed}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00043}00043\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a302e56d566a2561033b27c13680ea4b2}{ExprKind::kString}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00044}00044\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00045}00045\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a7eaa1b378656b37ef145e184c09afa84}{ExprKind::kUnary}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00046}00046\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}}\ ==\ \textcolor{charliteral}{'S'})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00047}00047\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00048}00048\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00049}00049\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}}\ ==\ \textcolor{charliteral}{'U'})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00050}00050\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00051}00051\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00052}00052\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}}\ ==\ \textcolor{charliteral}{'C'})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00053}00053\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00054}00054\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00055}00055\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00056}00056\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a212f9f34e4e151a9ba569c71e1aace47}{ExprKind::kBinary}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00057}00057\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ lhs\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00058}00058\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ rhs\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00059}00059\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ lhs\ \&\&\ rhs;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00060}00060\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00061}00061\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169abfe34f3d82a9dcbe0e8b751b0af6e151}{ExprKind::kTernary}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00062}00062\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ then\_signed\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00063}00063\ \ \ \ \ \ \ \ \ \ \ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\_expr}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\_expr}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00064}00064\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ else\_signed\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00065}00065\ \ \ \ \ \ \ \ \ \ \ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\_expr}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\_expr}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00066}00066\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ then\_signed\ \&\&\ else\_signed;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00067}00067\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00068}00068\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a0f74d4695fd4cccbe4380a5fcf6f8cc0}{ExprKind::kSelect}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00069}00069\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169aaaa1335fda1c8d46b88c83f27e161967}{ExprKind::kIndex}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00070}00070\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00071}00071\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4ff0cb81f1d2d093837e39bbf48501c8}{ExprKind::kCall}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00072}00072\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00073}00073\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a07f24210ce07b41cf8370dd8e9a3eb70}{ExprKind::kConcat}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00074}00074\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00075}00075\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00076}00076\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00077}00077\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00078}00078\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00079}00079\ int64\_t\ SignedValue(uint64\_t\ bits,\ \textcolor{keywordtype}{int}\ width)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00080}00080\ \ \ \textcolor{keywordflow}{if}\ (width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00081}00081\ \ \ \ \ \textcolor{keywordflow}{return}\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00082}00082\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00083}00083\ \ \ \textcolor{keywordflow}{if}\ (width\ >=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00084}00084\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(bits);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00085}00085\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00086}00086\ \ \ uint64\_t\ mask\ =\ (1ull\ <<\ width)\ -\/\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00087}00087\ \ \ bits\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00088}00088\ \ \ uint64\_t\ sign\ =\ 1ull\ <<\ (width\ -\/\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00089}00089\ \ \ \textcolor{keywordflow}{if}\ ((bits\ \&\ sign)\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00090}00090\ \ \ \ \ uint64\_t\ extended\ =\ bits\ |\ (\string~mask);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00091}00091\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(extended);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00092}00092\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00093}00093\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(bits);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00094}00094\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00095}00095\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00096}00096\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ ResizeValue(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ value,\ \textcolor{keywordtype}{int}\ width)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00097}00097\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out\ =\ value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00098}00098\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00099}00099\ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00100}00100\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00101}00101\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00102}00102\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00103}00103\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00104}00104\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00105}00105\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00106}00106\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ NormalizeUnknown(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ value,\ \textcolor{keywordtype}{int}\ width)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00107}00107\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out\ =\ ResizeValue(value,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00108}00108\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ |\ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}})\ \&\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00109}00109\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00110}00110\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00111}00111\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00112}00112\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00113}00113\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ MakeKnown(uint64\_t\ value,\ \textcolor{keywordtype}{int}\ width)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00114}00114\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00115}00115\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00116}00116\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ value\ \&\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00117}00117\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00118}00118\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00119}00119\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00120}00120\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ AllX(\textcolor{keywordtype}{int}\ width)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00121}00121\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00122}00122\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00123}00123\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00124}00124\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00125}00125\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00126}00126\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00127}00127\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00128}00128\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00129}00129\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ MergeUnknown(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ a,\ \textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ b)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00130}00130\ \ \ \textcolor{keywordtype}{int}\ width\ =\ std::max(ValueWidth(a),\ ValueWidth(b));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00131}00131\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ left\ =\ NormalizeUnknown(a,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00132}00132\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ right\ =\ NormalizeUnknown(b,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00133}00133\ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00134}00134\ \ \ uint64\_t\ left\_known\ =\ (\string~left.x\_bits)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00135}00135\ \ \ uint64\_t\ right\_known\ =\ (\string~right.x\_bits)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00136}00136\ \ \ uint64\_t\ same\ =\ \string~(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \string^\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}})\ \&\ left\_known\ \&}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00137}00137\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ right\_known\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00138}00138\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00139}00139\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00140}00140\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ same;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00141}00141\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ mask\ \&\ \string~same;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00142}00142\ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00143}00143\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00144}00144\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00145}00145\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00146}00146\ \}\ \ \textcolor{comment}{//\ namespace}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00147}00147\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00148}\doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{00148}}\ std::unique\_ptr<Expr>\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}\&\ expr)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00149}00149\ \ \ \textcolor{keyword}{auto}\ out\ =\ std::make\_unique<Expr>();}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00150}00150\ \ \ out-\/>kind\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ab80053df86026837eea2f74b4fd04e67_ab80053df86026837eea2f74b4fd04e67}{kind}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00151}00151\ \ \ out-\/>ident\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_afde4e1dbde54c2408d7d229dab4f334a_afde4e1dbde54c2408d7d229dab4f334a}{ident}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00152}00152\ \ \ out-\/>string\_value\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a84298b9b6c411c47e6dd73d40f6045e6_a84298b9b6c411c47e6dd73d40f6045e6}{string\_value}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00153}00153\ \ \ out-\/>number\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a16dc8c00ecb2ff18b089f714b6a6bd34_a16dc8c00ecb2ff18b089f714b6a6bd34}{number}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00154}00154\ \ \ out-\/>value\_bits\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a9583a0e2107b4f0a3f694017d9167728_a9583a0e2107b4f0a3f694017d9167728}{value\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00155}00155\ \ \ out-\/>x\_bits\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00156}00156\ \ \ out-\/>z\_bits\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}{z\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00157}00157\ \ \ out-\/>number\_width\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_af4f436fdafd8fd515255ffcb62382bfd_af4f436fdafd8fd515255ffcb62382bfd}{number\_width}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00158}00158\ \ \ out-\/>has\_width\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a5389be52a859d53e61fe19994544cf9b_a5389be52a859d53e61fe19994544cf9b}{has\_width}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00159}00159\ \ \ out-\/>has\_base\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae59059ac53cfd6a57583aba809f33a12_ae59059ac53cfd6a57583aba809f33a12}{has\_base}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00160}00160\ \ \ out-\/>base\_char\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a9a675861855617040e426cf4f019f22f_a9a675861855617040e426cf4f019f22f}{base\_char}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00161}00161\ \ \ out-\/>is\_signed\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad39c4a33a3f50a003c9d520449dccf38_ad39c4a33a3f50a003c9d520449dccf38}{is\_signed}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00162}00162\ \ \ out-\/>is\_real\_literal\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a38788a46451a9a175a81f3f6f3864d6d_a38788a46451a9a175a81f3f6f3864d6d}{is\_real\_literal}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00163}00163\ \ \ out-\/>op\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00164}00164\ \ \ out-\/>unary\_op\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00165}00165\ \ \ out-\/>msb\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a557ae18a9ab5f7af7036690b2df82e2d_a557ae18a9ab5f7af7036690b2df82e2d}{msb}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00166}00166\ \ \ out-\/>lsb\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a5016a9aa029dd4ba3c22e2d52a4c846c_a5016a9aa029dd4ba3c22e2d52a4c846c}{lsb}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00167}00167\ \ \ out-\/>has\_range\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a418702ddabe345185eb91ae643b32743_a418702ddabe345185eb91ae643b32743}{has\_range}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00168}00168\ \ \ out-\/>indexed\_range\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ac1f442c7a9ee507439c0ed029ff1fbab_ac1f442c7a9ee507439c0ed029ff1fbab}{indexed\_range}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00169}00169\ \ \ out-\/>indexed\_desc\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a848b0ed95ecba23586fc8f1505174d4d_a848b0ed95ecba23586fc8f1505174d4d}{indexed\_desc}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00170}00170\ \ \ out-\/>indexed\_width\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a4cf2c2d239a5dd99cb9582aefa221ac0_a4cf2c2d239a5dd99cb9582aefa221ac0}{indexed\_width}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00171}00171\ \ \ out-\/>repeat\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a410495c5dcdeff3f041a28775b8b497e_a410495c5dcdeff3f041a28775b8b497e}{repeat}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00172}00172\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00173}00173\ \ \ \ \ out-\/>operand\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00174}00174\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00175}00175\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00176}00176\ \ \ \ \ out-\/>lhs\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00177}00177\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00178}00178\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00179}00179\ \ \ \ \ out-\/>rhs\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00180}00180\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00181}00181\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_afd61fe36ea7a831d6b30a3b501fa12ff_afd61fe36ea7a831d6b30a3b501fa12ff}{condition}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00182}00182\ \ \ \ \ out-\/>condition\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_afd61fe36ea7a831d6b30a3b501fa12ff_afd61fe36ea7a831d6b30a3b501fa12ff}{condition}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00183}00183\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00184}00184\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00185}00185\ \ \ \ \ out-\/>then\_expr\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\_expr}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00186}00186\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00187}00187\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00188}00188\ \ \ \ \ out-\/>else\_expr\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\_expr}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00189}00189\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00190}00190\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00191}00191\ \ \ \ \ out-\/>base\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00192}00192\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00193}00193\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}{index}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00194}00194\ \ \ \ \ out-\/>index\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}{index}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00195}00195\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00196}00196\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a292f81a324bee24a19e9b20b023e1f30_a292f81a324bee24a19e9b20b023e1f30}{msb\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00197}00197\ \ \ \ \ out-\/>msb\_expr\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a292f81a324bee24a19e9b20b023e1f30_a292f81a324bee24a19e9b20b023e1f30}{msb\_expr}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00198}00198\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00199}00199\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}{lsb\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00200}00200\ \ \ \ \ out-\/>lsb\_expr\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}{lsb\_expr}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00201}00201\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00202}00202\ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360}{repeat\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00203}00203\ \ \ \ \ out-\/>repeat\_expr\ =\ \doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360}{repeat\_expr}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00204}00204\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00205}00205\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ element\ :\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a20773271aaa0f2ac1c73c66abc53a02b_a20773271aaa0f2ac1c73c66abc53a02b}{elements}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00206}00206\ \ \ \ \ out-\/>elements.push\_back(\doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*element));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00207}00207\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00208}00208\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ arg\ :\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_adbb7ad1f5b93cce35db3d057491a5118_adbb7ad1f5b93cce35db3d057491a5118}{call\_args}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00209}00209\ \ \ \ \ out-\/>call\_args.push\_back(\doxymbox{\hyperlink{namespacegpga_a80e523342e7e6ebbb0fc3d0e4a6c597f_a80e523342e7e6ebbb0fc3d0e4a6c597f}{CloneExpr}}(*arg));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00210}00210\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00211}00211\ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00212}00212\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00213}00213\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00214}\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{00214}}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}\&\ expr,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00215}00215\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ std::unordered\_map<std::string,\ int64\_t>\&\ params,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00216}00216\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}*\ out\_value,\ std::string*\ error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00217}00217\ \ \ \textcolor{keywordflow}{if}\ (!out\_value)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00218}00218\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00219}00219\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00220}00220\ \ \ \textcolor{keywordflow}{switch}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ab80053df86026837eea2f74b4fd04e67_ab80053df86026837eea2f74b4fd04e67}{kind}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00221}00221\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a5a7ab0ccb8bc2cc772c1552d08cb7d2f}{ExprKind::kNumber}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00222}00222\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a5389be52a859d53e61fe19994544cf9b_a5389be52a859d53e61fe19994544cf9b}{has\_width}}\ \&\&\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_af4f436fdafd8fd515255ffcb62382bfd_af4f436fdafd8fd515255ffcb62382bfd}{number\_width}}\ >\ 0}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00223}00223\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_af4f436fdafd8fd515255ffcb62382bfd_af4f436fdafd8fd515255ffcb62382bfd}{number\_width}}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00224}00224\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ std::max(32,\ std::max(\{MinimalWidth(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a9583a0e2107b4f0a3f694017d9167728_a9583a0e2107b4f0a3f694017d9167728}{value\_bits}}),}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00225}00225\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ MinimalWidth(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}{x\_bits}}),}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00226}00226\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ MinimalWidth(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}{z\_bits}})\}));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00227}00227\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00228}00228\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00229}00229\ \ \ \ \ \ \ out.value\_bits\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a9583a0e2107b4f0a3f694017d9167728_a9583a0e2107b4f0a3f694017d9167728}{value\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00230}00230\ \ \ \ \ \ \ out.x\_bits\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00231}00231\ \ \ \ \ \ \ out.z\_bits\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}{z\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00232}00232\ \ \ \ \ \ \ *out\_value\ =\ ResizeValue(out,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00233}00233\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00234}00234\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00235}00235\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a302e56d566a2561033b27c13680ea4b2}{ExprKind::kString}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00236}00236\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00237}00237\ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}string\ literal\ not\ allowed\ in\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00238}00238\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00239}00239\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00240}00240\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4a4e9edac25c0c24f1d9c30088f4f554}{ExprKind::kIdentifier}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00241}00241\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ it\ =\ params.find(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_afde4e1dbde54c2408d7d229dab4f334a_afde4e1dbde54c2408d7d229dab4f334a}{ident}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00242}00242\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (it\ ==\ params.end())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00243}00243\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00244}00244\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}unknown\ parameter\ '"{}}\ +\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_afde4e1dbde54c2408d7d229dab4f334a_afde4e1dbde54c2408d7d229dab4f334a}{ident}}\ +\ \textcolor{stringliteral}{"{}'"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00245}00245\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00246}00246\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00247}00247\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00248}00248\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ std::max(32,\ MinimalWidth(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(it-\/>second)));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00249}00249\ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(it-\/>second),\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00250}00250\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00251}00251\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00252}00252\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a7eaa1b378656b37ef145e184c09afa84}{ExprKind::kUnary}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00253}00253\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00254}00254\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}},\ params,\ \&value,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00255}00255\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00256}00256\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00257}00257\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ ValueWidth(value);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00258}00258\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ signed\_operand\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}}\ ?\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}})\ :\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00259}00259\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}}\ ==\ \textcolor{charliteral}{'+'}\ ||\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}}\ ==\ \textcolor{charliteral}{'-\/'})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00260}00260\ \ \ \ \ \ \ \ \ width\ =\ std::max(width,\ 32);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00261}00261\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00262}00262\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ extend\_value\ =\ [\&](\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ in\_value,\ \textcolor{keywordtype}{int}\ src\_width,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00263}00263\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ dst\_width,\ \textcolor{keywordtype}{bool}\ signed\_op)\ -\/>\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00264}00264\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out\ =\ in\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00265}00265\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ dst\_width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00266}00266\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (dst\_width\ <=\ src\_width\ ||\ src\_width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00267}00267\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(dst\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00268}00268\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00269}00269\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00270}00270\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00271}00271\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00272}00272\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00273}00273\ \ \ \ \ \ \ \ \ uint64\_t\ src\_mask\ =\ MaskForWidth(src\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00274}00274\ \ \ \ \ \ \ \ \ uint64\_t\ dst\_mask\ =\ MaskForWidth(dst\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00275}00275\ \ \ \ \ \ \ \ \ uint64\_t\ val\ =\ in\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00276}00276\ \ \ \ \ \ \ \ \ uint64\_t\ x\_bits\ =\ in\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&\ src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00277}00277\ \ \ \ \ \ \ \ \ uint64\_t\ z\_bits\ =\ in\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ \&\ src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00278}00278\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_op\ \&\&\ src\_width\ >\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00279}00279\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ sign\_bit\ =\ 1ull\ <<\ (src\_width\ -\/\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00280}00280\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ ext\_mask\ =\ dst\_mask\ \&\ \string~src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00281}00281\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ sign\_unknown\ =\ ((x\_bits\ |\ z\_bits)\ \&\ sign\_bit)\ !=\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00282}00282\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (sign\_unknown)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00283}00283\ \ \ \ \ \ \ \ \ \ \ \ \ x\_bits\ |=\ ext\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00284}00284\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ ((val\ \&\ sign\_bit)\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00285}00285\ \ \ \ \ \ \ \ \ \ \ \ \ val\ |=\ ext\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00286}00286\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00287}00287\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00288}00288\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ val\ \&\ dst\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00289}00289\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ x\_bits\ \&\ dst\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00290}00290\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ z\_bits\ \&\ dst\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00291}00291\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00292}00292\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00293}00293\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ extended\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00294}00294\ \ \ \ \ \ \ \ \ \ \ extend\_value(value,\ ValueWidth(value),\ width,\ signed\_operand);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00295}00295\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ normalized\ =\ NormalizeUnknown(extended,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00296}00296\ \ \ \ \ \ \ \textcolor{keywordflow}{switch}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\_op}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00297}00297\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'+'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00298}00298\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00299}00299\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00300}00300\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00301}00301\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ NormalizeUnknown(value,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00302}00302\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00303}00303\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00304}00304\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'-\/'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00305}00305\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00306}00306\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00307}00307\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00308}00308\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\string~normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ +\ 1ull,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00309}00309\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00310}00310\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00311}00311\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\string~'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00312}00312\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00313}00313\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00314}00314\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00315}00315\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ \string~normalized.value\_bits;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00316}00316\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00317}00317\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00318}00318\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ ResizeValue(out,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00319}00319\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00320}00320\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00321}00321\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'!'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00322}00322\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00323}00323\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00324}00324\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00325}00325\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ ==\ 0\ ?\ 1u\ :\ 0u,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00326}00326\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00327}00327\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00328}00328\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'S'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00329}00329\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ NormalizeUnknown(value,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00330}00330\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00331}00331\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'U'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00332}00332\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ NormalizeUnknown(value,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00333}00333\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00334}00334\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'C'}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00335}00335\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00336}00336\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(32);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00337}00337\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00338}00338\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00339}00339\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ input\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00340}00340\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ power\ =\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00341}00341\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ result\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00342}00342\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (power\ <\ input)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00343}00343\ \ \ \ \ \ \ \ \ \ \ \ \ power\ <<=\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00344}00344\ \ \ \ \ \ \ \ \ \ \ \ \ ++result;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00345}00345\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00346}00346\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(result,\ 32);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00347}00347\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00348}00348\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00349}00349\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'B'}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00350}00350\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00351}00351\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00352}00352\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00353}00353\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00354}00354\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ 0\ ?\ 1u\ :\ 0u,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00355}00355\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00356}00356\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00357}00357\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\&'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00358}00358\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00359}00359\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00360}00360\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ unknown\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00361}00361\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known0\ =\ (\string~normalized.value\_bits)\ \&\ \string~unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00362}00362\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known1\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ \string~unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00363}00363\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (known0\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00364}00364\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00365}00365\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00366}00366\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00367}00367\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (known1\ ==\ mask)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00368}00368\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(1,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00369}00369\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00370}00370\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00371}00371\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00372}00372\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00373}00373\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00374}00374\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'|'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00375}00375\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00376}00376\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00377}00377\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ unknown\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00378}00378\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known0\ =\ (\string~normalized.value\_bits)\ \&\ \string~unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00379}00379\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known1\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ \string~unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00380}00380\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (known1\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00381}00381\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(1,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00382}00382\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00383}00383\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00384}00384\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (known0\ ==\ mask)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00385}00385\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00386}00386\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00387}00387\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00388}00388\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00389}00389\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00390}00390\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00391}00391\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\string^'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00392}00392\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00393}00393\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00394}00394\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ ((normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&\ mask)\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00395}00395\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00396}00396\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00397}00397\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00398}00398\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ bits\ =\ normalized.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00399}00399\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ parity\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00400}00400\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (bits\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00401}00401\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ parity\ \string^=\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(bits\ \&\ 1ull);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00402}00402\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ bits\ >>=\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00403}00403\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00404}00404\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(parity),\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00405}00405\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00406}00406\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00407}00407\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{default}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00408}00408\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00409}00409\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}unsupported\ unary\ operator\ in\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00410}00410\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00411}00411\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00412}00412\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00413}00413\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00414}00414\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a212f9f34e4e151a9ba569c71e1aace47}{ExprKind::kBinary}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00415}00415\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ lhs;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00416}00416\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ rhs;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00417}00417\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}},\ params,\ \&lhs,\ error)\ ||}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00418}00418\ \ \ \ \ \ \ \ \ \ \ !\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}},\ params,\ \&rhs,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00419}00419\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00420}00420\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00421}00421\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ lhs\_width\ =\ ValueWidth(lhs);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00422}00422\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ rhs\_width\ =\ ValueWidth(rhs);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00423}00423\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ std::max(lhs\_width,\ rhs\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00424}00424\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ clamp\_width\ =\ [](\textcolor{keywordtype}{int}\ value)\ \{\ \textcolor{keywordflow}{return}\ std::min(value,\ 64);\ \};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00425}00425\ \ \ \ \ \ \ \textcolor{keywordflow}{switch}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00426}00426\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'+'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00427}00427\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'-\/'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00428}00428\ \ \ \ \ \ \ \ \ \ \ width\ =\ clamp\_width(std::max(lhs\_width,\ rhs\_width));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00429}00429\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00430}00430\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'*'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00431}00431\ \ \ \ \ \ \ \ \ \ \ width\ =\ clamp\_width(lhs\_width\ +\ rhs\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00432}00432\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00433}00433\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'p'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00434}00434\ \ \ \ \ \ \ \ \ \ \ width\ =\ clamp\_width(lhs\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00435}00435\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00436}00436\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'/'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00437}00437\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\%'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00438}00438\ \ \ \ \ \ \ \ \ \ \ width\ =\ clamp\_width(std::max(lhs\_width,\ rhs\_width));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00439}00439\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00440}00440\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'l'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00441}00441\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'r'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00442}00442\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'R'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00443}00443\ \ \ \ \ \ \ \ \ \ \ width\ =\ clamp\_width(lhs\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00444}00444\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00445}00445\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{default}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00446}00446\ \ \ \ \ \ \ \ \ \ \ width\ =\ clamp\_width(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00447}00447\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00448}00448\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00449}00449\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ signed\_cmp\ =\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}})\ \&\&\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00450}00450\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ extend\_value\ =\ [\&](\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ in\_value,\ \textcolor{keywordtype}{int}\ src\_width,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00451}00451\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ dst\_width,\ \textcolor{keywordtype}{bool}\ signed\_op)\ -\/>\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00452}00452\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out\ =\ in\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00453}00453\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ dst\_width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00454}00454\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (dst\_width\ <=\ src\_width\ ||\ src\_width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00455}00455\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(dst\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00456}00456\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00457}00457\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00458}00458\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ \&=\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00459}00459\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00460}00460\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00461}00461\ \ \ \ \ \ \ \ \ uint64\_t\ src\_mask\ =\ MaskForWidth(src\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00462}00462\ \ \ \ \ \ \ \ \ uint64\_t\ dst\_mask\ =\ MaskForWidth(dst\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00463}00463\ \ \ \ \ \ \ \ \ uint64\_t\ val\ =\ in\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00464}00464\ \ \ \ \ \ \ \ \ uint64\_t\ x\_bits\ =\ in\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \&\ src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00465}00465\ \ \ \ \ \ \ \ \ uint64\_t\ z\_bits\ =\ in\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ \&\ src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00466}00466\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_op\ \&\&\ src\_width\ >\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00467}00467\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ sign\_bit\ =\ 1ull\ <<\ (src\_width\ -\/\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00468}00468\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ ext\_mask\ =\ dst\_mask\ \&\ \string~src\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00469}00469\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ sign\_unknown\ =\ ((x\_bits\ |\ z\_bits)\ \&\ sign\_bit)\ !=\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00470}00470\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (sign\_unknown)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00471}00471\ \ \ \ \ \ \ \ \ \ \ \ \ x\_bits\ |=\ ext\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00472}00472\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ ((val\ \&\ sign\_bit)\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00473}00473\ \ \ \ \ \ \ \ \ \ \ \ \ val\ |=\ ext\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00474}00474\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00475}00475\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00476}00476\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ val\ \&\ dst\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00477}00477\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ x\_bits\ \&\ dst\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00478}00478\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ z\_bits\ \&\ dst\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00479}00479\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00480}00480\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00481}00481\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ left\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00482}00482\ \ \ \ \ \ \ \ \ \ \ NormalizeUnknown(extend\_value(lhs,\ lhs\_width,\ width,\ signed\_cmp),}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00483}00483\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00484}00484\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ right\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00485}00485\ \ \ \ \ \ \ \ \ \ \ NormalizeUnknown(extend\_value(rhs,\ rhs\_width,\ width,\ signed\_cmp),}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00486}00486\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00487}00487\ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00488}00488\ \ \ \ \ \ \ \textcolor{keywordflow}{switch}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00489}00489\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'+'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00490}00490\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00491}00491\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00492}00492\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00493}00493\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00494}00494\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ lv\ =\ SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00495}00495\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ rv\ =\ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00496}00496\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(lv\ +\ rv),\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00497}00497\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00498}00498\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ +\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00499}00499\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00500}00500\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00501}00501\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00502}00502\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'-\/'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00503}00503\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00504}00504\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00505}00505\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00506}00506\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00507}00507\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ lv\ =\ SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00508}00508\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ rv\ =\ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00509}00509\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(lv\ -\/\ rv),\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00510}00510\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00511}00511\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ -\/\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00512}00512\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00513}00513\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00514}00514\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00515}00515\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'*'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00516}00516\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00517}00517\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00518}00518\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00519}00519\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00520}00520\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ lv\ =\ SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00521}00521\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ rv\ =\ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00522}00522\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(lv\ *\ rv),\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00523}00523\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00524}00524\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ *\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00525}00525\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00526}00526\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00527}00527\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00528}00528\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'p'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00529}00529\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00530}00530\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00531}00531\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00532}00532\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ base\ =\ left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00533}00533\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ exp\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00534}00534\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00535}00535\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ signed\_exp\ =\ SignedValue(exp,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00536}00536\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_exp\ <\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00537}00537\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00538}00538\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00539}00539\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00540}00540\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ exp\ =\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(signed\_exp);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00541}00541\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00542}00542\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ result\ =\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00543}00543\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (exp\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00544}00544\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (exp\ \&\ 1ull)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00545}00545\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ result\ =\ (result\ *\ base)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00546}00546\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00547}00547\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ base\ =\ (base\ *\ base)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00548}00548\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ exp\ >>=\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00549}00549\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00550}00550\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(result,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00551}00551\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00552}00552\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00553}00553\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'/'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00554}00554\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00555}00555\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00556}00556\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00557}00557\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00558}00558\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00559}00559\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ lv\ =\ SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00560}00560\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ rv\ =\ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00561}00561\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (rv\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00562}00562\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00563}00563\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00564}00564\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(lv\ /\ rv),\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00565}00565\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00566}00566\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00567}00567\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ /\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00568}00568\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00569}00569\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00570}00570\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00571}00571\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\%'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00572}00572\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00573}00573\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00574}00574\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00575}00575\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00576}00576\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00577}00577\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ lv\ =\ SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00578}00578\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ rv\ =\ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00579}00579\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (rv\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00580}00580\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00581}00581\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00582}00582\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(lv\ \%\ rv),\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00583}00583\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00584}00584\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00585}00585\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \%\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00586}00586\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00587}00587\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00588}00588\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00589}00589\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\&'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00590}00590\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00591}00591\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ a\_unknown\ =\ left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00592}00592\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ b\_unknown\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00593}00593\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ a0\ =\ (\string~left.value\_bits)\ \&\ \string~a\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00594}00594\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ b0\ =\ (\string~right.value\_bits)\ \&\ \string~b\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00595}00595\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ a1\ =\ left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ \string~a\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00596}00596\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ b1\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ \string~b\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00597}00597\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known0\ =\ a0\ |\ b0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00598}00598\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known1\ =\ a1\ \&\ b1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00599}00599\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ unknown\ =\ mask\ \&\ \string~(known0\ |\ known1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00600}00600\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00601}00601\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00602}00602\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ known1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00603}00603\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ unknown;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00604}00604\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00605}00605\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00606}00606\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00607}00607\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00608}00608\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'|'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00609}00609\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00610}00610\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ a\_unknown\ =\ left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00611}00611\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ b\_unknown\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00612}00612\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ a0\ =\ (\string~left.value\_bits)\ \&\ \string~a\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00613}00613\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ b0\ =\ (\string~right.value\_bits)\ \&\ \string~b\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00614}00614\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ a1\ =\ left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ \string~a\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00615}00615\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ b1\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&\ \string~b\_unknown\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00616}00616\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known1\ =\ a1\ |\ b1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00617}00617\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ known0\ =\ a0\ \&\ b0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00618}00618\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ unknown\ =\ mask\ \&\ \string~(known0\ |\ known1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00619}00619\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00620}00620\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00621}00621\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ known1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00622}00622\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ unknown;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00623}00623\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00624}00624\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00625}00625\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00626}00626\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00627}00627\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\string^'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00628}00628\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00629}00629\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ unknown\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ |\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}})\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00630}00630\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00631}00631\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00632}00632\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \string^\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}})\ \&\ \string~unknown\ \&}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00633}00633\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00634}00634\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ unknown;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00635}00635\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00636}00636\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00637}00637\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00638}00638\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00639}00639\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'A'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00640}00640\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00641}00641\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00642}00642\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00643}00643\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00644}00644\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ MakeKnown((left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ 0\ \&\&\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ 0)\ ?\ 1}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00645}00645\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ 0,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00646}00646\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00647}00647\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00648}00648\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00649}00649\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'O'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00650}00650\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00651}00651\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00652}00652\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00653}00653\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00654}00654\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ MakeKnown((left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ 0\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ 0)\ ?\ 1}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00655}00655\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ 0,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00656}00656\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00657}00657\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00658}00658\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00659}00659\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'E'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00660}00660\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00661}00661\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00662}00662\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00663}00663\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00664}00664\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ ==\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00665}00665\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00666}00666\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00667}00667\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'N'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00668}00668\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00669}00669\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00670}00670\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00671}00671\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00672}00672\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ MakeKnown(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00673}00673\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00674}00674\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00675}00675\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'C'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00676}00676\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'c'}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00677}00677\ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ left\_raw\ =\ ResizeValue(lhs,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00678}00678\ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ right\_raw\ =\ ResizeValue(rhs,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00679}00679\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ val\_diff\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00680}00680\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (left\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \string^\ right\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}})\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00681}00681\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ x\_diff\ =\ (left\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ \string^\ right\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}})\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00682}00682\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ z\_diff\ =\ (left\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ \string^\ right\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}})\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00683}00683\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ equal\ =\ (val\_diff\ |\ x\_diff\ |\ z\_diff)\ ==\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00684}00684\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown((expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}}\ ==\ \textcolor{charliteral}{'c'})\ ?\ !equal\ :\ equal,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00685}00685\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00686}00686\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00687}00687\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'W'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00688}00688\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'w'}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00689}00689\ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ left\_raw\ =\ ResizeValue(lhs,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00690}00690\ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ right\_raw\ =\ ResizeValue(rhs,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00691}00691\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ ignore\ =\ (right\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ |\ right\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}})\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00692}00692\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ cared\ =\ (\string~ignore)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00693}00693\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ ((left\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ |\ left\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}})\ \&\ cared)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00694}00694\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}}\ ==\ \textcolor{charliteral}{'w'}\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00695}00695\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00696}00696\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00697}00697\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ equal\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00698}00698\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (((left\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \string^\ right\_raw.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}})\ \&\ cared)\ ==\ 0);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00699}00699\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown((expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}}\ ==\ \textcolor{charliteral}{'w'})\ ?\ !equal\ :\ equal,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00700}00700\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00701}00701\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00702}00702\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'<'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00703}00703\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00704}00704\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00705}00705\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00706}00706\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ result\ =\ signed\_cmp}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00707}00707\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ (SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width)\ <}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00708}00708\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width))}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00709}00709\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ <\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00710}00710\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(result\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00711}00711\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00712}00712\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00713}00713\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'>'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00714}00714\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00715}00715\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00716}00716\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00717}00717\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ result\ =\ signed\_cmp}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00718}00718\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ (SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width)\ >}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00719}00719\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width))}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00720}00720\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00721}00721\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(result\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00722}00722\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00723}00723\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00724}00724\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'L'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00725}00725\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00726}00726\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00727}00727\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00728}00728\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ result\ =\ signed\_cmp}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00729}00729\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ (SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width)\ <=}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00730}00730\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width))}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00731}00731\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ <=\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00732}00732\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(result\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00733}00733\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00734}00734\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00735}00735\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'G'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00736}00736\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}()\ ||\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00737}00737\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00738}00738\ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00739}00739\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ result\ =\ signed\_cmp}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00740}00740\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ (SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width)\ >=}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00741}00741\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SignedValue(right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width))}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00742}00742\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >=\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00743}00743\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(result\ ?\ 1\ :\ 0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00744}00744\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00745}00745\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00746}00746\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'l'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00747}00747\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00748}00748\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00749}00749\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00750}00750\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00751}00751\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00752}00752\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ shift\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00753}00753\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (shift\ >=\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(width))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00754}00754\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00755}00755\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00756}00756\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00757}00757\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00758}00758\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00759}00759\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ <<\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00760}00760\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ <<\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00761}00761\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00762}00762\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00763}00763\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00764}00764\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00765}00765\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'r'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00766}00766\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00767}00767\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00768}00768\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00769}00769\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00770}00770\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00771}00771\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ shift\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00772}00772\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (shift\ >=\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(width))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00773}00773\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00774}00774\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00775}00775\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00776}00776\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00777}00777\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00778}00778\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00779}00779\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00780}00780\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00781}00781\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00782}00782\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00783}00783\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00784}00784\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'R'}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00785}00785\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00786}00786\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ AllX(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00787}00787\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00788}00788\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00789}00789\ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00790}00790\ \ \ \ \ \ \ \ \ \ \ \ \ uint64\_t\ shift\ =\ right.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00791}00791\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (shift\ >=\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(width))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00792}00792\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00793}00793\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00794}00794\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00795}00795\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00796}00796\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00797}00797\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (signed\_cmp)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00798}00798\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t\ lv\ =\ SignedValue(left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00799}00799\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00800}00800\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(lv\ >>\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(shift))\ \&}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00801}00801\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00802}00802\ \ \ \ \ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00803}00803\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00804}00804\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00805}00805\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (left.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00806}00806\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00807}00807\ \ \ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00808}00808\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00809}00809\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00810}00810\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{default}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00811}00811\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00812}00812\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}unsupported\ operator\ in\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00813}00813\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00814}00814\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00815}00815\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00816}00816\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00817}00817\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169abfe34f3d82a9dcbe0e8b751b0af6e151}{ExprKind::kTernary}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00818}00818\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ cond;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00819}00819\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_afd61fe36ea7a831d6b30a3b501fa12ff_afd61fe36ea7a831d6b30a3b501fa12ff}{condition}},\ params,\ \&cond,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00820}00820\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00821}00821\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00822}00822\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (cond.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00823}00823\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ then\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00824}00824\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ else\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00825}00825\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\_expr}},\ params,\ \&then\_value,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00826}00826\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ error)\ ||}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00827}00827\ \ \ \ \ \ \ \ \ \ \ \ \ !\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\_expr}},\ params,\ \&else\_value,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00828}00828\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00829}00829\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00830}00830\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00831}00831\ \ \ \ \ \ \ \ \ *out\_value\ =\ MergeUnknown(then\_value,\ else\_value);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00832}00832\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00833}00833\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00834}00834\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (cond.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ !=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00835}00835\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\_expr}},\ params,\ out\_value,\ error);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00836}00836\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00837}00837\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\_expr}},\ params,\ out\_value,\ error);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00838}00838\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00839}00839\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a0f74d4695fd4cccbe4380a5fcf6f8cc0}{ExprKind::kSelect}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00840}00840\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00841}00841\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00842}00842\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}missing\ base\ expression\ in\ select"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00843}00843\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00844}00844\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00845}00845\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00846}00846\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ base;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00847}00847\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}},\ params,\ \&base,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00848}00848\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00849}00849\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00850}00850\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ base\_width\ =\ ValueWidth(base);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00851}00851\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (base\_width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00852}00852\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00853}00853\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}invalid\ base\ width\ in\ constant\ select"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00854}00854\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00855}00855\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00856}00856\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00857}00857\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_ac1f442c7a9ee507439c0ed029ff1fbab_ac1f442c7a9ee507439c0ed029ff1fbab}{indexed\_range}}\ \&\&\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a4cf2c2d239a5dd99cb9582aefa221ac0_a4cf2c2d239a5dd99cb9582aefa221ac0}{indexed\_width}}\ >\ 0\ \&\&\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}{lsb\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00858}00858\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ index\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00859}00859\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}{lsb\_expr}},\ params,\ \&index\_value,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00860}00860\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00861}00861\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00862}00862\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (index\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00863}00863\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00864}00864\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}indexed\ part\ select\ requires\ a\ known\ index"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00865}00865\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00866}00866\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00867}00867\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00868}00868\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ index\_width\ =\ ValueWidth(index\_value);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00869}00869\ \ \ \ \ \ \ \ \ int64\_t\ shift\ =\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}{lsb\_expr}})}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00870}00870\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ SignedValue(index\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ index\_width)}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00871}00871\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(index\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00872}00872\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (shift\ <\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00873}00873\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00874}00874\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}indexed\ part\ select\ index\ must\ be\ >=\ 0"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00875}00875\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00876}00876\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00877}00877\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00878}00878\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a4cf2c2d239a5dd99cb9582aefa221ac0_a4cf2c2d239a5dd99cb9582aefa221ac0}{indexed\_width}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00879}00879\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00880}00880\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00881}00881\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}indexed\ part\ select\ width\ must\ be\ >\ 0"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00882}00882\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00883}00883\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00884}00884\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00885}00885\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (width\ >\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00886}00886\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00887}00887\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}indexed\ part\ select\ width\ exceeds\ 64\ bits"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00888}00888\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00889}00889\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00890}00890\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00891}00891\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (shift\ >=\ base\_width\ ||\ shift\ >=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00892}00892\ \ \ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00893}00893\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00894}00894\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00895}00895\ \ \ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00896}00896\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00897}00897\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00898}00898\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00899}00899\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00900}00900\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ >>\ shift)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00901}00901\ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00902}00902\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00903}00903\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00904}00904\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ lo\ =\ std::min(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a557ae18a9ab5f7af7036690b2df82e2d_a557ae18a9ab5f7af7036690b2df82e2d}{msb}},\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a5016a9aa029dd4ba3c22e2d52a4c846c_a5016a9aa029dd4ba3c22e2d52a4c846c}{lsb}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00905}00905\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ hi\ =\ std::max(expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a557ae18a9ab5f7af7036690b2df82e2d_a557ae18a9ab5f7af7036690b2df82e2d}{msb}},\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a5016a9aa029dd4ba3c22e2d52a4c846c_a5016a9aa029dd4ba3c22e2d52a4c846c}{lsb}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00906}00906\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ hi\ -\/\ lo\ +\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00907}00907\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00908}00908\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00909}00909\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}part\ select\ width\ must\ be\ >\ 0"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00910}00910\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00911}00911\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00912}00912\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00913}00913\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (width\ >\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00914}00914\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00915}00915\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}part\ select\ width\ exceeds\ 64\ bits"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00916}00916\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00917}00917\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00918}00918\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00919}00919\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (lo\ <\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00920}00920\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00921}00921\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}part\ select\ index\ must\ be\ >=\ 0"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00922}00922\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00923}00923\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00924}00924\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00925}00925\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (lo\ >=\ base\_width\ ||\ lo\ >=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00926}00926\ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00927}00927\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00928}00928\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00929}00929\ \ \ \ \ \ \ uint64\_t\ mask\ =\ MaskForWidth(width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00930}00930\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00931}00931\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00932}00932\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >>\ lo)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00933}00933\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ >>\ lo)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00934}00934\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ >>\ lo)\ \&\ mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00935}00935\ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00936}00936\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00937}00937\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00938}00938\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169aaaa1335fda1c8d46b88c83f27e161967}{ExprKind::kIndex}}:\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00939}00939\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}}\ ||\ !expr.\doxymbox{\hyperlink{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}{index}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00940}00940\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00941}00941\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}missing\ base\ expression\ in\ index"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00942}00942\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00943}00943\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00944}00944\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00945}00945\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ base;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00946}00946\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ index\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00947}00947\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}},\ params,\ \&base,\ error)\ ||}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00948}00948\ \ \ \ \ \ \ \ \ \ \ !\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}{index}},\ params,\ \&index\_value,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00949}00949\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00950}00950\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00951}00951\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (index\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00952}00952\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00953}00953\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}index\ requires\ a\ known\ value"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00954}00954\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00955}00955\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00956}00956\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00957}00957\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ index\_width\ =\ ValueWidth(index\_value);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00958}00958\ \ \ \ \ \ \ int64\_t\ index\ =\ ExprIsSigned(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}{index}})}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00959}00959\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ SignedValue(index\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ index\_width)}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00960}00960\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(index\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00961}00961\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (index\ <\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00962}00962\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00963}00963\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}index\ must\ be\ >=\ 0"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00964}00964\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00965}00965\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00966}00966\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00967}00967\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ base\_width\ =\ ValueWidth(base);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00968}00968\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (base\_width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00969}00969\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00970}00970\ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}invalid\ base\ width\ in\ constant\ index"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00971}00971\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00972}00972\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00973}00973\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00974}00974\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (index\ >=\ base\_width\ ||\ index\ >=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00975}00975\ \ \ \ \ \ \ \ \ *out\_value\ =\ MakeKnown(0,\ 1);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00976}00976\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00977}00977\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00978}00978\ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00979}00979\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00980}00980\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ >>\ index)\ \&\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00981}00981\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ >>\ index)\ \&\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00982}00982\ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ (base.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ >>\ index)\ \&\ 1ull;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00983}00983\ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00984}00984\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00985}00985\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00986}00986\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a07f24210ce07b41cf8370dd8e9a3eb70}{ExprKind::kConcat}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00987}00987\ \ \ \ \ \ \ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00988}00988\ \ \ \ \ \ \ \ \ int64\_t\ repeat\ =\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a410495c5dcdeff3f041a28775b8b497e_a410495c5dcdeff3f041a28775b8b497e}{repeat}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00989}00989\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360}{repeat\_expr}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00990}00990\ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ repeat\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00991}00991\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*expr.\doxymbox{\hyperlink{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360}{repeat\_expr}},\ params,\ \&repeat\_value,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00992}00992\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00993}00993\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00994}00994\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00995}00995\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (repeat\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00996}00996\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00997}00997\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}repeat\ count\ not\ allowed\ to\ be\ x/z\ in\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00998}00998\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l00999}00999\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01000}01000\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01001}01001\ \ \ \ \ \ \ \ \ \ \ repeat\ =\ SignedValue(repeat\_value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01002}01002\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ValueWidth(repeat\_value));}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01003}01003\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01004}01004\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (repeat\ <\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01005}01005\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01006}01006\ \ \ \ \ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}repeat\ count\ must\ be\ >=\ 0\ in\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01007}01007\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01008}01008\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01009}01009\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01010}01010\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01011}01011\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01012}01012\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01013}01013\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01014}01014\ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01015}01015\ \ \ \ \ \ \ \ \ \textcolor{keyword}{auto}\ append\ =\ [\&](\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\&\ part)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01016}01016\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ part\_width\ =\ ValueWidth(part);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01017}01017\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (part\_width\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01018}01018\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01019}01019\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01020}01020\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (part\_width\ >\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01021}01021\ \ \ \ \ \ \ \ \ \ \ \ \ part\_width\ =\ 64;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01022}01022\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01023}01023\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ >=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01024}01024\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ 64;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01025}01025\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01026}01026\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01027}01027\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ part\_mask\ =\ MaskForWidth(part\_width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01028}01028\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ part\_val\ =\ part.value\_bits\ \&\ part\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01029}01029\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ part\_x\ =\ part.x\_bits\ \&\ part\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01030}01030\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ part\_z\ =\ part.z\_bits\ \&\ part\_mask;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01031}01031\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ +\ part\_width\ <=\ 64)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01032}01032\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ <<\ part\_width)\ |\ part\_val;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01033}01033\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ <<\ part\_width)\ |\ part\_x;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01034}01034\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ <<\ part\_width)\ |\ part\_z;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01035}01035\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ +=\ part\_width;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01036}01036\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01037}01037\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01038}01038\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ keep\ =\ 64\ -\/\ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01039}01039\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (keep\ <=\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01040}01040\ \ \ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ 64;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01041}01041\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01042}01042\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01043}01043\ \ \ \ \ \ \ \ \ \ \ uint64\_t\ keep\_mask\ =\ MaskForWidth(keep);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01044}01044\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ <<\ keep)\ |\ (part\_val\ \&\ keep\_mask);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01045}01045\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ <<\ keep)\ |\ (part\_x\ \&\ keep\_mask);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01046}01046\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ <<\ keep)\ |\ (part\_z\ \&\ keep\_mask);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01047}01047\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ 64;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01048}01048\ \ \ \ \ \ \ \ \ \};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01049}01049\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (int64\_t\ r\ =\ 0;\ r\ <\ repeat;\ ++r)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01050}01050\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ element\ :\ expr.\doxymbox{\hyperlink{structgpga_1_1_expr_a20773271aaa0f2ac1c73c66abc53a02b_a20773271aaa0f2ac1c73c66abc53a02b}{elements}})\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01051}01051\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!element)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01052}01052\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01053}01053\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01054}01054\ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ element\_value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01055}01055\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(*element,\ params,\ \&element\_value,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01056}01056\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01057}01057\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01058}01058\ \ \ \ \ \ \ \ \ \ \ \ \ append(element\_value);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01059}01059\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01060}01060\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01061}01061\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01062}01062\ \ \ \ \ \ \ \ \ \ \ out.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_ac9ad2724acc8ed82f74e4335e203e01d_ac9ad2724acc8ed82f74e4335e203e01d}{width}}\ =\ 1;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01063}01063\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01064}01064\ \ \ \ \ \ \ \ \ *out\_value\ =\ out;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01065}01065\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01066}01066\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01067}01067\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4ff0cb81f1d2d093837e39bbf48501c8}{ExprKind::kCall}}:}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01068}01068\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01069}01069\ \ \ \ \ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}function\ call\ not\ allowed\ in\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01070}01070\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01071}01071\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01072}01072\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01073}01073\ \ \ \textcolor{keywordflow}{if}\ (error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01074}01074\ \ \ \ \ *error\ =\ \textcolor{stringliteral}{"{}unsupported\ constant\ expression"{}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01075}01075\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01076}01076\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01077}01077\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01078}01078\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01079}\doxymbox{\hyperlink{namespacegpga_a82d45185631ff7559627c1fda8e9685a_a82d45185631ff7559627c1fda8e9685a}{01079}}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{namespacegpga_a82d45185631ff7559627c1fda8e9685a_a82d45185631ff7559627c1fda8e9685a}{EvalConstExpr}}(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}\&\ expr,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01080}01080\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{const}\ std::unordered\_map<std::string,\ int64\_t>\&\ params,}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01081}01081\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ int64\_t*\ out\_value,\ std::string*\ error)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01082}01082\ \ \ \doxymbox{\hyperlink{structgpga_1_1_four_state_value}{FourStateValue}}\ value;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01083}01083\ \ \ \textcolor{keywordflow}{if}\ (!\doxymbox{\hyperlink{namespacegpga_aeb25f66d13ade9539c9b463a1513333c_aeb25f66d13ade9539c9b463a1513333c}{EvalConstExpr4State}}(expr,\ params,\ \&value,\ error))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01084}01084\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01085}01085\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01086}01086\ \ \ \textcolor{keywordflow}{if}\ (value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a58e7c9b43582b9d3c04e938a7c2fed34_a58e7c9b43582b9d3c04e938a7c2fed34}{HasXorZ}}())\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01087}01087\ \ \ \ \ uint64\_t\ unknown\ =\ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ |\ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01088}01088\ \ \ \ \ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}}\ \&=\ \string~unknown;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01089}01089\ \ \ \ \ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aa1d2c55adc4742f68956c10d20de922c_aa1d2c55adc4742f68956c10d20de922c}{x\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01090}01090\ \ \ \ \ value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_aff446c5551e9daf82f341dab4bd6141b_aff446c5551e9daf82f341dab4bd6141b}{z\_bits}}\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01091}01091\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01092}01092\ \ \ \textcolor{keywordflow}{if}\ (out\_value)\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01093}01093\ \ \ \ \ \textcolor{keywordtype}{int}\ width\ =\ ValueWidth(value);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01094}01094\ \ \ \ \ \textcolor{keywordflow}{if}\ (ExprIsSigned(expr))\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01095}01095\ \ \ \ \ \ \ *out\_value\ =\ SignedValue(value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}},\ width);}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01096}01096\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01097}01097\ \ \ \ \ \ \ *out\_value\ =\ \textcolor{keyword}{static\_cast<}int64\_t\textcolor{keyword}{>}(value.\doxymbox{\hyperlink{structgpga_1_1_four_state_value_a67cb0f6a7747ece15085cd0811c1708d_a67cb0f6a7747ece15085cd0811c1708d}{value\_bits}});}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01098}01098\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01099}01099\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01100}01100\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01101}01101\ \}}
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01102}01102\ }
+\DoxyCodeLine{\Hypertarget{ast_8cc_source_l01103}01103\ \}\ \ \textcolor{comment}{//\ namespace\ gpga}}
+
+\end{DoxyCode}

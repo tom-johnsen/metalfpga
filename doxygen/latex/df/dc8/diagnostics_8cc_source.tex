@@ -1,0 +1,73 @@
+\doxysection{diagnostics.\+cc}
+\hypertarget{diagnostics_8cc_source}{}\label{diagnostics_8cc_source}\index{src/utils/diagnostics.cc@{src/utils/diagnostics.cc}}
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00001}00001\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{diagnostics_8hh}{utils/diagnostics.hh}}"{}}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00002}00002\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00003}00003\ \textcolor{preprocessor}{\#include\ <ostream>}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00004}00004\ \textcolor{preprocessor}{\#include\ <utility>}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00005}00005\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00006}00006\ \textcolor{keyword}{namespace\ }\doxymbox{\hyperlink{namespacegpga}{gpga}}\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00007}00007\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00008}\doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02diagnostics_8cc_03}{00008}}\ \textcolor{keyword}{namespace\ }\{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00009}00009\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00010}00010\ \textcolor{keyword}{const}\ \textcolor{keywordtype}{char}*\ SeverityLabel(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641f}{Severity}}\ severity)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00011}00011\ \ \ \textcolor{keywordflow}{switch}\ (severity)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00012}00012\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fafea4f62c88b0689240f8b7ba4b7fc5fc}{Severity::kNote}}:}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00013}00013\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}note"{}};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00014}00014\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641faec0da41f4e48b52c362303eb27ed5dee}{Severity::kWarning}}:}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00015}00015\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}warning"{}};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00016}00016\ \ \ \ \ \textcolor{keywordflow}{case}\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}}:}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00017}00017\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}error"{}};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00018}00018\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00019}00019\ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}error"{}};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00020}00020\ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00021}00021\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00022}00022\ \}\ \ \textcolor{comment}{//\ namespace}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00023}00023\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00024}\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{00024}}\ \textcolor{keywordtype}{void}\ \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Diagnostics::Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641f}{Severity}}\ severity,\ std::string\ message,}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00025}00025\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_source_location}{SourceLocation}}\ location)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00026}00026\ \ \ items\_.push\_back(\doxymbox{\hyperlink{structgpga_1_1_diagnostic}{Diagnostic}}\{severity,\ std::move(message),}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00027}00027\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::move(location)\});}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00028}00028\ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00029}00029\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00030}\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{00030}}\ \textcolor{keywordtype}{bool}\ \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a6ec4fdd6a68583d084cb12148ad60602_a6ec4fdd6a68583d084cb12148ad60602}{Diagnostics::HasErrors}}()\textcolor{keyword}{\ const\ }\{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00031}00031\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ diagnostic\ :\ items\_)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00032}00032\ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostic.severity\ ==\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}})\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00033}00033\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00034}00034\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00035}00035\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00036}00036\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00037}00037\ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00038}00038\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00039}\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a900926b963924a38aaa7e1b3e2de54e0_a900926b963924a38aaa7e1b3e2de54e0}{00039}}\ \textcolor{keywordtype}{int}\ \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a900926b963924a38aaa7e1b3e2de54e0_a900926b963924a38aaa7e1b3e2de54e0}{Diagnostics::ErrorCount}}()\textcolor{keyword}{\ const\ }\{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00040}00040\ \ \ \textcolor{keywordtype}{int}\ count\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00041}00041\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ diagnostic\ :\ items\_)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00042}00042\ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostic.severity\ ==\ \doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}})\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00043}00043\ \ \ \ \ \ \ ++count;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00044}00044\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00045}00045\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00046}00046\ \ \ \textcolor{keywordflow}{return}\ count;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00047}00047\ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00048}00048\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00049}\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{00049}}\ \textcolor{keywordtype}{void}\ \doxymbox{\hyperlink{classgpga_1_1_diagnostics_a20ba536c0eec37040198fc08a54e7d9a_a20ba536c0eec37040198fc08a54e7d9a}{Diagnostics::RenderTo}}(std::ostream\&\ os)\textcolor{keyword}{\ const\ }\{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00050}00050\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ diagnostic\ :\ items\_)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00051}00051\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ loc\ =\ diagnostic.location;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00052}00052\ \ \ \ \ \textcolor{keywordflow}{if}\ (!loc.file.empty())\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00053}00053\ \ \ \ \ \ \ os\ <<\ loc.file;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00054}00054\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (loc.line\ >\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00055}00055\ \ \ \ \ \ \ \ \ os\ <<\ \textcolor{stringliteral}{"{}:"{}}\ <<\ loc.line;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00056}00056\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (loc.column\ >\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00057}00057\ \ \ \ \ \ \ \ \ \ \ os\ <<\ \textcolor{stringliteral}{"{}:"{}}\ <<\ loc.column;}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00058}00058\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00059}00059\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00060}00060\ \ \ \ \ \ \ os\ <<\ \textcolor{stringliteral}{"{}:\ "{}};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00061}00061\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00062}00062\ \ \ \ \ os\ <<\ SeverityLabel(diagnostic.severity)\ <<\ \textcolor{stringliteral}{"{}:\ "{}}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00063}00063\ \ \ \ \ \ \ \ <<\ diagnostic.message\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00064}00064\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00065}00065\ \}}
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00066}00066\ }
+\DoxyCodeLine{\Hypertarget{diagnostics_8cc_source_l00067}00067\ \}\ \ \textcolor{comment}{//\ namespace\ gpga}}
+
+\end{DoxyCode}

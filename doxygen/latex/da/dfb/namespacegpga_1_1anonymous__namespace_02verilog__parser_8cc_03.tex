@@ -1,0 +1,1210 @@
+\doxysection{gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\} Namespace Reference}
+\hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03}{}\label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{Macro\+Def}}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_ifdef_state}{Ifdef\+State}}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}}
+\item 
+class \doxymbox{\hyperlink{classgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_parser}{Parser}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class {\bfseries Token\+Kind} \{ \newline
+{\bfseries k\+Identifier}
+, {\bfseries k\+Number}
+, {\bfseries k\+String}
+, {\bfseries k\+Symbol}
+, \newline
+{\bfseries k\+End}
+ \}
+\item 
+enum class {\bfseries Directive\+Kind} \{ \newline
+{\bfseries k\+Default\+Nettype}
+, {\bfseries k\+Unconnected\+Drive}
+, {\bfseries k\+No\+Unconnected\+Drive}
+, {\bfseries k\+Reset\+All}
+, \newline
+{\bfseries k\+Timescale}
+, {\bfseries k\+Begin\+Keywords}
+, {\bfseries k\+End\+Keywords}
+ \}
+\item 
+enum class {\bfseries Keyword\+Version} \{ {\bfseries k1364\+\_\+1995}
+, {\bfseries k1364\+\_\+2001}
+, {\bfseries k1364\+\_\+2005}
+ \}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a3f7cc2de8fd4b3a0b51b4df8ea692969_a3f7cc2de8fd4b3a0b51b4df8ea692969}{Is\+Ident\+Start}} (char c)
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_aeec517a69f69c2eedc24a693d4827fd5_aeec517a69f69c2eedc24a693d4827fd5}{Is\+Ident\+Char}} (char c)
+\item 
+std::\+string \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_aada59bae20433ebea6c0cd052b606b0a_aada59bae20433ebea6c0cd052b606b0a}{Strip\+Underscores}} (const std::\+string \&text)
+\item 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}} $>$ \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a067fa9eb84bcde4dc3a61876f5dbd7d0_a067fa9eb84bcde4dc3a61876f5dbd7d0}{Tokenize}} (const std::\+string \&text)
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ad086245e22bc1a87e72411c7d11ab109_ad086245e22bc1a87e72411c7d11ab109}{Has\+Unterminated\+String\+Literal}} (const std::\+string \&text)
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_adb3d3c839d8f9f6f34bd82d0cad6d8a5_adb3d3c839d8f9f6f34bd82d0cad6d8a5}{Expand\+Defines}} (const std::\+string \&line, const std::\+unordered\+\_\+map$<$ std::\+string, \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{Macro\+Def}} $>$ \&defines, const std::\+string \&path, int line\+\_\+number, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, std::\+string \texorpdfstring{$\ast$}{*}out\+\_\+line)
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a3df1d2433b09d19f189901b87e978a0a_a3df1d2433b09d19f189901b87e978a0a}{Preprocess\+Verilog\+Internal}} (const std::\+string \&input, const std::\+string \&path, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, std::\+unordered\+\_\+map$<$ std::\+string, \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{Macro\+Def}} $>$ \texorpdfstring{$\ast$}{*}defines, std::\+string \texorpdfstring{$\ast$}{*}out\+\_\+text, int depth, std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}} $>$ \texorpdfstring{$\ast$}{*}directives)
+\item 
+bool \doxymbox{\hyperlink{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a08b8ed4dcfeb43ae9f36c11f4c48b19f_a08b8ed4dcfeb43ae9f36c11f4c48b19f}{Preprocess\+Verilog}} (const std::\+string \&input, const std::\+string \&path, \doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}diagnostics, std::\+string \texorpdfstring{$\ast$}{*}out\+\_\+text, std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}} $>$ \texorpdfstring{$\ast$}{*}directives)
+\end{DoxyCompactItemize}
+
+
+\label{doc-enum-members}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_doc-enum-members}
+\doxysubsection{Enumeration Type Documentation}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ac09a6a566b47519bc975a9bffca84b1c_ac09a6a566b47519bc975a9bffca84b1c}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!DirectiveKind@{DirectiveKind}}
+\index{DirectiveKind@{DirectiveKind}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{DirectiveKind}{DirectiveKind}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ac09a6a566b47519bc975a9bffca84b1c_ac09a6a566b47519bc975a9bffca84b1c} 
+enum class gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Directive\+Kind\hspace{0.3cm}{\ttfamily [strong]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00515}{515}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00515\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00516\ \ \ kDefaultNettype,}
+\DoxyCodeLine{00517\ \ \ kUnconnectedDrive,}
+\DoxyCodeLine{00518\ \ \ kNoUnconnectedDrive,}
+\DoxyCodeLine{00519\ \ \ kResetAll,}
+\DoxyCodeLine{00520\ \ \ kTimescale,}
+\DoxyCodeLine{00521\ \ \ kBeginKeywords,}
+\DoxyCodeLine{00522\ \ \ kEndKeywords,}
+\DoxyCodeLine{00523\ \};}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ab3a5a74913d8e3c67ec9bbb7a0e2c2cd_ab3a5a74913d8e3c67ec9bbb7a0e2c2cd}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!KeywordVersion@{KeywordVersion}}
+\index{KeywordVersion@{KeywordVersion}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{KeywordVersion}{KeywordVersion}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ab3a5a74913d8e3c67ec9bbb7a0e2c2cd_ab3a5a74913d8e3c67ec9bbb7a0e2c2cd} 
+enum class gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Keyword\+Version\hspace{0.3cm}{\ttfamily [strong]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00532}{532}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00532\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00533\ \ \ k1364\_1995,}
+\DoxyCodeLine{00534\ \ \ k1364\_2001,}
+\DoxyCodeLine{00535\ \ \ k1364\_2005,}
+\DoxyCodeLine{00536\ \};}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a09681109eb5085ebd25820f10f5d61d3_a09681109eb5085ebd25820f10f5d61d3}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!TokenKind@{TokenKind}}
+\index{TokenKind@{TokenKind}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{TokenKind}{TokenKind}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a09681109eb5085ebd25820f10f5d61d3_a09681109eb5085ebd25820f10f5d61d3} 
+enum class gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Token\+Kind\hspace{0.3cm}{\ttfamily [strong]}}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00020}{20}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00020\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00021\ \ \ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4a4e9edac25c0c24f1d9c30088f4f554}{kIdentifier}},}
+\DoxyCodeLine{00022\ \ \ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a5a7ab0ccb8bc2cc772c1552d08cb7d2f}{kNumber}},}
+\DoxyCodeLine{00023\ \ \ \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a302e56d566a2561033b27c13680ea4b2}{kString}},}
+\DoxyCodeLine{00024\ \ \ kSymbol,}
+\DoxyCodeLine{00025\ \ \ kEnd,}
+\DoxyCodeLine{00026\ \};}
+
+\end{DoxyCode}
+
+
+\label{doc-func-members}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_doc-func-members}
+\doxysubsection{Function Documentation}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_adb3d3c839d8f9f6f34bd82d0cad6d8a5_adb3d3c839d8f9f6f34bd82d0cad6d8a5}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!ExpandDefines@{ExpandDefines}}
+\index{ExpandDefines@{ExpandDefines}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{ExpandDefines()}{ExpandDefines()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_adb3d3c839d8f9f6f34bd82d0cad6d8a5_adb3d3c839d8f9f6f34bd82d0cad6d8a5} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Expand\+Defines (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{line}{, }\item[{const std::\+unordered\+\_\+map$<$ std::\+string, \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{Macro\+Def}} $>$ \&}]{defines}{, }\item[{const std::\+string \&}]{path}{, }\item[{int}]{line\+\_\+number}{, }\item[{\doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}}]{diagnostics}{, }\item[{std::\+string \texorpdfstring{$\ast$}{*}}]{out\+\_\+line}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00345}{345}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00348\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00349\ \ \ \textcolor{keywordflow}{if}\ (!out\_line)\ \{}
+\DoxyCodeLine{00350\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00351\ \ \ \}}
+\DoxyCodeLine{00352\ \ \ std::string\ result;}
+\DoxyCodeLine{00353\ \ \ result.reserve(line.size());}
+\DoxyCodeLine{00354\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ line.size();\ ++i)\ \{}
+\DoxyCodeLine{00355\ \ \ \ \ \textcolor{keywordflow}{if}\ (line[i]\ !=\ \textcolor{charliteral}{'`'})\ \{}
+\DoxyCodeLine{00356\ \ \ \ \ \ \ result.push\_back(line[i]);}
+\DoxyCodeLine{00357\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00358\ \ \ \ \ \}}
+\DoxyCodeLine{00359\ \ \ \ \ \textcolor{keywordtype}{size\_t}\ start\ =\ i\ +\ 1;}
+\DoxyCodeLine{00360\ \ \ \ \ \textcolor{keywordflow}{if}\ (start\ >=\ line.size()\ ||\ !IsIdentStart(line[start]))\ \{}
+\DoxyCodeLine{00361\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics)\ \{}
+\DoxyCodeLine{00362\ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00363\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ macro\ name\ after\ '`'"{}},}
+\DoxyCodeLine{00364\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00365\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(i\ +\ 1)\});}
+\DoxyCodeLine{00366\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00367\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00368\ \ \ \ \ \}}
+\DoxyCodeLine{00369\ \ \ \ \ \textcolor{keywordtype}{size\_t}\ end\ =\ start\ +\ 1;}
+\DoxyCodeLine{00370\ \ \ \ \ \textcolor{keywordflow}{while}\ (end\ <\ line.size()\ \&\&\ IsIdentChar(line[end]))\ \{}
+\DoxyCodeLine{00371\ \ \ \ \ \ \ ++end;}
+\DoxyCodeLine{00372\ \ \ \ \ \}}
+\DoxyCodeLine{00373\ \ \ \ \ std::string\ name\ =\ line.substr(start,\ end\ -\/\ start);}
+\DoxyCodeLine{00374\ \ \ \ \ \textcolor{keyword}{auto}\ it\ =\ defines.find(name);}
+\DoxyCodeLine{00375\ \ \ \ \ \textcolor{keywordflow}{if}\ (it\ ==\ defines.end())\ \{}
+\DoxyCodeLine{00376\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics)\ \{}
+\DoxyCodeLine{00377\ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00378\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}undefined\ macro\ '"{}}\ +\ name\ +\ \textcolor{stringliteral}{"{}'"{}},}
+\DoxyCodeLine{00379\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00380\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(i\ +\ 1)\});}
+\DoxyCodeLine{00381\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00382\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00383\ \ \ \ \ \}}
+\DoxyCodeLine{00384\ \ \ \ \ \textcolor{keyword}{const}\ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{MacroDef}}\&\ macro\ =\ it-\/>second;}
+\DoxyCodeLine{00385\ \ \ \ \ std::string\ expansion\ =\ macro.body;}
+\DoxyCodeLine{00386\ \ \ \ \ \textcolor{keywordtype}{size\_t}\ invoke\_end\ =\ end;}
+\DoxyCodeLine{00387\ \ \ \ \ \textcolor{keywordflow}{if}\ (!macro.args.empty())\ \{}
+\DoxyCodeLine{00388\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ pos\ =\ end;}
+\DoxyCodeLine{00389\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00390\ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00391\ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00392\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00393\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (pos\ >=\ line.size()\ ||\ line[pos]\ !=\ \textcolor{charliteral}{'('})\ \{}
+\DoxyCodeLine{00394\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics)\ \{}
+\DoxyCodeLine{00395\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00396\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ '('\ after\ macro\ '"{}}\ +\ name\ +\ \textcolor{stringliteral}{"{}'"{}},}
+\DoxyCodeLine{00397\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00398\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(pos\ +\ 1)\});}
+\DoxyCodeLine{00399\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00400\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00401\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00402\ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00403\ \ \ \ \ \ \ std::vector<std::string>\ arg\_values;}
+\DoxyCodeLine{00404\ \ \ \ \ \ \ std::string\ current;}
+\DoxyCodeLine{00405\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ depth\ =\ 1;}
+\DoxyCodeLine{00406\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ in\_string\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00407\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ flush\_arg\ =\ [\&]()\ \{}
+\DoxyCodeLine{00408\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ left\ =\ current.find\_first\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}});}
+\DoxyCodeLine{00409\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ right\ =\ current.find\_last\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}});}
+\DoxyCodeLine{00410\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (left\ ==\ std::string::npos)\ \{}
+\DoxyCodeLine{00411\ \ \ \ \ \ \ \ \ \ \ arg\_values.emplace\_back(\textcolor{stringliteral}{"{}"{}});}
+\DoxyCodeLine{00412\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00413\ \ \ \ \ \ \ \ \ \ \ arg\_values.push\_back(current.substr(left,\ right\ -\/\ left\ +\ 1));}
+\DoxyCodeLine{00414\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00415\ \ \ \ \ \ \ \ \ current.clear();}
+\DoxyCodeLine{00416\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{00417\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (;\ pos\ <\ line.size();\ ++pos)\ \{}
+\DoxyCodeLine{00418\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ ch\ =\ line[pos];}
+\DoxyCodeLine{00419\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (in\_string)\ \{}
+\DoxyCodeLine{00420\ \ \ \ \ \ \ \ \ \ \ current.push\_back(ch);}
+\DoxyCodeLine{00421\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'"{}'}\ \&\&\ (pos\ ==\ 0\ ||\ line[pos\ -\/\ 1]\ !=\ \textcolor{charliteral}{'\(\backslash\)\(\backslash\)'}))\ \{}
+\DoxyCodeLine{00422\ \ \ \ \ \ \ \ \ \ \ \ \ in\_string\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00423\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00424\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00425\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00426\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00427\ \ \ \ \ \ \ \ \ \ \ in\_string\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00428\ \ \ \ \ \ \ \ \ \ \ current.push\_back(ch);}
+\DoxyCodeLine{00429\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00430\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00431\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'('})\ \{}
+\DoxyCodeLine{00432\ \ \ \ \ \ \ \ \ \ \ ++depth;}
+\DoxyCodeLine{00433\ \ \ \ \ \ \ \ \ \ \ current.push\_back(ch);}
+\DoxyCodeLine{00434\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00435\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00436\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{')'})\ \{}
+\DoxyCodeLine{00437\ \ \ \ \ \ \ \ \ \ \ -\/-\/depth;}
+\DoxyCodeLine{00438\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (depth\ ==\ 0)\ \{}
+\DoxyCodeLine{00439\ \ \ \ \ \ \ \ \ \ \ \ \ flush\_arg();}
+\DoxyCodeLine{00440\ \ \ \ \ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00441\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00442\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00443\ \ \ \ \ \ \ \ \ \ \ current.push\_back(ch);}
+\DoxyCodeLine{00444\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00445\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00446\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{','}\ \&\&\ depth\ ==\ 1)\ \{}
+\DoxyCodeLine{00447\ \ \ \ \ \ \ \ \ \ \ flush\_arg();}
+\DoxyCodeLine{00448\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00449\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00450\ \ \ \ \ \ \ \ \ current.push\_back(ch);}
+\DoxyCodeLine{00451\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00452\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (depth\ !=\ 0)\ \{}
+\DoxyCodeLine{00453\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics)\ \{}
+\DoxyCodeLine{00454\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00455\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unterminated\ macro\ invocation"{}},}
+\DoxyCodeLine{00456\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00457\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(i\ +\ 1)\});}
+\DoxyCodeLine{00458\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00459\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00460\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00461\ \ \ \ \ \ \ invoke\_end\ =\ pos;}
+\DoxyCodeLine{00462\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_values.size()\ !=\ macro.args.size())\ \{}
+\DoxyCodeLine{00463\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (diagnostics)\ \{}
+\DoxyCodeLine{00464\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00465\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}macro\ '"{}}\ +\ name\ +\ \textcolor{stringliteral}{"{}'\ expects\ "{}}\ +}
+\DoxyCodeLine{00466\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::to\_string(macro.args.size())\ +}
+\DoxyCodeLine{00467\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}\ arguments"{}},}
+\DoxyCodeLine{00468\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00469\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ static\_cast<int>(i\ +\ 1)\});}
+\DoxyCodeLine{00470\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00471\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00472\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00473\ \ \ \ \ \ \ std::unordered\_map<std::string,\ std::string>\ arg\_map;}
+\DoxyCodeLine{00474\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ arg\_index\ =\ 0;\ arg\_index\ <\ macro.args.size();\ ++arg\_index)\ \{}
+\DoxyCodeLine{00475\ \ \ \ \ \ \ \ \ arg\_map[macro.args[arg\_index]]\ =\ arg\_values[arg\_index];}
+\DoxyCodeLine{00476\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00477\ \ \ \ \ \ \ std::string\ substituted;}
+\DoxyCodeLine{00478\ \ \ \ \ \ \ substituted.reserve(expansion.size());}
+\DoxyCodeLine{00479\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ j\ =\ 0;\ j\ <\ expansion.size();)\ \{}
+\DoxyCodeLine{00480\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ ch\ =\ expansion[j];}
+\DoxyCodeLine{00481\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!IsIdentStart(ch))\ \{}
+\DoxyCodeLine{00482\ \ \ \ \ \ \ \ \ \ \ substituted.push\_back(ch);}
+\DoxyCodeLine{00483\ \ \ \ \ \ \ \ \ \ \ ++j;}
+\DoxyCodeLine{00484\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00485\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00486\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ ident\_start\ =\ j;}
+\DoxyCodeLine{00487\ \ \ \ \ \ \ \ \ ++j;}
+\DoxyCodeLine{00488\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (j\ <\ expansion.size()\ \&\&\ IsIdentChar(expansion[j]))\ \{}
+\DoxyCodeLine{00489\ \ \ \ \ \ \ \ \ \ \ ++j;}
+\DoxyCodeLine{00490\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00491\ \ \ \ \ \ \ \ \ std::string\ ident\ =\ expansion.substr(ident\_start,\ j\ -\/\ ident\_start);}
+\DoxyCodeLine{00492\ \ \ \ \ \ \ \ \ \textcolor{keyword}{auto}\ arg\_it\ =\ arg\_map.find(ident);}
+\DoxyCodeLine{00493\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_it\ !=\ arg\_map.end())\ \{}
+\DoxyCodeLine{00494\ \ \ \ \ \ \ \ \ \ \ substituted\ +=\ arg\_it-\/>second;}
+\DoxyCodeLine{00495\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00496\ \ \ \ \ \ \ \ \ \ \ substituted\ +=\ ident;}
+\DoxyCodeLine{00497\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00498\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00499\ \ \ \ \ \ \ expansion\ =\ std::move(substituted);}
+\DoxyCodeLine{00500\ \ \ \ \ \}}
+\DoxyCodeLine{00501\ \ \ \ \ result\ +=\ expansion;}
+\DoxyCodeLine{00502\ \ \ \ \ i\ =\ invoke\_end\ -\/\ 1;}
+\DoxyCodeLine{00503\ \ \ \}}
+\DoxyCodeLine{00504\ \ \ *out\_line\ =\ std::move(result);}
+\DoxyCodeLine{00505\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00506\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ad086245e22bc1a87e72411c7d11ab109_ad086245e22bc1a87e72411c7d11ab109}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!HasUnterminatedStringLiteral@{HasUnterminatedStringLiteral}}
+\index{HasUnterminatedStringLiteral@{HasUnterminatedStringLiteral}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{HasUnterminatedStringLiteral()}{HasUnterminatedStringLiteral()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_ad086245e22bc1a87e72411c7d11ab109_ad086245e22bc1a87e72411c7d11ab109} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Has\+Unterminated\+String\+Literal (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{text}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00320}{320}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00320\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00321\ \ \ \textcolor{keywordtype}{bool}\ in\_string\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00322\ \ \ \textcolor{keywordtype}{bool}\ escaped\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00323\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{char}\ ch\ :\ text)\ \{}
+\DoxyCodeLine{00324\ \ \ \ \ \textcolor{keywordflow}{if}\ (!in\_string)\ \{}
+\DoxyCodeLine{00325\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00326\ \ \ \ \ \ \ \ \ in\_string\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00327\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00328\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00329\ \ \ \ \ \}}
+\DoxyCodeLine{00330\ \ \ \ \ \textcolor{keywordflow}{if}\ (escaped)\ \{}
+\DoxyCodeLine{00331\ \ \ \ \ \ \ escaped\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00332\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00333\ \ \ \ \ \}}
+\DoxyCodeLine{00334\ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'\(\backslash\)\(\backslash\)'})\ \{}
+\DoxyCodeLine{00335\ \ \ \ \ \ \ escaped\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00336\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00337\ \ \ \ \ \}}
+\DoxyCodeLine{00338\ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00339\ \ \ \ \ \ \ in\_string\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00340\ \ \ \ \ \}}
+\DoxyCodeLine{00341\ \ \ \}}
+\DoxyCodeLine{00342\ \ \ \textcolor{keywordflow}{return}\ in\_string;}
+\DoxyCodeLine{00343\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_aeec517a69f69c2eedc24a693d4827fd5_aeec517a69f69c2eedc24a693d4827fd5}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!IsIdentChar@{IsIdentChar}}
+\index{IsIdentChar@{IsIdentChar}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{IsIdentChar()}{IsIdentChar()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_aeec517a69f69c2eedc24a693d4827fd5_aeec517a69f69c2eedc24a693d4827fd5} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Is\+Ident\+Char (\begin{DoxyParamCaption}\item[{char}]{c}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00039}{39}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00039\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00040\ \ \ \textcolor{keywordflow}{return}\ std::isalnum(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(c))\ ||\ c\ ==\ \textcolor{charliteral}{'\_'}\ ||\ c\ ==\ \textcolor{charliteral}{'\$'};}
+\DoxyCodeLine{00041\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a3f7cc2de8fd4b3a0b51b4df8ea692969_a3f7cc2de8fd4b3a0b51b4df8ea692969}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!IsIdentStart@{IsIdentStart}}
+\index{IsIdentStart@{IsIdentStart}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{IsIdentStart()}{IsIdentStart()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a3f7cc2de8fd4b3a0b51b4df8ea692969_a3f7cc2de8fd4b3a0b51b4df8ea692969} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Is\+Ident\+Start (\begin{DoxyParamCaption}\item[{char}]{c}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00035}{35}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00035\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00036\ \ \ \textcolor{keywordflow}{return}\ std::isalpha(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(c))\ ||\ c\ ==\ \textcolor{charliteral}{'\_'};}
+\DoxyCodeLine{00037\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a08b8ed4dcfeb43ae9f36c11f4c48b19f_a08b8ed4dcfeb43ae9f36c11f4c48b19f}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!PreprocessVerilog@{PreprocessVerilog}}
+\index{PreprocessVerilog@{PreprocessVerilog}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{PreprocessVerilog()}{PreprocessVerilog()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a08b8ed4dcfeb43ae9f36c11f4c48b19f_a08b8ed4dcfeb43ae9f36c11f4c48b19f} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Preprocess\+Verilog (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{input}{, }\item[{const std::\+string \&}]{path}{, }\item[{\doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}}]{diagnostics}{, }\item[{std::\+string \texorpdfstring{$\ast$}{*}}]{out\+\_\+text}{, }\item[{std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}} $>$ \texorpdfstring{$\ast$}{*}}]{directives}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l01042}{1042}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{01044\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{01045\ \ \ std::unordered\_map<std::string,\ MacroDef>\ defines;}
+\DoxyCodeLine{01046\ \ \ \textcolor{keywordflow}{return}\ PreprocessVerilogInternal(input,\ path,\ diagnostics,\ \&defines,}
+\DoxyCodeLine{01047\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ out\_text,\ 0,\ directives);}
+\DoxyCodeLine{01048\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a3df1d2433b09d19f189901b87e978a0a_a3df1d2433b09d19f189901b87e978a0a}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!PreprocessVerilogInternal@{PreprocessVerilogInternal}}
+\index{PreprocessVerilogInternal@{PreprocessVerilogInternal}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{PreprocessVerilogInternal()}{PreprocessVerilogInternal()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a3df1d2433b09d19f189901b87e978a0a_a3df1d2433b09d19f189901b87e978a0a} 
+bool gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Preprocess\+Verilog\+Internal (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{input}{, }\item[{const std::\+string \&}]{path}{, }\item[{\doxymbox{\hyperlink{classgpga_1_1_diagnostics}{Diagnostics}} \texorpdfstring{$\ast$}{*}}]{diagnostics}{, }\item[{std::\+unordered\+\_\+map$<$ std::\+string, \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{Macro\+Def}} $>$ \texorpdfstring{$\ast$}{*}}]{defines}{, }\item[{std::\+string \texorpdfstring{$\ast$}{*}}]{out\+\_\+text}{, }\item[{int}]{depth}{, }\item[{std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{Directive\+Event}} $>$ \texorpdfstring{$\ast$}{*}}]{directives}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00538}{538}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00542\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00543\ \ \ \textcolor{keywordflow}{if}\ (!out\_text\ ||\ !defines)\ \{}
+\DoxyCodeLine{00544\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00545\ \ \ \}}
+\DoxyCodeLine{00546\ \ \ \textcolor{keywordflow}{if}\ (depth\ >\ 32)\ \{}
+\DoxyCodeLine{00547\ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00548\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}include\ depth\ exceeded"{}},}
+\DoxyCodeLine{00549\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1_source_location}{SourceLocation}}\{path\});}
+\DoxyCodeLine{00550\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00551\ \ \ \}}
+\DoxyCodeLine{00552\ \ \ std::vector<IfdefState>\ if\_stack;}
+\DoxyCodeLine{00553\ \ \ std::istringstream\ stream(input);}
+\DoxyCodeLine{00554\ \ \ std::ostringstream\ output;}
+\DoxyCodeLine{00555\ \ \ std::string\ line;}
+\DoxyCodeLine{00556\ \ \ \textcolor{keywordtype}{int}\ line\_number\ =\ 1;}
+\DoxyCodeLine{00557\ \ \ \textcolor{keywordflow}{while}\ (std::getline(stream,\ line))\ \{}
+\DoxyCodeLine{00558\ \ \ \ \ \textcolor{keywordtype}{size\_t}\ first\ =\ line.find\_first\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}});}
+\DoxyCodeLine{00559\ \ \ \ \ \textcolor{keywordflow}{if}\ (first\ !=\ std::string::npos\ \&\&\ line[first]\ ==\ \textcolor{charliteral}{'`'})\ \{}
+\DoxyCodeLine{00560\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ pos\ =\ first\ +\ 1;}
+\DoxyCodeLine{00561\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00562\ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00563\ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00564\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00565\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ start\ =\ pos;}
+\DoxyCodeLine{00566\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&\ IsIdentChar(line[pos]))\ \{}
+\DoxyCodeLine{00567\ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00568\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00569\ \ \ \ \ \ \ std::string\ directive\ =\ line.substr(start,\ pos\ -\/\ start);}
+\DoxyCodeLine{00570\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ active\ =\ if\_stack.empty()\ ?\ true\ :\ if\_stack.back().active;}
+\DoxyCodeLine{00571\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}define"{}})\ \{}
+\DoxyCodeLine{00572\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active)\ \{}
+\DoxyCodeLine{00573\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00574\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00575\ \ \ \ \ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00576\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00577\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_start\ =\ pos;}
+\DoxyCodeLine{00578\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (name\_start\ >=\ line.size()\ ||\ !IsIdentStart(line[name\_start]))\ \{}
+\DoxyCodeLine{00579\ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00580\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ macro\ name\ after\ \`{}define"{}},}
+\DoxyCodeLine{00581\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00582\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(name\_start\ +\ 1)\});}
+\DoxyCodeLine{00583\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00584\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00585\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_end\ =\ name\_start\ +\ 1;}
+\DoxyCodeLine{00586\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (name\_end\ <\ line.size()\ \&\&\ IsIdentChar(line[name\_end]))\ \{}
+\DoxyCodeLine{00587\ \ \ \ \ \ \ \ \ \ \ \ \ ++name\_end;}
+\DoxyCodeLine{00588\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00589\ \ \ \ \ \ \ \ \ \ \ std::string\ name\ =\ line.substr(name\_start,\ name\_end\ -\/\ name\_start);}
+\DoxyCodeLine{00590\ \ \ \ \ \ \ \ \ \ \ std::vector<std::string>\ args;}
+\DoxyCodeLine{00591\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ after\_name\ =\ name\_end;}
+\DoxyCodeLine{00592\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (after\_name\ <\ line.size()\ \&\&\ line[after\_name]\ ==\ \textcolor{charliteral}{'('})\ \{}
+\DoxyCodeLine{00593\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_pos\ =\ after\_name\ +\ 1;}
+\DoxyCodeLine{00594\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_pos\ <\ line.size()\ \&\&\ line[arg\_pos]\ !=\ \textcolor{charliteral}{')'})\ \{}
+\DoxyCodeLine{00595\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00596\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[arg\_pos])))\ \{}
+\DoxyCodeLine{00597\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ++arg\_pos;}
+\DoxyCodeLine{00598\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00599\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ <\ line.size()\ \&\&\ line[arg\_pos]\ ==\ \textcolor{charliteral}{')'})\ \{}
+\DoxyCodeLine{00600\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00601\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00602\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ >=\ line.size()\ ||}
+\DoxyCodeLine{00603\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ !IsIdentStart(line[arg\_pos]))\ \{}
+\DoxyCodeLine{00604\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00605\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ macro\ argument\ name"{}},}
+\DoxyCodeLine{00606\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00607\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(arg\_pos\ +\ 1)\});}
+\DoxyCodeLine{00608\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00609\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00610\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_end\ =\ arg\_pos\ +\ 1;}
+\DoxyCodeLine{00611\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_end\ <\ line.size()\ \&\&\ IsIdentChar(line[arg\_end]))\ \{}
+\DoxyCodeLine{00612\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ++arg\_end;}
+\DoxyCodeLine{00613\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00614\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ args.push\_back(line.substr(arg\_pos,\ arg\_end\ -\/\ arg\_pos));}
+\DoxyCodeLine{00615\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ arg\_pos\ =\ arg\_end;}
+\DoxyCodeLine{00616\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00617\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[arg\_pos])))\ \{}
+\DoxyCodeLine{00618\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ++arg\_pos;}
+\DoxyCodeLine{00619\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00620\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ <\ line.size()\ \&\&\ line[arg\_pos]\ ==\ \textcolor{charliteral}{','})\ \{}
+\DoxyCodeLine{00621\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ++arg\_pos;}
+\DoxyCodeLine{00622\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00623\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00624\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ >=\ line.size()\ ||\ line[arg\_pos]\ !=\ \textcolor{charliteral}{')'})\ \{}
+\DoxyCodeLine{00625\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00626\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unterminated\ macro\ parameter\ list"{}},}
+\DoxyCodeLine{00627\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00628\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(after\_name\ +\ 1)\});}
+\DoxyCodeLine{00629\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00630\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00631\ \ \ \ \ \ \ \ \ \ \ \ \ after\_name\ =\ arg\_pos\ +\ 1;}
+\DoxyCodeLine{00632\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00633\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ body\_start\ =\ line.find\_first\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}},\ after\_name);}
+\DoxyCodeLine{00634\ \ \ \ \ \ \ \ \ \ \ std::string\ body\ =\ (body\_start\ ==\ std::string::npos)}
+\DoxyCodeLine{00635\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ?\ \textcolor{stringliteral}{"{}"{}}}
+\DoxyCodeLine{00636\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ :\ line.substr(body\_start);}
+\DoxyCodeLine{00637\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (HasUnterminatedStringLiteral(body))\ \{}
+\DoxyCodeLine{00638\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ column\ =\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(}
+\DoxyCodeLine{00639\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (body\_start\ ==\ std::string::npos\ ?\ after\_name\ :\ body\_start)\ +\ 1);}
+\DoxyCodeLine{00640\ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00641\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}macro\ definition\ cannot\ split\ a\ string\ literal"{}},}
+\DoxyCodeLine{00642\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,\ column\});}
+\DoxyCodeLine{00643\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00644\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00645\ \ \ \ \ \ \ \ \ \ \ (*defines)[name]\ =\ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_macro_def}{MacroDef}}\{std::move(args),\ std::move(body)\};}
+\DoxyCodeLine{00646\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00647\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00648\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00649\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00650\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00651\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}undef"{}})\ \{}
+\DoxyCodeLine{00652\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active)\ \{}
+\DoxyCodeLine{00653\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00654\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00655\ \ \ \ \ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00656\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00657\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_start\ =\ pos;}
+\DoxyCodeLine{00658\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (name\_start\ >=\ line.size()\ ||\ !IsIdentStart(line[name\_start]))\ \{}
+\DoxyCodeLine{00659\ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00660\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ macro\ name\ after\ \`{}undef"{}},}
+\DoxyCodeLine{00661\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00662\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(name\_start\ +\ 1)\});}
+\DoxyCodeLine{00663\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00664\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00665\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_end\ =\ name\_start\ +\ 1;}
+\DoxyCodeLine{00666\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (name\_end\ <\ line.size()\ \&\&\ IsIdentChar(line[name\_end]))\ \{}
+\DoxyCodeLine{00667\ \ \ \ \ \ \ \ \ \ \ \ \ ++name\_end;}
+\DoxyCodeLine{00668\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00669\ \ \ \ \ \ \ \ \ \ \ std::string\ name\ =\ line.substr(name\_start,\ name\_end\ -\/\ name\_start);}
+\DoxyCodeLine{00670\ \ \ \ \ \ \ \ \ \ \ defines-\/>erase(name);}
+\DoxyCodeLine{00671\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00672\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00673\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00674\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00675\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00676\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}ifdef"{}}\ ||\ directive\ ==\ \textcolor{stringliteral}{"{}ifndef"{}})\ \{}
+\DoxyCodeLine{00677\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00678\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00679\ \ \ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00680\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00681\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_start\ =\ pos;}
+\DoxyCodeLine{00682\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (name\_start\ >=\ line.size()\ ||\ !IsIdentStart(line[name\_start]))\ \{}
+\DoxyCodeLine{00683\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00684\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ macro\ name\ after\ \`{}"{}}\ +\ directive\ +\ \textcolor{stringliteral}{"{}'"{}},}
+\DoxyCodeLine{00685\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00686\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(name\_start\ +\ 1)\});}
+\DoxyCodeLine{00687\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00688\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00689\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_end\ =\ name\_start\ +\ 1;}
+\DoxyCodeLine{00690\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (name\_end\ <\ line.size()\ \&\&\ IsIdentChar(line[name\_end]))\ \{}
+\DoxyCodeLine{00691\ \ \ \ \ \ \ \ \ \ \ ++name\_end;}
+\DoxyCodeLine{00692\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00693\ \ \ \ \ \ \ \ \ std::string\ name\ =\ line.substr(name\_start,\ name\_end\ -\/\ name\_start);}
+\DoxyCodeLine{00694\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ defined\ =\ defines-\/>find(name)\ !=\ defines-\/>end();}
+\DoxyCodeLine{00695\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ condition\_true\ =\ (directive\ ==\ \textcolor{stringliteral}{"{}ifdef"{}})\ ?\ defined\ :\ !defined;}
+\DoxyCodeLine{00696\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_ifdef_state}{IfdefState}}\ state;}
+\DoxyCodeLine{00697\ \ \ \ \ \ \ \ \ state.parent\_active\ =\ active;}
+\DoxyCodeLine{00698\ \ \ \ \ \ \ \ \ state.branch\_taken\ =\ condition\_true;}
+\DoxyCodeLine{00699\ \ \ \ \ \ \ \ \ state.active\ =\ active\ \&\&\ condition\_true;}
+\DoxyCodeLine{00700\ \ \ \ \ \ \ \ \ if\_stack.push\_back(state);}
+\DoxyCodeLine{00701\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00702\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00703\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00704\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00705\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}elsif"{}})\ \{}
+\DoxyCodeLine{00706\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (if\_stack.empty())\ \{}
+\DoxyCodeLine{00707\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00708\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unexpected\ \`{}elsif\ without\ \`{}ifdef"{}},}
+\DoxyCodeLine{00709\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00710\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00711\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00712\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00713\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_ifdef_state}{IfdefState}}\&\ state\ =\ if\_stack.back();}
+\DoxyCodeLine{00714\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.else\_seen)\ \{}
+\DoxyCodeLine{00715\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00716\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}\`{}elsif\ after\ \`{}else"{}},}
+\DoxyCodeLine{00717\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00718\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00719\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00720\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00721\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00722\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00723\ \ \ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00724\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00725\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_start\ =\ pos;}
+\DoxyCodeLine{00726\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (name\_start\ >=\ line.size()\ ||\ !IsIdentStart(line[name\_start]))\ \{}
+\DoxyCodeLine{00727\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00728\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ macro\ name\ after\ \`{}elsif"{}},}
+\DoxyCodeLine{00729\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00730\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(name\_start\ +\ 1)\});}
+\DoxyCodeLine{00731\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00732\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00733\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ name\_end\ =\ name\_start\ +\ 1;}
+\DoxyCodeLine{00734\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (name\_end\ <\ line.size()\ \&\&\ IsIdentChar(line[name\_end]))\ \{}
+\DoxyCodeLine{00735\ \ \ \ \ \ \ \ \ \ \ ++name\_end;}
+\DoxyCodeLine{00736\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00737\ \ \ \ \ \ \ \ \ std::string\ name\ =\ line.substr(name\_start,\ name\_end\ -\/\ name\_start);}
+\DoxyCodeLine{00738\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ defined\ =\ defines-\/>find(name)\ !=\ defines-\/>end();}
+\DoxyCodeLine{00739\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ condition\_true\ =\ defined;}
+\DoxyCodeLine{00740\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ take\_branch\ =}
+\DoxyCodeLine{00741\ \ \ \ \ \ \ \ \ \ \ \ \ state.parent\_active\ \&\&\ !state.branch\_taken\ \&\&\ condition\_true;}
+\DoxyCodeLine{00742\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (condition\_true\ \&\&\ !state.branch\_taken)\ \{}
+\DoxyCodeLine{00743\ \ \ \ \ \ \ \ \ \ \ state.branch\_taken\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00744\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00745\ \ \ \ \ \ \ \ \ state.active\ =\ take\_branch;}
+\DoxyCodeLine{00746\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00747\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00748\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00749\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00750\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}else"{}})\ \{}
+\DoxyCodeLine{00751\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (if\_stack.empty())\ \{}
+\DoxyCodeLine{00752\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00753\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unexpected\ \`{}else\ without\ \`{}ifdef"{}},}
+\DoxyCodeLine{00754\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00755\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00756\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00757\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00758\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_ifdef_state}{IfdefState}}\&\ state\ =\ if\_stack.back();}
+\DoxyCodeLine{00759\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (state.else\_seen)\ \{}
+\DoxyCodeLine{00760\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00761\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}duplicate\ \`{}else\ in\ conditional\ block"{}},}
+\DoxyCodeLine{00762\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00763\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00764\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00765\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00766\ \ \ \ \ \ \ \ \ state.else\_seen\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00767\ \ \ \ \ \ \ \ \ state.active\ =\ state.parent\_active\ \&\&\ !state.branch\_taken;}
+\DoxyCodeLine{00768\ \ \ \ \ \ \ \ \ state.branch\_taken\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00769\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00770\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00771\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00772\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00773\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}endif"{}})\ \{}
+\DoxyCodeLine{00774\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (if\_stack.empty())\ \{}
+\DoxyCodeLine{00775\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00776\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unexpected\ \`{}endif\ without\ \`{}ifdef"{}},}
+\DoxyCodeLine{00777\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00778\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00779\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00780\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00781\ \ \ \ \ \ \ \ \ if\_stack.pop\_back();}
+\DoxyCodeLine{00782\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00783\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00784\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00785\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00786\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}include"{}})\ \{}
+\DoxyCodeLine{00787\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!active)\ \{}
+\DoxyCodeLine{00788\ \ \ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00789\ \ \ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00790\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00791\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00792\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (pos\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00793\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[pos])))\ \{}
+\DoxyCodeLine{00794\ \ \ \ \ \ \ \ \ \ \ ++pos;}
+\DoxyCodeLine{00795\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00796\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (pos\ >=\ line.size()\ ||}
+\DoxyCodeLine{00797\ \ \ \ \ \ \ \ \ \ \ \ \ (line[pos]\ !=\ \textcolor{charliteral}{'"{}'}\ \&\&\ line[pos]\ !=\ \textcolor{charliteral}{'<'}))\ \{}
+\DoxyCodeLine{00798\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00799\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ quoted\ path\ after\ \`{}include"{}},}
+\DoxyCodeLine{00800\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00801\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(pos\ +\ 1)\});}
+\DoxyCodeLine{00802\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00803\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00804\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ term\ =\ (line[pos]\ ==\ \textcolor{charliteral}{'"{}'})\ ?\ \textcolor{charliteral}{'"{}'}\ :\ \textcolor{stringliteral}{'>'};}
+\DoxyCodeLine{00805\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ path\_start\ =\ pos\ +\ 1;}
+\DoxyCodeLine{00806\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ path\_end\ =\ line.find(term,\ path\_start);}
+\DoxyCodeLine{00807\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (path\_end\ ==\ std::string::npos)\ \{}
+\DoxyCodeLine{00808\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00809\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unterminated\ \`{}include\ path"{}},}
+\DoxyCodeLine{00810\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00811\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(pos\ +\ 1)\});}
+\DoxyCodeLine{00812\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00813\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00814\ \ \ \ \ \ \ \ \ std::string\ include\_raw\ =\ line.substr(path\_start,\ path\_end\ -\/\ path\_start);}
+\DoxyCodeLine{00815\ \ \ \ \ \ \ \ \ std::filesystem::path\ include\_path(include\_raw);}
+\DoxyCodeLine{00816\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (include\_path.is\_relative())\ \{}
+\DoxyCodeLine{00817\ \ \ \ \ \ \ \ \ \ \ include\_path\ =\ std::filesystem::path(path).parent\_path()\ /\ include\_path;}
+\DoxyCodeLine{00818\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00819\ \ \ \ \ \ \ \ \ std::ifstream\ include\_file(include\_path);}
+\DoxyCodeLine{00820\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!include\_file)\ \{}
+\DoxyCodeLine{00821\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00822\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}failed\ to\ open\ include\ file"{}},}
+\DoxyCodeLine{00823\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00824\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(pos\ +\ 1)\});}
+\DoxyCodeLine{00825\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00826\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00827\ \ \ \ \ \ \ \ \ std::ostringstream\ include\_buffer;}
+\DoxyCodeLine{00828\ \ \ \ \ \ \ \ \ include\_buffer\ <<\ include\_file.rdbuf();}
+\DoxyCodeLine{00829\ \ \ \ \ \ \ \ \ std::string\ include\_text\ =\ include\_buffer.str();}
+\DoxyCodeLine{00830\ \ \ \ \ \ \ \ \ std::string\ included\_out;}
+\DoxyCodeLine{00831\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!PreprocessVerilogInternal(include\_text,\ include\_path.string(),}
+\DoxyCodeLine{00832\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics,\ defines,\ \&included\_out,}
+\DoxyCodeLine{00833\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ depth\ +\ 1,\ directives))\ \{}
+\DoxyCodeLine{00834\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00835\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00836\ \ \ \ \ \ \ \ \ output\ <<\ included\_out;}
+\DoxyCodeLine{00837\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!included\_out.empty()\ \&\&\ included\_out.back()\ !=\ \textcolor{charliteral}{'\(\backslash\)n'})\ \{}
+\DoxyCodeLine{00838\ \ \ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00839\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00840\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00841\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00842\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00843\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}timescale"{}})\ \{}
+\DoxyCodeLine{00844\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\ \&\&\ directives)\ \{}
+\DoxyCodeLine{00845\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_pos\ =\ line.find\_first\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}},\ pos);}
+\DoxyCodeLine{00846\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ !=\ std::string::npos)\ \{}
+\DoxyCodeLine{00847\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_end\ =\ arg\_pos;}
+\DoxyCodeLine{00848\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_end\ <\ line.size()\ \&\&}
+\DoxyCodeLine{00849\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ !std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(line[arg\_end]))\ \&\&}
+\DoxyCodeLine{00850\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ line[arg\_end]\ !=\ \textcolor{charliteral}{'/'})\ \{}
+\DoxyCodeLine{00851\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ++arg\_end;}
+\DoxyCodeLine{00852\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00853\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_end\ >\ arg\_pos)\ \{}
+\DoxyCodeLine{00854\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{}
+\DoxyCodeLine{00855\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ DirectiveKind::kTimescale,}
+\DoxyCodeLine{00856\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ line.substr(arg\_pos,\ arg\_end\ -\/\ arg\_pos),\ line\_number,}
+\DoxyCodeLine{00857\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00858\ \ \ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00859\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00860\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00861\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00862\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00863\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00864\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00865\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}begin\_keywords"{}})\ \{}
+\DoxyCodeLine{00866\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\ \&\&\ directives)\ \{}
+\DoxyCodeLine{00867\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_pos\ =\ line.find\_first\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}},\ pos);}
+\DoxyCodeLine{00868\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ ==\ std::string::npos\ ||\ line[arg\_pos]\ !=\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00869\ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00870\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ string\ literal\ after\ \`{}begin\_keywords"{}},}
+\DoxyCodeLine{00871\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00872\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(pos\ +\ 1)\});}
+\DoxyCodeLine{00873\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00874\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00875\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_end\ =\ arg\_pos\ +\ 1;}
+\DoxyCodeLine{00876\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_end\ <\ line.size()\ \&\&\ line[arg\_end]\ !=\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00877\ \ \ \ \ \ \ \ \ \ \ \ \ ++arg\_end;}
+\DoxyCodeLine{00878\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00879\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_end\ >=\ line.size())\ \{}
+\DoxyCodeLine{00880\ \ \ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00881\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unterminated\ \`{}begin\_keywords\ string"{}},}
+\DoxyCodeLine{00882\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00883\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(arg\_pos\ +\ 1)\});}
+\DoxyCodeLine{00884\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00885\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00886\ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{}
+\DoxyCodeLine{00887\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ DirectiveKind::kBeginKeywords,}
+\DoxyCodeLine{00888\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ line.substr(arg\_pos\ +\ 1,\ arg\_end\ -\/\ arg\_pos\ -\/\ 1),\ line\_number,}
+\DoxyCodeLine{00889\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00890\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00891\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00892\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00893\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00894\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00895\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}end\_keywords"{}})\ \{}
+\DoxyCodeLine{00896\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\ \&\&\ directives)\ \{}
+\DoxyCodeLine{00897\ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{}
+\DoxyCodeLine{00898\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ DirectiveKind::kEndKeywords,\ \textcolor{stringliteral}{"{}"{}},\ line\_number,}
+\DoxyCodeLine{00899\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00900\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00901\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00902\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00903\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00904\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00905\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}line"{}})\ \{}
+\DoxyCodeLine{00906\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00907\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00908\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00909\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00910\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}celldefine"{}}\ ||\ directive\ ==\ \textcolor{stringliteral}{"{}endcelldefine"{}}\ ||}
+\DoxyCodeLine{00911\ \ \ \ \ \ \ \ \ \ \ directive\ ==\ \textcolor{stringliteral}{"{}protect"{}}\ ||\ directive\ ==\ \textcolor{stringliteral}{"{}endprotect"{}}\ ||}
+\DoxyCodeLine{00912\ \ \ \ \ \ \ \ \ \ \ directive\ ==\ \textcolor{stringliteral}{"{}delay\_mode\_path"{}}\ ||\ directive\ ==\ \textcolor{stringliteral}{"{}delay\_mode\_unit"{}}\ ||}
+\DoxyCodeLine{00913\ \ \ \ \ \ \ \ \ \ \ directive\ ==\ \textcolor{stringliteral}{"{}delay\_mode\_distributed"{}})\ \{}
+\DoxyCodeLine{00914\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00915\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00916\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00917\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00918\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ parse\_directive\_arg\ =\ [\&](std::string*\ out)\ -\/>\ \textcolor{keywordtype}{bool}\ \{}
+\DoxyCodeLine{00919\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_pos\ =\ line.find\_first\_not\_of(\textcolor{stringliteral}{"{}\ \(\backslash\)t"{}},\ pos);}
+\DoxyCodeLine{00920\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\_pos\ ==\ std::string::npos\ ||}
+\DoxyCodeLine{00921\ \ \ \ \ \ \ \ \ \ \ \ \ !IsIdentStart(line[arg\_pos]))\ \{}
+\DoxyCodeLine{00922\ \ \ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00923\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}expected\ argument\ after\ \`{}"{}}\ +\ directive\ +\ \textcolor{stringliteral}{"{}'"{}},}
+\DoxyCodeLine{00924\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00925\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(pos\ +\ 1)\});}
+\DoxyCodeLine{00926\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00927\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00928\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ arg\_end\ =\ arg\_pos\ +\ 1;}
+\DoxyCodeLine{00929\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (arg\_end\ <\ line.size()\ \&\&\ IsIdentChar(line[arg\_end]))\ \{}
+\DoxyCodeLine{00930\ \ \ \ \ \ \ \ \ \ \ ++arg\_end;}
+\DoxyCodeLine{00931\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00932\ \ \ \ \ \ \ \ \ *out\ =\ line.substr(arg\_pos,\ arg\_end\ -\/\ arg\_pos);}
+\DoxyCodeLine{00933\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00934\ \ \ \ \ \ \ \};}
+\DoxyCodeLine{00935\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}default\_nettype"{}})\ \{}
+\DoxyCodeLine{00936\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active)\ \{}
+\DoxyCodeLine{00937\ \ \ \ \ \ \ \ \ \ \ std::string\ arg;}
+\DoxyCodeLine{00938\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!parse\_directive\_arg(\&arg))\ \{}
+\DoxyCodeLine{00939\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00940\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00941\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directives)\ \{}
+\DoxyCodeLine{00942\ \ \ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{}
+\DoxyCodeLine{00943\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ DirectiveKind::kDefaultNettype,\ arg,\ line\_number,}
+\DoxyCodeLine{00944\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00945\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00946\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00947\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00948\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00949\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00950\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00951\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}unconnected\_drive"{}})\ \{}
+\DoxyCodeLine{00952\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active)\ \{}
+\DoxyCodeLine{00953\ \ \ \ \ \ \ \ \ \ \ std::string\ arg;}
+\DoxyCodeLine{00954\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!parse\_directive\_arg(\&arg))\ \{}
+\DoxyCodeLine{00955\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00956\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00957\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directives)\ \{}
+\DoxyCodeLine{00958\ \ \ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{}
+\DoxyCodeLine{00959\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ DirectiveKind::kUnconnectedDrive,\ arg,\ line\_number,}
+\DoxyCodeLine{00960\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00961\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00962\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00963\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00964\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00965\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00966\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00967\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}nounconnected\_drive"{}})\ \{}
+\DoxyCodeLine{00968\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\ \&\&\ directives)\ \{}
+\DoxyCodeLine{00969\ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{DirectiveKind::kNoUnconnectedDrive,}
+\DoxyCodeLine{00970\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}"{}},\ line\_number,}
+\DoxyCodeLine{00971\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00972\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00973\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00974\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00975\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00976\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00977\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive\ ==\ \textcolor{stringliteral}{"{}resetall"{}})\ \{}
+\DoxyCodeLine{00978\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (active\ \&\&\ directives)\ \{}
+\DoxyCodeLine{00979\ \ \ \ \ \ \ \ \ \ \ directives-\/>push\_back(}
+\DoxyCodeLine{00980\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_directive_event}{DirectiveEvent}}\{DirectiveKind::kResetAll,\ \textcolor{stringliteral}{"{}"{}},\ line\_number,}
+\DoxyCodeLine{00981\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00982\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00983\ \ \ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00984\ \ \ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00985\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00986\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00987\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (directive.empty())\ \{}
+\DoxyCodeLine{00988\ \ \ \ \ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{00989\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unsupported\ compiler\ directive"{}},}
+\DoxyCodeLine{00990\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number,}
+\DoxyCodeLine{00991\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{int}\textcolor{keyword}{>}(first\ +\ 1)\});}
+\DoxyCodeLine{00992\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00993\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00994\ \ \ \ \ \}}
+\DoxyCodeLine{00995\ \ \ \ \ \textcolor{keywordtype}{bool}\ active\ =\ if\_stack.empty()\ ?\ true\ :\ if\_stack.back().active;}
+\DoxyCodeLine{00996\ \ \ \ \ \textcolor{keywordflow}{if}\ (!active)\ \{}
+\DoxyCodeLine{00997\ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{00998\ \ \ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{00999\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{01000\ \ \ \ \ \}}
+\DoxyCodeLine{01001\ \ \ \ \ \textcolor{keyword}{auto}\ strip\_line\_comment\ =\ [](\textcolor{keyword}{const}\ std::string\&\ input)\ -\/>\ std::string\ \{}
+\DoxyCodeLine{01002\ \ \ \ \ \ \ std::string\ out;}
+\DoxyCodeLine{01003\ \ \ \ \ \ \ out.reserve(input.size());}
+\DoxyCodeLine{01004\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ in\_string\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01005\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{size\_t}\ i\ =\ 0;\ i\ <\ input.size();\ ++i)\ \{}
+\DoxyCodeLine{01006\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ c\ =\ input[i];}
+\DoxyCodeLine{01007\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'"{}'}\ \&\&\ (i\ ==\ 0\ ||\ input[i\ -\/\ 1]\ !=\ \textcolor{charliteral}{'\(\backslash\)\(\backslash\)'}))\ \{}
+\DoxyCodeLine{01008\ \ \ \ \ \ \ \ \ \ \ in\_string\ =\ !in\_string;}
+\DoxyCodeLine{01009\ \ \ \ \ \ \ \ \ \ \ out.push\_back(c);}
+\DoxyCodeLine{01010\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{01011\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01012\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!in\_string\ \&\&\ c\ ==\ \textcolor{charliteral}{'/'}\ \&\&\ i\ +\ 1\ <\ input.size()\ \&\&}
+\DoxyCodeLine{01013\ \ \ \ \ \ \ \ \ \ \ \ \ input[i\ +\ 1]\ ==\ \textcolor{charliteral}{'/'})\ \{}
+\DoxyCodeLine{01014\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{01015\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01016\ \ \ \ \ \ \ \ \ out.push\_back(c);}
+\DoxyCodeLine{01017\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{01018\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ out;}
+\DoxyCodeLine{01019\ \ \ \ \ \};}
+\DoxyCodeLine{01020\ \ \ \ \ std::string\ line\_for\_expand\ =\ strip\_line\_comment(line);}
+\DoxyCodeLine{01021\ \ \ \ \ std::string\ expanded;}
+\DoxyCodeLine{01022\ \ \ \ \ \textcolor{keywordflow}{if}\ (!ExpandDefines(line\_for\_expand,\ *defines,\ path,\ line\_number,\ diagnostics,}
+\DoxyCodeLine{01023\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \&expanded))\ \{}
+\DoxyCodeLine{01024\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01025\ \ \ \ \ \}}
+\DoxyCodeLine{01026\ \ \ \ \ output\ <<\ expanded;}
+\DoxyCodeLine{01027\ \ \ \ \ \textcolor{keywordflow}{if}\ (!stream.eof())\ \{}
+\DoxyCodeLine{01028\ \ \ \ \ \ \ output\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{01029\ \ \ \ \ \}}
+\DoxyCodeLine{01030\ \ \ \ \ ++line\_number;}
+\DoxyCodeLine{01031\ \ \ \}}
+\DoxyCodeLine{01032\ \ \ \textcolor{keywordflow}{if}\ (!if\_stack.empty())\ \{}
+\DoxyCodeLine{01033\ \ \ \ \ diagnostics-\/>\doxymbox{\hyperlink{classgpga_1_1_diagnostics_a806957f0d8741b03eed392e20e628f6b_a806957f0d8741b03eed392e20e628f6b}{Add}}(\doxymbox{\hyperlink{namespacegpga_ad6e7cde4e1b00f05ed333df15e90641f_ad6e7cde4e1b00f05ed333df15e90641fae3587c730cc1aa530fa4ddc9c4204e97}{Severity::kError}},}
+\DoxyCodeLine{01034\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}unterminated\ \`{}ifdef\ block"{}},}
+\DoxyCodeLine{01035\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ SourceLocation\{path,\ line\_number\});}
+\DoxyCodeLine{01036\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{01037\ \ \ \}}
+\DoxyCodeLine{01038\ \ \ *out\_text\ =\ output.str();}
+\DoxyCodeLine{01039\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{01040\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_aada59bae20433ebea6c0cd052b606b0a_aada59bae20433ebea6c0cd052b606b0a}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!StripUnderscores@{StripUnderscores}}
+\index{StripUnderscores@{StripUnderscores}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{StripUnderscores()}{StripUnderscores()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_aada59bae20433ebea6c0cd052b606b0a_aada59bae20433ebea6c0cd052b606b0a} 
+std::\+string gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Strip\+Underscores (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{text}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00043}{43}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00043\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00044\ \ \ \textcolor{keywordflow}{if}\ (text.find(\textcolor{charliteral}{'\_'})\ ==\ std::string::npos)\ \{}
+\DoxyCodeLine{00045\ \ \ \ \ \textcolor{keywordflow}{return}\ text;}
+\DoxyCodeLine{00046\ \ \ \}}
+\DoxyCodeLine{00047\ \ \ std::string\ cleaned;}
+\DoxyCodeLine{00048\ \ \ cleaned.reserve(text.size());}
+\DoxyCodeLine{00049\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{char}\ c\ :\ text)\ \{}
+\DoxyCodeLine{00050\ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ !=\ \textcolor{charliteral}{'\_'})\ \{}
+\DoxyCodeLine{00051\ \ \ \ \ \ \ cleaned.push\_back(c);}
+\DoxyCodeLine{00052\ \ \ \ \ \}}
+\DoxyCodeLine{00053\ \ \ \}}
+\DoxyCodeLine{00054\ \ \ \textcolor{keywordflow}{return}\ cleaned;}
+\DoxyCodeLine{00055\ \}}
+
+\end{DoxyCode}
+\Hypertarget{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a067fa9eb84bcde4dc3a61876f5dbd7d0_a067fa9eb84bcde4dc3a61876f5dbd7d0}\index{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}!Tokenize@{Tokenize}}
+\index{Tokenize@{Tokenize}!gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}@{gpga::anonymous\_namespace\lcurly{}verilog\_parser.cc\rcurly{}}}
+\doxysubsubsection{\texorpdfstring{Tokenize()}{Tokenize()}}
+{\footnotesize\ttfamily \label{namespacegpga_1_1anonymous__namespace_02verilog__parser_8cc_03_a067fa9eb84bcde4dc3a61876f5dbd7d0_a067fa9eb84bcde4dc3a61876f5dbd7d0} 
+std::\+vector$<$ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}} $>$ gpga::\+anonymous\+\_\+namespace\{verilog\+\_\+parser.\+cc\}::\+\+Tokenize (\begin{DoxyParamCaption}\item[{const std::\+string \&}]{text}{}\end{DoxyParamCaption})}
+
+
+
+Definition at line \doxymbox{\hyperlink{verilog__parser_8cc_source_l00057}{57}} of file \doxymbox{\hyperlink{verilog__parser_8cc_source}{verilog\+\_\+parser.\+cc}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00057\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \{}
+\DoxyCodeLine{00058\ \ \ std::vector<Token>\ tokens;}
+\DoxyCodeLine{00059\ \ \ \textcolor{keywordtype}{size\_t}\ i\ =\ 0;}
+\DoxyCodeLine{00060\ \ \ \textcolor{keywordtype}{int}\ line\ =\ 1;}
+\DoxyCodeLine{00061\ \ \ \textcolor{keywordtype}{int}\ column\ =\ 1;}
+\DoxyCodeLine{00062\ \ \ \textcolor{keyword}{auto}\ push\ =\ [\&](TokenKind\ kind,\ std::string\ value,\ \textcolor{keywordtype}{int}\ token\_line,}
+\DoxyCodeLine{00063\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column)\ \{}
+\DoxyCodeLine{00064\ \ \ \ \ \doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}}\ token;}
+\DoxyCodeLine{00065\ \ \ \ \ token.kind\ =\ kind;}
+\DoxyCodeLine{00066\ \ \ \ \ token.text\ =\ std::move(value);}
+\DoxyCodeLine{00067\ \ \ \ \ token.line\ =\ token\_line;}
+\DoxyCodeLine{00068\ \ \ \ \ token.column\ =\ token\_column;}
+\DoxyCodeLine{00069\ \ \ \ \ tokens.push\_back(std::move(token));}
+\DoxyCodeLine{00070\ \ \ \};}
+\DoxyCodeLine{00071\ }
+\DoxyCodeLine{00072\ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size())\ \{}
+\DoxyCodeLine{00073\ \ \ \ \ \textcolor{keywordtype}{char}\ c\ =\ text[i];}
+\DoxyCodeLine{00074\ \ \ \ \ \textcolor{keywordflow}{if}\ (std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(c)))\ \{}
+\DoxyCodeLine{00075\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'\(\backslash\)n'})\ \{}
+\DoxyCodeLine{00076\ \ \ \ \ \ \ \ \ ++line;}
+\DoxyCodeLine{00077\ \ \ \ \ \ \ \ \ column\ =\ 1;}
+\DoxyCodeLine{00078\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00079\ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00080\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00081\ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00082\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00083\ \ \ \ \ \}}
+\DoxyCodeLine{00084\ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'/'}\ \&\&\ i\ +\ 1\ <\ text.size())\ \{}
+\DoxyCodeLine{00085\ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ next\ =\ text[i\ +\ 1];}
+\DoxyCodeLine{00086\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (next\ ==\ \textcolor{charliteral}{'/'})\ \{}
+\DoxyCodeLine{00087\ \ \ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00088\ \ \ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00089\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size()\ \&\&\ text[i]\ !=\ \textcolor{charliteral}{'\(\backslash\)n'})\ \{}
+\DoxyCodeLine{00090\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00091\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00092\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00093\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00094\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00095\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (next\ ==\ \textcolor{charliteral}{'*'})\ \{}
+\DoxyCodeLine{00096\ \ \ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00097\ \ \ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00098\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ +\ 1\ <\ text.size())\ \{}
+\DoxyCodeLine{00099\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (text[i]\ ==\ \textcolor{charliteral}{'*'}\ \&\&\ text[i\ +\ 1]\ ==\ \textcolor{charliteral}{'/'})\ \{}
+\DoxyCodeLine{00100\ \ \ \ \ \ \ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00101\ \ \ \ \ \ \ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00102\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00103\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00104\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (text[i]\ ==\ \textcolor{charliteral}{'\(\backslash\)n'})\ \{}
+\DoxyCodeLine{00105\ \ \ \ \ \ \ \ \ \ \ \ \ ++line;}
+\DoxyCodeLine{00106\ \ \ \ \ \ \ \ \ \ \ \ \ column\ =\ 1;}
+\DoxyCodeLine{00107\ \ \ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00108\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00109\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00110\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00111\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00112\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00113\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00114\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00115\ \ \ \ \ \}}
+\DoxyCodeLine{00116\ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'('}\ \&\&\ i\ +\ 1\ <\ text.size()\ \&\&\ text[i\ +\ 1]\ ==\ \textcolor{charliteral}{'*'})\ \{}
+\DoxyCodeLine{00117\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ prev\_is\_at\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00118\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ back\ =\ i;}
+\DoxyCodeLine{00119\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (back\ >\ 0)\ \{}
+\DoxyCodeLine{00120\ \ \ \ \ \ \ \ \ -\/-\/back;}
+\DoxyCodeLine{00121\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ prev\ =\ text[back];}
+\DoxyCodeLine{00122\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(prev)))\ \{}
+\DoxyCodeLine{00123\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00124\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00125\ \ \ \ \ \ \ \ \ prev\_is\_at\ =\ (prev\ ==\ \textcolor{charliteral}{'@'});}
+\DoxyCodeLine{00126\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00127\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00128\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!prev\_is\_at)\ \{}
+\DoxyCodeLine{00129\ \ \ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00130\ \ \ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00131\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ +\ 1\ <\ text.size())\ \{}
+\DoxyCodeLine{00132\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (text[i]\ ==\ \textcolor{charliteral}{'*'}\ \&\&\ text[i\ +\ 1]\ ==\ \textcolor{charliteral}{')'})\ \{}
+\DoxyCodeLine{00133\ \ \ \ \ \ \ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00134\ \ \ \ \ \ \ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00135\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00136\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00137\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (text[i]\ ==\ \textcolor{charliteral}{'\(\backslash\)n'})\ \{}
+\DoxyCodeLine{00138\ \ \ \ \ \ \ \ \ \ \ \ \ ++line;}
+\DoxyCodeLine{00139\ \ \ \ \ \ \ \ \ \ \ \ \ column\ =\ 1;}
+\DoxyCodeLine{00140\ \ \ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00141\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00142\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00143\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00144\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00145\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00146\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00147\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00148\ \ \ \ \ \}}
+\DoxyCodeLine{00149\ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00150\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00151\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00152\ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00153\ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00154\ \ \ \ \ \ \ std::string\ value;}
+\DoxyCodeLine{00155\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size())\ \{}
+\DoxyCodeLine{00156\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ ch\ =\ text[i];}
+\DoxyCodeLine{00157\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'"{}'})\ \{}
+\DoxyCodeLine{00158\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00159\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00160\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00161\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00162\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'\(\backslash\)\(\backslash\)'}\ \&\&\ i\ +\ 1\ <\ text.size())\ \{}
+\DoxyCodeLine{00163\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{char}\ esc\ =\ text[i\ +\ 1];}
+\DoxyCodeLine{00164\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{switch}\ (esc)\ \{}
+\DoxyCodeLine{00165\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'n'}:}
+\DoxyCodeLine{00166\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ value.push\_back(\textcolor{charliteral}{'\(\backslash\)n'});}
+\DoxyCodeLine{00167\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00168\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'t'}:}
+\DoxyCodeLine{00169\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ value.push\_back(\textcolor{charliteral}{'\(\backslash\)t'});}
+\DoxyCodeLine{00170\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00171\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'r'}:}
+\DoxyCodeLine{00172\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ value.push\_back(\textcolor{charliteral}{'\(\backslash\)r'});}
+\DoxyCodeLine{00173\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00174\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'"{}'}:}
+\DoxyCodeLine{00175\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ value.push\_back(\textcolor{charliteral}{'"{}'});}
+\DoxyCodeLine{00176\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00177\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{case}\ \textcolor{charliteral}{'\(\backslash\)\(\backslash\)'}:}
+\DoxyCodeLine{00178\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ value.push\_back(\textcolor{charliteral}{'\(\backslash\)\(\backslash\)'});}
+\DoxyCodeLine{00179\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00180\ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{default}:}
+\DoxyCodeLine{00181\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ value.push\_back(esc);}
+\DoxyCodeLine{00182\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{break};}
+\DoxyCodeLine{00183\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00184\ \ \ \ \ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00185\ \ \ \ \ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00186\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00187\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00188\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ch\ ==\ \textcolor{charliteral}{'\(\backslash\)n'})\ \{}
+\DoxyCodeLine{00189\ \ \ \ \ \ \ \ \ \ \ ++line;}
+\DoxyCodeLine{00190\ \ \ \ \ \ \ \ \ \ \ column\ =\ 1;}
+\DoxyCodeLine{00191\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00192\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00193\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00194\ \ \ \ \ \ \ \ \ value.push\_back(ch);}
+\DoxyCodeLine{00195\ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00196\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00197\ \ \ \ \ \ \ push(TokenKind::kString,\ value,\ token\_line,\ token\_column);}
+\DoxyCodeLine{00198\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00199\ \ \ \ \ \}}
+\DoxyCodeLine{00200\ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'\(\backslash\)\(\backslash\)'})\ \{}
+\DoxyCodeLine{00201\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00202\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00203\ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00204\ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00205\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ start\ =\ i;}
+\DoxyCodeLine{00206\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size()\ \&\&}
+\DoxyCodeLine{00207\ \ \ \ \ \ \ \ \ \ \ \ \ \ !std::isspace(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(text[i])))\ \{}
+\DoxyCodeLine{00208\ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00209\ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00210\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00211\ \ \ \ \ \ \ push(TokenKind::kIdentifier,\ text.substr(start,\ i\ -\/\ start),\ token\_line,}
+\DoxyCodeLine{00212\ \ \ \ \ \ \ \ \ \ \ \ token\_column);}
+\DoxyCodeLine{00213\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00214\ \ \ \ \ \}}
+\DoxyCodeLine{00215\ \ \ \ \ \textcolor{keywordflow}{if}\ (IsIdentStart(c))\ \{}
+\DoxyCodeLine{00216\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00217\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00218\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ start\ =\ i;}
+\DoxyCodeLine{00219\ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00220\ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00221\ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size()\ \&\&\ IsIdentChar(text[i]))\ \{}
+\DoxyCodeLine{00222\ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00223\ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00224\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00225\ \ \ \ \ \ \ push(TokenKind::kIdentifier,\ text.substr(start,\ i\ -\/\ start),\ token\_line,}
+\DoxyCodeLine{00226\ \ \ \ \ \ \ \ \ \ \ \ token\_column);}
+\DoxyCodeLine{00227\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00228\ \ \ \ \ \}}
+\DoxyCodeLine{00229\ \ \ \ \ \textcolor{keywordflow}{if}\ (std::isdigit(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(c))\ ||}
+\DoxyCodeLine{00230\ \ \ \ \ \ \ \ \ (c\ ==\ \textcolor{charliteral}{'.'}\ \&\&\ i\ +\ 1\ <\ text.size()\ \&\&}
+\DoxyCodeLine{00231\ \ \ \ \ \ \ \ \ \ std::isdigit(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(text[i\ +\ 1]))))\ \{}
+\DoxyCodeLine{00232\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00233\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00234\ \ \ \ \ \ \ \textcolor{keywordtype}{size\_t}\ start\ =\ i;}
+\DoxyCodeLine{00235\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ has\_dot\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00236\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ has\_exp\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{00237\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'.'})\ \{}
+\DoxyCodeLine{00238\ \ \ \ \ \ \ \ \ has\_dot\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00239\ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00240\ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00241\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{00242\ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00243\ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00244\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size()\ \&\&}
+\DoxyCodeLine{00245\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (std::isdigit(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(text[i]))\ ||}
+\DoxyCodeLine{00246\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ text[i]\ ==\ \textcolor{charliteral}{'\_'}))\ \{}
+\DoxyCodeLine{00247\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00248\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00249\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00250\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ <\ text.size()\ \&\&\ text[i]\ ==\ \textcolor{charliteral}{'.'})\ \{}
+\DoxyCodeLine{00251\ \ \ \ \ \ \ \ \ \ \ has\_dot\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00252\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00253\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00254\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00255\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00256\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (has\_dot)\ \{}
+\DoxyCodeLine{00257\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size()\ \&\&}
+\DoxyCodeLine{00258\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (std::isdigit(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(text[i]))\ ||}
+\DoxyCodeLine{00259\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ text[i]\ ==\ \textcolor{charliteral}{'\_'}))\ \{}
+\DoxyCodeLine{00260\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00261\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00262\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00263\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00264\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ <\ text.size()\ \&\&\ (text[i]\ ==\ \textcolor{charliteral}{'e'}\ ||\ text[i]\ ==\ \textcolor{charliteral}{'E'}))\ \{}
+\DoxyCodeLine{00265\ \ \ \ \ \ \ \ \ has\_exp\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{00266\ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00267\ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00268\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (i\ <\ text.size()\ \&\&\ (text[i]\ ==\ \textcolor{charliteral}{'+'}\ ||\ text[i]\ ==\ \textcolor{charliteral}{'-\/'}))\ \{}
+\DoxyCodeLine{00269\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00270\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00271\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00272\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{while}\ (i\ <\ text.size()\ \&\&}
+\DoxyCodeLine{00273\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (std::isdigit(\textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{char}\textcolor{keyword}{>}(text[i]))\ ||}
+\DoxyCodeLine{00274\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ text[i]\ ==\ \textcolor{charliteral}{'\_'}))\ \{}
+\DoxyCodeLine{00275\ \ \ \ \ \ \ \ \ \ \ ++i;}
+\DoxyCodeLine{00276\ \ \ \ \ \ \ \ \ \ \ ++column;}
+\DoxyCodeLine{00277\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00278\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{00279\ \ \ \ \ \ \ push(TokenKind::kNumber,\ text.substr(start,\ i\ -\/\ start),\ token\_line,}
+\DoxyCodeLine{00280\ \ \ \ \ \ \ \ \ \ \ \ token\_column);}
+\DoxyCodeLine{00281\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00282\ \ \ \ \ \}}
+\DoxyCodeLine{00283\ }
+\DoxyCodeLine{00284\ \ \ \ \ \textcolor{keywordflow}{if}\ ((c\ ==\ \textcolor{charliteral}{'+'}\ ||\ c\ ==\ \textcolor{charliteral}{'-\/'})\ \&\&\ i\ +\ 1\ <\ text.size()\ \&\&\ text[i\ +\ 1]\ ==\ \textcolor{charliteral}{':'})\ \{}
+\DoxyCodeLine{00285\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00286\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00287\ \ \ \ \ \ \ std::string\ sym;}
+\DoxyCodeLine{00288\ \ \ \ \ \ \ sym.push\_back(c);}
+\DoxyCodeLine{00289\ \ \ \ \ \ \ sym.push\_back(\textcolor{charliteral}{':'});}
+\DoxyCodeLine{00290\ \ \ \ \ \ \ push(TokenKind::kSymbol,\ sym,\ token\_line,\ token\_column);}
+\DoxyCodeLine{00291\ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00292\ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00293\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00294\ \ \ \ \ \}}
+\DoxyCodeLine{00295\ \ \ \ \ \textcolor{keywordflow}{if}\ (c\ ==\ \textcolor{charliteral}{'-\/'}\ \&\&\ i\ +\ 1\ <\ text.size()\ \&\&\ text[i\ +\ 1]\ ==\ \textcolor{charliteral}{'>'})\ \{}
+\DoxyCodeLine{00296\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00297\ \ \ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00298\ \ \ \ \ \ \ push(TokenKind::kSymbol,\ \textcolor{stringliteral}{"{}-\/>"{}},\ token\_line,\ token\_column);}
+\DoxyCodeLine{00299\ \ \ \ \ \ \ i\ +=\ 2;}
+\DoxyCodeLine{00300\ \ \ \ \ \ \ column\ +=\ 2;}
+\DoxyCodeLine{00301\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{00302\ \ \ \ \ \}}
+\DoxyCodeLine{00303\ }
+\DoxyCodeLine{00304\ \ \ \ \ \textcolor{keywordtype}{int}\ token\_line\ =\ line;}
+\DoxyCodeLine{00305\ \ \ \ \ \textcolor{keywordtype}{int}\ token\_column\ =\ column;}
+\DoxyCodeLine{00306\ \ \ \ \ push(TokenKind::kSymbol,\ std::string(1,\ c),\ token\_line,\ token\_column);}
+\DoxyCodeLine{00307\ \ \ \ \ ++i;}
+\DoxyCodeLine{00308\ \ \ \ \ ++column;}
+\DoxyCodeLine{00309\ \ \ \}}
+\DoxyCodeLine{00310\ }
+\DoxyCodeLine{00311\ \ \ tokens.push\_back(\doxymbox{\hyperlink{structgpga_1_1anonymous__namespace_02verilog__parser_8cc_03_1_1_token}{Token}}\{TokenKind::kEnd,\ \textcolor{stringliteral}{"{}"{}},\ line,\ column\});}
+\DoxyCodeLine{00312\ \ \ \textcolor{keywordflow}{return}\ tokens;}
+\DoxyCodeLine{00313\ \}}
+
+\end{DoxyCode}

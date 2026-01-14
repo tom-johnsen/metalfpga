@@ -1,0 +1,191 @@
+\doxysection{Gpga\+Sched\+Vm\+Assign\+Entry Struct Reference}
+\hypertarget{struct_gpga_sched_vm_assign_entry}{}\label{struct_gpga_sched_vm_assign_entry}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+
+
+VM assignment entry for a signal write.  
+
+
+
+
+{\ttfamily \+\#include $<$gpga\+\_\+sched.\+h$>$}
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_a0a033466e97311595301050db7c614cf_a0a033466e97311595301050db7c614cf}{flags}}
+\begin{DoxyCompactList}\small\item\em Assignment flags. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_aa7e52f9a85bdf3e7bb9ccff86469354d_aa7e52f9a85bdf3e7bb9ccff86469354d}{signal\+\_\+id}}
+\begin{DoxyCompactList}\small\item\em Target signal id. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_a5fed5809d8fc08b5117956c3970884a7_a5fed5809d8fc08b5117956c3970884a7}{rhs\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em Offset to RHS expression. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_a30035a8e012c91a9e97ebc5a3e13c2ab_a30035a8e012c91a9e97ebc5a3e13c2ab}{idx\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em Offset to index expression. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_a69bf7e44baa4361f869ed0b1ec7e79e2_a69bf7e44baa4361f869ed0b1ec7e79e2}{width}}
+\begin{DoxyCompactList}\small\item\em Assignment width in bits. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_a562aeef7c69dd806a8fab0543cb34e44_a562aeef7c69dd806a8fab0543cb34e44}{base\+\_\+width}}
+\begin{DoxyCompactList}\small\item\em Base signal width. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_aa8ee8142c504f7d7d63fa423bf7d3cc8_aa8ee8142c504f7d7d63fa423bf7d3cc8}{range\+\_\+lsb}}
+\begin{DoxyCompactList}\small\item\em Range LSB for part-\/selects. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_af95c54460b27b65ec85d8bee8cfde344_af95c54460b27b65ec85d8bee8cfde344}{array\+\_\+size}}
+\begin{DoxyCompactList}\small\item\em Array size in elements. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_a3d3f9d1ee5a36bbd0a1469bb46108978_a3d3f9d1ee5a36bbd0a1469bb46108978}{force\+\_\+slot}}
+\begin{DoxyCompactList}\small\item\em Force slot index. \end{DoxyCompactList}\item 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} \doxymbox{\hyperlink{struct_gpga_sched_vm_assign_entry_ab54a3155fe4ffb8d9a604bcebaed8d76_ab54a3155fe4ffb8d9a604bcebaed8d76}{passign\+\_\+slot}}
+\begin{DoxyCompactList}\small\item\em Procedural assign slot index. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+VM assignment entry for a signal write. 
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00240}{240}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+
+
+\label{doc-variable-members}
+\Hypertarget{struct_gpga_sched_vm_assign_entry_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{struct_gpga_sched_vm_assign_entry_af95c54460b27b65ec85d8bee8cfde344_af95c54460b27b65ec85d8bee8cfde344}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!array\_size@{array\_size}}
+\index{array\_size@{array\_size}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{array\_size}{array\_size}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_af95c54460b27b65ec85d8bee8cfde344_af95c54460b27b65ec85d8bee8cfde344} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+array\+\_\+size}
+
+
+
+Array size in elements. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00248}{248}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_a562aeef7c69dd806a8fab0543cb34e44_a562aeef7c69dd806a8fab0543cb34e44}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!base\_width@{base\_width}}
+\index{base\_width@{base\_width}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{base\_width}{base\_width}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_a562aeef7c69dd806a8fab0543cb34e44_a562aeef7c69dd806a8fab0543cb34e44} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+base\+\_\+width}
+
+
+
+Base signal width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00246}{246}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_a0a033466e97311595301050db7c614cf_a0a033466e97311595301050db7c614cf}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!flags@{flags}}
+\index{flags@{flags}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{flags}{flags}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_a0a033466e97311595301050db7c614cf_a0a033466e97311595301050db7c614cf} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+flags}
+
+
+
+Assignment flags. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00241}{241}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_a3d3f9d1ee5a36bbd0a1469bb46108978_a3d3f9d1ee5a36bbd0a1469bb46108978}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!force\_slot@{force\_slot}}
+\index{force\_slot@{force\_slot}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{force\_slot}{force\_slot}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_a3d3f9d1ee5a36bbd0a1469bb46108978_a3d3f9d1ee5a36bbd0a1469bb46108978} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+force\+\_\+slot}
+
+
+
+Force slot index. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00249}{249}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_a30035a8e012c91a9e97ebc5a3e13c2ab_a30035a8e012c91a9e97ebc5a3e13c2ab}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!idx\_expr@{idx\_expr}}
+\index{idx\_expr@{idx\_expr}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{idx\_expr}{idx\_expr}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_a30035a8e012c91a9e97ebc5a3e13c2ab_a30035a8e012c91a9e97ebc5a3e13c2ab} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+idx\+\_\+expr}
+
+
+
+Offset to index expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00244}{244}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_ab54a3155fe4ffb8d9a604bcebaed8d76_ab54a3155fe4ffb8d9a604bcebaed8d76}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!passign\_slot@{passign\_slot}}
+\index{passign\_slot@{passign\_slot}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{passign\_slot}{passign\_slot}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_ab54a3155fe4ffb8d9a604bcebaed8d76_ab54a3155fe4ffb8d9a604bcebaed8d76} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+passign\+\_\+slot}
+
+
+
+Procedural assign slot index. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00250}{250}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_aa8ee8142c504f7d7d63fa423bf7d3cc8_aa8ee8142c504f7d7d63fa423bf7d3cc8}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!range\_lsb@{range\_lsb}}
+\index{range\_lsb@{range\_lsb}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{range\_lsb}{range\_lsb}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_aa8ee8142c504f7d7d63fa423bf7d3cc8_aa8ee8142c504f7d7d63fa423bf7d3cc8} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+range\+\_\+lsb}
+
+
+
+Range LSB for part-\/selects. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00247}{247}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_a5fed5809d8fc08b5117956c3970884a7_a5fed5809d8fc08b5117956c3970884a7}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!rhs\_expr@{rhs\_expr}}
+\index{rhs\_expr@{rhs\_expr}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{rhs\_expr}{rhs\_expr}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_a5fed5809d8fc08b5117956c3970884a7_a5fed5809d8fc08b5117956c3970884a7} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+rhs\+\_\+expr}
+
+
+
+Offset to RHS expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00243}{243}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_aa7e52f9a85bdf3e7bb9ccff86469354d_aa7e52f9a85bdf3e7bb9ccff86469354d}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!signal\_id@{signal\_id}}
+\index{signal\_id@{signal\_id}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{signal\_id}{signal\_id}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_aa7e52f9a85bdf3e7bb9ccff86469354d_aa7e52f9a85bdf3e7bb9ccff86469354d} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+signal\+\_\+id}
+
+
+
+Target signal id. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00242}{242}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+\Hypertarget{struct_gpga_sched_vm_assign_entry_a69bf7e44baa4361f869ed0b1ec7e79e2_a69bf7e44baa4361f869ed0b1ec7e79e2}\index{GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}!width@{width}}
+\index{width@{width}!GpgaSchedVmAssignEntry@{GpgaSchedVmAssignEntry}}
+\doxysubsubsection{\texorpdfstring{width}{width}}
+{\footnotesize\ttfamily \label{struct_gpga_sched_vm_assign_entry_a69bf7e44baa4361f869ed0b1ec7e79e2_a69bf7e44baa4361f869ed0b1ec7e79e2} 
+\doxymbox{\hyperlink{gpga__4state_8h_a4f5fce8c1ef282264f9214809524d836_a4f5fce8c1ef282264f9214809524d836}{uint}} Gpga\+Sched\+Vm\+Assign\+Entry::\+width}
+
+
+
+Assignment width in bits. 
+
+
+
+Definition at line \doxymbox{\hyperlink{gpga__sched_8h_source_l00245}{245}} of file \doxymbox{\hyperlink{gpga__sched_8h_source}{gpga\+\_\+sched.\+h}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+include/\+\doxymbox{\hyperlink{gpga__sched_8h}{gpga\+\_\+sched.\+h}}\end{DoxyCompactItemize}

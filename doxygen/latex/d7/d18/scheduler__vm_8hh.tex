@@ -1,0 +1,345 @@
+\doxysection{src/\+core/\+scheduler\+\_\+vm.hh File Reference}
+\hypertarget{scheduler__vm_8hh}{}\label{scheduler__vm_8hh}\index{src/core/scheduler\_vm.hh@{src/core/scheduler\_vm.hh}}
+
+
+Scheduler VM bytecode definitions and helpers.  
+
+
+{\ttfamily \+\#include $<$cstdint$>$}\newline
+{\ttfamily \+\#include $<$string$>$}\newline
+{\ttfamily \+\#include $<$vector$>$}\newline
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_expr_table}{gpga::\+\+Scheduler\+Vm\+Expr\+Table}}
+\begin{DoxyCompactList}\small\item\em Expression bytecode and literal table. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_cond_entry}{gpga::\+\+Scheduler\+Vm\+Cond\+Entry}}
+\begin{DoxyCompactList}\small\item\em Condition table entry. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_packed_slot}{gpga::\+\+Scheduler\+Vm\+Packed\+Slot}}
+\begin{DoxyCompactList}\small\item\em Packed signal storage slot. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_signal_entry}{gpga::\+\+Scheduler\+Vm\+Signal\+Entry}}
+\begin{DoxyCompactList}\small\item\em Signal table entry. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_case_header}{gpga::\+\+Scheduler\+Vm\+Case\+Header}}
+\begin{DoxyCompactList}\small\item\em Case table header. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_case_entry}{gpga::\+\+Scheduler\+Vm\+Case\+Entry}}
+\begin{DoxyCompactList}\small\item\em Case entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_assign_entry}{gpga::\+\+Scheduler\+Vm\+Assign\+Entry}}
+\begin{DoxyCompactList}\small\item\em Assignment entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_delay_assign_entry}{gpga::\+\+Scheduler\+Vm\+Delay\+Assign\+Entry}}
+\begin{DoxyCompactList}\small\item\em Delayed assignment entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_force_entry}{gpga::\+\+Scheduler\+Vm\+Force\+Entry}}
+\begin{DoxyCompactList}\small\item\em Force entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_release_entry}{gpga::\+\+Scheduler\+Vm\+Release\+Entry}}
+\begin{DoxyCompactList}\small\item\em Release entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_service_entry}{gpga::\+\+Scheduler\+Vm\+Service\+Entry}}
+\begin{DoxyCompactList}\small\item\em Service call entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_service_arg}{gpga::\+\+Scheduler\+Vm\+Service\+Arg}}
+\begin{DoxyCompactList}\small\item\em Service argument record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_service_ret_assign_entry}{gpga::\+\+Scheduler\+Vm\+Service\+Ret\+Assign\+Entry}}
+\begin{DoxyCompactList}\small\item\em Service return assignment entry record. \end{DoxyCompactList}\item 
+struct \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_layout}{gpga::\+\+Scheduler\+Vm\+Layout}}
+\begin{DoxyCompactList}\small\item\em Scheduler VM layout and tables. \end{DoxyCompactList}\item 
+class \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_builder}{gpga::\+\+Scheduler\+Vm\+Builder}}
+\begin{DoxyCompactList}\small\item\em Builds a scheduler VM instruction stream. \end{DoxyCompactList}\item 
+class \doxymbox{\hyperlink{classgpga_1_1_scheduler_vm_expr_builder}{gpga::\+\+Scheduler\+Vm\+Expr\+Builder}}
+\begin{DoxyCompactList}\small\item\em Builds scheduler VM expression bytecode and literal pools. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \doxymbox{\hyperlink{namespacegpga}{gpga}}
+\begin{DoxyCompactList}\small\item\em Runtime, codegen, and frontend support types for metalfpga. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56}{gpga::\+\+Scheduler\+Vm\+Op}} :\+ uint32\+\_\+t \{ \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a9e2024e27d037d51bb46ef86d2e0ea4d}{gpga::\+k\+Done}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a4351a9cd70a8f139bcc9b3af2cb402a8}{gpga::\+k\+Call\+Group}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56aaf8a4a35171ebfcc6229f08f587c2bb9}{gpga::\+k\+Noop}} = 2u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56acd00bfbff81479d2c7c349bbb769fcd4}{gpga::\+k\+Jump}} = 3u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56ad73fff97e87bcb38bea31eb12c43a941}{gpga::\+k\+Jump\+If}} = 4u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56ad6a88e272e2adb0cf6e34009c73914de}{gpga::\+k\+Case}} = 5u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a4abf488ee7edbc3778f2e84003017fdb}{gpga::\+k\+Repeat}} = 6u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a4bf03a5b9add1cfbbc9bd41c2155f568}{gpga::\+k\+Assign}} = 7u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a3d12c7332f8ff753712b6817e06febd0}{gpga::\+k\+Assign\+Nb}} = 8u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56abe30fc9418588a66a7c2b3450842e0ad}{gpga::\+k\+Assign\+Delay}} = 9u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a5f1cd95b5107d0b426a753a484765cc9}{gpga::\+k\+Force}} = 10u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a042072d11384a0da225b50a05a939159}{gpga::\+k\+Release}} = 11u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a45e28bb7b6fb6953907421ac2afe35e6}{gpga::\+k\+Wait\+Time}} = 12u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a4295e26154956163cc712b07d3087e6e}{gpga::\+k\+Wait\+Delta}} = 13u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56abed36447df6f600469c57f06f3aabd6c}{gpga::\+k\+Wait\+Event}} = 14u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a5b3b79348e780f216cdd0ab5c556fea2}{gpga::\+k\+Wait\+Edge}} = 15u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a8b65c5029f8f79d12b568bc8502ac70c}{gpga::\+k\+Wait\+Cond}} = 16u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56abaeab1deef46ea124bbf5c07ed1f3089}{gpga::\+k\+Wait\+Join}} = 17u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a2089bee264109400534a5e279e526cff}{gpga::\+k\+Wait\+Service}} = 18u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a3a7088ba76c07f4f15cfc96f679a1bc1}{gpga::\+k\+Event\+Trigger}} = 19u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a76b55e5ebcd679848e4beb59e621a9ac}{gpga::\+k\+Fork}} = 20u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a229bc0c46e45e1688bdb842b616fd8d2}{gpga::\+k\+Disable}} = 21u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56af400f841302a3a1991f9de3dc440ef53}{gpga::\+k\+Service\+Call}} = 22u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56ad20ecce1450d98bcfe876a86095aee16}{gpga::\+k\+Service\+Ret\+Assign}} = 23u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a386c80128679443605e739be61ce93a8}{gpga::\+k\+Service\+Ret\+Branch}} = 24u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a5b7fb59878c91196132d29e3ce875abf}{gpga::\+k\+Task\+Call}} = 25u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56a4afecce348e6ece3c332c022f4847b1c}{gpga::\+k\+Ret}} = 26u
+, \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56af2e58ae4ece1a967527850d1493ecd71}{gpga::\+k\+Halt\+Sim}} = 27u
+ \}
+\begin{DoxyCompactList}\small\item\em Scheduler VM opcode. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143}{gpga::\+\+Scheduler\+Vm\+Join\+Kind}} :\+ uint32\+\_\+t \{ \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143a34bdbffdb1c0e1b603f58fc0d49548b6}{gpga::\+k\+All}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143a198158a4155a179dc73ad4bea1159c1d}{gpga::\+k\+Any}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143a35c3ace1970663a16e5c65baa5941b13}{gpga::\+k\+None}} = 2u
+ \}
+\begin{DoxyCompactList}\small\item\em Fork/\+join behavior. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_af52edeb0b8ee3f789d2bc8c572fd9709_af52edeb0b8ee3f789d2bc8c572fd9709}{gpga::\+\+Scheduler\+Vm\+Disable\+Kind}} :\+ uint32\+\_\+t \{ \doxymbox{\hyperlink{namespacegpga_af52edeb0b8ee3f789d2bc8c572fd9709_af52edeb0b8ee3f789d2bc8c572fd9709aaf937713a39275d7c02a4a08b982d81a}{gpga::\+k\+Block}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_af52edeb0b8ee3f789d2bc8c572fd9709_af52edeb0b8ee3f789d2bc8c572fd9709ac7b5b418f92f82992f1c3626d2174c1c}{gpga::\+k\+Child\+Proc}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_af52edeb0b8ee3f789d2bc8c572fd9709_af52edeb0b8ee3f789d2bc8c572fd9709ac8f788edb96b4355f682a6706bb1838a}{gpga::\+k\+Cross\+Proc}} = 2u
+ \}
+\begin{DoxyCompactList}\small\item\em Disable target kind. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_acd3d7b48f840d8b8d328f39469f34b0b_acd3d7b48f840d8b8d328f39469f34b0b}{gpga::\+\+Scheduler\+Vm\+Cond\+Kind}} :\+ uint32\+\_\+t \{ \doxymbox{\hyperlink{namespacegpga_acd3d7b48f840d8b8d328f39469f34b0b_acd3d7b48f840d8b8d328f39469f34b0ba31e8689e4043726d9a175c783872c06c}{gpga::\+k\+Dynamic}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_acd3d7b48f840d8b8d328f39469f34b0b_acd3d7b48f840d8b8d328f39469f34b0bad1efdc0f2aa096a47586b448aa73f414}{gpga::\+k\+Const}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_acd3d7b48f840d8b8d328f39469f34b0b_acd3d7b48f840d8b8d328f39469f34b0bad87b61f50587e7841b2d192c6e8afe05}{gpga::\+k\+Expr}} = 2u
+ \}
+\begin{DoxyCompactList}\small\item\em Condition entry kind. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77}{gpga::\+\+Scheduler\+Vm\+Expr\+Op}} :\+ uint32\+\_\+t \{ \newline
+\doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a9e2024e27d037d51bb46ef86d2e0ea4d}{gpga::\+k\+Done}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a7d9583ed16a101d1c6a5cadde2a12d40}{gpga::\+k\+Push\+Const}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a5a904b22ec1750e4c071480e66e90951}{gpga::\+k\+Push\+Signal}} = 2u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a89df03912c7abd65e780d5760b1069e5}{gpga::\+k\+Push\+Imm}} = 3u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a7eaa1b378656b37ef145e184c09afa84}{gpga::\+k\+Unary}} = 4u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a212f9f34e4e151a9ba569c71e1aace47}{gpga::\+k\+Binary}} = 5u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77abfe34f3d82a9dcbe0e8b751b0af6e151}{gpga::\+k\+Ternary}} = 6u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a0f74d4695fd4cccbe4380a5fcf6f8cc0}{gpga::\+k\+Select}} = 7u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77aaaa1335fda1c8d46b88c83f27e161967}{gpga::\+k\+Index}} = 8u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a07f24210ce07b41cf8370dd8e9a3eb70}{gpga::\+k\+Concat}} = 9u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77a4ff0cb81f1d2d093837e39bbf48501c8}{gpga::\+k\+Call}} = 10u
+, \doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77ac2fbf7fe97f93a6c5214c9e4d693e6b0}{gpga::\+k\+Push\+Const\+Xz}} = 11u
+ \}
+\begin{DoxyCompactList}\small\item\em Expression bytecode opcode. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2b}{gpga::\+\+Scheduler\+Vm\+Expr\+Unary\+Op}} :\+ uint32\+\_\+t \{ \newline
+\doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2ba29b0e29ca1242b047fdfcff449369c23}{gpga::\+k\+Plus}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2bacaaf09e10ea7e9c48f989450fe84ef9c}{gpga::\+k\+Minus}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2ba3c796e9320ab73ffd0faed560747d6bc}{gpga::\+k\+Bit\+Not}} = 2u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2ba27e4404d6fc56d8cb7ceea2c1d1f462e}{gpga::\+k\+Log\+Not}} = 3u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2badadfdafbaea67c5e4ea1b445f5f6169b}{gpga::\+k\+Red\+And}} = 4u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2bab61fc8dcde20ebaa6dabb3375be27b7b}{gpga::\+k\+Red\+Nand}} = 5u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2ba12e8499cfab944485d827c3e33911438}{gpga::\+k\+Red\+Or}} = 6u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2baddfcb62191ee89db2d4f0af4c646a060}{gpga::\+k\+Red\+Nor}} = 7u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2ba7023877c126e3106be8076ecb9dde164}{gpga::\+k\+Red\+Xor}} = 8u
+, \doxymbox{\hyperlink{namespacegpga_a4521f8bf7a80e3abb34697be7e144f2b_a4521f8bf7a80e3abb34697be7e144f2ba30929337e24942b0516b4d3f472a3740}{gpga::\+k\+Red\+Xnor}} = 9u
+ \}
+\begin{DoxyCompactList}\small\item\em Unary expression operation. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cb}{gpga::\+\+Scheduler\+Vm\+Expr\+Binary\+Op}} :\+ uint32\+\_\+t \{ \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbaa9130c0c8cfb5cbb3b70c98f89d3d96c}{gpga::\+k\+Add}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbaf66ca3c8e49231635fce6e56fadbc791}{gpga::\+k\+Sub}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba622e5142de51765da329dba31d104724}{gpga::\+k\+Mul}} = 2u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba62ff1bc26aac2154f97b79366b7a8de4}{gpga::\+k\+Div}} = 3u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba06e60060c4600af9c19680b810e9f58e}{gpga::\+k\+Mod}} = 4u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbac56b3cb75bb079338b9dd92cadcb42c0}{gpga::\+k\+Pow}} = 5u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba09dd4e23def71d75f1ab8bc95603a827}{gpga::\+k\+Shl}} = 6u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba2aa6a3cb013a47d2f45d963a3441bb26}{gpga::\+k\+Shr}} = 7u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba26ae3ba3910a68fe50d8331e907a359d}{gpga::\+k\+Ashr}} = 8u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba5c61096a81b3e5cbbde4f43b14c8f0d9}{gpga::\+k\+And}} = 9u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba5b7e85783b7acdff953371531833aac4}{gpga::\+k\+Or}} = 10u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbac045af4c7aaf252049c84e9c06019d6e}{gpga::\+k\+Xor}} = 11u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbaff5f4bbceca071b05fa0bac904561f11}{gpga::\+k\+Xnor}} = 12u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbae1f1dced10c8d35d975379468930d14c}{gpga::\+k\+Log\+And}} = 13u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba8cef7fbd095158e1bf19c4b734d9bf34}{gpga::\+k\+Log\+Or}} = 14u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba3d02bee6105201371a5a6c70cfdf1719}{gpga::\+k\+Eq}} = 15u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbabf8eaaed246a4129138c65540989baeb}{gpga::\+k\+Neq}} = 16u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba598cd22fcba361dbbb84f87f475589d0}{gpga::\+k\+Case\+Eq}} = 17u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba4d58addcf42d1261f10eba5c3a240d81}{gpga::\+k\+Case\+Neq}} = 18u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba79e0a0a6afb3ede6b7579b1c22fd5e66}{gpga::\+k\+Lt}} = 19u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba9e8a0d0d120ae8872ff448ab53b4c24e}{gpga::\+k\+Le}} = 20u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbaf166c5f480408355d40fdedd40d08cd5}{gpga::\+k\+Gt}} = 21u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba875bf24e71e153e4dc60b378b6d263e6}{gpga::\+k\+Ge}} = 22u
+, \doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cbaa7e62dab96f5bc0b4d30f5df1eac6bc0}{gpga::\+k\+CaseZ}} = 23u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ae7d9f278c9a0cb913b7a3fd72dea51cb_ae7d9f278c9a0cb913b7a3fd72dea51cba938223c9da59c82f2373fb3f8964d4b0}{gpga::\+k\+CaseX}} = 24u
+ \}
+\begin{DoxyCompactList}\small\item\em Binary expression operation. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654}{gpga::\+\+Scheduler\+Vm\+Expr\+Call\+Op}} :\+ uint32\+\_\+t \{ \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a4fbae144eab5d83a51adcf4d6542805a}{gpga::\+k\+Time}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654ab94341fbf762335fba82c897b337172c}{gpga::\+k\+Stime}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654af469fcae68ddb6eae05d4da6a8039163}{gpga::\+k\+Realtime}} = 2u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a22f593277ee8b41d0b211f5b718cd4fc}{gpga::\+k\+IToR}} = 3u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654acb99c8a0572f67d101bf227dabaa3a38}{gpga::\+k\+Bits\+To\+Real}} = 4u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654ae8c1ec963c145d8844d0063fca41e599}{gpga::\+k\+Real\+To\+Bits}} = 5u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a39ce094cd900d042b0e77e967ecfaba0}{gpga::\+k\+RToI}} = 6u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a369d163d7293d1beaeee06ed6866342a}{gpga::\+k\+Log10}} = 7u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a71f96d9b5a94defb7f02ed552ff44983}{gpga::\+k\+Ln}} = 8u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654aea1393acb96ce3ade0e095cc0623269f}{gpga::\+k\+Exp}} = 9u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654ad77219605b31dd1b06ca54d7bc41f520}{gpga::\+k\+Sqrt}} = 10u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a219dd653185709793daafbe7cb7ca474}{gpga::\+k\+Floor}} = 11u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654af8dcb6e55d5a46167c82507ea027848e}{gpga::\+k\+Ceil}} = 12u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654afeaf8ebd7195342c9e1e668fbb1128c5}{gpga::\+k\+Sin}} = 13u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a48a4ee7cd88ee6b528cd9d1b6bdfe856}{gpga::\+k\+Cos}} = 14u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654ad3610a4098e07c76ea6939f8fccf4c7f}{gpga::\+k\+Tan}} = 15u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654af7e00c35ce849b2e4307d16097a91e57}{gpga::\+k\+Asin}} = 16u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a8f74ea620833f6642c7c58e4da5f9ec4}{gpga::\+k\+Acos}} = 17u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a044b12ffe9fa818b87861320d405d086}{gpga::\+k\+Atan}} = 18u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a2b1e2be3dbba9764c985deb2af05c793}{gpga::\+k\+Sinh}} = 19u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a5b7c14a0da3e2f6f11483a02cd62d7ba}{gpga::\+k\+Cosh}} = 20u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a4918cf5d849692c2bed918bb9e948630}{gpga::\+k\+Tanh}} = 21u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a896fc2b95c35e97dd522457aa2353af1}{gpga::\+k\+Asinh}} = 22u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a89165569c003bcc3c0b40fae2c8d65e2}{gpga::\+k\+Acosh}} = 23u
+, \newline
+\doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654ac5844c564173935647d620be142335d9}{gpga::\+k\+Atanh}} = 24u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654ac56b3cb75bb079338b9dd92cadcb42c0}{gpga::\+k\+Pow}} = 25u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654abd5d9e00b3a80123e296c514ab558d04}{gpga::\+k\+Atan2}} = 26u
+, \doxymbox{\hyperlink{namespacegpga_ab8be8e951e72426db504dcc84720f654_ab8be8e951e72426db504dcc84720f654a5cad864addcd7f3c1123aa68ab0e3bca}{gpga::\+k\+Hypot}} = 27u
+ \}
+\begin{DoxyCompactList}\small\item\em Builtin call operation. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_a777c61f4dc3d8d46610186fa3a41edf6_a777c61f4dc3d8d46610186fa3a41edf6}{gpga::\+\+Scheduler\+Vm\+Case\+Kind}} :\+ uint32\+\_\+t \{ \doxymbox{\hyperlink{namespacegpga_a777c61f4dc3d8d46610186fa3a41edf6_a777c61f4dc3d8d46610186fa3a41edf6ad6a88e272e2adb0cf6e34009c73914de}{gpga::\+k\+Case}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_a777c61f4dc3d8d46610186fa3a41edf6_a777c61f4dc3d8d46610186fa3a41edf6a938223c9da59c82f2373fb3f8964d4b0}{gpga::\+k\+CaseX}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_a777c61f4dc3d8d46610186fa3a41edf6_a777c61f4dc3d8d46610186fa3a41edf6aa7e62dab96f5bc0b4d30f5df1eac6bc0}{gpga::\+k\+CaseZ}} = 2u
+ \}
+\begin{DoxyCompactList}\small\item\em Case opcode kind. \end{DoxyCompactList}\item 
+enum class \doxymbox{\hyperlink{namespacegpga_ae9e7c0269ea2eace5193d156d69c5517_ae9e7c0269ea2eace5193d156d69c5517}{gpga::\+\+Scheduler\+Vm\+Case\+Strategy}} :\+ uint32\+\_\+t \{ \doxymbox{\hyperlink{namespacegpga_ae9e7c0269ea2eace5193d156d69c5517_ae9e7c0269ea2eace5193d156d69c5517aac97f0008bcf7c7fe4f2ff94160e1385}{gpga::\+k\+Linear}} = 0u
+, \doxymbox{\hyperlink{namespacegpga_ae9e7c0269ea2eace5193d156d69c5517_ae9e7c0269ea2eace5193d156d69c5517a0226618c5258d9e1e71a400e0735314d}{gpga::\+k\+Bucket}} = 1u
+, \doxymbox{\hyperlink{namespacegpga_ae9e7c0269ea2eace5193d156d69c5517_ae9e7c0269ea2eace5193d156d69c5517a49f4e23c9d98ce6abd34dcb5e93414f2}{gpga::\+k\+Lut}} = 2u
+ \}
+\begin{DoxyCompactList}\small\item\em Case dispatch strategy. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a765207f335e57963f4c5eddbc648bb13_a765207f335e57963f4c5eddbc648bb13}{gpga::\+\+Make\+Scheduler\+Vm\+Instr}} (\doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56}{Scheduler\+Vm\+Op}} op, uint32\+\_\+t arg=0u)
+\begin{DoxyCompactList}\small\item\em Pack a scheduler VM instruction word. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a2a031a323a40b928dae33d819d4b2fe1_a2a031a323a40b928dae33d819d4b2fe1}{gpga::\+\+Make\+Scheduler\+Vm\+Expr\+Instr}} (\doxymbox{\hyperlink{namespacegpga_a0f3eec9a0394086b782708dd69b67d77_a0f3eec9a0394086b782708dd69b67d77}{Scheduler\+Vm\+Expr\+Op}} op, uint32\+\_\+t arg=0u)
+\begin{DoxyCompactList}\small\item\em Pack a scheduler VM expression instruction word. \end{DoxyCompactList}\item 
+constexpr \doxymbox{\hyperlink{namespacegpga_a5d3480df6f78878c589437c192372b56_a5d3480df6f78878c589437c192372b56}{Scheduler\+Vm\+Op}} \doxymbox{\hyperlink{namespacegpga_ad6a595a1dab420c1d1cbfb805c941b48_ad6a595a1dab420c1d1cbfb805c941b48}{gpga::\+\+Decode\+Scheduler\+Vm\+Op}} (uint32\+\_\+t instr)
+\begin{DoxyCompactList}\small\item\em Decode the opcode from an instruction word. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a1da2bb43c066293725cacd7dfaf0bc92_a1da2bb43c066293725cacd7dfaf0bc92}{gpga::\+\+Decode\+Scheduler\+Vm\+Arg}} (uint32\+\_\+t instr)
+\begin{DoxyCompactList}\small\item\em Decode the argument from an instruction word. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a00f9aa65b0076468ee5a614ee80445c0_a00f9aa65b0076468ee5a614ee80445c0}{gpga::\+\+Pack\+Scheduler\+Vm\+Fork\+Arg}} (uint32\+\_\+t count, \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143}{Scheduler\+Vm\+Join\+Kind}} kind)
+\begin{DoxyCompactList}\small\item\em Pack fork count and join kind into an argument word. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ad55f498fd13f9ccfa398196e1c289d75_ad55f498fd13f9ccfa398196e1c289d75}{gpga::\+\+Decode\+Scheduler\+Vm\+Fork\+Count}} (uint32\+\_\+t arg)
+\begin{DoxyCompactList}\small\item\em Decode fork count from a packed argument. \end{DoxyCompactList}\item 
+constexpr \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143}{Scheduler\+Vm\+Join\+Kind}} \doxymbox{\hyperlink{namespacegpga_a57f4c1e6cc773ab6c5775b735062b39c_a57f4c1e6cc773ab6c5775b735062b39c}{gpga::\+\+Decode\+Scheduler\+Vm\+Fork\+Kind}} (uint32\+\_\+t arg)
+\begin{DoxyCompactList}\small\item\em Decode join kind from a packed argument. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{namespacegpga_a8e3ed85434232f3d73ccaa5d8512b8a1_a8e3ed85434232f3d73ccaa5d8512b8a1}{gpga::\+\+Build\+Scheduler\+Vm\+Layout}} (const std::\+vector$<$ std::\+vector$<$ uint32\+\_\+t $>$ $>$ \&procs, \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_layout}{Scheduler\+Vm\+Layout}} \texorpdfstring{$\ast$}{*}out, std::\+string \texorpdfstring{$\ast$}{*}error)
+\begin{DoxyCompactList}\small\item\em Build a scheduler VM layout from per-\/process bytecode. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{namespacegpga_ae111ee3ec99ef8adcad1433262e30bf0_ae111ee3ec99ef8adcad1433262e30bf0}{gpga::\+\+Build\+Scheduler\+Vm\+Seed\+Layout}} (uint32\+\_\+t proc\+\_\+count, \doxymbox{\hyperlink{structgpga_1_1_scheduler_vm_layout}{Scheduler\+Vm\+Layout}} \texorpdfstring{$\ast$}{*}out, std::\+string \texorpdfstring{$\ast$}{*}error)
+\begin{DoxyCompactList}\small\item\em Build a seed scheduler VM layout with minimal bytecode. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Variables}
+\begin{DoxyCompactItemize}
+\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_af780b9d0722fe1863ee9fa35fb1a812e_af780b9d0722fe1863ee9fa35fb1a812e}{gpga::\+k\+Scheduler\+Vm\+Words\+Per\+Proc}} = 2u
+\begin{DoxyCompactList}\small\item\em Minimum words per proc. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a0c9bb2fcf22a78c3854bb0f3c8afb3a9_a0c9bb2fcf22a78c3854bb0f3c8afb3a9}{gpga::\+k\+Scheduler\+Vm\+Call\+Frame\+Words}} = 4u
+\begin{DoxyCompactList}\small\item\em Call frame size in words. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_aef98fc13a32756deca5a78d9a535f960_aef98fc13a32756deca5a78d9a535f960}{gpga::\+k\+Scheduler\+Vm\+Call\+Frame\+Depth}} = 1u
+\begin{DoxyCompactList}\small\item\em Call frame stack depth. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ad9bd057b05abe63834097d797d506de4_ad9bd057b05abe63834097d797d506de4}{gpga::\+k\+Scheduler\+Vm\+Op\+Mask}} = 0x\+FFu
+\begin{DoxyCompactList}\small\item\em Opcode bit mask. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a76d8b0a6c3e5a014364af922a93e3e20_a76d8b0a6c3e5a014364af922a93e3e20}{gpga::\+k\+Scheduler\+Vm\+Op\+Shift}} = 8u
+\begin{DoxyCompactList}\small\item\em Opcode argument shift. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a0afddc7f50413605785b26ecfe37cf84_a0afddc7f50413605785b26ecfe37cf84}{gpga::\+k\+Scheduler\+Vm\+Fork\+Join\+Shift}} = 24u
+\begin{DoxyCompactList}\small\item\em Fork join shift. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a2ef0b9edf75198bb3e208b4e2b8e8b60_a2ef0b9edf75198bb3e208b4e2b8e8b60}{gpga::\+k\+Scheduler\+Vm\+Fork\+Count\+Mask}} = 0x00\+FFFFFFu
+\begin{DoxyCompactList}\small\item\em Fork count mask. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a0de7b8b81cf8a24b8eb063c60f83ee37_a0de7b8b81cf8a24b8eb063c60f83ee37}{gpga::\+k\+Scheduler\+Vm\+Expr\+No\+Extra}} = 0x\+FFFFFFFFu
+\begin{DoxyCompactList}\small\item\em Sentinel for no extra word. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a1e5fbaf6829e15bfeb0c392f2a8fe538_a1e5fbaf6829e15bfeb0c392f2a8fe538}{gpga::\+k\+Scheduler\+Vm\+Expr\+Signed\+Flag}} = 1u $<$$<$ 8u
+\begin{DoxyCompactList}\small\item\em Expression signed flag. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a76a7a2ef55580a8eaf63fa6cbd8e2ea1_a76a7a2ef55580a8eaf63fa6cbd8e2ea1}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Nonblocking}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Nonblocking assign. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_adaed6dde187a504a3798cdc6c68ac194_adaed6dde187a504a3798cdc6c68ac194}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Fallback}} = 1u $<$$<$ 1u
+\begin{DoxyCompactList}\small\item\em Use fallback path. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a774680ed4cddc088bbb3ee3ad5431c1d_a774680ed4cddc088bbb3ee3ad5431c1d}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Is\+Array}} = 1u $<$$<$ 2u
+\begin{DoxyCompactList}\small\item\em Array assignment. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a3eefb022a9930c54190ecce2fe86bea5_a3eefb022a9930c54190ecce2fe86bea5}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Is\+Bit\+Select}} = 1u $<$$<$ 3u
+\begin{DoxyCompactList}\small\item\em Bit-\/select assign. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ae067bcfed9f1b29e2507bee35b7913db_ae067bcfed9f1b29e2507bee35b7913db}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Is\+Range}} = 1u $<$$<$ 4u
+\begin{DoxyCompactList}\small\item\em Range assign. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ab196b5a9d527daf58bdf4b2cf70babfb_ab196b5a9d527daf58bdf4b2cf70babfb}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Is\+Indexed\+Range}} = 1u $<$$<$ 5u
+\begin{DoxyCompactList}\small\item\em Indexed range assign. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a093a0964416221cb4d2b25ca7bbf6f7e_a093a0964416221cb4d2b25ca7bbf6f7e}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Wide\+Const}} = 1u $<$$<$ 6u
+\begin{DoxyCompactList}\small\item\em Wide const RHS. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a1da2eab190dabf4126ab2aac4a856e9a_a1da2eab190dabf4126ab2aac4a856e9a}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Rhs\+Cond}} = 1u $<$$<$ 7u
+\begin{DoxyCompactList}\small\item\em RHS conditional. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ad9e045749c309d2e6f33fade5d490e78_ad9e045749c309d2e6f33fade5d490e78}{gpga::\+k\+Scheduler\+Vm\+Assign\+Flag\+Rhs\+Signed}} = 1u $<$$<$ 8u
+\begin{DoxyCompactList}\small\item\em RHS signed. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a79e6ec7a9ab8d38012ca9632b46fe3f1_a79e6ec7a9ab8d38012ca9632b46fe3f1}{gpga::\+k\+Scheduler\+Vm\+Force\+Flag\+Procedural}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Procedural force. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a077eb7297a807e5a43215cae2394eeee_a077eb7297a807e5a43215cae2394eeee}{gpga::\+k\+Scheduler\+Vm\+Force\+Flag\+Fallback}} = 1u $<$$<$ 1u
+\begin{DoxyCompactList}\small\item\em Use fallback path. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ad2ca1b335639cb3d54fae78d4ff15a36_ad2ca1b335639cb3d54fae78d4ff15a36}{gpga::\+k\+Scheduler\+Vm\+Force\+Flag\+Override\+Reg}} = 1u $<$$<$ 2u
+\begin{DoxyCompactList}\small\item\em Override reg storage. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_acb18729028a31546fcfd514ef3060542_acb18729028a31546fcfd514ef3060542}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Nonblocking}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Delayed nonblocking. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a848b311302a5d0f7ed3a9526e61cff95_a848b311302a5d0f7ed3a9526e61cff95}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Inertial}} = 1u $<$$<$ 1u
+\begin{DoxyCompactList}\small\item\em Inertial delay. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a3b80a80299b7a3b251731232c23c3d26_a3b80a80299b7a3b251731232c23c3d26}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Showcancelled}} = 1u $<$$<$ 2u
+\begin{DoxyCompactList}\small\item\em Showcancelled. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a8b21c5a4b80f6172ea9db86e0fa3bbfc_a8b21c5a4b80f6172ea9db86e0fa3bbfc}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Has\+Pulse}} = 1u $<$$<$ 3u
+\begin{DoxyCompactList}\small\item\em Has pulse reject. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a88bb5947c1b023c890ba88c780c58105_a88bb5947c1b023c890ba88c780c58105}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Has\+Pulse\+Error}} = 1u $<$$<$ 4u
+\begin{DoxyCompactList}\small\item\em Has pulse error. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a2284771962ccf273b7313e803709fdb8_a2284771962ccf273b7313e803709fdb8}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Is\+Array}} = 1u $<$$<$ 5u
+\begin{DoxyCompactList}\small\item\em Array assignment. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_aeb28bca219ad622521038de40a3adca7_aeb28bca219ad622521038de40a3adca7}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Is\+Bit\+Select}} = 1u $<$$<$ 6u
+\begin{DoxyCompactList}\small\item\em Bit-\/select assignment. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ae694066b52f0ec595de2f37837aff4f9_ae694066b52f0ec595de2f37837aff4f9}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Is\+Range}} = 1u $<$$<$ 7u
+\begin{DoxyCompactList}\small\item\em Range assignment. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_aad3fe4c833f1a9294e1540f312539363_aad3fe4c833f1a9294e1540f312539363}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Is\+Indexed\+Range}} = 1u $<$$<$ 8u
+\begin{DoxyCompactList}\small\item\em Indexed range assignment. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_adc1905823ee6adf2ce24ea584396e087_adc1905823ee6adf2ce24ea584396e087}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Is\+Real}} = 1u $<$$<$ 9u
+\begin{DoxyCompactList}\small\item\em Real assignment. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a02ab5f96ad28be2e6fd01e907d431cb0_a02ab5f96ad28be2e6fd01e907d431cb0}{gpga::\+k\+Scheduler\+Vm\+Delay\+Assign\+Flag\+Fallback}} = 1u $<$$<$ 10u
+\begin{DoxyCompactList}\small\item\em Use fallback path. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a43242c24d63474f1be5aab4ffb503872_a43242c24d63474f1be5aab4ffb503872}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Fallback}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Use fallback path. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_affd15eb29be3af076ff672a6f0c533fa_affd15eb29be3af076ff672a6f0c533fa}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Global\+Only}} = 1u $<$$<$ 1u
+\begin{DoxyCompactList}\small\item\em Global-\/only service. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a8e75553f3d50b5b5ad03424160f213d6_a8e75553f3d50b5b5ad03424160f213d6}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Guard\+Fd}} = 1u $<$$<$ 2u
+\begin{DoxyCompactList}\small\item\em Guard file descriptor. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a9e1195dde86b51b7386a391dbf8dd2c4_a9e1195dde86b51b7386a391dbf8dd2c4}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Monitor}} = 1u $<$$<$ 3u
+\begin{DoxyCompactList}\small\item\em Monitor service. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_aad09c52a934a61506ee7be71a75fbf94_aad09c52a934a61506ee7be71a75fbf94}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Monitor\+On}} = 1u $<$$<$ 4u
+\begin{DoxyCompactList}\small\item\em Enable monitor. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_aba75404e5e9a53d5822b13069edbfc22_aba75404e5e9a53d5822b13069edbfc22}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Monitor\+Off}} = 1u $<$$<$ 5u
+\begin{DoxyCompactList}\small\item\em Disable monitor. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ae00f178aa758f128542cf49fa6625ca7_ae00f178aa758f128542cf49fa6625ca7}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Strobe}} = 1u $<$$<$ 6u
+\begin{DoxyCompactList}\small\item\em Strobe service. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a6eb52feecfba2296be63319f808d37ff_a6eb52feecfba2296be63319f808d37ff}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Finish}} = 1u $<$$<$ 7u
+\begin{DoxyCompactList}\small\item\em Finish request. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_abd6a92394110d24359e6b5387854a5b2_abd6a92394110d24359e6b5387854a5b2}{gpga::\+k\+Scheduler\+Vm\+Service\+Flag\+Stop}} = 1u $<$$<$ 8u
+\begin{DoxyCompactList}\small\item\em Stop request. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_acbcf3542cefc4ed2e724b1d3ca23318f_acbcf3542cefc4ed2e724b1d3ca23318f}{gpga::\+k\+Scheduler\+Vm\+Service\+Arg\+Flag\+Expr}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Argument is expr. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a48a96214e0bf9734c8335ea08f5b73ef_a48a96214e0bf9734c8335ea08f5b73ef}{gpga::\+k\+Scheduler\+Vm\+Service\+Arg\+Flag\+Time}} = 1u $<$$<$ 1u
+\begin{DoxyCompactList}\small\item\em Argument is time. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a9ec6301a3523f4443e785e9429e1e23b_a9ec6301a3523f4443e785e9429e1e23b}{gpga::\+k\+Scheduler\+Vm\+Service\+Arg\+Flag\+Stime}} = 1u $<$$<$ 2u
+\begin{DoxyCompactList}\small\item\em Argument is signed time. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_ad614cc969ec81148780420853f4bd9e5_ad614cc969ec81148780420853f4bd9e5}{gpga::\+k\+Scheduler\+Vm\+Service\+Ret\+Assign\+Flag\+Fallback}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Use fallback path. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_a4bdf8a4a0e985664c74e96f427f42d43_a4bdf8a4a0e985664c74e96f427f42d43}{gpga::\+k\+Scheduler\+Vm\+Signal\+Flag\+Real}} = 1u $<$$<$ 0u
+\begin{DoxyCompactList}\small\item\em Signal is real. \end{DoxyCompactList}\item 
+constexpr uint32\+\_\+t \doxymbox{\hyperlink{namespacegpga_af12de878fa9de3cba20bdb91e3a38887_af12de878fa9de3cba20bdb91e3a38887}{gpga::\+k\+Scheduler\+Vm\+Expr\+Stack\+Max}} = 32u
+\begin{DoxyCompactList}\small\item\em Max expression stack depth. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Scheduler VM bytecode definitions and helpers. 
+
+
+
+Definition in file \doxymbox{\hyperlink{scheduler__vm_8hh_source}{scheduler\+\_\+vm.\+hh}}.
+

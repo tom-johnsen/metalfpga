@@ -1,4 +1,13 @@
+/**
+ * @file gpga_real.h
+ * @brief Real math helpers and CRlibm-compatible API for Metal.
+ * 
+ */
 #ifndef GPGA_REAL_H
+/**
+ * @brief Header guard for gpga_real.h.
+ * 
+ */
 #define GPGA_REAL_H
 
 #if defined(__METAL_VERSION__)
@@ -7,23 +16,51 @@ using namespace metal;
 #else
 #include <cstdint>
 // Fallback typedefs for editors/non-Metal tooling.
+/**
+ * @brief 32-bit unsigned integer type for non-Metal builds.
+ * 
+ */
 typedef uint32_t uint;
+/**
+ * @brief 64-bit unsigned integer type for non-Metal builds.
+ * 
+ */
 typedef uint64_t ulong;
 #ifndef thread
+/**
+ * @brief Fallback definition for the Metal thread address-space qualifier in non-Metal builds.
+ * 
+ */
 #define thread
 #endif
 #ifndef constant
+/**
+ * @brief Fallback definition for the Metal constant address-space qualifier in non-Metal builds.
+ * 
+ */
 #define constant const
 #endif
 #endif
 
 #if defined(__METAL_VERSION__)
+/**
+ * @brief Storage qualifier for constants (Metal constant address space or static const fallback).
+ * 
+ */
 #define GPGA_CONST constant
 #else
+/**
+ * @brief Storage qualifier for constants (Metal constant address space or static const fallback).
+ * 
+ */
 #define GPGA_CONST static const
 #endif
 
 #if !defined(__METAL_VERSION__) && defined(GPGA_REAL_TRACE)
+/**
+ * @brief Counters for tracing fallback occurrences in real functions.
+ * 
+ */
 struct GpgaRealTraceCounters {
   uint64_t sin_rn_fallback = 0;
   uint64_t sin_ru_fallback = 0;
@@ -39,39 +76,111 @@ struct GpgaRealTraceCounters {
   uint64_t tan_rz_fallback = 0;
 };
 
+/**
+ * @brief Return the global counters for tracing fallback occurrences in real functions.
+ * 
+ * @return GpgaRealTraceCounters& Reference to the global trace counters.
+ */
 inline GpgaRealTraceCounters& gpga_real_trace_counters() {
   static GpgaRealTraceCounters counters;
   return counters;
 }
 
+/**
+ * @brief Reset the global counters for tracing fallback occurrences in real functions.
+ * 
+ */
 inline void gpga_real_trace_reset() {
   gpga_real_trace_counters() = GpgaRealTraceCounters();
 }
 
+/**
+ * @brief Increment the fallback counter for a specific real function.
+ * 
+ */
 #define GPGA_REAL_TRACE_FALLBACK(name) \
   do {                                 \
     gpga_real_trace_counters().name##_fallback += 1; \
   } while (0)
 #else
+/**
+ * @brief Trace macro for real-function fallbacks (no-op when tracing is disabled).
+ * 
+ */
 #define GPGA_REAL_TRACE_FALLBACK(name) \
   do {                                 \
   } while (0)
 #endif
 
 // IEEE-754 binary64 helpers and CRlibm-compatible API (MSL).
+
+/**
+ * @brief Double-precision floating-point type representation as 64-bit unsigned integer.
+ * 
+ */
 typedef ulong gpga_double;
+
+/**
+ * @brief Return the high 32 bits of a 64-bit unsigned integer.
+ * 
+ * @param value The 64-bit unsigned integer.
+ * @return uint - The high 32 bits.
+ */
 inline uint gpga_u64_hi(ulong value);
+
+/**
+ * @brief Return the low 32 bits of a 64-bit unsigned integer.
+ * 
+ * @param value The 64-bit unsigned integer.
+ * @return uint - The low 32 bits.
+ */
 inline uint gpga_u64_lo(ulong value);
+
+/**
+ * @brief Create a 64-bit unsigned integer from high and low 32-bit words.
+ * 
+ * @param hi The high 32 bits.
+ * @param lo The low 32 bits.
+ * @return gpga_double - The combined 64-bit unsigned integer.
+ */
 inline gpga_double gpga_u64_from_words(uint hi, uint lo);
+
+/**
+ * @brief Return the sign bit of a double-precision floating-point number.
+ * 
+ * @param d The double-precision floating-point number.
+ * @return uint - The sign bit (0 for positive, 1 for negative).
+ */
 inline uint gpga_double_sign(gpga_double d) {
   return (uint)((d >> 63) & 1ul);
 }
+
+/**
+ * @brief Return the exponent bits of a double-precision floating-point number.
+ * 
+ * @param d The double-precision floating-point number.
+ * @return uint - The exponent bits.
+ */
 inline uint gpga_double_exp(gpga_double d) {
   return (uint)((d >> 52) & 0x7FFu);
 }
+
+/**
+ * @brief Return the mantissa bits of a double-precision floating-point number.
+ * 
+ * @param d The double-precision floating-point number.
+ * @return ulong - The mantissa bits.
+ */
 inline ulong gpga_double_mantissa(gpga_double d) {
   return d & 0x000FFFFFFFFFFFFFul;
 }
+
+/**
+ * @brief Return the unbiased exponent of a double-precision floating-point number.
+ * 
+ * @param d The double-precision floating-point number.
+ * @return int - The unbiased exponent.
+ */
 inline int gpga_double_exponent(gpga_double d) {
   uint exp_bits = gpga_double_exp(d);
   if (exp_bits == 0u) {
@@ -88,38 +197,116 @@ inline int gpga_double_exponent(gpga_double d) {
   }
   return (int)exp_bits - 1023;
 }
+
+/**
+ * @brief Pack sign, exponent, and mantissa into a double-precision floating-point number.
+ * 
+ * @param sign The sign bit (0 for positive, 1 for negative).
+ * @param exp The exponent bits.
+ * @param mantissa The mantissa bits.
+ * @return gpga_double - The packed double-precision floating-point number.
+ */
 inline gpga_double gpga_double_pack(uint sign, uint exp, ulong mantissa) {
   return ((ulong)sign << 63) | ((ulong)exp << 52) |
          (mantissa & 0x000FFFFFFFFFFFFFul);
 }
+
+/**
+ * @brief Create a double-precision floating-point number representing zero with the given sign.
+ * 
+ * @param sign The sign bit (0 for positive, 1 for negative).
+ * @return gpga_double - The double-precision floating-point number representing zero.
+ */
 inline gpga_double gpga_double_zero(uint sign) {
   return ((ulong)sign << 63);
 }
+
+/**
+ * @brief Create a double-precision floating-point number representing infinity with the given sign.
+ * 
+ * @param sign The sign bit (0 for positive, 1 for negative).
+ * @return gpga_double - The double-precision floating-point number representing infinity.
+ */
 inline gpga_double gpga_double_inf(uint sign) {
   return gpga_double_pack(sign, 0x7FFu, 0ul);
 }
+
+/**
+ * @brief Create a double-precision floating-point number representing NaN (Not a Number).
+ * 
+ * @return gpga_double - The double-precision floating-point number representing NaN.
+ */
 inline gpga_double gpga_double_nan() {
   return 0x7FF8000000000000ul;
 }
+
+/**
+ * @brief Check if a double-precision floating-point number is zero.
+ * 
+ * @param d The double-precision floating-point number.
+ * @return true if the number is zero, false otherwise.
+ */
 inline bool gpga_double_is_zero(gpga_double d) {
   return (d & 0x7FFFFFFFFFFFFFFFul) == 0ul;
 }
+
+/**
+ * @brief Check if a double-precision floating-point number is negative infinity or positive infinity.
+ * 
+ * @param d The double-precision floating-point number.
+ * @return true if the number is negative or positive infinity, false otherwise.
+ */
 inline bool gpga_double_is_inf(gpga_double d) {
   return (d & 0x7FFFFFFFFFFFFFFFul) == 0x7FF0000000000000ul;
 }
+
+/**
+ * @brief Check if a double-precision floating-point number is NaN (Not a Number).
+ * 
+ * @param d The double-precision floating-point number.
+ * @return true if the number is NaN, false otherwise.
+ */
 inline bool gpga_double_is_nan(gpga_double d) {
   return (gpga_double_exp(d) == 0x7FFu) &&
          (gpga_double_mantissa(d) != 0ul);
 }
+
+/**
+ * @brief Convert a 64-bit unsigned integer bit pattern to a double-precision floating-point number.
+ * 
+ * @param bits The 64-bit unsigned integer bit pattern.
+ * @return gpga_double - The corresponding double-precision floating-point number.
+ */
 inline gpga_double gpga_bits_to_real(ulong bits) {
   return bits;
 }
+
+/**
+ * @brief Convert a double-precision floating-point number to its 64-bit unsigned integer bit pattern.
+ * 
+ * @param value The double-precision floating-point number.
+ * @return ulong - The corresponding 64-bit unsigned integer bit pattern.
+ */
 inline ulong gpga_real_to_bits(gpga_double value) {
   return value;
 }
+
+/**
+ * @brief Return the absolute value of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The absolute value.
+ */
 inline gpga_double gpga_double_abs(gpga_double x) {
   return x & 0x7FFFFFFFFFFFFFFFul;
 }
+
+/**
+ * @brief Return the next representable double-precision floating-point number greater than the given number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The next representable number greater than x.
+ */
 inline gpga_double gpga_double_next_up(gpga_double x) {
   if (gpga_double_is_nan(x) ||
       (gpga_double_is_inf(x) && gpga_double_sign(x) == 0u)) {
@@ -130,6 +317,13 @@ inline gpga_double gpga_double_next_up(gpga_double x) {
   }
   return gpga_double_sign(x) ? (x - 1ul) : (x + 1ul);
 }
+
+/**
+ * @brief Return the next representable double-precision floating-point number less than the given number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The next representable number less than x.
+ */
 inline gpga_double gpga_double_next_down(gpga_double x) {
   if (gpga_double_is_nan(x) ||
       (gpga_double_is_inf(x) && gpga_double_sign(x) != 0u)) {
@@ -140,105 +334,327 @@ inline gpga_double gpga_double_next_down(gpga_double x) {
   }
   return gpga_double_sign(x) ? (x + 1ul) : (x - 1ul);
 }
+
+/**
+ * @brief Return the constant value one as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value one.
+ */
 inline gpga_double gpga_double_const_one() {
   return gpga_bits_to_real(0x3ff0000000000000ul);
 }
+
+/**
+ * @brief Return the constant value two as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value two.
+ */
 inline gpga_double gpga_double_const_two() {
   return gpga_bits_to_real(0x4000000000000000ul);
 }
+
+/**
+ * @brief Return the constant value minus one as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value minus one.
+ */
 inline gpga_double gpga_double_const_minus_one() {
   return gpga_bits_to_real(0xbff0000000000000ul);
 }
+
+/**
+ * @brief Return the constant value ln(2) as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value ln(2).
+ */
 inline gpga_double gpga_double_const_ln2() {
   return gpga_bits_to_real(0x3fe62e42fefa39eful);
 }
+
+/**
+ * @brief Return the constant value ln(10) as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value ln(10).
+ */
 inline gpga_double gpga_double_const_ln10() {
   return gpga_bits_to_real(0x40026bb1bbb55516ul);
 }
+
+/**
+ * @brief Return the constant value log10(e) as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value log10(e).
+ */
 inline gpga_double gpga_double_const_log10e() {
   return gpga_bits_to_real(0x3fdbcb7b1526e50eul);
 }
+
+/**
+ * @brief Return the constant value pi as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value pi.
+ */
 inline gpga_double gpga_double_const_pi() {
   return gpga_bits_to_real(0x400921fb54442d18ul);
 }
+
+/**
+ * @brief Return the constant value two pi as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value two pi.
+ */
 inline gpga_double gpga_double_const_two_pi() {
   return gpga_bits_to_real(0x401921fb54442d18ul);
 }
+
+/**
+ * @brief Return the constant value half pi as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value half pi.
+ */
 inline gpga_double gpga_double_const_half_pi() {
   return gpga_bits_to_real(0x3ff921fb54442d18ul);
 }
+
+/**
+ * @brief Return the constant value quarter pi as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value quarter pi.
+ */
 inline gpga_double gpga_double_const_quarter_pi() {
   return gpga_bits_to_real(0x3fe921fb54442d18ul);
 }
+
+/**
+ * @brief Return the constant value inverse of ln(2) as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of ln(2).
+ */
 inline gpga_double gpga_double_const_inv_ln2() {
   return gpga_bits_to_real(0x3ff71547652b82feul);
 }
+
+/**
+ * @brief Return the constant value inverse of two pi as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of two pi.
+ */
 inline gpga_double gpga_double_const_inv_two_pi() {
   return gpga_bits_to_real(0x3fc45f306dc9c883ul);
 }
+
+/**
+ * @brief Return the constant value inverse of two as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of two.
+ */
 inline gpga_double gpga_double_const_inv2() {
   return gpga_bits_to_real(0x3fe0000000000000ul);
 }
+
+/**
+ * @brief Return the constant value inverse of three as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of three.
+ */
 inline gpga_double gpga_double_const_inv3() {
   return gpga_bits_to_real(0x3fd5555555555555ul);
 }
+
+/**
+ * @brief Return the constant value inverse of five as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of five.
+ */
 inline gpga_double gpga_double_const_inv5() {
   return gpga_bits_to_real(0x3fc999999999999aul);
 }
+
+/**
+ * @brief Return the constant value inverse of seven as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of seven.
+ */
 inline gpga_double gpga_double_const_inv7() {
   return gpga_bits_to_real(0x3fc2492492492492ul);
 }
+
+/**
+ * @brief Return the constant value inverse of nine as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of nine.
+ */
 inline gpga_double gpga_double_const_inv9() {
   return gpga_bits_to_real(0x3fbc71c71c71c71cul);
 }
+
+/**
+ * @brief Return the constant value inverse of eleven as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of eleven.
+ */
 inline gpga_double gpga_double_const_inv11() {
   return gpga_bits_to_real(0x3fb745d1745d1746ul);
 }
+
+/**
+ * @brief Return the constant value inverse of thirteen as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of thirteen.
+ */
 inline gpga_double gpga_double_const_inv13() {
   return gpga_bits_to_real(0x3fb3b13b13b13b14ul);
 }
+
+/**
+ * @brief Return the constant value inverse of fifteen as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of fifteen.
+ */
 inline gpga_double gpga_double_const_inv15() {
   return gpga_bits_to_real(0x3fb1111111111111ul);
 }
+
+/**
+ * @brief Return the constant value inverse of six as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of six.
+ */
 inline gpga_double gpga_double_const_inv6() {
   return gpga_bits_to_real(0x3fc5555555555555ul);
 }
+
+/**
+ * @brief Return the constant value inverse of twenty-four as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of twenty-four.
+ */
 inline gpga_double gpga_double_const_inv24() {
   return gpga_bits_to_real(0x3fa5555555555555ul);
 }
+/**
+ * @brief Return the constant value inverse of 120 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 120.
+ */
 inline gpga_double gpga_double_const_inv120() {
   return gpga_bits_to_real(0x3f81111111111111ul);
 }
+
+/**
+ * @brief Return the constant value inverse of 720 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 720.
+ */
 inline gpga_double gpga_double_const_inv720() {
   return gpga_bits_to_real(0x3f56c16c16c16c17ul);
 }
+
+/**
+ * @brief Return the constant value inverse of 5040 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 5040.
+ */
 inline gpga_double gpga_double_const_inv5040() {
   return gpga_bits_to_real(0x3f2a01a01a01a01aul);
 }
+
+/**
+ * @brief Return the constant value inverse of 40320 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 40320.
+ */
 inline gpga_double gpga_double_const_inv40320() {
   return gpga_bits_to_real(0x3efa01a01a01a01aul);
 }
+
+/**
+ * @brief Return the constant value inverse of 362880 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 362880.
+ */
 inline gpga_double gpga_double_const_inv362880() {
   return gpga_bits_to_real(0x3ec71de3a556c734ul);
 }
+
+/**
+ * @brief Return the constant value inverse of 3628800 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 3628800.
+ */
 inline gpga_double gpga_double_const_inv3628800() {
   return gpga_bits_to_real(0x3e927e4fb7789f5cul);
 }
+
+/**
+ * @brief Return the constant value inverse of 39916800 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 39916800.
+ */
 inline gpga_double gpga_double_const_inv39916800() {
   return gpga_bits_to_real(0x3e5ae64567f544e4ul);
 }
+
+/**
+ * @brief Return the constant value inverse of 479001600 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 479001600.
+ */
 inline gpga_double gpga_double_const_inv479001600() {
   return gpga_bits_to_real(0x3e21eed8eff8d898ul);
 }
+
+/**
+ * @brief Return the constant value inverse of 6227020800 as a double-precision floating-point number.
+ * 
+ * @return gpga_double - The constant value inverse of 6227020800.
+ */
 inline gpga_double gpga_double_const_inv6227020800() {
   return gpga_bits_to_real(0x3de6124613a86d09ul);
 }
+
+/**
+ * @brief Coefficient C0 for the sqrt core polynomial approximation.
+ * 
+ */
 GPGA_CONST gpga_double SQRTPOLYC0 = 0x400407e3bff0ce0ful;
+
+/**
+ * @brief Coefficient C1 for the sqrt core polynomial approximation.
+ * 
+ */
 GPGA_CONST gpga_double SQRTPOLYC1 = 0xc00a618de0a521aful;
+
+/**
+ * @brief Coefficient C2 for the sqrt core polynomial approximation.
+ * 
+ */
 GPGA_CONST gpga_double SQRTPOLYC2 = 0x40060edebae5c173ul;
+
+/**
+ * @brief Coefficient C3 for the sqrt core polynomial approximation.
+ * 
+ */
 GPGA_CONST gpga_double SQRTPOLYC3 = 0xbff26ff93141fe48ul;
+
+/**
+ * @brief Coefficient C4 for the sqrt core polynomial approximation.
+ * 
+ */
 GPGA_CONST gpga_double SQRTPOLYC4 = 0x3fc7ec5765014684ul;
+
+/**
+ * @brief Scaling factor sqrt(2) * 2^52 used in sqrt normalization.
+ * 
+ */
 GPGA_CONST gpga_double SQRTTWO52 = 0x4330000000000000ul;
+
+/**
+ * @brief Count leading zeros in a 64-bit unsigned integer.
+ * 
+ * @param value The 64-bit unsigned integer to count leading zeros in.
+ * @return uint - The number of leading zeros.
+ */
 inline uint gpga_clz64(ulong value) {
   if (value == 0ul) {
     return 64u;
@@ -251,6 +667,14 @@ inline uint gpga_clz64(ulong value) {
   }
   return count;
 }
+
+/**
+ * @brief Shift a 64-bit unsigned integer to the right with sticky bit.
+ * 
+ * @param value The 64-bit unsigned integer to shift.
+ * @param shift The number of bits to shift.
+ * @return ulong - The shifted value with sticky bit.
+ */
 inline ulong gpga_shift_right_sticky(ulong value, uint shift) {
   if (shift == 0u) {
     return value;
@@ -263,6 +687,15 @@ inline ulong gpga_shift_right_sticky(ulong value, uint shift) {
   ulong shifted = value >> shift;
   return shifted | sticky;
 }
+
+/**
+ * @brief Multiply two 64-bit unsigned integers to produce a 128-bit result.
+ * 
+ * @param a The first 64-bit unsigned integer.
+ * @param b The second 64-bit unsigned integer.
+ * @param hi Pointer to store the high 64 bits of the result.
+ * @param lo Pointer to store the low 64 bits of the result.
+ */
 inline void gpga_mul_64(ulong a, ulong b, thread ulong* hi,
                          thread ulong* lo) {
   ulong a_lo = a & 0xFFFFFFFFul;
@@ -277,6 +710,15 @@ inline void gpga_mul_64(ulong a, ulong b, thread ulong* hi,
   *lo = (p0 & 0xFFFFFFFFul) | (mid << 32);
   *hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
 }
+
+/**
+ * @brief Shift a 128-bit unsigned integer (represented by hi and lo) to the right with sticky bit.
+ * 
+ * @param hi The high 64 bits of the 128-bit unsigned integer.
+ * @param lo The low 64 bits of the 128-bit unsigned integer.
+ * @param shift The number of bits to shift.
+ * @return ulong - The shifted value with sticky bit.
+ */
 inline ulong gpga_shift_right_sticky_128(ulong hi, ulong lo,
                                          uint shift) {
   if (shift == 0u) {
@@ -306,6 +748,15 @@ inline ulong gpga_shift_right_sticky_128(ulong hi, ulong lo,
   }
   return shifted;
 }
+
+/**
+ * @brief Round and pack a double-precision floating-point number.
+ * 
+ * @param sign The sign bit of the double.
+ * @param exp The exponent of the double.
+ * @param mant_ext The extended mantissa with guard, round, and sticky bits.
+ * @return gpga_double - The rounded and packed double-precision floating-point number.
+ */
 inline gpga_double gpga_double_round_pack(uint sign, int exp,
                                           ulong mant_ext) {
   ulong sig = mant_ext >> 3;
@@ -345,6 +796,14 @@ inline gpga_double gpga_double_round_pack(uint sign, int exp,
   return gpga_double_pack(sign, exp_bits,
                           sig & 0x000FFFFFFFFFFFFFul);
 }
+
+/**
+ * @brief Scale a double-precision floating-point number by an exponent.
+ * 
+ * @param x The double-precision floating-point number to scale.
+ * @param exp The exponent to scale by.
+ * @return gpga_double - The scaled double-precision floating-point number.
+ */
 inline gpga_double gpga_double_ldexp(gpga_double x, int exp) {
   if (gpga_double_is_zero(x) || gpga_double_is_inf(x) ||
       gpga_double_is_nan(x)) {
@@ -382,6 +841,14 @@ inline gpga_double gpga_double_ldexp(gpga_double x, int exp) {
   }
   return gpga_double_pack(sign, (uint)(e + 1023), mant);
 }
+
+/**
+ * @brief Decompose a double-precision floating-point number into its mantissa and exponent.
+ * 
+ * @param x The double-precision floating-point number to decompose.
+ * @param exp_out Pointer to an integer where the exponent will be stored.
+ * @return gpga_double - The mantissa of the decomposed number.
+ */
 inline gpga_double gpga_double_frexp(gpga_double x, thread int* exp_out) {
   if (gpga_double_is_zero(x) || gpga_double_is_inf(x) ||
       gpga_double_is_nan(x)) {
@@ -409,6 +876,13 @@ inline gpga_double gpga_double_frexp(gpga_double x, thread int* exp_out) {
   }
   return gpga_double_pack(sign, 1022u, mant);
 }
+
+/**
+ * @brief Convert an unsigned 64-bit integer to a double-precision floating-point number.
+ * 
+ * @param value The unsigned 64-bit integer to convert.
+ * @return gpga_double - The converted double-precision floating-point number.
+ */
 inline gpga_double gpga_double_from_u64(ulong value) {
   if (value == 0ul) {
     return gpga_double_zero(0u);
@@ -439,6 +913,13 @@ inline gpga_double gpga_double_from_u64(ulong value) {
   }
   return gpga_double_pack(0u, (uint)(exp + 1023), mant);
 }
+
+/**
+ * @brief Convert a signed 64-bit integer to a double-precision floating-point number.
+ * 
+ * @param value The signed 64-bit integer to convert.
+ * @return gpga_double - The converted double-precision floating-point number.
+ */
 inline gpga_double gpga_double_from_s64(long value) {
   if (value == 0l) {
     return gpga_double_zero(0u);
@@ -453,12 +934,33 @@ inline gpga_double gpga_double_from_s64(long value) {
   }
   return out;
 }
+
+/**
+ * @brief Convert a 32-bit unsigned integer to a double-precision floating-point number.
+ * 
+ * @param value The 32-bit unsigned integer to convert.
+ * @return gpga_double - The converted double-precision floating-point number.
+ */
 inline gpga_double gpga_double_from_u32(uint value) {
   return gpga_double_from_u64((ulong)value);
 }
+
+/**
+ * @brief Convert a 32-bit signed integer to a double-precision floating-point number.
+ * 
+ * @param value The 32-bit signed integer to convert.
+ * @return gpga_double - The converted double-precision floating-point number.
+ */
 inline gpga_double gpga_double_from_s32(int value) {
   return gpga_double_from_s64((long)value);
 }
+
+/**
+ * @brief Convert a double-precision floating-point number to a signed 64-bit integer.
+ * 
+ * @param d The double-precision floating-point number to convert.
+ * @return long - The converted signed 64-bit integer.
+ */
 inline long gpga_double_to_s64(gpga_double d) {
   if (gpga_double_is_nan(d) || gpga_double_is_inf(d)) {
     return 0l;
@@ -482,9 +984,23 @@ inline long gpga_double_to_s64(gpga_double d) {
   long out = (long)val;
   return sign ? -out : out;
 }
+
+/**
+ * @brief Convert a double-precision floating-point number to a signed 32-bit integer.
+ * 
+ * @param d The double-precision floating-point number to convert.
+ * @return int - The converted signed 32-bit integer.
+ */
 inline int gpga_double_to_s32(gpga_double d) {
   return (int)gpga_double_to_s64(d);
 }
+
+/**
+ * @brief Round a double-precision floating-point number to the nearest signed 64-bit integer.
+ * 
+ * @param d The double-precision floating-point number to round.
+ * @return long - The rounded signed 64-bit integer.
+ */
 inline long gpga_double_round_to_s64(gpga_double d) {
   if (gpga_double_is_nan(d) || gpga_double_is_inf(d)) {
     return 0l;
@@ -527,12 +1043,34 @@ inline long gpga_double_round_to_s64(gpga_double d) {
   long out = (long)int_part;
   return sign ? -out : out;
 }
+
+/**
+ * @brief Negate a double-precision floating-point number.
+ * 
+ * @param d The double-precision floating-point number to negate.
+ * @return gpga_double - The negated double-precision floating-point number.
+ */
 inline gpga_double gpga_double_neg(gpga_double d) {
   return d ^ (1ul << 63);
 }
+
+/**
+ * @brief Negate a double-precision floating-point number. (Alias of gpga_double_neg)
+ * 
+ * @param d The double-precision floating-point number to negate.
+ * @return gpga_double - The negated double-precision floating-point number.
+ */
 inline gpga_double gpga_double_negate(gpga_double d) {
   return gpga_double_neg(d);
 }
+
+/**
+ * @brief Add two double-precision floating-point numbers.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return gpga_double - The sum of a and b.
+ */
 inline gpga_double gpga_double_add(gpga_double a, gpga_double b) {
   if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {
     return gpga_double_nan();
@@ -618,9 +1156,25 @@ inline gpga_double gpga_double_add(gpga_double a, gpga_double b) {
   }
   return gpga_double_round_pack(sign, (int)exp_a, mant_ext);
 }
+
+/**
+ * @brief Subtract two double-precision floating-point numbers.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return gpga_double - The result of a - b.
+ */
 inline gpga_double gpga_double_sub(gpga_double a, gpga_double b) {
   return gpga_double_add(a, gpga_double_neg(b));
 }
+
+/**
+ * @brief Multiply two double-precision floating-point numbers.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return gpga_double - The product of a and b.
+ */
 inline gpga_double gpga_double_mul(gpga_double a, gpga_double b) {
   if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {
     return gpga_double_nan();
@@ -671,6 +1225,14 @@ inline gpga_double gpga_double_mul(gpga_double a, gpga_double b) {
   ulong mant_ext = gpga_shift_right_sticky_128(hi, lo, shift);
   return gpga_double_round_pack(sign, (int)exp, mant_ext);
 }
+
+/**
+ * @brief Divide two mantissas and return the extended mantissa.
+ * 
+ * @param num The numerator mantissa.
+ * @param den The denominator mantissa.
+ * @return ulong - The extended mantissa result of the division.
+ */
 inline ulong gpga_div_mantissa(ulong num, ulong den) {
   if (den == 0ul) {
     return 0ul;
@@ -705,6 +1267,14 @@ inline ulong gpga_div_mantissa(ulong num, ulong den) {
   }
   return quot;
 }
+
+/**
+ * @brief Divide two double-precision floating-point numbers.
+ * 
+ * @param a The numerator double-precision floating-point number.
+ * @param b The denominator double-precision floating-point number.
+ * @return gpga_double - The result of a / b.
+ */
 inline gpga_double gpga_double_div(gpga_double a, gpga_double b) {
   if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {
     return gpga_double_nan();
@@ -762,6 +1332,14 @@ inline gpga_double gpga_double_div(gpga_double a, gpga_double b) {
   }
   return gpga_double_round_pack(sign, (int)exp, mant_ext);
 }
+
+/**
+ * @brief Compare two double-precision floating-point numbers for equality.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return bool - True if a and b are equal, false otherwise.
+ */
 inline bool gpga_double_eq(gpga_double a, gpga_double b) {
   if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {
     return false;
@@ -771,6 +1349,14 @@ inline bool gpga_double_eq(gpga_double a, gpga_double b) {
   }
   return a == b;
 }
+
+/**
+ * @brief Compare two double-precision floating-point numbers for less-than.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return bool - True if a < b, false otherwise.
+ */
 inline bool gpga_double_lt(gpga_double a, gpga_double b) {
   if (gpga_double_is_nan(a) || gpga_double_is_nan(b)) {
     return false;
@@ -790,15 +1376,46 @@ inline bool gpga_double_lt(gpga_double a, gpga_double b) {
   }
   return mag_a < mag_b;
 }
+
+/**
+ * @brief Compare two double-precision floating-point numbers for less-than-or-equal.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return bool - True if a <= b, false otherwise.
+ */
 inline bool gpga_double_le(gpga_double a, gpga_double b) {
   return gpga_double_lt(a, b) || gpga_double_eq(a, b);
 }
+
+/**
+ * @brief Compare two double-precision floating-point numbers for greater-than.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return bool - True if a > b, false otherwise.
+ */
 inline bool gpga_double_gt(gpga_double a, gpga_double b) {
   return gpga_double_lt(b, a);
 }
+
+/**
+ * @brief Compare two double-precision floating-point numbers for greater-than-or-equal.
+ * 
+ * @param a The first double-precision floating-point number.
+ * @param b The second double-precision floating-point number.
+ * @return bool - True if a >= b, false otherwise.
+ */
 inline bool gpga_double_ge(gpga_double a, gpga_double b) {
   return gpga_double_gt(a, b) || gpga_double_eq(a, b);
 }
+
+/**
+ * @brief Compute the floor of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The floor of x.
+ */
 inline gpga_double gpga_double_floor(gpga_double x) {
   if (gpga_double_is_nan(x) || gpga_double_is_inf(x) ||
       gpga_double_is_zero(x)) {
@@ -814,6 +1431,13 @@ inline gpga_double gpga_double_floor(gpga_double x) {
   }
   return t_real;
 }
+
+/**
+ * @brief Compute the ceiling of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The ceiling of x.
+ */
 inline gpga_double gpga_double_ceil(gpga_double x) {
   if (gpga_double_is_nan(x) || gpga_double_is_inf(x) ||
       gpga_double_is_zero(x)) {
@@ -829,18 +1453,44 @@ inline gpga_double gpga_double_ceil(gpga_double x) {
   }
   return t_real;
 }
+
+// Forward declarations for transcendental functions + aliases
+
 inline gpga_double gpga_log_rn(gpga_double x);
 inline gpga_double gpga_log2_rn(gpga_double x);
 inline gpga_double gpga_log10_rn(gpga_double x);
+
+/**
+ * @brief Compute the natural logarithm of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of x.
+ */
 inline gpga_double gpga_double_ln(gpga_double x) {
   return gpga_log_rn(x);
 }
+
+/**
+ * @brief Compute the base-2 logarithm of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-2 logarithm of x.
+ */
 inline gpga_double gpga_double_log2(gpga_double x) {
   return gpga_log2_rn(x);
 }
+
+/**
+ * @brief Compute the base-10 logarithm of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-10 logarithm of x.
+ */
 inline gpga_double gpga_double_log10(gpga_double x) {
   return gpga_log10_rn(x);
 }
+
+// Forward declarations for helper functions used in transcendental functions + aliases
 
 inline gpga_double gpga_exp_rn(gpga_double x);
 inline gpga_double gpga_exp_rd(gpga_double x);
@@ -857,13 +1507,35 @@ inline void gpga_sqrt13(thread gpga_double* resh, thread gpga_double* resm,
                         thread gpga_double* resl, gpga_double x);
 inline gpga_double ReturnRoundToNearest3(gpga_double xh, gpga_double xm,
                                          gpga_double xl);
+
+/**
+ * @brief Compute the exponential of a double-precision floating-point number.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The exponential of the input number.
+ */
 inline gpga_double gpga_double_exp_real(gpga_double x) {
   return gpga_exp_rn(x);
 }
+
 inline gpga_double gpga_expm1_rn(gpga_double x);
+
+/**
+ * @brief Compute the exponential minus one of a double-precision floating-point number.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The exponential minus one of the input number.
+ */
 inline gpga_double gpga_double_expm1(gpga_double x) {
   return gpga_expm1_rn(x);
 }
+
+/**
+ * @brief Compute the square root of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The square root of x.
+ */
 inline gpga_double gpga_double_sqrt(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -881,6 +1553,8 @@ inline gpga_double gpga_double_sqrt(gpga_double x) {
   return ReturnRoundToNearest3(rh, rm, rl);
 }
 
+// Forward declarations for trigonometric functions + aliases
+
 inline gpga_double scs_sin_rn(gpga_double x);
 inline gpga_double scs_cos_rn(gpga_double x);
 inline gpga_double scs_tan_rn(gpga_double x);
@@ -888,28 +1562,79 @@ inline gpga_double gpga_sin_rn(gpga_double x);
 inline gpga_double gpga_cos_rn(gpga_double x);
 inline gpga_double gpga_tan_rn(gpga_double x);
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The sine of x.
+ */
 inline gpga_double gpga_double_sin(gpga_double x) {
   return gpga_sin_rn(x);
 }
+
+/**
+ * @brief Compute the cosine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The cosine of x.
+ */
 inline gpga_double gpga_double_cos(gpga_double x) {
   return gpga_cos_rn(x);
 }
+
+/**
+ * @brief Compute the tangent of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The tangent of x.
+ */
 inline gpga_double gpga_double_tan(gpga_double x) {
   return gpga_tan_rn(x);
 }
+
+// Forward declarations for hyperbolic functions + aliases
+
 inline gpga_double gpga_sinh_rn(gpga_double x);
 inline gpga_double gpga_cosh_rn(gpga_double x);
+
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The hyperbolic sine of x.
+ */
 inline gpga_double gpga_double_sinh(gpga_double x) {
   return gpga_sinh_rn(x);
 }
+
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The hyperbolic cosine of x.
+ */
 inline gpga_double gpga_double_cosh(gpga_double x) {
   return gpga_cosh_rn(x);
 }
+
+/**
+ * @brief Compute the hyperbolic tangent of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The hyperbolic tangent of x.
+ */
 inline gpga_double gpga_double_tanh(gpga_double x) {
   gpga_double sinh = gpga_double_sinh(x);
   gpga_double cosh = gpga_double_cosh(x);
   return gpga_double_div(sinh, cosh);
 }
+
+/**
+ * @brief Compute the arctangent of a double-precision floating-point number using a series expansion.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The arctangent of x.
+ */
 inline gpga_double gpga_double_atan_series(gpga_double x) {
   gpga_double x2 = gpga_double_mul(x, x);
   gpga_double term = x;
@@ -940,9 +1665,22 @@ inline gpga_double gpga_atanpi_rd(gpga_double x);
 inline gpga_double gpga_atanpi_ru(gpga_double x);
 inline gpga_double gpga_atanpi_rz(gpga_double x);
 
+/**
+ * @brief Compute the arctangent of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The arctangent of x.
+ */
 inline gpga_double gpga_double_atan(gpga_double x) {
   return gpga_atan_rn(x);
 }
+
+/**
+ * @brief Compute the arcsine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The arcsine of x.
+ */
 inline gpga_double gpga_double_asin(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -956,15 +1694,37 @@ inline gpga_double gpga_double_asin(gpga_double x) {
   gpga_double ratio = gpga_double_div(x, denom);
   return gpga_double_atan(ratio);
 }
+
+/**
+ * @brief Compute the arccosine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The arccosine of x.
+ */
 inline gpga_double gpga_double_acos(gpga_double x) {
   gpga_double half_pi = gpga_double_const_half_pi();
   return gpga_double_sub(half_pi, gpga_double_asin(x));
 }
+
+/**
+ * @brief Compute the hypotenuse of two double-precision floating-point numbers.
+ * 
+ * @param x The first double-precision floating-point number.
+ * @param y The second double-precision floating-point number.
+ * @return gpga_double - The hypotenuse of x and y.
+ */
 inline gpga_double gpga_double_hypot(gpga_double x, gpga_double y) {
   gpga_double x2 = gpga_double_mul(x, x);
   gpga_double y2 = gpga_double_mul(y, y);
   return gpga_double_sqrt(gpga_double_add(x2, y2));
 }
+
+/**
+ * @brief Compute the inverse hyperbolic sine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The inverse hyperbolic sine of x.
+ */
 inline gpga_double gpga_double_asinh(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -977,6 +1737,13 @@ inline gpga_double gpga_double_asinh(gpga_double x) {
   gpga_double res = gpga_double_ln(gpga_double_add(ax, root));
   return neg ? gpga_double_neg(res) : res;
 }
+
+/**
+ * @brief Compute the inverse hyperbolic cosine of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The inverse hyperbolic cosine of x.
+ */
 inline gpga_double gpga_double_acosh(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -991,6 +1758,13 @@ inline gpga_double gpga_double_acosh(gpga_double x) {
                                      gpga_double_sqrt(xp1));
   return gpga_double_ln(gpga_double_add(x, root));
 }
+
+/**
+ * @brief Compute the inverse hyperbolic tangent of a double-precision floating-point number.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The inverse hyperbolic tangent of x.
+ */
 inline gpga_double gpga_double_atanh(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -1005,6 +1779,14 @@ inline gpga_double gpga_double_atanh(gpga_double x) {
   gpga_double half_val = gpga_double_div(one, gpga_double_from_u32(2u));
   return gpga_double_mul(half_val, gpga_double_ln(gpga_double_div(num, den)));
 }
+
+/**
+ * @brief Compute the arctangent of y/x considering the quadrant.
+ * 
+ * @param y The y-coordinate.
+ * @param x The x-coordinate.
+ * @return gpga_double - The angle in radians between the positive x-axis and the point (x, y).
+ */
 inline gpga_double gpga_double_atan2(gpga_double y, gpga_double x) {
   if (gpga_double_is_nan(x) || gpga_double_is_nan(y)) {
     return gpga_double_nan();
@@ -1026,6 +1808,14 @@ inline gpga_double gpga_double_atan2(gpga_double y, gpga_double x) {
   return gpga_double_sign(y) ? gpga_double_sub(angle, pi)
                              : gpga_double_add(angle, pi);
 }
+
+/**
+ * @brief Compute the power of a double-precision floating-point number raised to an integer exponent.
+ * 
+ * @param base The base double-precision floating-point number.
+ * @param exp The integer exponent.
+ * @return gpga_double - The result of base raised to the power of exp.
+ */
 inline gpga_double gpga_double_pow_int(gpga_double base, long exp) {
   if (exp == 0l) {
     return gpga_double_from_u32(1u);
@@ -1048,7 +1838,17 @@ inline gpga_double gpga_double_pow_int(gpga_double base, long exp) {
   }
   return result;
 }
+
+
 inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y);
+
+/**
+ * @brief Compute the power of a double-precision floating-point number raised to another double-precision floating-point number.
+ * 
+ * @param base The base double-precision floating-point number.
+ * @param exp The exponent double-precision floating-point number.
+ * @return gpga_double - The result of base raised to the power of exp.
+ */
 inline gpga_double gpga_double_pow(gpga_double base, gpga_double exp) {
   return gpga_pow_rn(base, exp);
 }
@@ -1056,22 +1856,43 @@ inline gpga_double gpga_double_pow(gpga_double base, gpga_double exp) {
 // ---------------------------------------------------------------------------
 // CRlibm internal helpers (double-double / triple-double scaffolding).
 
+/**
+ * @brief Double-double representation with high and low parts.
+ * 
+ */
 struct GpgaDd {
   gpga_double hi;
   gpga_double lo;
 };
 
+/**
+ * @brief Triple-double representation with high, middle, and low parts.
+ * 
+ */
 struct GpgaTd {
   gpga_double hi;
   gpga_double mid;
   gpga_double lo;
 };
 
+/**
+ * @brief Return Dekker splitting constant (2^27 + 1).
+ * 
+ * @return gpga_double - Dekker split constant.
+ */
 inline gpga_double gpga_double_dekker_const() {
   // 2^27 + 1, used for Dekker splitting.
   return gpga_double_from_u32(134217729u);
 }
 
+/**
+ * @brief Error-free sum of two doubles (hi/lo parts).
+ * 
+ * @param s Output high part of the sum.
+ * @param r Output low part (roundoff) of the sum.
+ * @param a First addend.
+ * @param b Second addend.
+ */
 inline void Add12(thread gpga_double* s, thread gpga_double* r,
                   gpga_double a, gpga_double b) {
   gpga_double sum = gpga_double_add(a, b);
@@ -1080,6 +1901,14 @@ inline void Add12(thread gpga_double* s, thread gpga_double* r,
   *r = gpga_double_sub(b, z);
 }
 
+/**
+ * @brief Error-free sum using a conditional algorithm.
+ * 
+ * @param s Output high part of the sum.
+ * @param r Output low part (roundoff) of the sum.
+ * @param a First addend.
+ * @param b Second addend.
+ */
 inline void Add12Cond(thread gpga_double* s, thread gpga_double* r,
                       gpga_double a, gpga_double b) {
   gpga_double sum = gpga_double_add(a, b);
@@ -1091,6 +1920,16 @@ inline void Add12Cond(thread gpga_double* s, thread gpga_double* r,
   *r = gpga_double_add(u4, u3);
 }
 
+/**
+ * @brief Add two double-double numbers.
+ * 
+ * @param zh Output high part of the sum.
+ * @param zl Output low part of the sum.
+ * @param xh High part of the first addend.
+ * @param xl Low part of the first addend.
+ * @param yh High part of the second addend.
+ * @param yl Low part of the second addend.
+ */
 inline void Add22(thread gpga_double* zh, thread gpga_double* zl,
                   gpga_double xh, gpga_double xl,
                   gpga_double yh, gpga_double yl) {
@@ -1102,6 +1941,16 @@ inline void Add22(thread gpga_double* zh, thread gpga_double* zl,
   *zl = gpga_double_add(gpga_double_sub(r, z), s);
 }
 
+/**
+ * @brief Add two double-double numbers using a conditional algorithm.
+ * 
+ * @param zh Output high part of the sum.
+ * @param zl Output low part of the sum.
+ * @param xh High part of the first addend.
+ * @param xl Low part of the first addend.
+ * @param yh High part of the second addend.
+ * @param yl Low part of the second addend.
+ */
 inline void Add22Cond(thread gpga_double* zh, thread gpga_double* zl,
                       gpga_double xh, gpga_double xl,
                       gpga_double yh, gpga_double yl) {
@@ -1113,6 +1962,14 @@ inline void Add22Cond(thread gpga_double* zh, thread gpga_double* zl,
   Add12(zh, zl, v1, v4);
 }
 
+/**
+ * @brief Error-free product of two doubles using Dekker splitting.
+ * 
+ * @param rh Output high part of the product.
+ * @param rl Output low part (roundoff) of the product.
+ * @param u First factor.
+ * @param v Second factor.
+ */
 inline void Mul12(thread gpga_double* rh, thread gpga_double* rl,
                   gpga_double u, gpga_double v) {
   gpga_double c = gpga_double_dekker_const();
@@ -1133,6 +1990,14 @@ inline void Mul12(thread gpga_double* rh, thread gpga_double* rl,
   *rl = err;
 }
 
+/**
+ * @brief Compute a*b + c using double-double steps and return the high part.
+ * 
+ * @param a Multiplicand.
+ * @param b Multiplier.
+ * @param c Addend.
+ * @return gpga_double - High part of the fused result.
+ */
 inline gpga_double gpga_double_fma(gpga_double a, gpga_double b,
                                    gpga_double c) {
   gpga_double prod_hi = gpga_double_zero(0u);
@@ -1144,11 +2009,29 @@ inline gpga_double gpga_double_fma(gpga_double a, gpga_double b,
   return sum_hi;
 }
 
+/**
+ * @brief Conditional wrapper for Mul12.
+ * 
+ * @param rh Output high part of the product.
+ * @param rl Output low part (roundoff) of the product.
+ * @param a First factor.
+ * @param b Second factor.
+ */
 inline void Mul12Cond(thread gpga_double* rh, thread gpga_double* rl,
                       gpga_double a, gpga_double b) {
   Mul12(rh, rl, a, b);
 }
 
+/**
+ * @brief Multiply two double-double numbers.
+ * 
+ * @param zh Output high part of the product.
+ * @param zl Output low part of the product.
+ * @param xh High part of the first factor.
+ * @param xl Low part of the first factor.
+ * @param yh High part of the second factor.
+ * @param yl Low part of the second factor.
+ */
 inline void Mul22(thread gpga_double* zh, thread gpga_double* zl,
                   gpga_double xh, gpga_double xl,
                   gpga_double yh, gpga_double yl) {
@@ -1161,12 +2044,30 @@ inline void Mul22(thread gpga_double* zh, thread gpga_double* zl,
   Add12(zh, zl, mh, ml);
 }
 
+/**
+ * @brief Conditional wrapper for Mul22.
+ * 
+ * @param zh Output high part of the product.
+ * @param zl Output low part of the product.
+ * @param xh High part of the first factor.
+ * @param xl Low part of the first factor.
+ * @param yh High part of the second factor.
+ * @param yl Low part of the second factor.
+ */
 inline void Mul22Cond(thread gpga_double* zh, thread gpga_double* zl,
                       gpga_double xh, gpga_double xl,
                       gpga_double yh, gpga_double yl) {
   Mul22(zh, zl, xh, xl, yh, yl);
 }
 
+/**
+ * @brief Fast2Sum split of a sum into high/low parts.
+ * 
+ * @param s Output high part of the sum.
+ * @param r Output low part (roundoff) of the sum.
+ * @param a First addend.
+ * @param b Second addend.
+ */
 inline void Fast2Sum(thread gpga_double* s, thread gpga_double* r,
                      gpga_double a, gpga_double b) {
   gpga_double sum = gpga_double_add(a, b);
@@ -1175,6 +2076,16 @@ inline void Fast2Sum(thread gpga_double* s, thread gpga_double* r,
   *r = gpga_double_sub(b, z);
 }
 
+/**
+ * @brief Sum three doubles into an ordered triple using Fast2Sum.
+ * 
+ * @param r1 Output high part.
+ * @param r2 Output middle part.
+ * @param r3 Output low part.
+ * @param a First addend.
+ * @param b Second addend.
+ * @param c Third addend.
+ */
 inline void Fast3Sum(thread gpga_double* r1, thread gpga_double* r2,
                      thread gpga_double* r3, gpga_double a, gpga_double b,
                      gpga_double c) {
@@ -1186,6 +2097,15 @@ inline void Fast3Sum(thread gpga_double* r1, thread gpga_double* r2,
   Fast2Sum(r2, r3, w, v);
 }
 
+/**
+ * @brief Multiply a double by a double-double.
+ * 
+ * @param resh Output high part of the product.
+ * @param resl Output low part of the product.
+ * @param a Scalar factor.
+ * @param bh High part of double-double factor.
+ * @param bl Low part of double-double factor.
+ */
 inline void Mul122(thread gpga_double* resh, thread gpga_double* resl,
                    gpga_double a, gpga_double bh, gpga_double bl) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1196,6 +2116,17 @@ inline void Mul122(thread gpga_double* resh, thread gpga_double* resl,
   Add12(resh, resl, t1, t4);
 }
 
+/**
+ * @brief Compute (ch, cl) + a * (bh, bl) as a double-double.
+ * 
+ * @param resh Output high part of the result.
+ * @param resl Output low part of the result.
+ * @param ch High part of the addend.
+ * @param cl Low part of the addend.
+ * @param a Scalar factor.
+ * @param bh High part of the double-double factor.
+ * @param bl Low part of the double-double factor.
+ */
 inline void MulAdd212(thread gpga_double* resh, thread gpga_double* resl,
                       gpga_double ch, gpga_double cl, gpga_double a,
                       gpga_double bh, gpga_double bl) {
@@ -1216,6 +2147,18 @@ inline void MulAdd212(thread gpga_double* resh, thread gpga_double* resl,
   Add12(resh, resl, t3, t8);
 }
 
+/**
+ * @brief Compute (ch, cl) + (ah, al) * (bh, bl) as a double-double.
+ * 
+ * @param resh Output high part of the result.
+ * @param resl Output low part of the result.
+ * @param ch High part of the addend.
+ * @param cl Low part of the addend.
+ * @param ah High part of the first factor.
+ * @param al Low part of the first factor.
+ * @param bh High part of the second factor.
+ * @param bl Low part of the second factor.
+ */
 inline void MulAdd22(thread gpga_double* resh, thread gpga_double* resl,
                      gpga_double ch, gpga_double cl,
                      gpga_double ah, gpga_double al,
@@ -1235,6 +2178,15 @@ inline void MulAdd22(thread gpga_double* resh, thread gpga_double* resl,
   Add12(resh, resl, t3, t10);
 }
 
+/**
+ * @brief Add a double to a double-double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resl Output low part of the sum.
+ * @param a Scalar addend.
+ * @param bh High part of double-double addend.
+ * @param bl Low part of double-double addend.
+ */
 inline void Add122(thread gpga_double* resh, thread gpga_double* resl,
                    gpga_double a, gpga_double bh, gpga_double bl) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1244,6 +2196,15 @@ inline void Add122(thread gpga_double* resh, thread gpga_double* resl,
   Add12(resh, resl, t1, t3);
 }
 
+/**
+ * @brief Add a double to a double-double using a conditional algorithm.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resl Output low part of the sum.
+ * @param a Scalar addend.
+ * @param bh High part of double-double addend.
+ * @param bl Low part of double-double addend.
+ */
 inline void Add122Cond(thread gpga_double* resh, thread gpga_double* resl,
                        gpga_double a, gpga_double bh, gpga_double bl) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1253,6 +2214,15 @@ inline void Add122Cond(thread gpga_double* resh, thread gpga_double* resl,
   Add12(resh, resl, t1, t3);
 }
 
+/**
+ * @brief Add a double-double to a double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of double-double addend.
+ * @param al Low part of double-double addend.
+ * @param b Scalar addend.
+ */
 inline void Add212(thread gpga_double* resh, thread gpga_double* resl,
                    gpga_double ah, gpga_double al, gpga_double b) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1262,6 +2232,16 @@ inline void Add212(thread gpga_double* resh, thread gpga_double* resl,
   Add12(resh, resl, t1, t3);
 }
 
+/**
+ * @brief Divide one double-double by another.
+ * 
+ * @param pzh Output high part of the quotient.
+ * @param pzl Output low part of the quotient.
+ * @param xh High part of the numerator.
+ * @param xl Low part of the numerator.
+ * @param yh High part of the denominator.
+ * @param yl Low part of the denominator.
+ */
 inline void Div22(thread gpga_double* pzh, thread gpga_double* pzl,
                   gpga_double xh, gpga_double xl,
                   gpga_double yh, gpga_double yl) {
@@ -1279,6 +2259,16 @@ inline void Div22(thread gpga_double* pzh, thread gpga_double* pzl,
   *pzl = gpga_double_add(gpga_double_sub(ch, z), cl);
 }
 
+/**
+ * @brief Renormalize triple-double components into non-overlapping parts.
+ * 
+ * @param resh Output high part.
+ * @param resm Output middle part.
+ * @param resl Output low part.
+ * @param ah Input high part.
+ * @param am Input middle part.
+ * @param al Input low part.
+ */
 inline void Renormalize3(thread gpga_double* resh, thread gpga_double* resm,
                          thread gpga_double* resl, gpga_double ah,
                          gpga_double am, gpga_double al) {
@@ -1290,6 +2280,17 @@ inline void Renormalize3(thread gpga_double* resh, thread gpga_double* resm,
   Add12(resm, resl, t2l, t1l);
 }
 
+/**
+ * @brief Multiply two double-doubles into a triple-double.
+ * 
+ * @param resh Output high part.
+ * @param resm Output middle part.
+ * @param resl Output low part.
+ * @param ah High part of first factor.
+ * @param al Low part of first factor.
+ * @param bh High part of second factor.
+ * @param bl Low part of second factor.
+ */
 inline void Mul23(thread gpga_double* resh, thread gpga_double* resm,
                   thread gpga_double* resl, gpga_double ah, gpga_double al,
                   gpga_double bh, gpga_double bl) {
@@ -1312,6 +2313,18 @@ inline void Mul23(thread gpga_double* resh, thread gpga_double* resm,
   Add22Cond(resm, resl, t7, t8, t9, t10);
 }
 
+/**
+ * @brief Multiply a double-double by a triple-double.
+ * 
+ * @param resh Output high part.
+ * @param resm Output middle part.
+ * @param resl Output low part.
+ * @param ah High part of double-double factor.
+ * @param al Low part of double-double factor.
+ * @param bh High part of triple-double factor.
+ * @param bm Middle part of triple-double factor.
+ * @param bl Low part of triple-double factor.
+ */
 inline void Mul233(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double ah, gpga_double al,
                    gpga_double bh, gpga_double bm, gpga_double bl) {
@@ -1346,6 +2359,19 @@ inline void Mul233(thread gpga_double* resh, thread gpga_double* resm,
   Add22Cond(resm, resl, t17, t18, t15, t16);
 }
 
+/**
+ * @brief Add two triple-double numbers.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of the first addend.
+ * @param am Middle part of the first addend.
+ * @param al Low part of the first addend.
+ * @param bh High part of the second addend.
+ * @param bm Middle part of the second addend.
+ * @param bl Low part of the second addend.
+ */
 inline void Add33(thread gpga_double* resh, thread gpga_double* resm,
                   thread gpga_double* resl, gpga_double ah, gpga_double am,
                   gpga_double al, gpga_double bh, gpga_double bm,
@@ -1367,6 +2393,19 @@ inline void Add33(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t7, t8);
 }
 
+/**
+ * @brief Add two triple-double numbers using a conditional algorithm.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of the first addend.
+ * @param am Middle part of the first addend.
+ * @param al Low part of the first addend.
+ * @param bh High part of the second addend.
+ * @param bm Middle part of the second addend.
+ * @param bl Low part of the second addend.
+ */
 inline void Add33Cond(thread gpga_double* resh, thread gpga_double* resm,
                       thread gpga_double* resl, gpga_double ah,
                       gpga_double am, gpga_double al, gpga_double bh,
@@ -1388,6 +2427,18 @@ inline void Add33Cond(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t7, t8);
 }
 
+/**
+ * @brief Add a double-double to a triple-double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of the double-double addend.
+ * @param al Low part of the double-double addend.
+ * @param bh High part of the triple-double addend.
+ * @param bm Middle part of the triple-double addend.
+ * @param bl Low part of the triple-double addend.
+ */
 inline void Add233(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double ah, gpga_double al,
                    gpga_double bh, gpga_double bm, gpga_double bl) {
@@ -1406,6 +2457,18 @@ inline void Add233(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t4, t7);
 }
 
+/**
+ * @brief Add a double-double to a triple-double using a conditional algorithm.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of the double-double addend.
+ * @param al Low part of the double-double addend.
+ * @param bh High part of the triple-double addend.
+ * @param bm Middle part of the triple-double addend.
+ * @param bl Low part of the triple-double addend.
+ */
 inline void Add233Cond(thread gpga_double* resh, thread gpga_double* resm,
                        thread gpga_double* resl, gpga_double ah, gpga_double al,
                        gpga_double bh, gpga_double bm, gpga_double bl) {
@@ -1422,6 +2485,16 @@ inline void Add233Cond(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t4, t7);
 }
 
+/**
+ * @brief Add a double to a double-double, producing a triple-double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param a Scalar addend.
+ * @param bh High part of double-double addend.
+ * @param bl Low part of double-double addend.
+ */
 inline void Add123(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double a, gpga_double bh,
                    gpga_double bl) {
@@ -1430,6 +2503,17 @@ inline void Add123(thread gpga_double* resh, thread gpga_double* resm,
   Add12(resm, resl, t1, bl);
 }
 
+/**
+ * @brief Add a double to a triple-double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param a Scalar addend.
+ * @param bh High part of triple-double addend.
+ * @param bm Middle part of triple-double addend.
+ * @param bl Low part of triple-double addend.
+ */
 inline void Add133(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double a, gpga_double bh,
                    gpga_double bm, gpga_double bl) {
@@ -1442,6 +2526,17 @@ inline void Add133(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t2, t4);
 }
 
+/**
+ * @brief Add a double to a triple-double using a conditional algorithm.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param a Scalar addend.
+ * @param bh High part of triple-double addend.
+ * @param bm Middle part of triple-double addend.
+ * @param bl Low part of triple-double addend.
+ */
 inline void Add133Cond(thread gpga_double* resh, thread gpga_double* resm,
                        thread gpga_double* resl, gpga_double a, gpga_double bh,
                        gpga_double bm, gpga_double bl) {
@@ -1454,6 +2549,16 @@ inline void Add133Cond(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t2, t4);
 }
 
+/**
+ * @brief Add a double-double to a double, producing a triple-double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of double-double addend.
+ * @param al Low part of double-double addend.
+ * @param b Scalar addend.
+ */
 inline void Add213(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double ah, gpga_double al,
                    gpga_double b) {
@@ -1462,6 +2567,17 @@ inline void Add213(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, al, b);
 }
 
+/**
+ * @brief Add two double-doubles, producing a triple-double.
+ * 
+ * @param resh Output high part of the sum.
+ * @param resm Output middle part of the sum.
+ * @param resl Output low part of the sum.
+ * @param ah High part of the first addend.
+ * @param al Low part of the first addend.
+ * @param bh High part of the second addend.
+ * @param bl Low part of the second addend.
+ */
 inline void Add23(thread gpga_double* resh, thread gpga_double* resm,
                   thread gpga_double* resl, gpga_double ah, gpga_double al,
                   gpga_double bh, gpga_double bl) {
@@ -1478,6 +2594,19 @@ inline void Add23(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t4, t6);
 }
 
+/**
+ * @brief Multiply two triple-double numbers.
+ * 
+ * @param resh Output high part of the product.
+ * @param resm Output middle part of the product.
+ * @param resl Output low part of the product.
+ * @param ah High part of the first factor.
+ * @param am Middle part of the first factor.
+ * @param al Low part of the first factor.
+ * @param bh High part of the second factor.
+ * @param bm Middle part of the second factor.
+ * @param bl Low part of the second factor.
+ */
 inline void Mul33(thread gpga_double* resh, thread gpga_double* resm,
                   thread gpga_double* resl, gpga_double ah, gpga_double am,
                   gpga_double al, gpga_double bh, gpga_double bm,
@@ -1523,6 +2652,17 @@ inline void Mul33(thread gpga_double* resh, thread gpga_double* resm,
   Add22Cond(resm, resl, t21, t22, t19, t20);
 }
 
+/**
+ * @brief Multiply a double by a triple-double.
+ * 
+ * @param resh Output high part of the product.
+ * @param resm Output middle part of the product.
+ * @param resl Output low part of the product.
+ * @param a Scalar factor.
+ * @param bh High part of triple-double factor.
+ * @param bm Middle part of triple-double factor.
+ * @param bl Low part of triple-double factor.
+ */
 inline void Mul133(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double a, gpga_double bh,
                    gpga_double bm, gpga_double bl) {
@@ -1543,6 +2683,16 @@ inline void Mul133(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t9, t10);
 }
 
+/**
+ * @brief Multiply a double by a double-double, producing a triple-double.
+ * 
+ * @param resh Output high part of the product.
+ * @param resm Output middle part of the product.
+ * @param resl Output low part of the product.
+ * @param a Scalar factor.
+ * @param bh High part of double-double factor.
+ * @param bl Low part of double-double factor.
+ */
 inline void Mul123(thread gpga_double* resh, thread gpga_double* resm,
                    thread gpga_double* resl, gpga_double a, gpga_double bh,
                    gpga_double bl) {
@@ -1559,6 +2709,16 @@ inline void Mul123(thread gpga_double* resh, thread gpga_double* resm,
   Add12Cond(resm, resl, t5, t6);
 }
 
+/**
+ * @brief Compute the reciprocal of a triple-double number.
+ * 
+ * @param resh Output high part of the reciprocal.
+ * @param resm Output middle part of the reciprocal.
+ * @param resl Output low part of the reciprocal.
+ * @param dh High part of the input.
+ * @param dm Middle part of the input.
+ * @param dl Low part of the input.
+ */
 inline void Recpr33(thread gpga_double* resh, thread gpga_double* resm,
                     thread gpga_double* resl, gpga_double dh, gpga_double dm,
                     gpga_double dl) {
@@ -1607,6 +2767,13 @@ inline void Recpr33(thread gpga_double* resh, thread gpga_double* resm,
   Renormalize3(resh, resm, resl, rec_t21, rec_t22, rec_t23);
 }
 
+/**
+ * @brief Compute an unfiltered double-double sqrt approximation.
+ * 
+ * @param resh Output high part of sqrt(x).
+ * @param resl Output low part of sqrt(x).
+ * @param x Input value.
+ */
 inline void gpga_sqrt12_64_unfiltered(thread gpga_double* resh,
                                       thread gpga_double* resl,
                                       gpga_double x) {
@@ -1675,6 +2842,14 @@ inline void gpga_sqrt12_64_unfiltered(thread gpga_double* resh,
   *resl = gpga_double_mul(scale, srtml);
 }
 
+/**
+ * @brief Compute a triple-double sqrt approximation.
+ * 
+ * @param resh Output high part of sqrt(x).
+ * @param resm Output middle part of sqrt(x).
+ * @param resl Output low part of sqrt(x).
+ * @param x Input value.
+ */
 inline void gpga_sqrt13(thread gpga_double* resh, thread gpga_double* resm,
                         thread gpga_double* resl, gpga_double x) {
   if (gpga_double_is_zero(x)) {
@@ -1802,14 +2977,34 @@ inline void gpga_sqrt13(thread gpga_double* resh, thread gpga_double* resm,
   *resl = gpga_double_mul(scale, srtml);
 }
 
+/**
+ * @brief Increment the raw bits of a gpga_double by 1. Warning: does not honor IEEE 754 semantics.
+ * 
+ * @param x The gpga_double to increment.
+ * @return gpga_double - The incremented gpga_double.
+ */
 inline gpga_double gpga_double_raw_inc(gpga_double x) {
   return x + 1ul;
 }
 
+/**
+ * @brief Decrement the raw bits of a gpga_double by 1. Warning: does not honor IEEE 754 semantics.
+ * 
+ * @param x The gpga_double to decrement.
+ * @return gpga_double - The decremented gpga_double.
+ */
 inline gpga_double gpga_double_raw_dec(gpga_double x) {
   return x - 1ul;
 }
 
+/**
+ * @brief Rounds to nearest, ties to even for a triple-double represented by (xh, xm, xl).
+ * 
+ * @param xh The high part of the triple-double.
+ * @param xm The middle part of the triple-double.
+ * @param xl The low part of the triple-double.
+ * @return gpga_double - The rounded gpga_double.
+ */
 inline gpga_double ReturnRoundToNearest3(gpga_double xh, gpga_double xm,
                                          gpga_double xl) {
   gpga_double t1 = gpga_double_raw_dec(xh);
@@ -1832,6 +3027,14 @@ inline gpga_double ReturnRoundToNearest3(gpga_double xh, gpga_double xm,
   return xh;
 }
 
+/**
+ * @brief Rounds to nearest, ties to other for a triple-double represented by (xh, xm, xl).
+ * 
+ * @param xh The high part of the triple-double.
+ * @param xm The middle part of the triple-double.
+ * @param xl The low part of the triple-double.
+ * @return gpga_double - The rounded gpga_double.
+ */
 inline gpga_double ReturnRoundToNearest3Other(gpga_double xh, gpga_double xm,
                                               gpga_double xl) {
   gpga_double t3 = gpga_double_zero(0u);
@@ -1851,6 +3054,14 @@ inline gpga_double ReturnRoundToNearest3Other(gpga_double xh, gpga_double xm,
   return gpga_double_add(xh, t3);
 }
 
+/**
+ * @brief Round a triple-double upward (toward +inf).
+ * 
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ * @return gpga_double - Rounded value.
+ */
 inline gpga_double ReturnRoundUpwards3(gpga_double xh, gpga_double xm,
                                        gpga_double xl) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1866,6 +3077,14 @@ inline gpga_double ReturnRoundUpwards3(gpga_double xh, gpga_double xm,
   return t1;
 }
 
+/**
+ * @brief Round a triple-double downward (toward -inf).
+ * 
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ * @return gpga_double - Rounded value.
+ */
 inline gpga_double ReturnRoundDownwards3(gpga_double xh, gpga_double xm,
                                          gpga_double xl) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1881,6 +3100,14 @@ inline gpga_double ReturnRoundDownwards3(gpga_double xh, gpga_double xm,
   return t1;
 }
 
+/**
+ * @brief Round a triple-double toward zero.
+ * 
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ * @return gpga_double - Rounded value.
+ */
 inline gpga_double ReturnRoundTowardsZero3(gpga_double xh, gpga_double xm,
                                            gpga_double xl) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1899,6 +3126,15 @@ inline gpga_double ReturnRoundTowardsZero3(gpga_double xh, gpga_double xm,
   return t1;
 }
 
+/**
+ * @brief Round a triple-double upward with an unfiltered error check.
+ * 
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ * @param wca Scaling factor used for the unfiltered rounding check.
+ * @return gpga_double - Rounded value.
+ */
 inline gpga_double ReturnRoundUpwards3Unfiltered(gpga_double xh, gpga_double xm,
                                                  gpga_double xl,
                                                  gpga_double wca) {
@@ -1920,6 +3156,15 @@ inline gpga_double ReturnRoundUpwards3Unfiltered(gpga_double xh, gpga_double xm,
   return t1;
 }
 
+/**
+ * @brief Round a triple-double downward with an unfiltered error check.
+ * 
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ * @param wca Scaling factor used for the unfiltered rounding check.
+ * @return gpga_double - Rounded value.
+ */
 inline gpga_double ReturnRoundDownwards3Unfiltered(
     gpga_double xh, gpga_double xm, gpga_double xl, gpga_double wca) {
   gpga_double t1 = gpga_double_zero(0u);
@@ -1940,6 +3185,15 @@ inline gpga_double ReturnRoundDownwards3Unfiltered(
   return t1;
 }
 
+/**
+ * @brief Round a triple-double toward zero with an unfiltered error check.
+ * 
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ * @param wca Scaling factor used for the unfiltered rounding check.
+ * @return gpga_double - Rounded value.
+ */
 inline gpga_double ReturnRoundTowardsZero3Unfiltered(
     gpga_double xh, gpga_double xm, gpga_double xl, gpga_double wca) {
   if (gpga_double_gt(xh, gpga_double_zero(0u))) {
@@ -1948,26 +3202,67 @@ inline gpga_double ReturnRoundTowardsZero3Unfiltered(
   return ReturnRoundUpwards3Unfiltered(xh, xm, xl, wca);
 }
 
+/**
+ * @brief Store round-to-nearest result for a triple-double.
+ * 
+ * @param res Output rounded value.
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ */
 inline void RoundToNearest3(thread gpga_double* res, gpga_double xh,
                             gpga_double xm, gpga_double xl) {
   *res = ReturnRoundToNearest3(xh, xm, xl);
 }
 
+/**
+ * @brief Store upward-rounded result for a triple-double.
+ * 
+ * @param res Output rounded value.
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ */
 inline void RoundUpwards3(thread gpga_double* res, gpga_double xh,
                           gpga_double xm, gpga_double xl) {
   *res = ReturnRoundUpwards3(xh, xm, xl);
 }
 
+/**
+ * @brief Store downward-rounded result for a triple-double.
+ * 
+ * @param res Output rounded value.
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ */
 inline void RoundDownwards3(thread gpga_double* res, gpga_double xh,
                             gpga_double xm, gpga_double xl) {
   *res = ReturnRoundDownwards3(xh, xm, xl);
 }
 
+/**
+ * @brief Store round-toward-zero result for a triple-double.
+ * 
+ * @param res Output rounded value.
+ * @param xh High part.
+ * @param xm Middle part.
+ * @param xl Low part.
+ */
 inline void RoundTowardsZero3(thread gpga_double* res, gpga_double xh,
                               gpga_double xm, gpga_double xl) {
   *res = ReturnRoundTowardsZero3(xh, xm, xl);
 }
 
+/**
+ * @brief Test rounding uncertainty and return round-up result when needed.
+ * 
+ * @param yh High part.
+ * @param yl Low part.
+ * @param eps Error threshold.
+ * @param out Output rounded value when a decision is made.
+ * @return bool - True if a rounding decision was made, false otherwise.
+ */
 inline bool gpga_test_and_return_ru(gpga_double yh, gpga_double yl,
                                     gpga_double eps,
                                     thread gpga_double* out) {
@@ -1991,6 +3286,15 @@ inline bool gpga_test_and_return_ru(gpga_double yh, gpga_double yl,
   return false;
 }
 
+/**
+ * @brief Test rounding uncertainty and return round-down result when needed.
+ * 
+ * @param yh High part.
+ * @param yl Low part.
+ * @param eps Error threshold.
+ * @param out Output rounded value when a decision is made.
+ * @return bool - True if a rounding decision was made, false otherwise.
+ */
 inline bool gpga_test_and_return_rd(gpga_double yh, gpga_double yl,
                                     gpga_double eps,
                                     thread gpga_double* out) {
@@ -2014,6 +3318,15 @@ inline bool gpga_test_and_return_rd(gpga_double yh, gpga_double yl,
   return false;
 }
 
+/**
+ * @brief Test rounding uncertainty and return round-toward-zero result when needed.
+ * 
+ * @param yh High part.
+ * @param yl Low part.
+ * @param eps Error threshold.
+ * @param out Output rounded value when a decision is made.
+ * @return bool - True if a rounding decision was made, false otherwise.
+ */
 inline bool gpga_test_and_return_rz(gpga_double yh, gpga_double yl,
                                     gpga_double eps,
                                     thread gpga_double* out) {
@@ -2038,45 +3351,86 @@ inline bool gpga_test_and_return_rz(gpga_double yh, gpga_double yl,
 
 
 // ---------------------------------------------------------------------------
-// SCS multi-precision (base 2^30) support for CRlibm.
+/**
+ * @brief SCS multi-precision (base 2^30) support for CRlibm.
+ * 
+ * Provides the SCS representation, helpers, and lookup tables used for
+ * CRlibm-style range reduction and polynomial evaluation.
+ */
+/** @brief Number of 30-bit limbs in an SCS value. */
 #define SCS_NB_WORDS 8
+/** @brief Limb size in bits for SCS values. */
 #define SCS_NB_BITS 30
+/** @brief Base (radix) for SCS limbs. */
 #define SCS_RADIX ((uint)(1u << SCS_NB_BITS))
+/** @brief Mask for extracting one SCS limb. */
 #define SCS_MASK_RADIX (SCS_RADIX - 1u)
+/** @brief Maximum range used for SCS normalization. */
 #define SCS_MAX_RANGE 32
 
+/**
+ * @brief SCS multi-precision value in base 2^30.
+ * 
+ */
 struct scs {
-  uint h_word[SCS_NB_WORDS];
-  gpga_double exception;
-  int index;
-  int sign;
+  uint h_word[SCS_NB_WORDS]; /**< Limb array, most significant first. */
+  gpga_double exception; /**< Cached double or exception sentinel. */
+  int index; /**< Exponent/index for the SCS value. */
+  int sign; /**< Sign (+1 or -1). */
 };
 
+/** @brief Alias for struct scs. */
 typedef struct scs scs;
+/** @brief Thread-addressable pointer to scs. */
 typedef thread scs* scs_ptr;
+/** @brief Constant pointer to scs. */
 typedef constant scs* scs_const_ptr;
+/** @brief Single-element array wrapper used by SCS APIs. */
 typedef struct scs scs_t[1];
 
+/** @brief Access result limb array. */
 #define R_HW result->h_word
+/** @brief Access result sign. */
 #define R_SGN result->sign
+/** @brief Access result index. */
 #define R_IND result->index
+/** @brief Access result exception. */
 #define R_EXP result->exception
 
+/** @brief Access x limb array. */
 #define X_HW x->h_word
+/** @brief Access x sign. */
 #define X_SGN x->sign
+/** @brief Access x index. */
 #define X_IND x->index
+/** @brief Access x exception. */
 #define X_EXP x->exception
 
+/** @brief Access y limb array. */
 #define Y_HW y->h_word
+/** @brief Access y sign. */
 #define Y_SGN y->sign
+/** @brief Access y index. */
 #define Y_IND y->index
+/** @brief Access y exception. */
 #define Y_EXP y->exception
 
+/** @brief Access z limb array. */
 #define Z_HW z->h_word
+/** @brief Access z sign. */
 #define Z_SGN z->sign
+/** @brief Access z index. */
 #define Z_IND z->index
+/** @brief Access z exception. */
 #define Z_EXP z->exception
 
+/**
+ * @brief Propagate carry for a limb pair in base 2^SCS_NB_BITS.
+ * 
+ * @param r1 Upper limb (reduced in-place).
+ * @param r0 Lower limb (receives carry).
+ * @param tmp Temporary variable.
+ */
 #define SCS_CARRY_PROPAGATE(r1, r0, tmp) \
   {                                     \
     tmp = r1 >> SCS_NB_BITS;            \
@@ -2084,15 +3438,76 @@ typedef struct scs scs_t[1];
     r1 -= (tmp << SCS_NB_BITS);         \
   }
 
+/**
+ * @brief Copy a constant SCS value into a mutable result.
+ * 
+ * @param result Destination SCS value.
+ * @param src Source constant SCS value.
+ */
 inline void scs_set_const(thread scs* result, scs_const_ptr src);
+/**
+ * @brief Copy one SCS value into another.
+ * 
+ * @param result Destination SCS value.
+ * @param x Source SCS value.
+ */
 inline void scs_set(scs_ptr result, scs_ptr x);
+/**
+ * @brief Set an SCS value from a signed integer.
+ * 
+ * @param result Destination SCS value.
+ * @param x Signed integer input.
+ */
 inline void scs_set_si(scs_ptr result, int x);
+/**
+ * @brief Set an SCS value from a double-precision input.
+ * 
+ * @param result Destination SCS value.
+ * @param x Double-precision input.
+ */
 inline void scs_set_d(scs_ptr result, gpga_double x);
+/**
+ * @brief Convert an SCS value to double.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d(thread gpga_double* result, scs_ptr x);
+/**
+ * @brief Return the comparison of absolute values for two SCS numbers.
+ * 
+ * @param a First SCS value.
+ * @param b Second SCS value.
+ * @return int - Comparison result (<0, 0, >0).
+ */
 inline int scs_cmp_abs(scs_ptr a, scs_ptr b);
+/**
+ * @brief Convert an SCS value to double with round-to-nearest.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_nearest(thread gpga_double* result, scs_ptr x);
+/**
+ * @brief Convert an SCS value to double rounded toward -inf.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_minf(thread gpga_double* result, scs_ptr x);
+/**
+ * @brief Convert an SCS value to double rounded toward +inf.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_pinf(thread gpga_double* result, scs_ptr x);
+/**
+ * @brief Convert an SCS value to double rounded toward zero.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_zero(thread gpga_double* result, scs_ptr x);
 inline void scs_add(scs_ptr result, scs_ptr x, scs_ptr y);
 inline void scs_add(scs_ptr result, scs_const_ptr x, scs_ptr y);
@@ -2106,17 +3521,48 @@ inline void scs_mul(scs_ptr result, scs_ptr x, scs_ptr y);
 inline void scs_mul(scs_ptr result, scs_const_ptr x, scs_ptr y);
 inline void scs_mul(scs_ptr result, scs_ptr x, scs_const_ptr y);
 inline void scs_mul(scs_ptr result, scs_const_ptr x, scs_const_ptr y);
+/**
+ * @brief Square an SCS value.
+ * 
+ * @param result Output SCS square.
+ * @param x Input SCS value.
+ */
 inline void scs_square(scs_ptr result, scs_ptr x);
+/**
+ * @brief Multiply an SCS value by an unsigned integer in place.
+ * 
+ * @param x Input/output SCS value.
+ * @param val_int Unsigned integer multiplier.
+ */
 inline void scs_mul_ui(scs_ptr x, uint val_int);
+/**
+ * @brief Divide two SCS values.
+ * 
+ * @param result Output SCS quotient.
+ * @param x Numerator.
+ * @param y Denominator.
+ */
 inline void scs_div(scs_ptr result, scs_ptr x, scs_ptr y);
 inline void scs_inv(scs_ptr result, scs_ptr y);
 
+/**
+ * @brief Binary64 constant 1.0 used to initialize SCS values.
+ * 
+ */
 GPGA_CONST gpga_double gpga_db_one =
     gpga_bits_to_real(0x3ff0000000000000ul);
 
+/**
+ * @brief Pack 32-bit high/low words into a 64-bit value.
+ * 
+ */
 #define GPGA_DBL_FROM_WORDS(hi, lo) \
   (((ulong)(hi) << 32) | (ulong)(lo))
 
+/**
+ * @brief SCS constant for zero.
+ * 
+ */
 GPGA_CONST scs scs_zer = {{
                                0x00000000u,
                                0x00000000u,
@@ -2131,6 +3577,10 @@ GPGA_CONST scs scs_zer = {{
                            0,
                            1};
 
+/**
+ * @brief SCS constant for one half.
+ * 
+ */
 GPGA_CONST scs scs_half = {{
                                 0x20000000u,
                                 0x00000000u,
@@ -2145,6 +3595,10 @@ GPGA_CONST scs scs_half = {{
                             -1,
                             1};
 
+/**
+ * @brief SCS constant for one.
+ * 
+ */
 GPGA_CONST scs scs_one = {{
                                0x00000001u,
                                0x00000000u,
@@ -2159,6 +3613,10 @@ GPGA_CONST scs scs_one = {{
                            0,
                            1};
 
+/**
+ * @brief SCS constant for two.
+ * 
+ */
 GPGA_CONST scs scs_two = {{
                                0x00000002u,
                                0x00000000u,
@@ -2173,6 +3631,10 @@ GPGA_CONST scs scs_two = {{
                            0,
                            1};
 
+/**
+ * @brief SCS constant for 1/6.
+ * 
+ */
 GPGA_CONST scs scs_sixinv = {{
                                   0x0aaaaaaau,
                                   0x2aaaaaaau,
@@ -2187,12 +3649,23 @@ GPGA_CONST scs scs_sixinv = {{
                               -1,
                               1};
 
+/** @brief Pointer alias for SCS zero constant. */
 #define SCS_ZERO ((scs_const_ptr)&scs_zer)
+/** @brief Pointer alias for SCS one-half constant. */
 #define SCS_HALF ((scs_const_ptr)&scs_half)
+/** @brief Pointer alias for SCS one constant. */
 #define SCS_ONE ((scs_const_ptr)&scs_one)
+/** @brief Pointer alias for SCS two constant. */
 #define SCS_TWO ((scs_const_ptr)&scs_two)
+/** @brief Pointer alias for SCS 1/6 constant. */
 #define SCS_SIXINV ((scs_const_ptr)&scs_sixinv)
 
+/**
+ * @brief Copy a constant SCS value into a mutable result.
+ * 
+ * @param result Destination SCS value.
+ * @param src Source constant SCS value.
+ */
 inline void scs_set_const(thread scs* result, scs_const_ptr src) {
   for (int i = 0; i < SCS_NB_WORDS; ++i) {
     result->h_word[i] = src->h_word[i];
@@ -2202,6 +3675,10 @@ inline void scs_set_const(thread scs* result, scs_const_ptr src) {
   result->sign = src->sign;
 }
 
+/**
+ * @brief SCS limb table for 2/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST uint scs_two_over_pi[] = {
     0x28be60dbu, 0x24e44152u, 0x27f09d5fu, 0x11f534ddu, 0x3036d8a5u,
     0x1993c439u, 0x0107f945u, 0x23abdebbu, 0x31586dc9u, 0x06e3a424u,
@@ -2215,6 +3692,10 @@ GPGA_CONST uint scs_two_over_pi[] = {
     0x199855f1u, 0x1281a102u, 0x0dffd880u,
 };
 
+/**
+ * @brief SCS constant for pi/2.
+ * 
+ */
 GPGA_CONST scs scs_pio2 = {{
                                  0x00000001u,
                                  0x2487ed51u,
@@ -2229,8 +3710,13 @@ GPGA_CONST scs scs_pio2 = {{
                              0,
                              1};
 
+/** @brief Pointer alias for SCS pi/2 constant. */
 #define Pio2_ptr ((scs_const_ptr)&scs_pio2)
 
+/**
+ * @brief SCS constant for pi.
+ * 
+ */
 GPGA_CONST scs scs_pi = {{
                                0x00000003u,
                                0x090fdaa2u,
@@ -2245,8 +3731,13 @@ GPGA_CONST scs scs_pi = {{
                            0,
                            1};
 
+/** @brief Pointer alias for SCS pi constant. */
 #define PiSCS_ptr ((scs_const_ptr)&scs_pi)
 
+/**
+ * @brief SCS constant for ln(2).
+ * 
+ */
 GPGA_CONST scs sc_ln2 = {{
                                0x2c5c85fdu,
                                0x3d1cf79au,
@@ -2261,8 +3752,13 @@ GPGA_CONST scs sc_ln2 = {{
                            -1,
                            1};
 
+/** @brief Pointer alias for SCS ln(2) constant. */
 #define sc_ln2_ptr ((scs_const_ptr)&sc_ln2)
 
+/**
+ * @brief SCS table of ti values used for log range reduction.
+ * 
+ */
 GPGA_CONST scs table_ti[13] = {
     {{0x17fafa3bu, 0x360546fbu, 0x1e6fdb53u, 0x0b1225e6u,
       0x15f38987u, 0x26664702u, 0x3cb1bf6du, 0x118a64f9u},
@@ -2331,8 +3827,13 @@ GPGA_CONST scs table_ti[13] = {
      1},
 };
 
+/** @brief Pointer alias for table_ti. */
 #define table_ti_ptr ((scs_const_ptr)&table_ti)
 
+/**
+ * @brief SCS table of 1/wi values used for log range reduction.
+ * 
+ */
 GPGA_CONST scs table_inv_wi[13] = {
     {{0x00000001u, 0x1d1745d1u, 0x1d1745d1u, 0x1d1745d1u,
       0x1d1745d1u, 0x1d1745d1u, 0x1d183e2au, 0x36835582u},
@@ -2401,8 +3902,13 @@ GPGA_CONST scs table_inv_wi[13] = {
      1},
 };
 
+/** @brief Pointer alias for table_inv_wi. */
 #define table_inv_wi_ptr ((scs_const_ptr)&table_inv_wi)
 
+/**
+ * @brief SCS polynomial coefficients for log approximation.
+ * 
+ */
 GPGA_CONST scs constant_poly[20] = {
     {{0x0337074bu, 0x275aac5cu, 0x2cf4a893u, 0x38013cc3u,
       0x149a3416u, 0x0e067307u, 0x12745608u, 0x1658e0d5u},
@@ -2506,8 +4012,13 @@ GPGA_CONST scs constant_poly[20] = {
      1},
 };
 
+/** @brief Pointer alias for constant_poly. */
 #define constant_poly_ptr ((scs_const_ptr)&constant_poly)
 
+/**
+ * @brief SCS table of ti values used for log2 range reduction.
+ * 
+ */
 GPGA_CONST scs log2_table_ti[13] = {
     {{0x2298ac1fu, 0x33457c40u, 0x1c141e66u, 0x3eaaab29u,
       0x1030633du, 0x048bef17u, 0x1a91d6a1u, 0x22230522u},
@@ -2576,6 +4087,10 @@ GPGA_CONST scs log2_table_ti[13] = {
      1},
 };
 
+/**
+ * @brief SCS polynomial coefficients for log2 approximation.
+ * 
+ */
 GPGA_CONST scs log2_constant_poly[20] = {
     {{0x04a3610eu, 0x3280f22fu, 0x1de04b83u, 0x13d0592cu,
       0x01c1f347u, 0x0e59a808u, 0x0bcf5cfau, 0x3009a167u},
@@ -2679,10 +4194,17 @@ GPGA_CONST scs log2_constant_poly[20] = {
      1},
 };
 
+/** @brief Pointer alias for log2_constant_poly. */
 #define log2_constant_poly_ptr ((scs_const_ptr)&log2_constant_poly)
+/** @brief Pointer alias for log2_table_ti. */
 #define log2_table_ti_ptr ((scs_const_ptr)&log2_table_ti)
+/** @brief Pointer alias for log2 table_inv_wi. */
 #define log2_table_inv_wi_ptr ((scs_const_ptr)&table_inv_wi)
 
+/**
+ * @brief SCS polynomial coefficients for sine approximation.
+ * 
+ */
 GPGA_CONST scs sin_scs_poly[13] = {
     {{0x0000004fu, 0x18f09e97u, 0x212a5b47u, 0x39f049a7u,
       0x3bd24b7bu, 0x23af8e4au, 0x34d618d1u, 0x013262b6u},
@@ -2751,6 +4273,10 @@ GPGA_CONST scs sin_scs_poly[13] = {
      1},
 };
 
+/**
+ * @brief SCS polynomial coefficients for cosine approximation.
+ * 
+ */
 GPGA_CONST scs cos_scs_poly[14] = {
     {{0x00000003u, 0x036a24afu, 0x0b960021u, 0x36ab92b4u,
       0x251cbcb3u, 0x24a97fbbu, 0x175c8edbu, 0x26ff1299u},
@@ -2824,6 +4350,10 @@ GPGA_CONST scs cos_scs_poly[14] = {
      1},
 };
 
+/**
+ * @brief SCS polynomial coefficients for tangent approximation.
+ * 
+ */
 GPGA_CONST scs tan_scs_poly[35] = {
     {{0x0049c3c8u, 0x3614b771u, 0x24336d30u, 0x18260f52u,
       0x1c63a612u, 0x3c9708b1u, 0x2c030207u, 0x3b60a762u},
@@ -3002,14 +4532,24 @@ GPGA_CONST scs tan_scs_poly[35] = {
      1},
 };
 
+/** @brief Degree of the SCS sine polynomial. */
 #define DEGREE_SIN_SCS 25
+/** @brief Degree of the SCS cosine polynomial. */
 #define DEGREE_COS_SCS 26
+/** @brief Degree of the SCS tangent polynomial. */
 #define DEGREE_TAN_SCS 69
 
+/** @brief Pointer alias for sin_scs_poly. */
 #define sin_scs_poly_ptr ((scs_const_ptr)&sin_scs_poly)
+/** @brief Pointer alias for cos_scs_poly. */
 #define cos_scs_poly_ptr ((scs_const_ptr)&cos_scs_poly)
+/** @brief Pointer alias for tan_scs_poly. */
 #define tan_scs_poly_ptr ((scs_const_ptr)&tan_scs_poly)
 
+/**
+ * @brief SCS polynomial coefficients for arctangent approximation.
+ * 
+ */
 GPGA_CONST scs atan_constant_poly[10] = {
     {{0x035e50d7u, 0x250d7943u, 0x179435e5u, 0x035e50d7u,
       0x250d7943u, 0x179435e5u, 0x035e50d7u, 0x250d7943u},
@@ -3063,8 +4603,13 @@ GPGA_CONST scs atan_constant_poly[10] = {
      1},
 };
 
+/** @brief Pointer alias for atan_constant_poly. */
 #define atan_constant_poly_ptr ((scs_const_ptr)&atan_constant_poly)
 
+/**
+ * @brief SCS constant for 1/pi used by arctangent helpers.
+ * 
+ */
 GPGA_CONST scs atan_inv_pi_scs = {
     {0x145f306du, 0x327220a9u, 0x13f84eafu, 0x28fa9a6eu,
      0x381b6c52u, 0x2cc9e21cu, 0x2083fca2u, 0x31d5ef5du},
@@ -3072,8 +4617,13 @@ GPGA_CONST scs atan_inv_pi_scs = {
     -1,
     1};
 
+/** @brief Pointer alias for atan_inv_pi_scs. */
 #define atan_inv_pi_scs_ptr ((scs_const_ptr)&atan_inv_pi_scs)
 
+/**
+ * @brief Low-part correction table for atan argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double atan_blolo[62] = {
     0xb8d1c5f3a947cce9ul, 0xb8b059433c749846ul, 0x38fc2f2a267751fbul,
     0x38d44e61dda4249dul, 0xb906fbfaa5b245c8ul, 0xb8de1e9867cabe65ul,
@@ -3098,12 +4648,36 @@ GPGA_CONST gpga_double atan_blolo[62] = {
     0xb9112692d7179e60ul, 0x392f96b5bcc93753ul,
 };
 
+/**
+ * @brief High-precision pi/2 used by the fast atan range reduction.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_halfpi = 0x3ff921fb54442d18ul;
+/**
+ * @brief Pi/2 rounded upward (pi/2 + ulp) for fast atan special cases.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_halfpi_plus_inf = 0x3ff921fb54442d19ul;
+/**
+ * @brief Threshold for switching to range reduction in fast atan.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_min_reduction_needed = 0x3f89fdf8bcce533dul;
+/**
+ * @brief High part of 1/pi for fast atan argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_invpih = 0x3fd45f306dc9c883ul;
+/**
+ * @brief Low part of 1/pi for fast atan argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_invpil = 0xbc76b01ec5417056ul;
 
+/**
+ * @brief Rounding constants for fast atan table indexing.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_rncst[4] = {
     0x3ff0046e5629e4e3ul,
     0x3ff00036ddc523c4ul,
@@ -3111,6 +4685,10 @@ GPGA_CONST gpga_double atan_fast_rncst[4] = {
     0x3ff0000ae2d4671ful,
 };
 
+/**
+ * @brief Error bounds for fast atan table entries.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_epsilon[4] = {
     0x3bf1ac7dfb3fc0a6ul,
     0x3baaee76d65775a4ul,
@@ -3118,6 +4696,10 @@ GPGA_CONST gpga_double atan_fast_epsilon[4] = {
     0x3b83c5950893a3b9ul,
 };
 
+/**
+ * @brief Polynomial coefficients for the fast atan core approximation.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_coef_poly[4] = {
     0x3fbc71c71c71c71cul,
     0xbfc2492492492492ul,
@@ -3125,6 +4707,10 @@ GPGA_CONST gpga_double atan_fast_coef_poly[4] = {
     0xbfd5555555555555ul,
 };
 
+/**
+ * @brief Piecewise atan table with correction terms for the fast path.
+ * 
+ */
 GPGA_CONST gpga_double atan_fast_table[62][4] = {
     {0x3f89fdf8bcce533dul, 0x3f99ff0b27760007ul, 0x3f99fd9d4969f96cul,
      0xbc301997750685eaul},
@@ -3253,22 +4839,86 @@ GPGA_CONST gpga_double atan_fast_table[62][4] = {
 };
 
 // trigpi constants (binary64 bits)
+/**
+ * @brief 2^42 scale used to extract integer parts in trigpi reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_twoto42 = 0x4290000000000000ul;
+/**
+ * @brief 2^52 scale used to round to nearest integer in trigpi reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_twoto52 = 0x4330000000000000ul;
+/**
+ * @brief 1/128 scale for the trigpi fractional remainder.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_inv128 = 0x3f80000000000000ul;
+/**
+ * @brief 2^52 + 2^51 bias used to round to the nearest 1/128 in trigpi.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_twoto5251 = 0x4338000000000000ul;
+/**
+ * @brief Dekker split constant used to separate pi in trigpi reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_dekker_const = 0x41a0000002000000ul;
+/**
+ * @brief Smallest positive subnormal used for trigpi underflow handling.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_smallest = 0x0000000000000001ul;
+/**
+ * @brief High part of pi used in trigpi range reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pih = 0x400921fb54442d18ul;
+/**
+ * @brief Mid part of pi used in trigpi range reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pim = 0x3ca1a62633145c07ul;
+/**
+ * @brief Low part of pi used in trigpi range reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pil = 0xb92f1976b7ed8fbcul;
+/**
+ * @brief High-high part of pi used for extended trigpi reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pihh = 0x400921fb58000000ul;
+/**
+ * @brief High-mid part of pi used for extended trigpi reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pihm = 0xbe5dde9740000000ul;
+/**
+ * @brief Rounding constant for sin(pi*x) near-integer handling.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pix_rncst_sin = 0x3ff0204081020409ul;
+/**
+ * @brief Error bound for sin(pi*x) near-integer handling.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pix_eps_sin = 0x3c20000000000000ul;
+/**
+ * @brief Rounding constant for tan(pi*x) near-integer handling.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pix_rncst_tan = 0x3ff0410410410411ul;
+/**
+ * @brief Error bound for tan(pi*x) near-integer handling.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_pix_eps_tan = 0x3c30000000000000ul;
 
+/**
+ * @brief Split sin/cos table entry used by trigpi range reduction.
+ * 
+ */
 struct GpgaTrigpiEntry {
   gpga_double sh;
   gpga_double ch;
@@ -3278,6 +4928,10 @@ struct GpgaTrigpiEntry {
   gpga_double cl;
 };
 
+/**
+ * @brief Lookup table of sin/cos(pi*k/128) split into high/mid/low parts.
+ * 
+ */
 GPGA_CONST GpgaTrigpiEntry gpga_trigpi_sincos_table[64] = {
     {0x0000000000000000ul, 0x3ff0000000000000ul, 0x0000000000000000ul,
      0x0000000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul},
@@ -3409,39 +5063,166 @@ GPGA_CONST GpgaTrigpiEntry gpga_trigpi_sincos_table[64] = {
      0xbbfb1d63091a0130ul, 0xb923d19b52e092dbul, 0x3899e58994be786bul},
 };
 
+/**
+ * @brief High part of coefficient C1 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_1h = 0x400921fb54442d18ul;
+/**
+ * @brief Mid part of coefficient C1 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_1m = 0x3ca1a62633145c07ul;
+/**
+ * @brief Low part of coefficient C1 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_1l = 0xb92de56bfc518aa0ul;
+/**
+ * @brief High part of coefficient C3 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_3h = 0xc014abbce625be53ul;
+/**
+ * @brief Mid part of coefficient C3 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_3m = 0x3cb05511c6845b60ul;
+/**
+ * @brief High part of coefficient C5 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_5h = 0x400466bc6775aae2ul;
+/**
+ * @brief Mid part of coefficient C5 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_5m = 0xbc96dc099509acb4ul;
+/**
+ * @brief High part of coefficient C7 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_7h = 0xbfe32d2cce62bd86ul;
+/**
+ * @brief High part of coefficient C9 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_9h = 0x3fb507834881024eul;
+/**
+ * @brief High part of coefficient C11 for the accurate sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiacc_coeff_11h = 0xbf7e307ef392817eul;
 
+/**
+ * @brief High part of coefficient C0 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_0h = 0x3ff0000000000000ul;
+/**
+ * @brief High part of coefficient C2 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_2h = 0xc013bd3cc9be45deul;
+/**
+ * @brief Mid part of coefficient C2 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_2m = 0xbcb692b71366d2deul;
+/**
+ * @brief High part of coefficient C4 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_4h = 0x40103c1f081b5ac4ul;
+/**
+ * @brief Mid part of coefficient C4 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_4m = 0xbcb32b33c9f113a8ul;
+/**
+ * @brief High part of coefficient C6 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_6h = 0xbff55d3c7e3cbffaul;
+/**
+ * @brief High part of coefficient C8 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_8h = 0x3fce1f506891855aul;
+/**
+ * @brief High part of coefficient C10 for the accurate cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiacc_coeff_10h = 0xbf9a6d1b3a75a55ful;
 
+/**
+ * @brief High part of coefficient C1 for the quick sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiquick_coeff_1h = 0x400921fb54442d18ul;
+/**
+ * @brief Mid part of coefficient C1 for the quick sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiquick_coeff_1m = 0x3ca1a628f488484aul;
+/**
+ * @brief High part of coefficient C3 for the quick sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiquick_coeff_3h = 0xc014abbce625be53ul;
+/**
+ * @brief High part of coefficient C5 for the quick sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiquick_coeff_5h = 0x400466bc67767178ul;
+/**
+ * @brief High part of coefficient C7 for the quick sin(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_sinpiquick_coeff_7h = 0xbfe32d2b83a83690ul;
+/**
+ * @brief High part of coefficient C0 for the quick cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiquick_coeff_0h = 0x3ff0000000000000ul;
+/**
+ * @brief High part of coefficient C2 for the quick cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiquick_coeff_2h = 0xc013bd3cc9be45deul;
+/**
+ * @brief High part of coefficient C4 for the quick cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiquick_coeff_4h = 0x40103c1f0819cac7ul;
+/**
+ * @brief High part of coefficient C6 for the quick cos(pi*x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_cospiquick_coeff_6h = 0xbff55d33e38f046bul;
 
+/**
+ * @brief Rounding constant for the quick trigpi path.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_quick_rncst = 0x3ff0000a7c5ac472ul;
+/**
+ * @brief 1 - ulp guard used in trigpi edge handling.
+ * 
+ */
 GPGA_CONST gpga_double trigpi_one_minus_ulp = 0x3feffffffffffffful;
 
+/**
+ * @brief Evaluate accurate sin(pi*x) and cos(pi*x) polynomials for a reduced argument.
+ * 
+ * @param sin_h Output high part of sin(pi*x).
+ * @param sin_m Output mid part of sin(pi*x).
+ * @param sin_l Output low part of sin(pi*x).
+ * @param cos_h Output high part of cos(pi*x).
+ * @param cos_m Output mid part of cos(pi*x).
+ * @param cos_l Output low part of cos(pi*x).
+ * @param x Reduced argument.
+ */
 inline void gpga_sincospiacc(thread gpga_double* sin_h,
                              thread gpga_double* sin_m,
                              thread gpga_double* sin_l,
@@ -3510,6 +5291,16 @@ inline void gpga_sincospiacc(thread gpga_double* sin_h,
   *cos_l = cos_t9l;
 }
 
+/**
+ * @brief Reconstruct sin(pi*x) using accurate polynomials and table entries.
+ * 
+ * @param rh Output high part of sin(pi*x).
+ * @param rm Output mid part of sin(pi*x).
+ * @param rl Output low part of sin(pi*x).
+ * @param y Reduced argument.
+ * @param index Table index for sin/cos(pi*k/128).
+ * @param quadrant Quadrant for sign adjustment.
+ */
 inline void gpga_sinpi_accurate(thread gpga_double* rh, thread gpga_double* rm,
                                 thread gpga_double* rl, gpga_double y,
                                 int index, int quadrant) {
@@ -3554,6 +5345,16 @@ inline void gpga_sinpi_accurate(thread gpga_double* rh, thread gpga_double* rm,
   }
 }
 
+/**
+ * @brief Reconstruct cos(pi*x) using accurate polynomials and table entries.
+ * 
+ * @param rh Output high part of cos(pi*x).
+ * @param rm Output mid part of cos(pi*x).
+ * @param rl Output low part of cos(pi*x).
+ * @param y Reduced argument.
+ * @param index Table index for sin/cos(pi*k/128).
+ * @param quadrant Quadrant for sign adjustment.
+ */
 inline void gpga_cospi_accurate(thread gpga_double* rh, thread gpga_double* rm,
                                 thread gpga_double* rl, gpga_double y,
                                 int index, int quadrant) {
@@ -3598,6 +5399,15 @@ inline void gpga_cospi_accurate(thread gpga_double* rh, thread gpga_double* rm,
   }
 }
 
+/**
+ * @brief Fast sin(pi*x) approximation using low-degree polynomials and table entries.
+ * 
+ * @param rh Output high part of sin(pi*x).
+ * @param rm Output mid part of sin(pi*x).
+ * @param x Reduced argument.
+ * @param index Table index for sin/cos(pi*k/128).
+ * @param quadrant Quadrant for sign adjustment.
+ */
 inline void gpga_sinpiquick(thread gpga_double* rh, thread gpga_double* rm,
                             gpga_double x, int index, int quadrant) {
   gpga_double x2h = gpga_double_zero(0u);
@@ -3666,14 +5476,48 @@ inline void gpga_sinpiquick(thread gpga_double* rh, thread gpga_double* rm,
 }
 
 // Trigpi constants used in small-x fallback (see crlibm trigpi.h).
+/**
+ * @brief High-high part of pi for small-x trigpi fallback.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIHH = 0x400921fb58000000ul;
+/**
+ * @brief High-mid part of pi for small-x trigpi fallback.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIHM = 0xbe5dde9740000000ul;
+/**
+ * @brief Mid part of pi for small-x trigpi fallback.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIM = 0x3ca1a62633145c07ul;
+/**
+ * @brief Rounding constant for sin(pi*x) pix handling in the fallback path.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIX_RNCST_SIN = 0x3ff0204081020409ul;
+/**
+ * @brief Rounding constant for tan(pi*x) pix handling in the fallback path.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIX_RNCST_TAN = 0x3ff0410410410411ul;
+/**
+ * @brief Error bound for sin(pi*x) pix handling in the fallback path.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIX_EPS_SIN = 0x3c20000000000000ul;
+/**
+ * @brief Error bound for tan(pi*x) pix handling in the fallback path.
+ * 
+ */
 GPGA_CONST gpga_double TRIGPI_PIX_EPS_TAN = 0x3c30000000000000ul;
 
+/**
+ * @brief Compute sin(pi*x) rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - sin(pi*x) rounded to nearest.
+ */
 inline gpga_double gpga_sinpi_rn(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3728,6 +5572,12 @@ inline gpga_double gpga_sinpi_rn(gpga_double x) {
   return ReturnRoundToNearest3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute sin(pi*x) rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - sin(pi*x) rounded toward -inf.
+ */
 inline gpga_double gpga_sinpi_rd(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3777,6 +5627,12 @@ inline gpga_double gpga_sinpi_rd(gpga_double x) {
   return ReturnRoundDownwards3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute sin(pi*x) rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - sin(pi*x) rounded toward +inf.
+ */
 inline gpga_double gpga_sinpi_ru(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3826,6 +5682,12 @@ inline gpga_double gpga_sinpi_ru(gpga_double x) {
   return ReturnRoundUpwards3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute sin(pi*x) rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - sin(pi*x) rounded toward zero.
+ */
 inline gpga_double gpga_sinpi_rz(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3875,6 +5737,12 @@ inline gpga_double gpga_sinpi_rz(gpga_double x) {
   return ReturnRoundTowardsZero3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute cos(pi*x) rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - cos(pi*x) rounded to nearest.
+ */
 inline gpga_double gpga_cospi_rn(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3918,6 +5786,12 @@ inline gpga_double gpga_cospi_rn(gpga_double x) {
   return ReturnRoundToNearest3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute cos(pi*x) rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - cos(pi*x) rounded toward -inf.
+ */
 inline gpga_double gpga_cospi_rd(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -3961,6 +5835,12 @@ inline gpga_double gpga_cospi_rd(gpga_double x) {
   return ReturnRoundDownwards3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute cos(pi*x) rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - cos(pi*x) rounded toward +inf.
+ */
 inline gpga_double gpga_cospi_ru(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -4004,6 +5884,12 @@ inline gpga_double gpga_cospi_ru(gpga_double x) {
   return ReturnRoundUpwards3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute cos(pi*x) rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - cos(pi*x) rounded toward zero.
+ */
 inline gpga_double gpga_cospi_rz(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -4047,6 +5933,12 @@ inline gpga_double gpga_cospi_rz(gpga_double x) {
   return ReturnRoundTowardsZero3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute tan(pi*x) rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - tan(pi*x) rounded to nearest.
+ */
 inline gpga_double gpga_tanpi_rn(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -4107,6 +5999,12 @@ inline gpga_double gpga_tanpi_rn(gpga_double x) {
   return ReturnRoundToNearest3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute tan(pi*x) rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - tan(pi*x) rounded toward -inf.
+ */
 inline gpga_double gpga_tanpi_rd(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -4168,6 +6066,12 @@ inline gpga_double gpga_tanpi_rd(gpga_double x) {
   return ReturnRoundDownwards3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute tan(pi*x) rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - tan(pi*x) rounded toward +inf.
+ */
 inline gpga_double gpga_tanpi_ru(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -4229,6 +6133,12 @@ inline gpga_double gpga_tanpi_ru(gpga_double x) {
   return ReturnRoundUpwards3(rh, rm, rl);
 }
 
+/**
+ * @brief Compute tan(pi*x) rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - tan(pi*x) rounded toward zero.
+ */
 inline gpga_double gpga_tanpi_rz(gpga_double x) {
   gpga_double absx = gpga_double_abs(x);
   gpga_double xs = gpga_double_mul(x, gpga_double_from_u32(128u));
@@ -4292,125 +6202,601 @@ inline gpga_double gpga_tanpi_rz(gpga_double x) {
 
 
 // CRLIBM_ASINCOS_CONSTANTS
+/**
+ * @brief Rounding constant for asin/acos round-to-nearest tests.
+ * 
+ */
 GPGA_CONST gpga_double RNROUNDCST = 0x3ff00b5baade1dbcul;
+/**
+ * @brief Rounding constant for asin/acos round-down tests.
+ * 
+ */
 GPGA_CONST gpga_double RDROUNDCST = 0x3c06a09e667f3bcdul;
+/**
+ * @brief Rounding constant for asinpi round-to-nearest tests.
+ * 
+ */
 GPGA_CONST gpga_double RNROUNDCSTASINPI = 0x3ff000000406cacaul;
+/**
+ * @brief Rounding constant for asinpi round-down tests.
+ * 
+ */
 GPGA_CONST gpga_double RDROUNDCSTASINPI = 0x3af0000000000000ul;
+/**
+ * @brief High-word cutoff for asin(x) to return x in the small-angle path.
+ * 
+ */
 GPGA_CONST uint ASINSIMPLEBOUND = 0x3e300000u;
+/**
+ * @brief High-word cutoff for acos(x) to use the pi/2 - x small-angle path.
+ * 
+ */
 GPGA_CONST uint ACOSSIMPLEBOUND = 0x3e400000u;
+/**
+ * @brief High-word cutoff for asinpi(x) to use the x/pi small-angle path.
+ * 
+ */
 GPGA_CONST uint ASINPISIMPLEBOUND = 0x3c300000u;
+/**
+ * @brief High-word cutoff for acospi(x) to return 0.5 for tiny x.
+ * 
+ */
 GPGA_CONST uint ACOSPISIMPLEBOUND = 0x3c900000u;
+/**
+ * @brief High-word cutoff above which asinpi(x) avoids subnormal scaling.
+ * 
+ */
 GPGA_CONST uint ASINPINOSUBNORMALBOUND = 0xa5000000u;
+/**
+ * @brief High-word threshold to include higher-degree terms in the asin P0 quick polynomial.
+ * 
+ */
 GPGA_CONST uint EXTRABOUND = 0x3f500000u;
+/**
+ * @brief High-word threshold below which the asin P0 quick polynomial uses only the cubic term.
+ * 
+ */
 GPGA_CONST uint EXTRABOUND2 = 0x3f020000u;
+/**
+ * @brief High part of pi/2 used in asin/acos reconstruction.
+ * 
+ */
 GPGA_CONST gpga_double PIHALFH = 0x3ff921fb54442d18ul;
+/**
+ * @brief Mid part of pi/2 used in asin/acos reconstruction.
+ * 
+ */
 GPGA_CONST gpga_double PIHALFM = 0x3c91a62633145c07ul;
+/**
+ * @brief Low part of pi/2 used in asin/acos reconstruction.
+ * 
+ */
 GPGA_CONST gpga_double PIHALFL = 0xb91f1976b7ed8fbcul;
+/**
+ * @brief Pi/2 rounded upward for boundary handling.
+ * 
+ */
 GPGA_CONST gpga_double PIHALFRU = 0x3ff921fb54442d19ul;
+/**
+ * @brief Pi rounded upward for boundary handling.
+ * 
+ */
 GPGA_CONST gpga_double PIRU = 0x400921fb54442d19ul;
+/**
+ * @brief High part of pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double PIH = 0x400921fb54442d18ul;
+/**
+ * @brief Mid part of pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double PIM = 0x3ca1a62633145c07ul;
+/**
+ * @brief High-high split of pi used for extra precision.
+ * 
+ */
 GPGA_CONST gpga_double PIHH = 0x400921fb58000000ul;
+/**
+ * @brief High-mid split of pi used for extra precision.
+ * 
+ */
 GPGA_CONST gpga_double PIHM = 0xbe5dde9740000000ul;
+/**
+ * @brief Rounding constant for sin(pi*x) near-integer checks.
+ * 
+ */
 GPGA_CONST gpga_double PIX_RNCST_SIN = 0x3ff0204081020409ul;
+/**
+ * @brief Rounding constant for tan(pi*x) near-integer checks.
+ * 
+ */
 GPGA_CONST gpga_double PIX_RNCST_TAN = 0x3ff0410410410411ul;
+/**
+ * @brief Error bound for sin(pi*x) near-integer checks.
+ * 
+ */
 GPGA_CONST gpga_double PIX_EPS_SIN = 0x3c20000000000000ul;
+/**
+ * @brief Error bound for tan(pi*x) near-integer checks.
+ * 
+ */
 GPGA_CONST gpga_double PIX_EPS_TAN = 0x3c30000000000000ul;
+/**
+ * @brief Low part of pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double PIL = 0xb92f1976b7ed8fbcul;
+/**
+ * @brief High part of 1/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double RECPRPIH = 0x3fd45f306dc9c883ul;
+/**
+ * @brief Mid part of 1/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double RECPRPIM = 0xbc76b01ec5417056ul;
+/**
+ * @brief Low part of 1/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double RECPRPIL = 0xb916447e493ad4ceul;
+/**
+ * @brief High part of -1/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double MRECPRPIH = 0xbfd45f306dc9c883ul;
+/**
+ * @brief Mid part of -1/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double MRECPRPIM = 0x3c76b01ec5417056ul;
+/**
+ * @brief Low part of -1/pi used in argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double MRECPRPIL = 0x3916447e493ad4ceul;
+/**
+ * @brief 0.5 + ulp used for tie-breaking in asin/acos.
+ * 
+ */
 GPGA_CONST gpga_double HALFPLUSULP = 0x3fe0000000000001ul;
+/**
+ * @brief 0.5 - 0.5 ulp used for tie-breaking in asin/acos.
+ * 
+ */
 GPGA_CONST gpga_double HALFMINUSHALFULP = 0x3fdffffffffffffful;
+/**
+ * @brief 2^1000 scaling constant used for extreme-range handling.
+ * 
+ */
 GPGA_CONST gpga_double TWO1000 = 0x7e70000000000000ul;
+/**
+ * @brief 2^-1000 scaling constant used for extreme-range handling.
+ * 
+ */
 GPGA_CONST gpga_double TWOM1000 = 0x0170000000000000ul;
+/**
+ * @brief 2^999 scaling constant used for extreme-range handling.
+ * 
+ */
 GPGA_CONST gpga_double TWO999 = 0x7e60000000000000ul;
+/**
+ * @brief Input value that triggers the asin rounding fixup.
+ * 
+ */
 GPGA_CONST gpga_double ASINBADCASEX = 0x3fde9950730c4696ul;
+/**
+ * @brief Asin value rounded upward for the bad-case fixup.
+ * 
+ */
 GPGA_CONST gpga_double ASINBADCASEYRU = 0x3fdfe767739d0f6eul;
+/**
+ * @brief Asin value rounded downward for the bad-case fixup.
+ * 
+ */
 GPGA_CONST gpga_double ASINBADCASEYRD = 0x3fdfe767739d0f6dul;
+/**
+ * @brief Input value that triggers the acospi rounding fixup.
+ * 
+ */
 GPGA_CONST gpga_double ACOSPIRN_BADCASEX = 0x3fd94789f4bd4efaul;
+/**
+ * @brief Acospi value for the bad-case fixup.
+ * 
+ */
 GPGA_CONST gpga_double ACOSPIRN_BADCASEY = 0x3fd7ba5406f2b9ccul;
+/**
+ * @brief High part of coefficient C19 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_19h = 0x3f8a4b92dae969edul;
+/**
+ * @brief High part of coefficient C17 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_17h = 0x3f86c7aa165208f9ul;
+/**
+ * @brief High part of coefficient C15 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_15h = 0x3f8caa781489e2b8ul;
+/**
+ * @brief High part of coefficient C13 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_13h = 0x3f91c48b99d291deul;
+/**
+ * @brief High part of coefficient C11 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_11h = 0x3f96e8bcd6ff71c4ul;
+/**
+ * @brief High part of coefficient C9 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_9h = 0x3f9f1c71bbd33c20ul;
+/**
+ * @brief High part of coefficient C7 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_7h = 0x3fa6db6db6e9018dul;
+/**
+ * @brief High part of coefficient C5 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_5h = 0x3fb3333333332b26ul;
+/**
+ * @brief High part of coefficient C3 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_3h = 0x3fc5555555555557ul;
+/**
+ * @brief High part of coefficient C1 for the asin P0 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_quick_coeff_1h = 0x3ff0000000000000ul;
+/**
+ * @brief Midpoint constant for the asin P9 polynomial interval.
+ * 
+ */
 GPGA_CONST gpga_double MI_9 = 0x3fec000000001b87ul;
+/**
+ * @brief High part of coefficient C0 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_0h = 0x3ff02be9ce0b8696ul;
+/**
+ * @brief High part of coefficient C1 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_1h = 0xbfb69ab5325bba15ul;
+/**
+ * @brief High part of coefficient C2 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_2h = 0x3f958a4c3097993aul;
+/**
+ * @brief High part of coefficient C3 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_3h = 0xbf7b3db36068b22cul;
+/**
+ * @brief High part of coefficient C4 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_4h = 0x3f63b9482181094eul;
+/**
+ * @brief High part of coefficient C5 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_5h = 0xbf4eedc823c6567ful;
+/**
+ * @brief High part of coefficient C6 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_6h = 0x3f398e361865b1daul;
+/**
+ * @brief High part of coefficient C7 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_7h = 0xbf25ea4eb35ec8feul;
+/**
+ * @brief High part of coefficient C8 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_8h = 0x3f135231ff7355f4ul;
+/**
+ * @brief High part of coefficient C9 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_9h = 0xbf01681507f3d4a9ul;
+/**
+ * @brief High part of coefficient C10 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_10h = 0x3ef01cad0aca1cc8ul;
+/**
+ * @brief High part of coefficient C11 for the asin P9 (quick path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_quick_coeff_11h = 0xbedd8b99c74259f7ul;
+/**
+ * @brief High part of coefficient C1 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_1h = 0x3ff0000000000000ul;
+/**
+ * @brief High part of coefficient C3 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_3h = 0x3fc5555555555555ul;
+/**
+ * @brief Mid part of coefficient C3 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_3m = 0x3c65555555555553ul;
+/**
+ * @brief High part of coefficient C5 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_5h = 0x3fb3333333333333ul;
+/**
+ * @brief Mid part of coefficient C5 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_5m = 0x3c4999999999ee40ul;
+/**
+ * @brief High part of coefficient C7 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_7h = 0x3fa6db6db6db6db7ul;
+/**
+ * @brief Mid part of coefficient C7 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_7m = 0xbc324924946fc466ul;
+/**
+ * @brief High part of coefficient C9 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_9h = 0x3f9f1c71c71c71c7ul;
+/**
+ * @brief Mid part of coefficient C9 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_9m = 0x3c1c71d56e6e2658ul;
+/**
+ * @brief High part of coefficient C11 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_11h = 0x3f96e8ba2e8ba2e9ul;
+/**
+ * @brief Mid part of coefficient C11 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_11m = 0xbc3177f0b6a02ad8ul;
+/**
+ * @brief High part of coefficient C13 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_13h = 0x3f91c4ec4ec4ec4ful;
+/**
+ * @brief Mid part of coefficient C13 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_13m = 0xbc28d703ddf5c0eeul;
+/**
+ * @brief High part of coefficient C15 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_15h = 0x3f8c999999999991ul;
+/**
+ * @brief High part of coefficient C17 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_17h = 0x3f87a87878787b52ul;
+/**
+ * @brief High part of coefficient C19 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_19h = 0x3f83fde50d788fa8ul;
+/**
+ * @brief High part of coefficient C21 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_21h = 0x3f812ef3cf5e6feeul;
+/**
+ * @brief High part of coefficient C23 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_23h = 0x3f7df3bd2e1e27c2ul;
+/**
+ * @brief High part of coefficient C25 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_25h = 0x3f7a6864e1905aeeul;
+/**
+ * @brief High part of coefficient C27 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_27h = 0x3f7782c75df2256eul;
+/**
+ * @brief High part of coefficient C29 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_29h = 0x3f751d0b829517ccul;
+/**
+ * @brief High part of coefficient C31 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_31h = 0x3f7305990a9ad96cul;
+/**
+ * @brief High part of coefficient C33 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_33h = 0x3f71f051de5bc8f4ul;
+/**
+ * @brief High part of coefficient C35 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_35h = 0x3f6941e71c6b15aful;
+/**
+ * @brief High part of coefficient C37 for the asin P0 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p0_accu_coeff_37h = 0x3f798ced3dfaf58aul;
+/**
+ * @brief High part of coefficient C0 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_0h = 0x3ff02be9ce0b8696ul;
+/**
+ * @brief Mid part of coefficient C0 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_0m = 0x3bd06cf1ba8caf60ul;
+/**
+ * @brief High part of coefficient C1 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_1h = 0xbfb69ab5325bba15ul;
+/**
+ * @brief Mid part of coefficient C1 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_1m = 0x3c464d2b56116c2aul;
+/**
+ * @brief High part of coefficient C2 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_2h = 0x3f958a4c3097991eul;
+/**
+ * @brief Mid part of coefficient C2 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_2m = 0x3c33fc0eca2ce284ul;
+/**
+ * @brief High part of coefficient C3 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_3h = 0xbf7b3db36068bb92ul;
+/**
+ * @brief Mid part of coefficient C3 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_3m = 0xbc1817caa85a093eul;
+/**
+ * @brief High part of coefficient C4 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_4h = 0x3f63b9482183be1cul;
+/**
+ * @brief Mid part of coefficient C4 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_4m = 0xbc0d1c776f95416bul;
+/**
+ * @brief High part of coefficient C5 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_5h = 0xbf4eedc82374e2ecul;
+/**
+ * @brief Mid part of coefficient C5 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_5m = 0xbbc7c28f8ed03cb8ul;
+/**
+ * @brief High part of coefficient C6 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_6h = 0x3f398e36009d94c6ul;
+/**
+ * @brief Mid part of coefficient C6 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_6m = 0xbb9fde9c3b0f5980ul;
+/**
+ * @brief High part of coefficient C7 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_7h = 0xbf25ea4f480d9f95ul;
+/**
+ * @brief Mid part of coefficient C7 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_7m = 0x3bcc488ea1a7b842ul;
+/**
+ * @brief High part of coefficient C8 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_8h = 0x3f135260961ad1dcul;
+/**
+ * @brief High part of coefficient C9 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_9h = 0xbf0167a6f81b3715ul;
+/**
+ * @brief High part of coefficient C10 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_10h = 0x3eefe5d222269587ul;
+/**
+ * @brief High part of coefficient C11 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_11h = 0xbedda3f6c87e1372ul;
+/**
+ * @brief High part of coefficient C12 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_12h = 0x3ecbdd61f82c378cul;
+/**
+ * @brief High part of coefficient C13 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_13h = 0xbeba7427808ac3beul;
+/**
+ * @brief High part of coefficient C14 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_14h = 0x3ea9536e8db047ebul;
+/**
+ * @brief High part of coefficient C15 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_15h = 0xbe986c4cdc80ebd3ul;
+/**
+ * @brief High part of coefficient C16 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_16h = 0x3e87b3d309e2ad0bul;
+/**
+ * @brief High part of coefficient C17 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_17h = 0xbe7720d2fc58438aul;
+/**
+ * @brief High part of coefficient C18 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_18h = 0x3e66af52d4c5c5cbul;
+/**
+ * @brief High part of coefficient C19 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_19h = 0xbe56cece65f20c88ul;
+/**
+ * @brief High part of coefficient C20 for the asin P9 (accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double p9_accu_coeff_20h = 0x3e46893e81151731ul;
 
+/**
+ * @brief Piecewise asin polynomial coefficient table for the quick path.
+ * 
+ */
 GPGA_CONST gpga_double gpga_asin_poly_quick[128] = {
     0x3fd3504f333f9e0aul, 0x3fd39e9bbade6b79ul, 0x3c04585d01c53454ul, 0x3ff0c84ca0d3b637ul,
     0xbc9df9a90b236e11ul, 0x3fc649b4bb6046ecul, 0x3fd0025bb2b6e4daul, 0x3fc5763aba8a7efcul,
@@ -4446,6 +6832,10 @@ GPGA_CONST gpga_double gpga_asin_poly_quick[128] = {
     0x408f411591fccdf0ul, 0x40a87a9aac5cde95ul, 0x40c3ca3f7574c7f5ul, 0x40dff8d69f2bfc18ul,
 };
 
+/**
+ * @brief Piecewise asin polynomial coefficient table for the accurate path.
+ * 
+ */
 GPGA_CONST gpga_double gpga_asin_poly_accu[256] = {
     0x3fd39e9bbade6b79ul, 0x3c046c8e980714a1ul, 0x3ff0c84ca0d3b637ul, 0xbc9db627c6ba1cccul,
     0x3fc649b4bb6046ecul, 0xbc6c3a235f1337deul, 0x3fd0025bb2b6e42dul, 0xbc530da0bb1270eeul,
@@ -4514,6 +6904,14 @@ GPGA_CONST gpga_double gpga_asin_poly_accu[256] = {
 };
 
 
+/**
+ * @brief Evaluate the quick asin polynomial for the base interval (index 0).
+ * 
+ * @param p_resh Output high part of the polynomial result.
+ * @param p_resm Output mid part of the polynomial result.
+ * @param x Reduced argument.
+ * @param xhi High word of |x| used for bound selection.
+ */
 inline void gpga_asin_p0_quick(thread gpga_double* p_resh,
                                thread gpga_double* p_resm, gpga_double x,
                                int xhi) {
@@ -4568,6 +6966,14 @@ inline void gpga_asin_p0_quick(thread gpga_double* p_resh,
   *p_resm = p_t_20_0m;
 }
 
+/**
+ * @brief Evaluate the quick asin polynomial from the coefficient table.
+ * 
+ * @param p_resh Output high part of the polynomial result.
+ * @param p_resm Output mid part of the polynomial result.
+ * @param x Reduced argument.
+ * @param index Table index selecting coefficients.
+ */
 inline void gpga_asin_p_quick(thread gpga_double* p_resh,
                               thread gpga_double* p_resm, gpga_double x,
                               int index) {
@@ -4624,6 +7030,13 @@ inline void gpga_asin_p_quick(thread gpga_double* p_resh,
   *p_resm = p_t_23_0m;
 }
 
+/**
+ * @brief Evaluate the quick asin polynomial for the near-one (p9) branch.
+ * 
+ * @param p_resh Output high part of the polynomial result.
+ * @param p_resm Output mid part of the polynomial result.
+ * @param x Reduced argument.
+ */
 inline void gpga_asin_p9_quick(thread gpga_double* p_resh,
                                thread gpga_double* p_resm, gpga_double x) {
   gpga_double p_t_1_0h = p9_quick_coeff_11h;
@@ -4660,6 +7073,14 @@ inline void gpga_asin_p9_quick(thread gpga_double* p_resh,
   *p_resm = p_t_23_0m;
 }
 
+/**
+ * @brief Evaluate the accurate asin polynomial for the base interval.
+ * 
+ * @param p_resh Output high part of the polynomial result.
+ * @param p_resm Output mid part of the polynomial result.
+ * @param p_resl Output low part of the polynomial result.
+ * @param x Reduced argument.
+ */
 inline void gpga_asin_p0_accu(thread gpga_double* p_resh,
                               thread gpga_double* p_resm,
                               thread gpga_double* p_resl, gpga_double x) {
@@ -4791,6 +7212,15 @@ inline void gpga_asin_p0_accu(thread gpga_double* p_resh,
   Renormalize3(p_resh, p_resm, p_resl, p_t_35_0h, p_t_35_0m, p_t_35_0l);
 }
 
+/**
+ * @brief Evaluate the accurate asin polynomial from the coefficient table.
+ * 
+ * @param p_resh Output high part of the polynomial result.
+ * @param p_resm Output mid part of the polynomial result.
+ * @param p_resl Output low part of the polynomial result.
+ * @param x Reduced argument.
+ * @param index Table index selecting coefficients.
+ */
 inline void gpga_asin_p_accu(thread gpga_double* p_resh,
                              thread gpga_double* p_resm,
                              thread gpga_double* p_resl, gpga_double x,
@@ -4933,6 +7363,14 @@ inline void gpga_asin_p_accu(thread gpga_double* p_resh,
   Renormalize3(p_resh, p_resm, p_resl, p_t_39_0h, p_t_39_0m, p_t_39_0l);
 }
 
+/**
+ * @brief Evaluate the accurate asin polynomial for the near-one (p9) branch.
+ * 
+ * @param p_resh Output high part of the polynomial result.
+ * @param p_resm Output mid part of the polynomial result.
+ * @param p_resl Output low part of the polynomial result.
+ * @param x Reduced argument.
+ */
 inline void gpga_asin_p9_accu(thread gpga_double* p_resh,
                               thread gpga_double* p_resm,
                               thread gpga_double* p_resl, gpga_double x) {
@@ -5024,6 +7462,12 @@ inline void gpga_asin_p9_accu(thread gpga_double* p_resh,
   Renormalize3(p_resh, p_resm, p_resl, p_t_35_0h, p_t_35_0m, p_t_35_0l);
 }
 
+/**
+ * @brief Compute asin(x) rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x) rounded to nearest.
+ */
 inline gpga_double gpga_asin_rn(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5119,6 +7563,12 @@ inline gpga_double gpga_asin_rn(gpga_double x) {
   return neg ? gpga_double_neg(asin) : asin;
 }
 
+/**
+ * @brief Compute asin(x) rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x) rounded toward +inf.
+ */
 inline gpga_double gpga_asin_ru(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5231,6 +7681,12 @@ inline gpga_double gpga_asin_ru(gpga_double x) {
   return ReturnRoundUpwards3(asinh, asinm, asinl);
 }
 
+/**
+ * @brief Compute asin(x) rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x) rounded toward -inf.
+ */
 inline gpga_double gpga_asin_rd(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5343,6 +7799,12 @@ inline gpga_double gpga_asin_rd(gpga_double x) {
   return ReturnRoundDownwards3(asinh, asinm, asinl);
 }
 
+/**
+ * @brief Compute asin(x) rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x) rounded toward zero.
+ */
 inline gpga_double gpga_asin_rz(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5452,6 +7914,12 @@ inline gpga_double gpga_asin_rz(gpga_double x) {
   return ReturnRoundTowardsZero3(asinh, asinm, asinl);
 }
 
+/**
+ * @brief Compute acos(x) rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x) rounded to nearest.
+ */
 inline gpga_double gpga_acos_rn(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5578,6 +8046,12 @@ inline gpga_double gpga_acos_rn(gpga_double x) {
   return ReturnRoundToNearest3(acosh, acosm, acosl);
 }
 
+/**
+ * @brief Compute acos(x) rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x) rounded toward +inf.
+ */
 inline gpga_double gpga_acos_ru(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5703,6 +8177,12 @@ inline gpga_double gpga_acos_ru(gpga_double x) {
   return ReturnRoundUpwards3(acosh, acosm, acosl);
 }
 
+/**
+ * @brief Compute acos(x) rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x) rounded toward -inf.
+ */
 inline gpga_double gpga_acos_rd(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double zdb = gpga_double_add(one, gpga_double_mul(x, x));
@@ -5828,10 +8308,22 @@ inline gpga_double gpga_acos_rd(gpga_double x) {
   return ReturnRoundDownwards3(acosh, acosm, acosl);
 }
 
+/**
+ * @brief Compute acos(x) rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x) rounded toward zero.
+ */
 inline gpga_double gpga_acos_rz(gpga_double x) {
   return gpga_acos_rd(x);
 }
 
+/**
+ * @brief Compute asin(x)/pi rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x)/pi rounded to nearest.
+ */
 inline gpga_double gpga_asinpi_rn(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6015,6 +8507,12 @@ inline gpga_double gpga_asinpi_rn(gpga_double x) {
   return neg ? gpga_double_neg(asinpi) : asinpi;
 }
 
+/**
+ * @brief Compute asin(x)/pi rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x)/pi rounded toward -inf.
+ */
 inline gpga_double gpga_asinpi_rd(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6182,6 +8680,12 @@ inline gpga_double gpga_asinpi_rd(gpga_double x) {
   return neg ? gpga_double_neg(asinpi) : asinpi;
 }
 
+/**
+ * @brief Compute asin(x)/pi rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x)/pi rounded toward +inf.
+ */
 inline gpga_double gpga_asinpi_ru(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6348,6 +8852,12 @@ inline gpga_double gpga_asinpi_ru(gpga_double x) {
   return neg ? gpga_double_neg(asinpi) : asinpi;
 }
 
+/**
+ * @brief Compute asin(x)/pi rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - asin(x)/pi rounded toward zero.
+ */
 inline gpga_double gpga_asinpi_rz(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6512,6 +9022,12 @@ inline gpga_double gpga_asinpi_rz(gpga_double x) {
   return neg ? gpga_double_neg(asinpi) : asinpi;
 }
 
+/**
+ * @brief Compute acos(x)/pi rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x)/pi rounded to nearest.
+ */
 inline gpga_double gpga_acospi_rn(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6646,6 +9162,12 @@ inline gpga_double gpga_acospi_rn(gpga_double x) {
   return ReturnRoundToNearest3(acosh, acosm, acosl);
 }
 
+/**
+ * @brief Compute acos(x)/pi rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x)/pi rounded toward -inf.
+ */
 inline gpga_double gpga_acospi_rd(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6777,6 +9299,12 @@ inline gpga_double gpga_acospi_rd(gpga_double x) {
   return ReturnRoundDownwards3(acosh, acosm, acosl);
 }
 
+/**
+ * @brief Compute acos(x)/pi rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x)/pi rounded toward +inf.
+ */
 inline gpga_double gpga_acospi_ru(gpga_double x) {
   gpga_double one = gpga_double_from_u32(1u);
   gpga_double half_val = gpga_double_const_inv2();
@@ -6908,12 +9436,23 @@ inline gpga_double gpga_acospi_ru(gpga_double x) {
   return ReturnRoundUpwards3(acosh, acosm, acosl);
 }
 
+/**
+ * @brief Compute acos(x)/pi rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - acos(x)/pi rounded toward zero.
+ */
 inline gpga_double gpga_acospi_rz(gpga_double x) {
   return gpga_acospi_rd(x);
 }
 
 // CRLIBM_TRIGO_ACCURATE_SCS
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ */
 inline void scs_sin(scs_ptr x) {
   scs_t res_scs;
   scs_t x2;
@@ -6930,6 +9469,11 @@ inline void scs_sin(scs_ptr x) {
   scs_add(x, x, res_scs);
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ */
 inline void scs_cos(scs_ptr x) {
   scs_t res_scs;
   scs_t x2;
@@ -6945,6 +9489,13 @@ inline void scs_cos(scs_ptr x) {
   scs_add(x, res_scs, SCS_ONE);
 }
 
+/**
+ * @brief Reduce the argument x modulo π/2 using SCS representation.
+ * 
+ * @param result The result of the reduction.
+ * @param x The input value to be reduced.
+ * @return The integer multiple of π/2 subtracted from x.
+ */
 inline int rem_pio2_scs(scs_ptr result, scs_ptr x) {
   ulong r[SCS_NB_WORDS + 3];
   ulong tmp = 0ul;
@@ -7084,6 +9635,12 @@ inline int rem_pio2_scs(scs_ptr result, scs_ptr x) {
   return X_SGN * (int)N;
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding to nearest using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The sine of the input value, rounded to nearest.
+ */
 inline gpga_double scs_sin_rn(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7115,6 +9672,12 @@ inline gpga_double scs_sin_rn(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding down using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The sine of the input value, rounded down.
+ */
 inline gpga_double scs_sin_rd(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7146,6 +9709,12 @@ inline gpga_double scs_sin_rd(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding up using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The sine of the input value, rounded up.
+ */
 inline gpga_double scs_sin_ru(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7177,6 +9746,12 @@ inline gpga_double scs_sin_ru(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding toward zero using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The sine of the input value, rounded toward zero.
+ */
 inline gpga_double scs_sin_rz(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7208,6 +9783,12 @@ inline gpga_double scs_sin_rz(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding to nearest using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The cosine of the input value, rounded to nearest.
+ */
 inline gpga_double scs_cos_rn(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7239,6 +9820,12 @@ inline gpga_double scs_cos_rn(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding down using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The cosine of the input value, rounded down.
+ */
 inline gpga_double scs_cos_rd(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7270,6 +9857,12 @@ inline gpga_double scs_cos_rd(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding up using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The cosine of the input value, rounded up.
+ */
 inline gpga_double scs_cos_ru(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7301,6 +9894,12 @@ inline gpga_double scs_cos_ru(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding toward zero using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The cosine of the input value, rounded toward zero.
+ */
 inline gpga_double scs_cos_rz(gpga_double x) {
   scs_t sc1;
   scs_t sc2;
@@ -7332,6 +9931,12 @@ inline gpga_double scs_cos_rz(gpga_double x) {
   }
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @param res_scs Resulting tangent value in SCS format.
+ */
 inline void scs_tan(gpga_double x, scs_ptr res_scs) {
   scs_t x_scs;
   scs_t y_scs;
@@ -7360,6 +9965,12 @@ inline void scs_tan(gpga_double x, scs_ptr res_scs) {
   }
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding to nearest using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The tangent of the input value, rounded to nearest.
+ */
 inline gpga_double scs_tan_rn(gpga_double x) {
   scs_t res_scs;
   gpga_double resd = gpga_double_zero(0u);
@@ -7368,6 +9979,12 @@ inline gpga_double scs_tan_rn(gpga_double x) {
   return resd;
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding down using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The tangent of the input value, rounded down.
+ */
 inline gpga_double scs_tan_rd(gpga_double x) {
   scs_t res_scs;
   gpga_double resd = gpga_double_zero(0u);
@@ -7376,6 +9993,12 @@ inline gpga_double scs_tan_rd(gpga_double x) {
   return resd;
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding up using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The tangent of the input value, rounded up.
+ */
 inline gpga_double scs_tan_ru(gpga_double x) {
   scs_t res_scs;
   gpga_double resd = gpga_double_zero(0u);
@@ -7384,6 +10007,12 @@ inline gpga_double scs_tan_ru(gpga_double x) {
   return resd;
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding toward zero using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double The tangent of the input value, rounded toward zero.
+ */
 inline gpga_double scs_tan_rz(gpga_double x) {
   scs_t res_scs;
   gpga_double resd = gpga_double_zero(0u);
@@ -7392,73 +10021,241 @@ inline gpga_double scs_tan_rz(gpga_double x) {
   return resd;
 }
 
+/**
+ * @brief High-word cutoff where sin(x) returns x in the fast path.
+ * 
+ */
 GPGA_CONST uint XMAX_RETURN_X_FOR_SIN = 0x3E4FFFFEu;
+/**
+ * @brief High-word cutoff for the sin case-2 polynomial path.
+ * 
+ */
 GPGA_CONST uint XMAX_SIN_CASE2 = 0x3F8921F9u;
+/**
+ * @brief High-word cutoff where cos(x) returns 1.0 in round-to-nearest mode.
+ * 
+ */
 GPGA_CONST uint XMAX_RETURN_1_FOR_COS_RN = 0x3E46A09Cu;
+/**
+ * @brief High-word cutoff where cos(x) returns 1.0 in directed-rounding modes.
+ * 
+ */
 GPGA_CONST uint XMAX_RETURN_1_FOR_COS_RDIR = 0x3E4FFFFEu;
+/**
+ * @brief High-word cutoff for the cos case-2 polynomial path.
+ * 
+ */
 GPGA_CONST uint XMAX_COS_CASE2 = 0x3F8921F9u;
+/**
+ * @brief High-word cutoff where tan(x) returns x in the fast path.
+ * 
+ */
 GPGA_CONST uint XMAX_RETURN_X_FOR_TAN = 0x3E3FFFFEu;
+/**
+ * @brief High-word cutoff for the tan case-2 polynomial path.
+ * 
+ */
 GPGA_CONST uint XMAX_TAN_CASE2 = 0x3FAFFFFEu;
 
+/**
+ * @brief 1.0 rounded down (1 - ulp) used for fast trig bounds.
+ * 
+ */
 GPGA_CONST gpga_double ONE_ROUNDED_DOWN =
     gpga_bits_to_real(0x3feffffffffffffful);
+/**
+ * @brief Error bound for fast sin case 2.
+ * 
+ */
 GPGA_CONST gpga_double EPS_SIN_CASE2 =
     gpga_bits_to_real(0x3bcbf6ecf516aab6ul);
+/**
+ * @brief Rounding constant for fast sin case 2.
+ * 
+ */
 GPGA_CONST gpga_double RN_CST_SIN_CASE2 =
     gpga_bits_to_real(0x3ff000dfc563fef6ul);
+/**
+ * @brief Error bound for fast cos case 2.
+ * 
+ */
 GPGA_CONST gpga_double EPS_COS_CASE2 =
     gpga_bits_to_real(0x3be6564c8577e0bdul);
+/**
+ * @brief Rounding constant for fast cos case 2.
+ * 
+ */
 GPGA_CONST gpga_double RN_CST_COS_CASE2 =
     gpga_bits_to_real(0x3ff002cb7c6fcaeful);
+/**
+ * @brief Error bound for fast sincos case 3.
+ * 
+ */
 GPGA_CONST gpga_double EPS_SINCOS_CASE3 =
     gpga_bits_to_real(0x3be8000000000000ul);
+/**
+ * @brief Rounding constant for fast sincos case 3.
+ * 
+ */
 GPGA_CONST gpga_double RN_CST_SINCOS_CASE3 =
     gpga_bits_to_real(0x3ff00300c0300c04ul);
+/**
+ * @brief Error bound for fast tan case 2.
+ * 
+ */
 GPGA_CONST gpga_double EPS_TAN_CASE2 =
     gpga_bits_to_real(0x3c20f4d172f7c308ul);
+/**
+ * @brief Error bound for fast tan case 3.
+ * 
+ */
 GPGA_CONST gpga_double EPS_TAN_CASE3 =
     gpga_bits_to_real(0x3bf9333333333333ul);
+/**
+ * @brief Rounding constant for fast tan case 3.
+ * 
+ */
 GPGA_CONST gpga_double RN_CST_TAN_CASE3 =
     gpga_bits_to_real(0x3ff0064ff4c73065ul);
 
+/**
+ * @brief Reciprocal of pi/256 used for fast trig argument reduction.
+ * 
+ */
 GPGA_CONST gpga_double INV_PIO256 =
     gpga_bits_to_real(0x40545f306dc9c883ul);
 
+/**
+ * @brief High-word cutoff for 2-term Cody-Waite range reduction.
+ * 
+ */
 GPGA_CONST uint XMAX_CODY_WAITE_2 = 0x40B921F9u;
+/**
+ * @brief High-word cutoff for 3-term Cody-Waite range reduction.
+ * 
+ */
 GPGA_CONST uint XMAX_CODY_WAITE_3 = 0x416921F9u;
+/**
+ * @brief High-word cutoff for double-double range reduction before SCS fallback.
+ * 
+ */
 GPGA_CONST uint XMAX_DDRR = 0x426921F9u;
 
+/**
+ * @brief Cody-Waite 2-term range-reduction constant (high part).
+ * 
+ */
 GPGA_CONST gpga_double RR_CW2_CH =
     gpga_bits_to_real(0x3f8921fb54480000ul);
+/**
+ * @brief Cody-Waite 2-term range-reduction constant (low correction).
+ * 
+ */
 GPGA_CONST gpga_double RR_CW2_MCL =
     gpga_bits_to_real(0x3d5e973dcb3b399dul);
+/**
+ * @brief Cody-Waite 3-term range-reduction constant (high part).
+ * 
+ */
 GPGA_CONST gpga_double RR_CW3_CH =
     gpga_bits_to_real(0x3f8921fb40000000ul);
+/**
+ * @brief Cody-Waite 3-term range-reduction constant (mid part).
+ * 
+ */
 GPGA_CONST gpga_double RR_CW3_CM =
     gpga_bits_to_real(0x3e04442d00000000ul);
+/**
+ * @brief Cody-Waite 3-term range-reduction constant (low correction).
+ * 
+ */
 GPGA_CONST gpga_double RR_CW3_MCL =
     gpga_bits_to_real(0xbc88469898cc5170ul);
+/**
+ * @brief Double-double range-reduction constant (high part).
+ * 
+ */
 GPGA_CONST gpga_double RR_DD_MCH =
     gpga_bits_to_real(0xbf8921fb54442d18ul);
+/**
+ * @brief Double-double range-reduction constant (mid part).
+ * 
+ */
 GPGA_CONST gpga_double RR_DD_MCM =
     gpga_bits_to_real(0xbc21a62633145c07ul);
+/**
+ * @brief Double-double range-reduction constant (low part).
+ * 
+ */
 GPGA_CONST gpga_double RR_DD_CL =
     gpga_bits_to_real(0xb8af1976b7ed8fbcul);
 
 // trigo_fast constants (little-endian)
+/**
+ * @brief Coefficient for the sin term x^3 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_s3 = 0xbfc5555555555555ul;
+/**
+ * @brief Coefficient for the sin term x^5 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_s5 = 0x3f81111111111111ul;
+/**
+ * @brief Coefficient for the sin term x^7 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_s7 = 0xbf2a01a01a01a01aul;
+/**
+ * @brief Coefficient for the cos term x^2 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_c2 = 0xbfe0000000000000ul;
+/**
+ * @brief Coefficient for the cos term x^4 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_c4 = 0x3fa5555555555555ul;
+/**
+ * @brief Coefficient for the cos term x^6 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_c6 = 0xbf56c16c16c16c17ul;
+/**
+ * @brief High part of the tan term x^3 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_t3h = 0x3fd5555555555555ul;
+/**
+ * @brief Low part of the tan term x^3 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_t3l = 0x3c7cb8e2b4ee83f1ul;
+/**
+ * @brief Coefficient for the tan term x^5 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_t5 = 0x3fc1111111110586ul;
+/**
+ * @brief Coefficient for the tan term x^7 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_t7 = 0x3faba1ba1d1301a5ul;
+/**
+ * @brief Coefficient for the tan term x^9 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_t9 = 0x3f9664ec751be4a4ul;
+/**
+ * @brief Coefficient for the tan term x^11 in the fast trig polynomial.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_t11 = 0x3f823953efc04f73ul;
 
+/**
+ * @brief Interleaved sin/cos lookup table for fast trig reduction.
+ * 
+ */
 GPGA_CONST gpga_double trigo_fast_sincos_table[260] = {
     0x0000000000000000ul, 0x0000000000000000ul, 0x3ff0000000000000ul,
     0x0000000000000000ul, 0x3f8921d1fcdec784ul, 0x3c29878ebe836d9dul,
@@ -7549,6 +10346,10 @@ GPGA_CONST gpga_double trigo_fast_sincos_table[260] = {
     0x3fe6a09e667f3bcdul, 0xbc8bdd3413b26456ul,
 };
 
+/**
+ * @brief Base-2^32 digits of 256/pi used by fast pio256 range reduction.
+ * 
+ */
 GPGA_CONST int trigo_fast_digits_256_over_pi[] = {
     0x51,       0x1F306DC9, 0x3220A94F, 0x384EAFA3, 0x3A9A6EE0,
     0x1B6C52B3, 0x9E21C82,  0x3FCA2C7,  0x15EF5DE2, 0x2C36E48D,
@@ -7562,6 +10363,10 @@ GPGA_CONST int trigo_fast_digits_256_over_pi[] = {
     0x3610CB3,  0xC2AF8A5,  0xD0811C,
 };
 
+/**
+ * @brief SCS constant for pi/256 used in fast trig reduction.
+ * 
+ */
 GPGA_CONST scs trigo_fast_pio256 = {{
     0x00c90fdau,
     0x28885a30u,
@@ -7573,6 +10378,7 @@ GPGA_CONST scs trigo_fast_pio256 = {{
     0x2efa98ecu,
 }, gpga_db_one, -1, 1};
 
+/** @brief Pointer alias for trigo_fast_pio256. */
 #define trigo_fast_pio256_ptr ((scs_const_ptr)&trigo_fast_pio256)
 
 inline uint gpga_u64_hi(ulong value) {
@@ -7587,17 +10393,45 @@ inline gpga_double gpga_u64_from_words(uint hi, uint lo) {
   return ((ulong)hi << 32) | (ulong)lo;
 }
 
+/**
+ * @brief Shift constant used in fast trig reduction (stage 1).
+ * 
+ */
 GPGA_CONST gpga_double TRIGO_SHIFT1 =
     gpga_bits_to_real(0x3e10000000000000ul);
+/**
+ * @brief Shift constant used in fast trig reduction (stage 2).
+ * 
+ */
 GPGA_CONST gpga_double TRIGO_SHIFT2 =
     gpga_bits_to_real(0x3c30000000000000ul);
+/**
+ * @brief Shift constant used in fast trig reduction (stage 3).
+ * 
+ */
 GPGA_CONST gpga_double TRIGO_SHIFT3 =
     gpga_bits_to_real(0x3a50000000000000ul);
 
+/**
+ * @brief Selector value for sine in trig dispatch.
+ * 
+ */
 GPGA_CONST int GPGA_TRIGO_SIN = 0;
+/**
+ * @brief Selector value for cosine in trig dispatch.
+ * 
+ */
 GPGA_CONST int GPGA_TRIGO_COS = 1;
+/**
+ * @brief Selector value for tangent in trig dispatch.
+ * 
+ */
 GPGA_CONST int GPGA_TRIGO_TAN = 2;
 
+/**
+ * @brief State bundle for trig argument reduction and reconstruction.
+ * 
+ */
 struct gpga_rrinfo {
   gpga_double rh;
   gpga_double rl;
@@ -7607,6 +10441,13 @@ struct gpga_rrinfo {
   int changesign;
 };
 
+/**
+ * @brief Reduce an SCS value by pi/256 and return the integer multiple.
+ * 
+ * @param result Output SCS remainder.
+ * @param x Input SCS value.
+ * @return int - Signed integer multiple of pi/256.
+ */
 inline int rem_pio256_scs(scs_ptr result, scs_ptr x) {
   ulong r[SCS_NB_WORDS + 3];
   ulong tmp = 0ul;
@@ -7746,6 +10587,16 @@ inline int rem_pio256_scs(scs_ptr result, scs_ptr x) {
   return X_SGN * (int)N;
 }
 
+/**
+ * @brief Perform SCS range reduction by pi/256 and return split remainder.
+ * 
+ * @param x Input value.
+ * @param k_out Output integer multiple of pi/256.
+ * @param index_out Output table index for reconstruction.
+ * @param quadrant_out Output quadrant for sign handling.
+ * @param yh_out Output high part of the reduced argument.
+ * @param yl_out Output low part of the reduced argument.
+ */
 inline void gpga_range_reduction_scs(gpga_double x, thread int* k_out,
                                      thread int* index_out,
                                      thread int* quadrant_out,
@@ -7779,6 +10630,14 @@ inline void gpga_range_reduction_scs(gpga_double x, thread int* k_out,
   *yl_out = yl;
 }
 
+/**
+ * @brief Evaluate sine for a reduced argument when the table index is zero.
+ * 
+ * @param psh Output high part of sine.
+ * @param psl Output low part of sine.
+ * @param yh High part of reduced argument.
+ * @param yl Low part of reduced argument.
+ */
 inline void gpga_trigo_do_sin_zero(thread gpga_double* psh,
                                    thread gpga_double* psl, gpga_double yh,
                                    gpga_double yl) {
@@ -7793,6 +10652,14 @@ inline void gpga_trigo_do_sin_zero(thread gpga_double* psh,
   Add12(psh, psl, yh, gpga_double_add(yl, gpga_double_mul(ts, yh)));
 }
 
+/**
+ * @brief Evaluate cosine for a reduced argument when the table index is zero.
+ * 
+ * @param pch Output high part of cosine.
+ * @param pcl Output low part of cosine.
+ * @param yh High part of reduced argument.
+ * @param yl Low part of reduced argument.
+ */
 inline void gpga_trigo_do_cos_zero(thread gpga_double* pch,
                                    thread gpga_double* pcl, gpga_double yh,
                                    gpga_double yl) {
@@ -7808,6 +10675,20 @@ inline void gpga_trigo_do_cos_zero(thread gpga_double* pch,
   Add12(pch, pcl, gpga_double_from_u32(1u), tc);
 }
 
+/**
+ * @brief Combine table values with reduced argument to compute sine.
+ * 
+ * @param psh Output high part of sine.
+ * @param psl Output low part of sine.
+ * @param sah Table sine high part.
+ * @param sal Table sine low part.
+ * @param cah Table cosine high part.
+ * @param cal Table cosine low part.
+ * @param yh High part of reduced argument.
+ * @param yl Low part of reduced argument.
+ * @param ts Sine polynomial correction term.
+ * @param tc Cosine polynomial correction term.
+ */
 inline void gpga_trigo_do_sin_not_zero(
     thread gpga_double* psh, thread gpga_double* psl, gpga_double sah,
     gpga_double sal, gpga_double cah, gpga_double cal, gpga_double yh,
@@ -7829,6 +10710,20 @@ inline void gpga_trigo_do_sin_not_zero(
   Add12(psh, psl, thi, tlo2);
 }
 
+/**
+ * @brief Combine table values with reduced argument to compute cosine.
+ * 
+ * @param pch Output high part of cosine.
+ * @param pcl Output low part of cosine.
+ * @param sah Table sine high part.
+ * @param sal Table sine low part.
+ * @param cah Table cosine high part.
+ * @param cal Table cosine low part.
+ * @param yh High part of reduced argument.
+ * @param yl Low part of reduced argument.
+ * @param ts Sine polynomial correction term.
+ * @param tc Cosine polynomial correction term.
+ */
 inline void gpga_trigo_do_cos_not_zero(
     thread gpga_double* pch, thread gpga_double* pcl, gpga_double sah,
     gpga_double sal, gpga_double cah, gpga_double cal, gpga_double yh,
@@ -7851,6 +10746,11 @@ inline void gpga_trigo_do_cos_not_zero(
   Add12(pch, pcl, thi, tlo2);
 }
 
+/**
+ * @brief Perform argument reduction and compute the requested trig function.
+ * 
+ * @param rri Input/output state bundle for argument reduction and results.
+ */
 inline void gpga_compute_trig_with_argred(thread gpga_rrinfo* rri) {
   gpga_double sah = gpga_double_zero(0u);
   gpga_double sal = gpga_double_zero(0u);
@@ -8025,6 +10925,12 @@ inline void gpga_compute_trig_with_argred(thread gpga_rrinfo* rri) {
   }
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding to nearest using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The sine of the input value, rounded to nearest.
+ */
 inline gpga_double gpga_sin_rn(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double ts = gpga_double_zero(0u);
@@ -8077,6 +10983,12 @@ inline gpga_double gpga_sin_rn(gpga_double x) {
   return scs_sin_rn(x);
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding up using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The sine of the input value, rounded up.
+ */
 inline gpga_double gpga_sin_ru(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double xx = gpga_double_zero(0u);
@@ -8130,6 +11042,12 @@ inline gpga_double gpga_sin_ru(gpga_double x) {
   return scs_sin_ru(x);
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding down using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The sine of the input value, rounded down.
+ */
 inline gpga_double gpga_sin_rd(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double xx = gpga_double_zero(0u);
@@ -8183,6 +11101,12 @@ inline gpga_double gpga_sin_rd(gpga_double x) {
   return scs_sin_rd(x);
 }
 
+/**
+ * @brief Compute the sine of a double-precision floating-point number with rounding toward zero using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The sine of the input value, rounded toward zero.
+ */
 inline gpga_double gpga_sin_rz(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double xx = gpga_double_zero(0u);
@@ -8235,6 +11159,12 @@ inline gpga_double gpga_sin_rz(gpga_double x) {
   return scs_sin_rz(x);
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding to nearest using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The cosine of the input value, rounded to nearest.
+ */
 inline gpga_double gpga_cos_rn(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double tc = gpga_double_zero(0u);
@@ -8284,6 +11214,12 @@ inline gpga_double gpga_cos_rn(gpga_double x) {
   return scs_cos_rn(x);
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding up using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The cosine of the input value, rounded up.
+ */
 inline gpga_double gpga_cos_ru(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double tc = gpga_double_zero(0u);
@@ -8331,6 +11267,12 @@ inline gpga_double gpga_cos_ru(gpga_double x) {
   return scs_cos_ru(x);
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding down using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The cosine of the input value, rounded down.
+ */
 inline gpga_double gpga_cos_rd(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double tc = gpga_double_zero(0u);
@@ -8381,6 +11323,12 @@ inline gpga_double gpga_cos_rd(gpga_double x) {
   return scs_cos_rd(x);
 }
 
+/**
+ * @brief Compute the cosine of a double-precision floating-point number with rounding to zero using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The cosine of the input value, rounded to zero.
+ */
 inline gpga_double gpga_cos_rz(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double tc = gpga_double_zero(0u);
@@ -8431,6 +11379,12 @@ inline gpga_double gpga_cos_rz(gpga_double x) {
   return scs_cos_rz(x);
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding to nearest using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The tangent of the input value, rounded to nearest.
+ */
 inline gpga_double gpga_tan_rn(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double x2 = gpga_double_zero(0u);
@@ -8496,6 +11450,12 @@ inline gpga_double gpga_tan_rn(gpga_double x) {
   return scs_tan_rn(x);
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding up using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The tangent of the input value, rounded up.
+ */
 inline gpga_double gpga_tan_ru(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double epsilon = gpga_double_zero(0u);
@@ -8557,6 +11517,12 @@ inline gpga_double gpga_tan_ru(gpga_double x) {
   return scs_tan_ru(x);
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding down using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The tangent of the input value, rounded down.
+ */
 inline gpga_double gpga_tan_rd(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double epsilon = gpga_double_zero(0u);
@@ -8618,6 +11584,12 @@ inline gpga_double gpga_tan_rd(gpga_double x) {
   return scs_tan_rd(x);
 }
 
+/**
+ * @brief Compute the tangent of a double-precision floating-point number with rounding toward zero using SCS.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The tangent of the input value, rounded toward zero.
+ */
 inline gpga_double gpga_tan_rz(gpga_double x) {
   gpga_rrinfo rri;
   gpga_double epsilon = gpga_double_zero(0u);
@@ -8675,6 +11647,12 @@ inline gpga_double gpga_tan_rz(gpga_double x) {
   return scs_tan_rz(x);
 }
 
+/**
+ * @brief Return a power-of-two double from a biased exponent field.
+ * 
+ * @param exp_bits Biased exponent bits (IEEE-754).
+ * @return gpga_double - 2^(exp_bits-1023) as a gpga_double.
+ */
 inline gpga_double scs_double_pow2_bits(int exp_bits) {
   if (exp_bits <= 0) {
     return gpga_double_zero(0u);
@@ -8685,38 +11663,83 @@ inline gpga_double scs_double_pow2_bits(int exp_bits) {
   return gpga_double_pack(0u, (uint)exp_bits, 0ul);
 }
 
+/**
+ * @brief Return the SCS radix as a double (2^SCS_NB_BITS).
+ * 
+ * @return gpga_double - SCS radix as double.
+ */
 inline gpga_double scs_radix_one_double() {
   return scs_double_pow2_bits(1023 + SCS_NB_BITS);
 }
 
+/**
+ * @brief Return 2^(2*SCS_NB_BITS) as a double.
+ * 
+ * @return gpga_double - SCS radix squared as double.
+ */
 inline gpga_double scs_radix_two_double() {
   return scs_double_pow2_bits(1023 + 2 * SCS_NB_BITS);
 }
 
+/**
+ * @brief Return 2^(-SCS_NB_BITS) as a double.
+ * 
+ * @return gpga_double - Inverse SCS radix as double.
+ */
 inline gpga_double scs_radix_mone_double() {
   return scs_double_pow2_bits(1023 - SCS_NB_BITS);
 }
 
+/**
+ * @brief Return 2^(-2*SCS_NB_BITS) as a double.
+ * 
+ * @return gpga_double - Inverse squared SCS radix as double.
+ */
 inline gpga_double scs_radix_mtwo_double() {
   return scs_double_pow2_bits(1023 - 2 * SCS_NB_BITS);
 }
 
+/**
+ * @brief Return 2^(SCS_NB_BITS*SCS_MAX_RANGE) as a double.
+ * 
+ * @return gpga_double - SCS range scale as double.
+ */
 inline gpga_double scs_radix_rng_double() {
   return scs_double_pow2_bits(1023 + (SCS_NB_BITS * SCS_MAX_RANGE));
 }
 
+/**
+ * @brief Return 2^(-SCS_NB_BITS*SCS_MAX_RANGE) as a double.
+ * 
+ * @return gpga_double - Inverse SCS range scale as double.
+ */
 inline gpga_double scs_radix_mrng_double() {
   return scs_double_pow2_bits(1023 - (SCS_NB_BITS * SCS_MAX_RANGE));
 }
 
+/**
+ * @brief Return the maximum finite double.
+ * 
+ * @return gpga_double - Maximum finite double.
+ */
 inline gpga_double scs_max_double() {
   return gpga_bits_to_real(0x7feffffffffffffful);
 }
 
+/**
+ * @brief Return the minimum positive subnormal double.
+ * 
+ * @return gpga_double - Minimum positive subnormal double.
+ */
 inline gpga_double scs_min_double() {
   return gpga_bits_to_real(0x0000000000000001ul);
 }
 
+/**
+ * @brief Set an SCS value to zero.
+ * 
+ * @param result Destination SCS value.
+ */
 inline void scs_zero(scs_ptr result) {
   for (int i = 0; i < SCS_NB_WORDS; ++i) {
     R_HW[i] = 0u;
@@ -8726,6 +11749,12 @@ inline void scs_zero(scs_ptr result) {
   R_SGN = 1;
 }
 
+/**
+ * @brief Copy an SCS value.
+ * 
+ * @param result Destination SCS value.
+ * @param x Source SCS value.
+ */
 inline void scs_set(scs_ptr result, scs_ptr x) {
   for (int i = 0; i < SCS_NB_WORDS; ++i) {
     R_HW[i] = X_HW[i];
@@ -8735,6 +11764,12 @@ inline void scs_set(scs_ptr result, scs_ptr x) {
   R_SGN = X_SGN;
 }
 
+/**
+ * @brief Set an SCS value from a signed integer.
+ * 
+ * @param result Destination SCS value.
+ * @param x Signed integer input.
+ */
 inline void scs_set_si(scs_ptr result, int x) {
   uint ux = 0u;
   if (x >= 0) {
@@ -8766,6 +11801,12 @@ inline void scs_set_si(scs_ptr result, int x) {
   }
 }
 
+/**
+ * @brief Set an SCS value from a double-precision input.
+ * 
+ * @param result Destination SCS value.
+ * @param x Double-precision input.
+ */
 inline void scs_set_d(scs_ptr result, gpga_double x) {
   gpga_double nb = gpga_double_abs(x);
   if (gpga_double_is_zero(nb)) {
@@ -8819,6 +11860,12 @@ inline void scs_set_d(scs_ptr result, gpga_double x) {
   }
 }
 
+/**
+ * @brief Convert an SCS value to double using default rounding.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d(thread gpga_double* result, scs_ptr x) {
   if (X_EXP != gpga_double_from_u32(1u)) {
     *result = X_EXP;
@@ -8887,6 +11934,13 @@ inline void scs_get_d(thread gpga_double* result, scs_ptr x) {
   }
 }
 
+/**
+ * @brief Compare absolute values of two SCS numbers.
+ * 
+ * @param a First SCS value.
+ * @param b Second SCS value.
+ * @return int - Comparison result (<0, 0, >0).
+ */
 inline int scs_cmp_abs(scs_ptr a, scs_ptr b) {
   if (a->index != b->index) {
     return (a->index > b->index) ? 1 : -1;
@@ -8900,6 +11954,12 @@ inline int scs_cmp_abs(scs_ptr a, scs_ptr b) {
   return 0;
 }
 
+/**
+ * @brief Convert an SCS value to double with round-to-nearest.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_nearest(thread gpga_double* result, scs_ptr x) {
   gpga_double down = gpga_double_zero(0u);
   gpga_double up = gpga_double_zero(0u);
@@ -8935,6 +11995,13 @@ inline void scs_get_d_nearest(thread gpga_double* result, scs_ptr x) {
   *result = ((bits & 1ul) == 0ul) ? down : up;
 }
 
+/**
+ * @brief Convert an SCS value to double with directed rounding.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ * @param rnd_mantissa_up Nonzero to round mantissa upward.
+ */
 inline void scs_get_d_directed(thread gpga_double* result, scs_ptr x,
                                int rnd_mantissa_up) {
   if (X_EXP != gpga_double_from_u32(1u)) {
@@ -9001,18 +12068,41 @@ inline void scs_get_d_directed(thread gpga_double* result, scs_ptr x,
   }
 }
 
+/**
+ * @brief Convert an SCS value to double rounded toward -inf.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_minf(thread gpga_double* result, scs_ptr x) {
   scs_get_d_directed(result, x, (int)(X_SGN < 0));
 }
 
+/**
+ * @brief Convert an SCS value to double rounded toward +inf.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_pinf(thread gpga_double* result, scs_ptr x) {
   scs_get_d_directed(result, x, (int)(X_SGN >= 0));
 }
 
+/**
+ * @brief Convert an SCS value to double rounded toward zero.
+ * 
+ * @param result Output double.
+ * @param x Input SCS value.
+ */
 inline void scs_get_d_zero(thread gpga_double* result, scs_ptr x) {
   scs_get_d_directed(result, x, 0);
 }
 
+/**
+ * @brief Renormalize an SCS value and adjust the index.
+ * 
+ * @param result Input/output SCS value.
+ */
 inline void scs_renorm(scs_ptr result) {
   for (int i = SCS_NB_WORDS - 1; i > 0; --i) {
     uint c = R_HW[i] & ~SCS_MASK_RADIX;
@@ -9043,6 +12133,11 @@ inline void scs_renorm(scs_ptr result) {
   }
 }
 
+/**
+ * @brief Renormalize an SCS value without cancellation checks.
+ * 
+ * @param result Input/output SCS value.
+ */
 inline void scs_renorm_no_cancel_check(scs_ptr result) {
   for (int i = SCS_NB_WORDS - 1; i > 0; --i) {
     uint carry = R_HW[i] >> SCS_NB_BITS;
@@ -9060,6 +12155,13 @@ inline void scs_renorm_no_cancel_check(scs_ptr result) {
   }
 }
 
+/**
+ * @brief Add two SCS values without renormalization.
+ * 
+ * @param result Output SCS sum.
+ * @param x First addend.
+ * @param y Second addend.
+ */
 inline void scs_add_no_renorm(scs_ptr result, scs_ptr x, scs_ptr y) {
   scs_ptr ax = x;
   scs_ptr ay = y;
@@ -9086,6 +12188,13 @@ inline void scs_add_no_renorm(scs_ptr result, scs_ptr x, scs_ptr y) {
   }
 }
 
+/**
+ * @brief Core addition for two SCS values with aligned exponents.
+ * 
+ * @param result Output SCS sum.
+ * @param x First addend.
+ * @param y Second addend.
+ */
 inline void scs_do_add(scs_ptr result, scs_ptr x, scs_ptr y) {
   int diff = X_IND - Y_IND;
   R_EXP = gpga_double_sub(gpga_double_add(X_EXP, Y_EXP),
@@ -9120,6 +12229,13 @@ inline void scs_do_add(scs_ptr result, scs_ptr x, scs_ptr y) {
   }
 }
 
+/**
+ * @brief Core subtraction for two SCS values with aligned exponents.
+ * 
+ * @param result Output SCS difference.
+ * @param x Minuend.
+ * @param y Subtrahend.
+ */
 inline void scs_do_sub(scs_ptr result, scs_ptr x, scs_ptr y) {
   int diff = X_IND - Y_IND;
   R_EXP = gpga_double_sub(gpga_double_add(X_EXP, Y_EXP),
@@ -9196,6 +12312,13 @@ inline void scs_do_sub(scs_ptr result, scs_ptr x, scs_ptr y) {
   }
 }
 
+/**
+ * @brief Add two SCS values with sign handling.
+ * 
+ * @param result Output SCS sum.
+ * @param x First addend.
+ * @param y Second addend.
+ */
 inline void scs_add(scs_ptr result, scs_ptr x, scs_ptr y) {
   if (X_EXP == gpga_double_zero(0u)) {
     scs_set(result, y);
@@ -9220,6 +12343,13 @@ inline void scs_add(scs_ptr result, scs_ptr x, scs_ptr y) {
   }
 }
 
+/**
+ * @brief Subtract two SCS values with sign handling.
+ * 
+ * @param result Output SCS difference.
+ * @param x Minuend.
+ * @param y Subtrahend.
+ */
 inline void scs_sub(scs_ptr result, scs_ptr x, scs_ptr y) {
   if (X_EXP == gpga_double_zero(0u)) {
     scs_set(result, y);
@@ -9247,6 +12377,13 @@ inline void scs_sub(scs_ptr result, scs_ptr x, scs_ptr y) {
   }
 }
 
+/**
+ * @brief Multiply two SCS values.
+ * 
+ * @param result Output SCS product.
+ * @param x First factor.
+ * @param y Second factor.
+ */
 inline void scs_mul(scs_ptr result, scs_ptr x, scs_ptr y) {
   uint64_t res[SCS_NB_WORDS + 1];
   for (int i = 0; i <= SCS_NB_WORDS; ++i) {
@@ -9286,54 +12423,105 @@ inline void scs_mul(scs_ptr result, scs_ptr x, scs_ptr y) {
   }
 }
 
+/**
+ * @brief Add a constant SCS value to a mutable SCS value.
+ * 
+ * @overload
+ */
 inline void scs_add(scs_ptr result, scs_const_ptr x, scs_ptr y) {
   scs tmp = *x;
   scs_add(result, (scs_ptr)&tmp, y);
 }
 
+/**
+ * @brief Add a mutable SCS value to a constant SCS value.
+ * 
+ * @overload
+ */
 inline void scs_add(scs_ptr result, scs_ptr x, scs_const_ptr y) {
   scs tmp = *y;
   scs_add(result, x, (scs_ptr)&tmp);
 }
 
+/**
+ * @brief Add two constant SCS values.
+ * 
+ * @overload
+ */
 inline void scs_add(scs_ptr result, scs_const_ptr x, scs_const_ptr y) {
   scs tmp_x = *x;
   scs tmp_y = *y;
   scs_add(result, (scs_ptr)&tmp_x, (scs_ptr)&tmp_y);
 }
 
+/**
+ * @brief Subtract a mutable SCS value from a constant SCS value.
+ * 
+ * @overload
+ */
 inline void scs_sub(scs_ptr result, scs_const_ptr x, scs_ptr y) {
   scs tmp = *x;
   scs_sub(result, (scs_ptr)&tmp, y);
 }
 
+/**
+ * @brief Subtract a constant SCS value from a mutable SCS value.
+ * 
+ * @overload
+ */
 inline void scs_sub(scs_ptr result, scs_ptr x, scs_const_ptr y) {
   scs tmp = *y;
   scs_sub(result, x, (scs_ptr)&tmp);
 }
 
+/**
+ * @brief Subtract two constant SCS values.
+ * 
+ * @overload
+ */
 inline void scs_sub(scs_ptr result, scs_const_ptr x, scs_const_ptr y) {
   scs tmp_x = *x;
   scs tmp_y = *y;
   scs_sub(result, (scs_ptr)&tmp_x, (scs_ptr)&tmp_y);
 }
 
+/**
+ * @brief Multiply a constant SCS value by a mutable SCS value.
+ * 
+ * @overload
+ */
 inline void scs_mul(scs_ptr result, scs_const_ptr x, scs_ptr y) {
   scs tmp = *x;
   scs_mul(result, (scs_ptr)&tmp, y);
 }
 
+/**
+ * @brief Multiply a mutable SCS value by a constant SCS value.
+ * 
+ * @overload
+ */
 inline void scs_mul(scs_ptr result, scs_ptr x, scs_const_ptr y) {
   scs tmp = *y;
   scs_mul(result, x, (scs_ptr)&tmp);
 }
 
+/**
+ * @brief Multiply two constant SCS values.
+ * 
+ * @overload
+ */
 inline void scs_mul(scs_ptr result, scs_const_ptr x, scs_const_ptr y) {
   scs tmp_x = *x;
   scs tmp_y = *y;
   scs_mul(result, (scs_ptr)&tmp_x, (scs_ptr)&tmp_y);
 }
 
+/**
+ * @brief Square an SCS value.
+ * 
+ * @param result Output SCS square.
+ * @param x Input SCS value.
+ */
 inline void scs_square(scs_ptr result, scs_ptr x) {
   uint64_t res[SCS_NB_WORDS + 1];
   for (int i = 0; i <= SCS_NB_WORDS; ++i) {
@@ -9381,6 +12569,12 @@ inline void scs_square(scs_ptr result, scs_ptr x) {
   }
 }
 
+/**
+ * @brief Multiply an SCS value by an unsigned integer in place.
+ * 
+ * @param x Input/output SCS value.
+ * @param val_int Unsigned integer multiplier.
+ */
 inline void scs_mul_ui(scs_ptr x, uint val_int) {
   if (val_int == 0u) {
     X_EXP = gpga_double_zero(0u);
@@ -9406,6 +12600,11 @@ inline void scs_mul_ui(scs_ptr x, uint val_int) {
   }
 }
 
+/**
+ * @brief Divide an SCS value by two in place.
+ * 
+ * @param num Input/output SCS value.
+ */
 inline void scs_div_2(scs_ptr num) {
   uint carry = 0u;
   uint mask = (uint)((1u << SCS_NB_BITS) - 1u);
@@ -9427,6 +12626,12 @@ inline void scs_div_2(scs_ptr num) {
   }
 }
 
+/**
+ * @brief Compute the reciprocal of an SCS value.
+ * 
+ * @param result Output SCS reciprocal.
+ * @param x Input SCS value.
+ */
 inline void scs_inv(scs_ptr result, scs_ptr x) {
   scs_t tmp;
   scs_t res;
@@ -9450,6 +12655,13 @@ inline void scs_inv(scs_ptr result, scs_ptr x) {
   scs_mul(result, res, res1);
 }
 
+/**
+ * @brief Divide two SCS values.
+ * 
+ * @param result Output SCS quotient.
+ * @param x Numerator.
+ * @param y Denominator.
+ */
 inline void scs_div(scs_ptr result, scs_ptr x, scs_ptr y) {
   scs_t res;
   if (X_EXP != gpga_double_from_u32(1u)) {
@@ -9460,6 +12672,14 @@ inline void scs_div(scs_ptr result, scs_ptr x, scs_ptr y) {
   scs_mul(result, res, x);
 }
 
+/**
+ * @brief Compute x * y + z in SCS precision.
+ * 
+ * @param result Output SCS result.
+ * @param x Multiplicand.
+ * @param y Multiplier.
+ * @param z Addend.
+ */
 inline void scs_fma(scs_ptr result, scs_ptr x, scs_ptr y, scs_ptr z) {
   uint64_t res[SCS_NB_WORDS * 2];
   for (int i = 0; i < (SCS_NB_WORDS * 2); ++i) {
@@ -9540,6 +12760,14 @@ inline void scs_fma(scs_ptr result, scs_ptr x, scs_ptr y, scs_ptr z) {
   }
 }
 
+/**
+ * @brief Fast atan approximation using table reduction.
+ * 
+ * @param atanhi Output high part of atan(x).
+ * @param atanlo Output low part of atan(x).
+ * @param index_of_e Output index selecting epsilon bounds.
+ * @param x Input value (assumed non-negative).
+ */
 inline void gpga_atan_quick(thread gpga_double* atanhi,
                             thread gpga_double* atanlo,
                             thread int* index_of_e, gpga_double x) {
@@ -9650,6 +12878,12 @@ inline void gpga_atan_quick(thread gpga_double* atanhi,
   }
 }
 
+/**
+ * @brief Compute atan(x) using SCS multi-precision arithmetic.
+ * 
+ * @param res_scs Output SCS result.
+ * @param x Input SCS value.
+ */
 inline void scs_atan(scs_ptr res_scs, scs_ptr x) {
   scs_t X_scs, denom1_scs, denom2_scs, poly_scs, X2;
   scs_t atanbhihi, atanbhilo, atanblo, atanbhi, atanb;
@@ -9726,6 +12960,12 @@ inline void scs_atan(scs_ptr res_scs, scs_ptr x) {
   }
 }
 
+/**
+ * @brief Compute atan(x)/pi using SCS multi-precision arithmetic.
+ * 
+ * @param res Output SCS result.
+ * @param x Input SCS value.
+ */
 inline void scs_atanpi(scs_ptr res, scs_ptr x) {
   scs_t at, inv_pi;
   scs_atan(at, x);
@@ -9733,6 +12973,12 @@ inline void scs_atanpi(scs_ptr res, scs_ptr x) {
   scs_mul(res, at, inv_pi);
 }
 
+/**
+ * @brief Compute atan(x) using SCS and round to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded to nearest.
+ */
 inline gpga_double scs_atan_rn(gpga_double x) {
   scs_t sc1, res_scs;
   gpga_double res = x;
@@ -9751,6 +12997,12 @@ inline gpga_double scs_atan_rn(gpga_double x) {
   return res;
 }
 
+/**
+ * @brief Compute atan(x) using SCS and round toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded toward -inf.
+ */
 inline gpga_double scs_atan_rd(gpga_double x) {
   scs_t sc1, res_scs;
   gpga_double res = x;
@@ -9771,6 +13023,12 @@ inline gpga_double scs_atan_rd(gpga_double x) {
   return res;
 }
 
+/**
+ * @brief Compute atan(x) using SCS and round toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded toward +inf.
+ */
 inline gpga_double scs_atan_ru(gpga_double x) {
   scs_t sc1, res_scs;
   gpga_double res = x;
@@ -9791,6 +13049,12 @@ inline gpga_double scs_atan_ru(gpga_double x) {
   return res;
 }
 
+/**
+ * @brief Compute atan(x)/pi using SCS and round to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded to nearest.
+ */
 inline gpga_double scs_atanpi_rn(gpga_double x) {
   scs_t sc1, res_scs;
   gpga_double res = x;
@@ -9809,6 +13073,12 @@ inline gpga_double scs_atanpi_rn(gpga_double x) {
   return res;
 }
 
+/**
+ * @brief Compute atan(x)/pi using SCS and round toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded toward -inf.
+ */
 inline gpga_double scs_atanpi_rd(gpga_double x) {
   scs_t sc1, res_scs;
   gpga_double res = x;
@@ -9829,6 +13099,12 @@ inline gpga_double scs_atanpi_rd(gpga_double x) {
   return res;
 }
 
+/**
+ * @brief Compute atan(x)/pi using SCS and round toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded toward +inf.
+ */
 inline gpga_double scs_atanpi_ru(gpga_double x) {
   scs_t sc1, res_scs;
   gpga_double res = x;
@@ -9849,6 +13125,12 @@ inline gpga_double scs_atanpi_ru(gpga_double x) {
   return res;
 }
 
+/**
+ * @brief Compute atan(x) rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded to nearest.
+ */
 inline gpga_double gpga_atan_rn(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffff;
   uint xlo = gpga_u64_lo(x);
@@ -9886,6 +13168,12 @@ inline gpga_double gpga_atan_rn(gpga_double x) {
   return result;
 }
 
+/**
+ * @brief Compute atan(x) rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded toward -inf.
+ */
 inline gpga_double gpga_atan_rd(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   uint xlo = gpga_u64_lo(x);
@@ -9930,6 +13218,12 @@ inline gpga_double gpga_atan_rd(gpga_double x) {
   return scs_atan_rd(signed_x);
 }
 
+/**
+ * @brief Compute atan(x) rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded toward +inf.
+ */
 inline gpga_double gpga_atan_ru(gpga_double x) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   uint xlo = gpga_u64_lo(x);
@@ -9975,6 +13269,12 @@ inline gpga_double gpga_atan_ru(gpga_double x) {
   return scs_atan_ru(signed_x);
 }
 
+/**
+ * @brief Compute atan(x) rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x) rounded toward zero.
+ */
 inline gpga_double gpga_atan_rz(gpga_double x) {
   if (gpga_double_sign(x) != 0u) {
     return gpga_atan_ru(x);
@@ -9982,6 +13282,13 @@ inline gpga_double gpga_atan_rz(gpga_double x) {
   return gpga_atan_rd(x);
 }
 
+/**
+ * @brief Handle NaN/Inf/large-argument cases for atan(x)/pi.
+ * 
+ * @param x Input value.
+ * @param out Output value when a special case is handled.
+ * @return bool - True if a special case was handled.
+ */
 inline bool gpga_atanpi_special_case(gpga_double x, thread gpga_double* out) {
   uint absxhi = gpga_u64_hi(x) & 0x7fffffffU;
   uint xlo = gpga_u64_lo(x);
@@ -10008,6 +13315,12 @@ inline bool gpga_atanpi_special_case(gpga_double x, thread gpga_double* out) {
   return false;
 }
 
+/**
+ * @brief Compute atan(x)/pi rounded to nearest.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded to nearest.
+ */
 inline gpga_double gpga_atanpi_rn(gpga_double x) {
   gpga_double out = gpga_double_zero(0u);
   if (gpga_atanpi_special_case(x, &out)) {
@@ -10016,6 +13329,12 @@ inline gpga_double gpga_atanpi_rn(gpga_double x) {
   return scs_atanpi_rn(x);
 }
 
+/**
+ * @brief Compute atan(x)/pi rounded toward -inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded toward -inf.
+ */
 inline gpga_double gpga_atanpi_rd(gpga_double x) {
   gpga_double out = gpga_double_zero(0u);
   if (gpga_atanpi_special_case(x, &out)) {
@@ -10024,6 +13343,12 @@ inline gpga_double gpga_atanpi_rd(gpga_double x) {
   return scs_atanpi_rd(x);
 }
 
+/**
+ * @brief Compute atan(x)/pi rounded toward +inf.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded toward +inf.
+ */
 inline gpga_double gpga_atanpi_ru(gpga_double x) {
   gpga_double out = gpga_double_zero(0u);
   if (gpga_atanpi_special_case(x, &out)) {
@@ -10032,6 +13357,12 @@ inline gpga_double gpga_atanpi_ru(gpga_double x) {
   return scs_atanpi_ru(x);
 }
 
+/**
+ * @brief Compute atan(x)/pi rounded toward zero.
+ * 
+ * @param x Input value.
+ * @return gpga_double - atan(x)/pi rounded toward zero.
+ */
 inline gpga_double gpga_atanpi_rz(gpga_double x) {
   gpga_double out = gpga_double_zero(0u);
   if (gpga_atanpi_special_case(x, &out)) {
@@ -10046,47 +13377,197 @@ inline gpga_double gpga_atanpi_rz(gpga_double x) {
 // CRLIBM_LOG_TD
 // LOG_TD_CONSTANTS_BEGIN
 // CRLIBM_LOG_TD_CONSTANTS
+/**
+ * @brief Number of index bits for the log argument-reduction table.
+ * 
+ */
 GPGA_CONST uint log_L = 7u;
+/**
+ * @brief Maximum index for the log argument-reduction table.
+ * 
+ */
 GPGA_CONST uint log_MAXINDEX = 53u;
+/**
+ * @brief Mask for extracting the log table index bits.
+ * 
+ */
 GPGA_CONST uint log_INDEXMASK = 127u;
+/**
+ * @brief 2^52 used to extract integer parts during log range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log_two52 = 0x4330000000000000ul;
+/**
+ * @brief High part of ln(2) used in log range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log_log2h = 0x3fe62e42fefa3800ul;
+/**
+ * @brief Mid part of ln(2) used in log range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log_log2m = 0x3d2ef35793c76800ul;
+/**
+ * @brief Low part of ln(2) used in log range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log_log2l = 0xba59ff0342542fc3ul;
+/**
+ * @brief Rounding constant used for log table index selection.
+ * 
+ */
 GPGA_CONST gpga_double log_ROUNDCST1 = 0x3ff00b5baade1dbcul;
+/**
+ * @brief Rounding constant used for log table index selection.
+ * 
+ */
 GPGA_CONST gpga_double log_ROUNDCST2 = 0x3ff00b5baade1dbcul;
+/**
+ * @brief Round-down bias used in log directed rounding.
+ * 
+ */
 GPGA_CONST gpga_double log_RDROUNDCST1 = 0x3c06a09e667f3bcdul;
+/**
+ * @brief Round-down bias used in log directed rounding.
+ * 
+ */
 GPGA_CONST gpga_double log_RDROUNDCST2 = 0x3c06a09e667f3bcdul;
+/**
+ * @brief Coefficient C3 for the fast log(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_c3 = 0x3fd5555555555556ul;
+/**
+ * @brief Coefficient C4 for the fast log(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_c4 = 0xbfcffffffffafffaul;
+/**
+ * @brief Coefficient C5 for the fast log(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_c5 = 0x3fc99999998e0b4dul;
+/**
+ * @brief Coefficient C6 for the fast log(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_c6 = 0xbfc55569556623b2ul;
+/**
+ * @brief Coefficient C7 for the fast log(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_c7 = 0x3fc2493d75f51811ul;
+/**
+ * @brief High part of coefficient C3 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC3h = 0x3fd5555555555555ul;
+/**
+ * @brief Low part of coefficient C3 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC3l = 0x3c75555555555555ul;
+/**
+ * @brief High part of coefficient C4 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC4h = 0xbfd0000000000000ul;
+/**
+ * @brief Low part of coefficient C4 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC4l = 0x3937ffadc266bcb8ul;
+/**
+ * @brief High part of coefficient C5 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC5h = 0x3fc999999999999aul;
+/**
+ * @brief Low part of coefficient C5 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC5l = 0xbc69999999866631ul;
+/**
+ * @brief High part of coefficient C6 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC6h = 0xbfc5555555555555ul;
+/**
+ * @brief Low part of coefficient C6 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC6l = 0xbc655555559e546aul;
+/**
+ * @brief High part of coefficient C7 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC7h = 0x3fc2492492492492ul;
+/**
+ * @brief Low part of coefficient C7 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC7l = 0x3c6248448ff5ae97ul;
+/**
+ * @brief High part of coefficient C8 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC8h = 0xbfc0000000000000ul;
+/**
+ * @brief Low part of coefficient C8 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC8l = 0x3bb02fd4be5cfcddul;
+/**
+ * @brief High part of coefficient C9 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC9h = 0x3fbc71c71c71c73aul;
+/**
+ * @brief Low part of coefficient C9 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC9l = 0x3c53fbe1792ad51cul;
+/**
+ * @brief Coefficient C10 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC10 = 0xbfb99999999999ccul;
+/**
+ * @brief Coefficient C11 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC11 = 0x3fb745d174237d2cul;
+/**
+ * @brief Coefficient C12 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC12 = 0xbfb5555555095594ul;
+/**
+ * @brief Coefficient C13 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC13 = 0x3fb3b16e4739debbul;
+/**
+ * @brief Coefficient C14 for the accurate log polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log_accPolyC14 = 0xbfb2495c92506ce8ul;
+
+/**
+ * @brief Natural logarithm argument reduction entry.
+ * 
+ */
 struct GpgaLogArgRedEntry {
   gpga_double ri;
   gpga_double logih;
   gpga_double logim;
   gpga_double logil;
 };
+
+/**
+ * @brief Natural logarithm argument reduction table for high precision computations.
+ * 
+ */
 GPGA_CONST GpgaLogArgRedEntry log_argredtable[128] = {
   { 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
   { 0x3fefc07f00000000ul, 0x3f7fe02b6b106791ul, 0xbbce44b538c673f4ul, 0x38440499da63c12aul },
@@ -10219,6 +13700,25 @@ GPGA_CONST GpgaLogArgRedEntry log_argredtable[128] = {
 };
 // LOG_TD_CONSTANTS_END
 
+/**
+ * @brief Compute logarithm using a high-accuracy polynomial approximation.
+ *
+ * This function calculates the logarithm of a number represented in
+ * triple-double precision using a polynomial approximation method. It takes
+ * into account the high, medium, and low parts of the input number to ensure
+ * accuracy.
+ *
+ * @param logh Pointer to store the high part of the logarithm result.
+ * @param logm Pointer to store the medium part of the logarithm result.
+ * @param logl Pointer to store the low part of the logarithm result.
+ * @param E Exponent part of the input number.
+ * @param ed Exponent delta for scaling.
+ * @param index Index for selecting polynomial coefficients.
+ * @param zh High part of the normalized input number.
+ * @param zl Low part of the normalized input number.
+ * @param logih High part of the logarithm of the integer part.
+ * @param logim Medium part of the logarithm of the integer part.
+ */
 inline void gpga_log_td_accurate(thread gpga_double* logh,
                                  thread gpga_double* logm,
                                  thread gpga_double* logl, int E,
@@ -10328,6 +13828,13 @@ inline void gpga_log_td_accurate(thread gpga_double* logh,
   Renormalize3(logh, logm, logl, loghover, logmover, loglover);
 }
 
+
+/**
+ * @brief Compute the natural logarithm of a double-precision floating-point number in round-to-nearest mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of x, rounded to nearest.
+ */
 inline gpga_double gpga_log_rn(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -10440,6 +13947,12 @@ inline gpga_double gpga_log_rn(gpga_double x) {
   return ReturnRoundToNearest3(logh, logm, logl);
 }
 
+/**
+ * @brief Compute the natural logarithm of a double-precision floating-point number in round-up mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of x, rounded up.
+ */
 inline gpga_double gpga_log_ru(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -10557,6 +14070,12 @@ inline gpga_double gpga_log_ru(gpga_double x) {
   return ReturnRoundUpwards3(logh, logm, logl);
 }
 
+/**
+ * @brief Compute the natural logarithm of a double-precision floating-point number in round-down mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of x, rounded down.
+ */
 inline gpga_double gpga_log_rd(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -10674,6 +14193,12 @@ inline gpga_double gpga_log_rd(gpga_double x) {
   return ReturnRoundDownwards3(logh, logm, logl);
 }
 
+/**
+ * @brief Compute the natural logarithm of a double-precision floating-point number in round-towards-zero mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of x, rounded towards zero.
+ */
 inline gpga_double gpga_log_rz(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -10791,7 +14316,20 @@ inline gpga_double gpga_log_rz(gpga_double x) {
   return ReturnRoundTowardsZero3(logh, logm, logl);
 }
 
-// CRLIBM_LOG1P_TD
+/**
+ * @brief Compute the natural logarithm using a highly accurate polynomial approximation.
+ * 
+ * @param logh Pointer to store the high part of the result.
+ * @param logm Pointer to store the middle part of the result.
+ * @param logl Pointer to store the low part of the result.
+ * @param ed Exponent difference.
+ * @param index Index for argument reduction table.
+ * @param zh High part of reduced argument.
+ * @param zm Middle part of reduced argument.
+ * @param zl Low part of reduced argument.
+ * @param logih High part of precomputed logarithm.
+ * @param logim Middle part of precomputed logarithm.
+ */
 inline void gpga_log1p_td_accurate(thread gpga_double* logh,
                                    thread gpga_double* logm,
                                    thread gpga_double* logl, gpga_double ed,
@@ -10904,6 +14442,12 @@ inline void gpga_log1p_td_accurate(thread gpga_double* logh,
   Renormalize3(logh, logm, logl, loghover, logmover, loglover);
 }
 
+/**
+ * @brief Compute the natural logarithm of 1 plus a double-precision floating-point number in round-to-nearest mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of 1 plus x, rounded to nearest.
+ */
 inline gpga_double gpga_log1p_rn(gpga_double x) {
   gpga_double yh = gpga_double_zero(0u);
   gpga_double yl = gpga_double_zero(0u);
@@ -11046,6 +14590,12 @@ inline gpga_double gpga_log1p_rn(gpga_double x) {
   return ReturnRoundToNearest3(logh, logm, logl);
 }
 
+/**
+ * @brief Compute the natural logarithm of 1 plus a double-precision floating-point number in round-up mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of 1 plus x, rounded up.
+ */
 inline gpga_double gpga_log1p_ru(gpga_double x) {
   gpga_double yh = gpga_double_zero(0u);
   gpga_double yl = gpga_double_zero(0u);
@@ -11188,6 +14738,12 @@ inline gpga_double gpga_log1p_ru(gpga_double x) {
   return ReturnRoundUpwards3(logh, logm, logl);
 }
 
+/**
+ * @brief Compute the natural logarithm of 1 plus a double-precision floating-point number in round-down mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of 1 plus x, rounded down.
+ */
 inline gpga_double gpga_log1p_rd(gpga_double x) {
   gpga_double yh = gpga_double_zero(0u);
   gpga_double yl = gpga_double_zero(0u);
@@ -11333,6 +14889,12 @@ inline gpga_double gpga_log1p_rd(gpga_double x) {
   return ReturnRoundDownwards3(logh, logm, logl);
 }
 
+/**
+ * @brief Compute the natural logarithm of 1 plus a double-precision floating-point number in round-to-zero mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural logarithm of 1 plus x, rounded towards zero.
+ */
 inline gpga_double gpga_log1p_rz(gpga_double x) {
   gpga_double yh = gpga_double_zero(0u);
   gpga_double yl = gpga_double_zero(0u);
@@ -11481,45 +15043,207 @@ inline gpga_double gpga_log1p_rz(gpga_double x) {
 // CRLIBM_LOG2_TD
 // LOG2_TD_CONSTANTS_BEGIN
 // CRLIBM_LOG2_TD_CONSTANTS
+/**
+ * @brief Number of index bits for the log2 argument-reduction table.
+ * 
+ */
 GPGA_CONST uint log2_L = 7u;
+/**
+ * @brief Maximum index for the log2 argument-reduction table.
+ * 
+ */
 GPGA_CONST uint log2_MAXINDEX = 53u;
+/**
+ * @brief Mask for extracting the log2 table index bits.
+ * 
+ */
 GPGA_CONST uint log2_INDEXMASK = 127u;
+/**
+ * @brief 2^52 used to extract integer parts during log2 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log2_two52 = 0x4330000000000000ul;
+/**
+ * @brief High part of ln(2) used in log2 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log2_log2h = 0x3fe62e42fefa3800ul;
+/**
+ * @brief Mid part of ln(2) used in log2 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log2_log2m = 0x3d2ef35793c76800ul;
+/**
+ * @brief Low part of ln(2) used in log2 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log2_log2l = 0xba59ff0342542fc3ul;
+/**
+ * @brief High part of 1/ln(2) used to scale log2 results.
+ * 
+ */
 GPGA_CONST gpga_double log2_invh = 0x3ff71547652b82feul;
+/**
+ * @brief Low part of 1/ln(2) used to scale log2 results.
+ * 
+ */
 GPGA_CONST gpga_double log2_invl = 0x3c7777d0ffda0d24ul;
+/**
+ * @brief Rounding constant used for log2 table index selection.
+ * 
+ */
 GPGA_CONST gpga_double log2_ROUNDCST1 = 0x3ff0204081020409ul;
+/**
+ * @brief Rounding constant used for log2 table index selection.
+ * 
+ */
 GPGA_CONST gpga_double log2_ROUNDCST2 = 0x3ff0204081020409ul;
+/**
+ * @brief Round-down bias used in log2 directed rounding.
+ * 
+ */
 GPGA_CONST gpga_double log2_RDROUNDCST1 = 0x3c20000000000000ul;
+/**
+ * @brief Round-down bias used in log2 directed rounding.
+ * 
+ */
 GPGA_CONST gpga_double log2_RDROUNDCST2 = 0x3c20000000000000ul;
+/**
+ * @brief Coefficient C3 for the fast log2(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_c3 = 0x3fd5555555555556ul;
+/**
+ * @brief Coefficient C4 for the fast log2(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_c4 = 0xbfcffffffffafffaul;
+/**
+ * @brief Coefficient C5 for the fast log2(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_c5 = 0x3fc99999998e0b4dul;
+/**
+ * @brief Coefficient C6 for the fast log2(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_c6 = 0xbfc55569556623b2ul;
+/**
+ * @brief Coefficient C7 for the fast log2(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_c7 = 0x3fc2493d75f51811ul;
+/**
+ * @brief High part of coefficient C3 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC3h = 0x3fd5555555555555ul;
+/**
+ * @brief Low part of coefficient C3 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC3l = 0x3c75555555555555ul;
+/**
+ * @brief High part of coefficient C4 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC4h = 0xbfd0000000000000ul;
+/**
+ * @brief Low part of coefficient C4 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC4l = 0x3937ffadc266bcb8ul;
+/**
+ * @brief High part of coefficient C5 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC5h = 0x3fc999999999999aul;
+/**
+ * @brief Low part of coefficient C5 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC5l = 0xbc69999999866631ul;
+/**
+ * @brief High part of coefficient C6 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC6h = 0xbfc5555555555555ul;
+/**
+ * @brief Low part of coefficient C6 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC6l = 0xbc655555559e546aul;
+/**
+ * @brief High part of coefficient C7 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC7h = 0x3fc2492492492492ul;
+/**
+ * @brief Low part of coefficient C7 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC7l = 0x3c6248448ff5ae97ul;
+/**
+ * @brief High part of coefficient C8 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC8h = 0xbfc0000000000000ul;
+/**
+ * @brief Low part of coefficient C8 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC8l = 0x3bb02fd4be5cfcddul;
+/**
+ * @brief High part of coefficient C9 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC9h = 0x3fbc71c71c71c73aul;
+/**
+ * @brief Low part of coefficient C9 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC9l = 0x3c53fbe1792ad51cul;
+/**
+ * @brief Coefficient C10 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC10 = 0xbfb99999999999ccul;
+/**
+ * @brief Coefficient C11 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC11 = 0x3fb745d174237d2cul;
+/**
+ * @brief Coefficient C12 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC12 = 0xbfb5555555095594ul;
+/**
+ * @brief Coefficient C13 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC13 = 0x3fb3b16e4739debbul;
+/**
+ * @brief Coefficient C14 for the accurate log2 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log2_accPolyC14 = 0xbfb2495c92506ce8ul;
 // LOG2_TD_CONSTANTS_END
 
+/**
+ * @brief Compute the base-2 logarithm using a highly accurate polynomial approximation.
+ * 
+ * @param logb2h Pointer to store the high part of the result.
+ * @param logb2m Pointer to store the middle part of the result.
+ * @param logb2l Pointer to store the low part of the result.
+ * @param E Exponent part of the input number.
+ * @param ed Exponent as a double-precision floating-point number.
+ * @param index Index for argument reduction.
+ * @param zh High part of the reduced argument.
+ * @param zl Low part of the reduced argument.
+ * @param logih High part of the precomputed logarithm table value.
+ * @param logim Low part of the precomputed logarithm table value.
+ */
 inline void gpga_log2_td_accurate(thread gpga_double* logb2h,
                                   thread gpga_double* logb2m,
                                   thread gpga_double* logb2l, int E,
@@ -11635,6 +15359,12 @@ inline void gpga_log2_td_accurate(thread gpga_double* logb2h,
   Renormalize3(logb2h, logb2m, logb2l, logb2hover, logb2mover, logb2lover);
 }
 
+/**
+ * @brief Compute the base-2 logarithm of a double-precision floating-point number in round-to-nearest mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-2 logarithm of x, rounded to nearest.
+ */
 inline gpga_double gpga_log2_rn(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -11754,6 +15484,12 @@ inline gpga_double gpga_log2_rn(gpga_double x) {
   return ReturnRoundToNearest3(logb2h, logb2m, logb2l);
 }
 
+/**
+ * @brief Compute the base-2 logarithm of a double-precision floating-point number in round-up mode.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The base-2 logarithm of the input number, rounded up.
+ */
 inline gpga_double gpga_log2_ru(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -11873,6 +15609,12 @@ inline gpga_double gpga_log2_ru(gpga_double x) {
   return ReturnRoundUpwards3(logb2h, logb2m, logb2l);
 }
 
+/**
+ * @brief Compute the base-2 logarithm of a double-precision floating-point number in round-down mode.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The base-2 logarithm of the input number, rounded down.
+ */
 inline gpga_double gpga_log2_rd(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -11992,6 +15734,12 @@ inline gpga_double gpga_log2_rd(gpga_double x) {
   return ReturnRoundDownwards3(logb2h, logb2m, logb2l);
 }
 
+/**
+ * @brief Compute the base-2 logarithm of a double-precision floating-point number in round-to-zero mode.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The base-2 logarithm of the input number, rounded towards zero.
+ */
 inline gpga_double gpga_log2_rz(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -12114,47 +15862,217 @@ inline gpga_double gpga_log2_rz(gpga_double x) {
 // CRLIBM_LOG10_TD
 // LOG10_TD_CONSTANTS_BEGIN
 // CRLIBM_LOG10_TD_CONSTANTS
+/**
+ * @brief Number of index bits for the log10 argument-reduction table.
+ * 
+ */
 GPGA_CONST uint log10_L = 7u;
+/**
+ * @brief Maximum index for the log10 argument-reduction table.
+ * 
+ */
 GPGA_CONST uint log10_MAXINDEX = 53u;
+/**
+ * @brief Mask for extracting the log10 table index bits.
+ * 
+ */
 GPGA_CONST uint log10_INDEXMASK = 127u;
+/**
+ * @brief 2^52 used to extract integer parts during log10 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log10_two52 = 0x4330000000000000ul;
+/**
+ * @brief High part of ln(2) used in log10 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log10_log2h = 0x3fe62e42fefa3800ul;
+/**
+ * @brief Mid part of ln(2) used in log10 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log10_log2m = 0x3d2ef35793c76800ul;
+/**
+ * @brief Low part of ln(2) used in log10 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double log10_log2l = 0xba59ff0342542fc3ul;
+/**
+ * @brief High part of 1/ln(10) used to scale log10 results.
+ * 
+ */
 GPGA_CONST gpga_double log10_invh = 0x3fdbcb7b1526e50eul;
+/**
+ * @brief Mid part of 1/ln(10) used to scale log10 results.
+ * 
+ */
 GPGA_CONST gpga_double log10_invm = 0x3c695355baaafad3ul;
+/**
+ * @brief Low part of 1/ln(10) used to scale log10 results.
+ * 
+ */
 GPGA_CONST gpga_double log10_invl = 0x38fee191f71a3012ul;
+/**
+ * @brief Worst-case error bound used when rounding log10.
+ * 
+ */
 GPGA_CONST gpga_double log10_worstcase = 0x4790000000000000ul;
+/**
+ * @brief Rounding constant used for log10 table index selection.
+ * 
+ */
 GPGA_CONST gpga_double log10_ROUNDCST1 = 0x3ff0204081020409ul;
+/**
+ * @brief Rounding constant used for log10 table index selection.
+ * 
+ */
 GPGA_CONST gpga_double log10_ROUNDCST2 = 0x3ff0204081020409ul;
+/**
+ * @brief Round-down bias used in log10 directed rounding.
+ * 
+ */
 GPGA_CONST gpga_double log10_RDROUNDCST1 = 0x3c20000000000000ul;
+/**
+ * @brief Round-down bias used in log10 directed rounding.
+ * 
+ */
 GPGA_CONST gpga_double log10_RDROUNDCST2 = 0x3c20000000000000ul;
+/**
+ * @brief Coefficient C3 for the fast log10(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_c3 = 0x3fd5555555555556ul;
+/**
+ * @brief Coefficient C4 for the fast log10(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_c4 = 0xbfcffffffffafffaul;
+/**
+ * @brief Coefficient C5 for the fast log10(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_c5 = 0x3fc99999998e0b4dul;
+/**
+ * @brief Coefficient C6 for the fast log10(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_c6 = 0xbfc55569556623b2ul;
+/**
+ * @brief Coefficient C7 for the fast log10(1+x) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_c7 = 0x3fc2493d75f51811ul;
+/**
+ * @brief High part of coefficient C3 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC3h = 0x3fd5555555555555ul;
+/**
+ * @brief Low part of coefficient C3 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC3l = 0x3c75555555555555ul;
+/**
+ * @brief High part of coefficient C4 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC4h = 0xbfd0000000000000ul;
+/**
+ * @brief Low part of coefficient C4 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC4l = 0x3937ffadc266bcb8ul;
+/**
+ * @brief High part of coefficient C5 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC5h = 0x3fc999999999999aul;
+/**
+ * @brief Low part of coefficient C5 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC5l = 0xbc69999999866631ul;
+/**
+ * @brief High part of coefficient C6 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC6h = 0xbfc5555555555555ul;
+/**
+ * @brief Low part of coefficient C6 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC6l = 0xbc655555559e546aul;
+/**
+ * @brief High part of coefficient C7 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC7h = 0x3fc2492492492492ul;
+/**
+ * @brief Low part of coefficient C7 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC7l = 0x3c6248448ff5ae97ul;
+/**
+ * @brief High part of coefficient C8 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC8h = 0xbfc0000000000000ul;
+/**
+ * @brief Low part of coefficient C8 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC8l = 0x3bb02fd4be5cfcddul;
+/**
+ * @brief High part of coefficient C9 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC9h = 0x3fbc71c71c71c73aul;
+/**
+ * @brief Low part of coefficient C9 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC9l = 0x3c53fbe1792ad51cul;
+/**
+ * @brief Coefficient C10 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC10 = 0xbfb99999999999ccul;
+/**
+ * @brief Coefficient C11 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC11 = 0x3fb745d174237d2cul;
+/**
+ * @brief Coefficient C12 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC12 = 0xbfb5555555095594ul;
+/**
+ * @brief Coefficient C13 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC13 = 0x3fb3b16e4739debbul;
+/**
+ * @brief Coefficient C14 for the accurate log10 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double log10_accPolyC14 = 0xbfb2495c92506ce8ul;
 // LOG10_TD_CONSTANTS_END
 
+/**
+ * @brief Compute the base-10 logarithm of a double-precision floating-point number with high accuracy.
+ * 
+ * @param logb10h Pointer to store the high part of the result.
+ * @param logb10m Pointer to store the middle part of the result.
+ * @param logb10l Pointer to store the low part of the result.
+ * @param E Exponent part of the input number.
+ * @param ed Double-precision representation of the exponent.
+ * @param index Index used for argument reduction.
+ * @param zh High part of the reduced argument.
+ * @param zl Low part of the reduced argument.
+ * @param logih High part of the logarithm table entry.
+ * @param logim Low part of the logarithm table entry.
+ */
 inline void gpga_log10_td_accurate(thread gpga_double* logb10h,
                                    thread gpga_double* logb10m,
                                    thread gpga_double* logb10l, int E,
@@ -12279,6 +16197,12 @@ inline void gpga_log10_td_accurate(thread gpga_double* logb10h,
                logb10lover);
 }
 
+/**
+ * @brief Compute the base-10 logarithm of a double-precision floating-point number in round-to-nearest mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-10 logarithm of x, rounded to nearest.
+ */
 inline gpga_double gpga_log10_rn(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -12395,6 +16319,12 @@ inline gpga_double gpga_log10_rn(gpga_double x) {
   return ReturnRoundToNearest3(logb10h, logb10m, logb10l);
 }
 
+/**
+ * @brief Compute the base-10 logarithm of a double-precision floating-point number in round-up mode.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The base-10 logarithm of the input number, rounded up.
+ */
 inline gpga_double gpga_log10_ru(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -12511,6 +16441,12 @@ inline gpga_double gpga_log10_ru(gpga_double x) {
                                        log10_worstcase);
 }
 
+/**
+ * @brief Compute the base-10 logarithm of a double-precision floating-point number in round-down mode.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The base-10 logarithm of the input number, rounded down.
+ */
 inline gpga_double gpga_log10_rd(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -12627,6 +16563,12 @@ inline gpga_double gpga_log10_rd(gpga_double x) {
                                          log10_worstcase);
 }
 
+/**
+ * @brief Compute the base-10 logarithm of a double-precision floating-point number in round-toward-zero mode.
+ * 
+ * @param x Input double-precision floating-point number.
+ * @return gpga_double - The base-10 logarithm of the input number, rounded toward zero.
+ */
 inline gpga_double gpga_log10_rz(gpga_double x) {
   gpga_double y = x;
   gpga_double ed = gpga_double_zero(0u);
@@ -12744,6 +16686,10 @@ inline gpga_double gpga_log10_rz(gpga_double x) {
 }
 
 // CRLIBM_EXP_TD
+/**
+ * @brief Split exp table entry holding high/mid/low parts.
+ * 
+ */
 struct GpgaExpTableEntry {
   gpga_double hi;
   gpga_double mi;
@@ -12751,36 +16697,160 @@ struct GpgaExpTableEntry {
 };
 // EXP_TD_CONSTANTS_BEGIN
 // CRLIBM_EXP_TD_CONSTANTS
+/**
+ * @brief Number of index bits for the exp table lookup.
+ * 
+ */
 GPGA_CONST uint exp_L = 12u;
+/**
+ * @brief Half of exp_L used for the split exp tables.
+ * 
+ */
 GPGA_CONST uint exp_LHALF = 6u;
+/**
+ * @brief Scaling factor (2^L/ln2) used to form exp table indices.
+ * 
+ */
 GPGA_CONST gpga_double exp_log2InvMult2L = 0x40b71547652b82feul;
+/**
+ * @brief High part of -ln(2)/2^L used in exp range reduction.
+ * 
+ */
 GPGA_CONST gpga_double exp_msLog2Div2Lh = 0xbf262e42fefa39eful;
+/**
+ * @brief Mid part of -ln(2)/2^L used in exp range reduction.
+ * 
+ */
 GPGA_CONST gpga_double exp_msLog2Div2Lm = 0xbbbabc9e3b39803ful;
+/**
+ * @brief Low part of -ln(2)/2^L used in exp range reduction.
+ * 
+ */
 GPGA_CONST gpga_double exp_msLog2Div2Ll = 0xb847b57a079a1934ul;
+/**
+ * @brief Bias constant used to extract exp table indices.
+ * 
+ */
 GPGA_CONST gpga_double exp_shiftConst = 0x4338000000000000ul;
+/**
+ * @brief Mask for the lower exp table index bits.
+ * 
+ */
 GPGA_CONST uint exp_INDEXMASK1 = 0x0000003fu;
+/**
+ * @brief Mask for the upper exp table index bits.
+ * 
+ */
 GPGA_CONST uint exp_INDEXMASK2 = 0x00000fc0u;
+/**
+ * @brief High-word cutoff for exp overflow/underflow fast checks.
+ * 
+ */
 GPGA_CONST uint exp_OVRUDRFLWSMPLBOUND = 0x4086232bu;
+/**
+ * @brief Upper bound beyond which exp overflows.
+ * 
+ */
 GPGA_CONST gpga_double exp_OVRFLWBOUND = 0x40862e42fefa39eful;
+/**
+ * @brief Largest finite double used for exp overflow handling.
+ * 
+ */
 GPGA_CONST gpga_double exp_LARGEST = 0x7feffffffffffffful;
+/**
+ * @brief Smallest positive subnormal used for exp underflow handling.
+ * 
+ */
 GPGA_CONST gpga_double exp_SMALLEST = 0x0000000000000001ul;
+/**
+ * @brief Threshold below which exp results may be subnormal.
+ * 
+ */
 GPGA_CONST gpga_double exp_DENORMBOUND = 0xc086232bdd7abcd2ul;
+/**
+ * @brief Lower bound beyond which exp underflows to zero.
+ * 
+ */
 GPGA_CONST gpga_double exp_UNDERFLWBOUND = 0xc0874910d52d3052ul;
+/**
+ * @brief 2^-1000 scaling used in exp denormal handling.
+ * 
+ */
 GPGA_CONST gpga_double exp_twoPowerM1000 = 0x0170000000000000ul;
+/**
+ * @brief 2^1000 scaling used in exp overflow handling.
+ * 
+ */
 GPGA_CONST gpga_double exp_twoPower1000 = 0x7e70000000000000ul;
+/**
+ * @brief Rounding constant used to test exp roundability.
+ * 
+ */
 GPGA_CONST gpga_double exp_ROUNDCST = 0x3ff0040100401005ul;
+/**
+ * @brief Round-down bias used in directed exp rounding.
+ * 
+ */
 GPGA_CONST gpga_double exp_RDROUNDCST = 0x3bf0000000000000ul;
+/**
+ * @brief 2^-52 increment used for tiny exp results.
+ * 
+ */
 GPGA_CONST gpga_double exp_twoM52 = 0x3cb0000000000000ul;
+/**
+ * @brief -2^-53 decrement used for tiny exp results.
+ * 
+ */
 GPGA_CONST gpga_double exp_mTwoM53 = 0xbca0000000000000ul;
+/**
+ * @brief Coefficient C3 for the quick exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_c3 = 0x3fc555555565bb99ul;
+/**
+ * @brief Coefficient C4 for the quick exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_c4 = 0x3fa55555556b3304ul;
+/**
+ * @brief High part of coefficient C3 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC3h = 0x3fc5555555555555ul;
+/**
+ * @brief Low part of coefficient C3 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC3l = 0x3c6555555555557eul;
+/**
+ * @brief High part of coefficient C4 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC4h = 0x3fa5555555555555ul;
+/**
+ * @brief Low part of coefficient C4 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC4l = 0x3c45546534ca3666ul;
+/**
+ * @brief Coefficient C5 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC5 = 0x3f81111111111111ul;
+/**
+ * @brief Coefficient C6 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC6 = 0x3f56c16c16d10a6ful;
+/**
+ * @brief Coefficient C7 for the accurate exp remainder polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp_accPolyC7 = 0x3f2a01a01a150cf9ul;
+/**
+ * @brief Coarse exp table of 2^(k/2^L) split into high/mid/low parts.
+ * 
+ */
 GPGA_CONST GpgaExpTableEntry exp_twoPowerIndex1[64] = {
   { 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
   { 0x3ff000b175effdc7ul, 0x3c9ae8e38c59c72aul, 0x39339726694630e3ul },
@@ -12848,6 +16918,10 @@ GPGA_CONST GpgaExpTableEntry exp_twoPowerIndex1[64] = {
   { 0x3ff02be6e199c811ul, 0x3c9e47120223467ful, 0x3926ae7d36d7c1f7ul },
 };
 
+/**
+ * @brief Fine exp table of 2^(k/2^L) split into high/mid/low parts.
+ * 
+ */
 GPGA_CONST GpgaExpTableEntry exp_twoPowerIndex2[64] = {
   { 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
   { 0x3ff02c9a3e778061ul, 0xbc719083535b085dul, 0xb919085b0a3d74d5ul },
@@ -12915,19 +16989,56 @@ GPGA_CONST GpgaExpTableEntry exp_twoPowerIndex2[64] = {
   { 0x3fffa7c1819e90d8ul, 0x3c874853f3a5931eul, 0x38fdc060c36f7651ul },
 };
 // EXP_TD_CONSTANTS_END
+/**
+ * @brief High part of ln(2) used in exp range reduction.
+ * 
+ */
 GPGA_CONST gpga_double exp_Log2h = 0x3f262e42ff000000ul;
+/**
+ * @brief Low part of ln(2) used in exp range reduction.
+ * 
+ */
 GPGA_CONST gpga_double exp_Log2l = 0xbd0718432a1b0e26ul;
 
+/**
+ * @brief Adjust the exponent field of a normalized value by M.
+ * 
+ * @param value Input value.
+ * @param M Exponent delta to add.
+ * @return gpga_double - Value with adjusted exponent.
+ */
 inline gpga_double gpga_exp_adjust_exponent(gpga_double value, int M) {
   uint hi = gpga_u64_hi(value);
   hi += ((uint)M) << 20;
   return gpga_u64_from_words(hi, gpga_u64_lo(value));
 }
 
+/**
+ * @brief Construct a power-of-two value from biased exponent bits.
+ * 
+ * @param exp_bits Biased exponent bits.
+ * @return gpga_double - Power-of-two value.
+ */
 inline gpga_double gpga_exp_make_pow2(int exp_bits) {
   return gpga_u64_from_words(((uint)exp_bits) << 20, 0u);
 }
 
+/**
+ * @brief Evaluate the exp polynomial in triple-double precision.
+ * 
+ * @param polyTblh Output high part of the polynomial result.
+ * @param polyTblm Output mid part of the polynomial result.
+ * @param polyTbll Output low part of the polynomial result.
+ * @param rh Reduced argument high part.
+ * @param rm Reduced argument mid part.
+ * @param rl Reduced argument low part.
+ * @param tbl1h High part of table entry 1.
+ * @param tbl1m Mid part of table entry 1.
+ * @param tbl1l Low part of table entry 1.
+ * @param tbl2h High part of table entry 2.
+ * @param tbl2m Mid part of table entry 2.
+ * @param tbl2l Low part of table entry 2.
+ */
 inline void gpga_exp_td_accurate(thread gpga_double* polyTblh,
                                  thread gpga_double* polyTblm,
                                  thread gpga_double* polyTbll, gpga_double rh,
@@ -13024,6 +17135,12 @@ inline void gpga_exp_td_accurate(thread gpga_double* polyTblh,
                polyWithTablesl);
 }
 
+/**
+ * @brief Compute the natural exponential of a double-precision floating-point number in round-to-nearest mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural exponential of x, rounded to nearest.
+ */
 inline gpga_double gpga_exp_rn(gpga_double x) {
   gpga_double rh = gpga_double_zero(0u);
   gpga_double rm = gpga_double_zero(0u);
@@ -13186,6 +17303,12 @@ inline gpga_double gpga_exp_rn(gpga_double x) {
   return gpga_exp_adjust_exponent(res, M);
 }
 
+/**
+ * @brief Compute the natural exponential of a double-precision floating-point number in round-up mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural exponential of x, rounded up.
+ */
 inline gpga_double gpga_exp_ru(gpga_double x) {
   gpga_double rh = gpga_double_zero(0u);
   gpga_double rm = gpga_double_zero(0u);
@@ -13343,6 +17466,12 @@ inline gpga_double gpga_exp_ru(gpga_double x) {
   return gpga_exp_adjust_exponent(res, M);
 }
 
+/**
+ * @brief Compute the exponential of a double-precision floating-point number in round-down mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The exponential of x, rounded down.
+ */
 inline gpga_double gpga_exp_rd(gpga_double x) {
   gpga_double rh = gpga_double_zero(0u);
   gpga_double rm = gpga_double_zero(0u);
@@ -13502,10 +17631,22 @@ inline gpga_double gpga_exp_rd(gpga_double x) {
   return gpga_exp_adjust_exponent(res, M);
 }
 
+/**
+ * @brief Compute the natural exponential of a double-precision floating-point number in round-towards-zero mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The natural exponential of x, rounded towards zero.
+ */
 inline gpga_double gpga_exp_rz(gpga_double x) {
   return gpga_exp_rd(x);
 }
 
+/**
+ * @brief Compute the base-2 exponential of a double-precision floating-point number in round-to-nearest mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-2 exponential of x, rounded to the nearest value.
+ */
 inline gpga_double gpga_exp2_rn(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -13530,6 +17671,12 @@ inline gpga_double gpga_exp2_rn(gpga_double x) {
   return gpga_double_ldexp(res, H);
 }
 
+/**
+ * @brief Compute the base-2 exponential of a double-precision floating-point number in round-down mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-2 exponential of x, rounded down.
+ */
 inline gpga_double gpga_exp2_rd(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -13554,6 +17701,12 @@ inline gpga_double gpga_exp2_rd(gpga_double x) {
   return gpga_double_ldexp(res, H);
 }
 
+/**
+ * @brief Compute the base-2 exponential of a double-precision floating-point number in round-up mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-2 exponential of x, rounded up.
+ */
 inline gpga_double gpga_exp2_ru(gpga_double x) {
   if (gpga_double_is_nan(x)) {
     return x;
@@ -13578,6 +17731,12 @@ inline gpga_double gpga_exp2_ru(gpga_double x) {
   return gpga_double_ldexp(res, H);
 }
 
+/**
+ * @brief Compute the base-2 exponential of a double-precision floating-point number in round-towards-zero mode.
+ * 
+ * @param x The double-precision floating-point number.
+ * @return gpga_double - The base-2 exponential of x, rounded towards zero.
+ */
 inline gpga_double gpga_exp2_rz(gpga_double x) {
   return gpga_exp2_rd(x);
 }
@@ -13585,65 +17744,306 @@ inline gpga_double gpga_exp2_rz(gpga_double x) {
 // CRLIBM_EXPM1
 // EXPM1_CONSTANTS_BEGIN
 // CRLIBM_EXPM1_CONSTANTS
+/**
+ * @brief Scaling factor (2^L/ln2) used to form expm1 table indices.
+ * 
+ */
 GPGA_CONST gpga_double expm1_log2InvMult2L = 0x40b71547652b82feul;
+/**
+ * @brief High part of -ln(2)/2^L used in expm1 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double expm1_msLog2Div2Lh = 0xbf262e42fefa39eful;
+/**
+ * @brief Mid part of -ln(2)/2^L used in expm1 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double expm1_msLog2Div2Lm = 0xbbbabc9e3b39803ful;
+/**
+ * @brief Low part of -ln(2)/2^L used in expm1 range reduction.
+ * 
+ */
 GPGA_CONST gpga_double expm1_msLog2Div2Ll = 0xb847b57a079a1934ul;
+/**
+ * @brief Bias constant used to extract expm1 table indices.
+ * 
+ */
 GPGA_CONST gpga_double expm1_shiftConst = 0x4338000000000000ul;
+/**
+ * @brief Mask for the lower expm1 table index bits.
+ * 
+ */
 GPGA_CONST uint expm1_INDEXMASK1 = 0x0000003fu;
+/**
+ * @brief Mask for the upper expm1 table index bits.
+ * 
+ */
 GPGA_CONST uint expm1_INDEXMASK2 = 0x00000fc0u;
+/**
+ * @brief High-word cutoff below which expm1(x) returns x.
+ * 
+ */
 GPGA_CONST uint expm1_RETURNXBOUND = 0x3c900000u;
+/**
+ * @brief Upper bound beyond which expm1 overflows.
+ * 
+ */
 GPGA_CONST gpga_double expm1_OVERFLOWBOUND = 0x40862e42fefa39eful;
+/**
+ * @brief Largest finite double used for expm1 overflow handling.
+ * 
+ */
 GPGA_CONST gpga_double expm1_LARGEST = 0x7feffffffffffffful;
+/**
+ * @brief Smallest positive subnormal used for expm1 underflow handling.
+ * 
+ */
 GPGA_CONST gpga_double expm1_SMALLEST = 0x0000000000000001ul;
+/**
+ * @brief Lower bound where expm1 returns -1.
+ * 
+ */
 GPGA_CONST gpga_double expm1_MINUSONEBOUND = 0xc042b708872320e2ul;
+/**
+ * @brief High-word cutoff for the expm1 simple overflow check.
+ * 
+ */
 GPGA_CONST uint expm1_SIMPLEOVERFLOWBOUND = 0x40862e42u;
+/**
+ * @brief High-word cutoff for the expm1 direct polynomial interval.
+ * 
+ */
 GPGA_CONST uint expm1_DIRECTINTERVALBOUND = 0x3fd00000u;
+/**
+ * @brief High-word cutoff for the expm1 special-case interval.
+ * 
+ */
 GPGA_CONST uint expm1_SPECIALINTERVALBOUND = 0x3f300000u;
+/**
+ * @brief Rounding constant for direct expm1 round-to-nearest tests.
+ * 
+ */
 GPGA_CONST gpga_double expm1_ROUNDCSTDIRECTRN = 0x3ff0101010101011ul;
+/**
+ * @brief Rounding constant for direct expm1 round-down tests.
+ * 
+ */
 GPGA_CONST gpga_double expm1_ROUNDCSTDIRECTRD = 0x3c10000000000000ul;
+/**
+ * @brief Rounding constant for common expm1 round-to-nearest tests.
+ * 
+ */
 GPGA_CONST gpga_double expm1_ROUNDCSTCOMMONRN = 0x3ff0101010101011ul;
+/**
+ * @brief Rounding constant for common expm1 round-down tests.
+ * 
+ */
 GPGA_CONST gpga_double expm1_ROUNDCSTCOMMONRD = 0x3c10000000000000ul;
+/**
+ * @brief (-1 + ulp) guard used near the expm1 lower limit.
+ * 
+ */
 GPGA_CONST gpga_double expm1_MINUSONEPLUSONEULP = 0xbfeffffffffffffful;
+/**
+ * @brief Coefficient C3 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC3h = 0x3fc5555555555555ul;
+/**
+ * @brief Coefficient C4 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC4h = 0x3fa5555555555559ul;
+/**
+ * @brief Coefficient C5 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC5h = 0x3f8111111111bbbful;
+/**
+ * @brief Coefficient C6 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC6h = 0x3f56c16c16b1d8aeul;
+/**
+ * @brief Coefficient C7 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC7h = 0x3f2a019ec49aa7cful;
+/**
+ * @brief Coefficient C8 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC8h = 0x3efa01c0084c2c02ul;
+/**
+ * @brief Coefficient C9 for the quick direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickDirectpolyC9h = 0x3ec7e10b9cfb79faul;
+/**
+ * @brief High part of coefficient C3 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC3h = 0x3fc5555555555555ul;
+/**
+ * @brief Mid part of coefficient C3 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC3m = 0x3c65555555555555ul;
+/**
+ * @brief Low part of coefficient C3 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC3l = 0x390555563cabe8e8ul;
+/**
+ * @brief High part of coefficient C4 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC4h = 0x3fa5555555555555ul;
+/**
+ * @brief Mid part of coefficient C4 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC4m = 0x3c45555555555554ul;
+/**
+ * @brief High part of coefficient C5 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC5h = 0x3f81111111111111ul;
+/**
+ * @brief Mid part of coefficient C5 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC5m = 0x3c01111111111110ul;
+/**
+ * @brief High part of coefficient C6 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC6h = 0x3f56c16c16c16c17ul;
+/**
+ * @brief Mid part of coefficient C6 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC6m = 0xbbef49f49f35a818ul;
+/**
+ * @brief High part of coefficient C7 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC7h = 0x3f2a01a01a01a01aul;
+/**
+ * @brief Mid part of coefficient C7 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC7m = 0x3b6a01a01b129d80ul;
+/**
+ * @brief High part of coefficient C8 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC8h = 0x3efa01a01a01a01aul;
+/**
+ * @brief Mid part of coefficient C8 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC8m = 0x3b39f327e395e980ul;
+/**
+ * @brief High part of coefficient C9 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC9h = 0x3ec71de3a556c734ul;
+/**
+ * @brief Mid part of coefficient C9 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC9m = 0xbb6c1569ffc6b4fcul;
+/**
+ * @brief High part of coefficient C10 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC10h = 0x3e927e4fb7789f5ful;
+/**
+ * @brief High part of coefficient C11 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC11h = 0x3e5ae64567f544e6ul;
+/**
+ * @brief High part of coefficient C12 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC12h = 0x3e21eed8eff141b7ul;
+/**
+ * @brief High part of coefficient C13 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC13h = 0x3de6124613a115cdul;
+/**
+ * @brief High part of coefficient C14 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC14h = 0x3da9398b61dd2859ul;
+/**
+ * @brief High part of coefficient C15 for the accurate direct expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuDirectpolyC15h = 0x3d6ae809b431ab32ul;
+/**
+ * @brief Coefficient C3 for the quick common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickCommonpolyC3h = 0x3fc555555565bba1ul;
+/**
+ * @brief Coefficient C4 for the quick common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_quickCommonpolyC4h = 0x3fa55555556b330ful;
+/**
+ * @brief High part of coefficient C3 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC3h = 0x3fc5555555555555ul;
+/**
+ * @brief Mid part of coefficient C3 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC3m = 0x3c655555555689e2ul;
+/**
+ * @brief High part of coefficient C4 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC4h = 0x3fa5555555555555ul;
+/**
+ * @brief Mid part of coefficient C4 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC4m = 0x3c45546533d76562ul;
+/**
+ * @brief High part of coefficient C5 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC5h = 0x3f81111111111111ul;
+/**
+ * @brief High part of coefficient C6 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC6h = 0x3f56c16c16d10a77ul;
+/**
+ * @brief High part of coefficient C7 for the accurate common expm1 polynomial.
+ * 
+ */
 GPGA_CONST gpga_double expm1_accuCommonpolyC7h = 0x3f2a01a03b7b3d5aul;
 // EXPM1_CONSTANTS_END
 
+/**
+ * @brief Direct expm1 polynomial evaluation in triple-double precision.
+ *
+ * @param expm1h Pointer to store the high part of the result.
+ * @param expm1m Pointer to store the middle part of the result.
+ * @param expm1l Pointer to store the low part of the result.
+ * @param x Input argument for the direct polynomial.
+ * @param xSqHalfh High part of precomputed x^2 / 2.
+ * @param xSqHalfl Low part of precomputed x^2 / 2.
+ * @param xSqh High part of precomputed x^2.
+ * @param xSql Low part of precomputed x^2.
+ * @param expoX Exponent adjustment used to rescale the result.
+ */
 inline void gpga_expm1_direct_td(thread gpga_double* expm1h,
                                  thread gpga_double* expm1m,
                                  thread gpga_double* expm1l, gpga_double x,
@@ -13793,6 +18193,23 @@ inline void gpga_expm1_direct_td(thread gpga_double* expm1h,
   Renormalize3(expm1h, expm1m, expm1l, expm1hover, expm1mover, expm1lover);
 }
 
+/**
+ * @brief Compute the natural exponential minus one of a double-precision floating-point number using the common polynomial approximation in triple-double precision.
+ * 
+ * @param expm1h Pointer to store the high part of the result.
+ * @param expm1m Pointer to store the middle part of the result.
+ * @param expm1l Pointer to store the low part of the result.
+ * @param rh The reduced high part of the input.
+ * @param rm The reduced middle part of the input.
+ * @param rl The reduced low part of the input.
+ * @param tbl1h The high part of the first lookup table value.
+ * @param tbl1m The middle part of the first lookup table value.
+ * @param tbl1l The low part of the first lookup table value.
+ * @param tbl2h The high part of the second lookup table value.
+ * @param tbl2m The middle part of the second lookup table value.
+ * @param tbl2l The low part of the second lookup table value.
+ * @param M The exponent adjustment value.
+ */
 inline void gpga_expm1_common_td(thread gpga_double* expm1h,
                                  thread gpga_double* expm1m,
                                  thread gpga_double* expm1l, gpga_double rh,
@@ -13917,6 +18334,12 @@ inline void gpga_expm1_common_td(thread gpga_double* expm1h,
   Renormalize3(expm1h, expm1m, expm1l, expm1hover, expm1mover, expm1lover);
 }
 
+/**
+ * @brief Computes the exponential of x minus 1 with rounding to nearest.
+ * 
+ * @param x The input value.
+ * @return gpga_double The computed value of exp(x) - 1.
+ */
 inline gpga_double gpga_expm1_rn(gpga_double x) {
   gpga_double xSqh = gpga_double_zero(0u);
   gpga_double xSql = gpga_double_zero(0u);
@@ -14143,6 +18566,12 @@ inline gpga_double gpga_expm1_rn(gpga_double x) {
   return ReturnRoundToNearest3(expm1h, expm1m, expm1l);
 }
 
+/**
+ * @brief Computes the exponential of x minus 1 with rounding down.
+ * 
+ * @param x The input value.
+ * @return gpga_double The computed value of exp(x) - 1.
+ */
 inline gpga_double gpga_expm1_rd(gpga_double x) {
   gpga_double xSqh = gpga_double_zero(0u);
   gpga_double xSql = gpga_double_zero(0u);
@@ -14370,6 +18799,12 @@ inline gpga_double gpga_expm1_rd(gpga_double x) {
   return ReturnRoundDownwards3(expm1h, expm1m, expm1l);
 }
 
+/**
+ * @brief Computes the exponential of x minus 1 with rounding up.
+ * 
+ * @param x The input value.
+ * @return gpga_double The computed value of exp(x) - 1.
+ */
 inline gpga_double gpga_expm1_ru(gpga_double x) {
   gpga_double xSqh = gpga_double_zero(0u);
   gpga_double xSql = gpga_double_zero(0u);
@@ -14598,6 +19033,12 @@ inline gpga_double gpga_expm1_ru(gpga_double x) {
   return ReturnRoundUpwards3(expm1h, expm1m, expm1l);
 }
 
+/**
+ * @brief Computes the exponential of x minus 1 with rounding to zero.
+ * 
+ * @param x The input value.
+ * @return gpga_double The computed value of exp(x) - 1.
+ */
 inline gpga_double gpga_expm1_rz(gpga_double x) {
   gpga_double xSqh = gpga_double_zero(0u);
   gpga_double xSql = gpga_double_zero(0u);
@@ -14833,6 +19274,15 @@ inline gpga_double gpga_expm1_rz(gpga_double x) {
 
 
 // CRLIBM_EXP13
+/**
+ * @brief Compute exp(x) as a triple-double mantissa with a separate exponent.
+ * 
+ * @param exponent Output exponent scale (optional).
+ * @param exph Output high part of the mantissa.
+ * @param expm Output mid part of the mantissa.
+ * @param expl Output low part of the mantissa.
+ * @param x Input value.
+ */
 inline void gpga_exp13(thread int* exponent, thread gpga_double* exph,
                        thread gpga_double* expm, thread gpga_double* expl,
                        gpga_double x) {
@@ -14882,6 +19332,14 @@ inline void gpga_exp13(thread int* exponent, thread gpga_double* exph,
   }
 }
 
+/**
+ * @brief Compute expm1(x) in triple-double precision.
+ * 
+ * @param expm1h Output high part of expm1(x).
+ * @param expm1m Output mid part of expm1(x).
+ * @param expm1l Output low part of expm1(x).
+ * @param x Input value.
+ */
 inline void gpga_expm1_13(thread gpga_double* expm1h,
                           thread gpga_double* expm1m,
                           thread gpga_double* expm1l, gpga_double x) {
@@ -14942,6 +19400,10 @@ inline void gpga_expm1_13(thread gpga_double* expm1h,
 }
 
 // CRLIBM_POW
+/**
+ * @brief Pow argument-reduction entry with reciprocal and split log terms.
+ * 
+ */
 struct GpgaPowArgRed {
   gpga_double ri;
   gpga_double logih;
@@ -14949,43 +19411,196 @@ struct GpgaPowArgRed {
   gpga_double logil;
 };
 
+/**
+ * @brief Number of index bits for the pow argument-reduction table.
+ * 
+ */
 GPGA_CONST int pow_L = 8;
+/**
+ * @brief Maximum index for the pow argument-reduction table.
+ * 
+ */
 GPGA_CONST int pow_MAXINDEX = 106;
+/**
+ * @brief Mask for extracting the pow table index bits.
+ * 
+ */
 GPGA_CONST int pow_INDEXMASK = 255;
+/**
+ * @brief 2^52 used to extract integer parts in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_two52 = 0x4330000000000000ul;
+/**
+ * @brief 2^53 used to extract integer parts in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_two53 = 0x4340000000000000ul;
+/**
+ * @brief 2^54 used to extract integer parts in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_two54 = 0x4350000000000000ul;
+/**
+ * @brief 2^-55 scaling constant used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_twoM55 = 0x3c80000000000000ul;
+/**
+ * @brief sqrt(2) factor used in the fast pow log reduction.
+ * 
+ */
 GPGA_CONST gpga_double pow_logFastCoeff = 0x3ff6a09e667f3bcdul;
+/**
+ * @brief Largest finite double used to detect pow overflow.
+ * 
+ */
 GPGA_CONST gpga_double pow_LARGEST = 0x7fe0000000000000ul;
+/**
+ * @brief Smallest normal double used to detect pow underflow.
+ * 
+ */
 GPGA_CONST gpga_double pow_SMALLEST = 0x0010000000000000ul;
+/**
+ * @brief Bias constant used to extract pow table indices.
+ * 
+ */
 GPGA_CONST gpga_double pow_shiftConst = 0x4338000000000000ul;
+/**
+ * @brief Bias constant used for pow index extraction with 2^-13 scaling.
+ * 
+ */
 GPGA_CONST gpga_double pow_shiftConstTwoM13 = 0x4268000000000000ul;
+/**
+ * @brief 2^13 scaling constant used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_two13 = 0x40c0000000000000ul;
+/**
+ * @brief 2^-13 scaling constant used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_twoM13 = 0x3f20000000000000ul;
+/**
+ * @brief Mask for the lower pow exp2 table index bits.
+ * 
+ */
 GPGA_CONST uint pow_INDEXMASK1 = 0x1f;
+/**
+ * @brief Mask for the upper pow exp2 table index bits.
+ * 
+ */
 GPGA_CONST uint pow_INDEXMASK2 = 0x1fe0;
+/**
+ * @brief Rounding constant for pow round-to-nearest tests.
+ * 
+ */
 GPGA_CONST gpga_double pow_RNROUNDCST = 0x3ff0410410410411ul;
+/**
+ * @brief Rounding constant for pow round-down tests.
+ * 
+ */
 GPGA_CONST gpga_double pow_RDROUNDCST = 0x3c30000000000000ul;
+/**
+ * @brief Rounding constant for subnormal pow results.
+ * 
+ */
 GPGA_CONST gpga_double pow_SUBNORMROUNDCST = 0x43a0000000000000ul;
+/**
+ * @brief Extra-precision rounding bias for pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_PRECISEROUNDCST = 0x3890000000000000ul;
+/**
+ * @brief 2^-1000 scaling constant used in pow extremes.
+ * 
+ */
 GPGA_CONST gpga_double pow_twoM1000 = 0x0170000000000000ul;
+/**
+ * @brief 2^-74 scaling constant used in pow extremes.
+ * 
+ */
 GPGA_CONST gpga_double pow_twoM74 = 0x3b50000000000000ul;
+/**
+ * @brief High part of coefficient C1 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_1h = 0x3ff71547652b82feul;
+/**
+ * @brief Mid part of coefficient C1 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_1m = 0x3c7777d18d78d3a4ul;
+/**
+ * @brief High part of coefficient C2 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_2h = 0xbfe71547652b82feul;
+/**
+ * @brief Mid part of coefficient C2 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_2m = 0xbc69fe25073392e8ul;
+/**
+ * @brief High part of coefficient C3 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_3h = 0x3fdec709dc3a03fdul;
+/**
+ * @brief High part of coefficient C4 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_4h = 0xbfd71547652ae169ul;
+/**
+ * @brief High part of coefficient C5 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_5h = 0x3fd2776c50f37de2ul;
+/**
+ * @brief High part of coefficient C6 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_6h = 0xbfcec713f58b6770ul;
+/**
+ * @brief High part of coefficient C7 for the degree-70 log2 (pow fast path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_70_p_coeff_7h = 0x3fca61692f10726aul;
+/**
+ * @brief High part of coefficient C0 for the exp2 core polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp2_p_coeff_0h = 0x3ff0000000000000ul;
+/**
+ * @brief High part of coefficient C1 for the exp2 core polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp2_p_coeff_1h = 0x3fe62e42fefa39eful;
+/**
+ * @brief High part of coefficient C2 for the exp2 core polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp2_p_coeff_2h = 0x3fcebfbdff932fc8ul;
+/**
+ * @brief High part of coefficient C3 for the exp2 core polynomial.
+ * 
+ */
 GPGA_CONST gpga_double exp2_p_coeff_3h = 0x3fac6b091734cf02ul;
+/**
+ * @brief Coarse 2^(k/32) table entry with hi-1, hi, mid, and low parts.
+ * 
+ */
 struct GpgaPowTwoPowerIndex1 { gpga_double hiM1; gpga_double hi; gpga_double mi; gpga_double lo; };
+/**
+ * @brief Fine 2^(k/256) table entry with hi, mid, and low parts.
+ * 
+ */
 struct GpgaPowTwoPowerIndex2 { gpga_double hi; gpga_double mi; gpga_double lo; };
+
+/**
+ * @brief Table for 2^(i/32) where i = 0..31. Each entry contains hiM1, hi, mi, lo parts.
+ * 
+ */
 GPGA_CONST GpgaPowTwoPowerIndex1 pow_twoPowerIndex1[32] = {
   { 0x0000000000000000ul, 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
   { 0x3f162e807ee7e5b6ul, 0x3ff00058ba01fba0ul, 0xbc9a4a4d4cad39feul, 0x39317c3e43a86f9ful },
@@ -15020,6 +19635,11 @@ GPGA_CONST GpgaPowTwoPowerIndex1 pow_twoPowerIndex1[32] = {
   { 0x3f64d221e76df99ful, 0x3ff00a6910f3b6fdul, 0xbc882e8e14e3110eul, 0xb91706bd4eb22595ul },
   { 0x3f658409612d105eul, 0x3ff00ac204b09688ul, 0x3c879b63bed45265ul, 0x390163dde4b4c1e8ul },
 };
+
+/**
+ * @brief Table for 2^(i/256) where i = 0..255. Each entry contains hi, mi, lo parts.
+ * 
+ */
 GPGA_CONST GpgaPowTwoPowerIndex2 pow_twoPowerIndex2[256] = {
   { 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
   { 0x3ff00b1afa5abcbful, 0xbc84f6b2a7609f71ul, 0xb90b55dd523f3c08ul },
@@ -15278,214 +19898,1046 @@ GPGA_CONST GpgaPowTwoPowerIndex2 pow_twoPowerIndex2[256] = {
   { 0x3fffd3c22b8f71f1ul, 0x3c62eb74966579e7ul, 0x3902f096934ec56cul },
   { 0x3fffe9d96b2a23d9ul, 0x3c74a6037442fde3ul, 0x38fbaf85e8130af3ul },
 };
+/**
+ * @brief High part of coefficient C1 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_1h = 0x3ff71547652b82feul;
+/**
+ * @brief Mid part of coefficient C1 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_1m = 0x3c7777d0ffda0d24ul;
+/**
+ * @brief Low part of coefficient C1 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_1l = 0xb9160bb8ae96fdf8ul;
+/**
+ * @brief High part of coefficient C2 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_2h = 0xbfe71547652b82feul;
+/**
+ * @brief Mid part of coefficient C2 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_2m = 0xbc6777d0ffda0d24ul;
+/**
+ * @brief Low part of coefficient C2 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_2l = 0x390633e6775d9370ul;
+/**
+ * @brief High part of coefficient C3 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_3h = 0x3fdec709dc3a03fdul;
+/**
+ * @brief Mid part of coefficient C3 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_3m = 0x3c7d27f05548af0cul;
+/**
+ * @brief High part of coefficient C4 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_4h = 0xbfd71547652b82feul;
+/**
+ * @brief Mid part of coefficient C4 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_4m = 0xbc5777d0ffda7848ul;
+/**
+ * @brief High part of coefficient C5 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_5h = 0x3fd2776c50ef9bfeul;
+/**
+ * @brief Mid part of coefficient C5 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_5m = 0x3c7e4b29ccc0d7d2ul;
+/**
+ * @brief High part of coefficient C6 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_6h = 0xbfcec709dc3a03fdul;
+/**
+ * @brief Mid part of coefficient C6 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_6m = 0xbc6d27eb0faef882ul;
+/**
+ * @brief High part of coefficient C7 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_7h = 0x3fca61762a7aded9ul;
+/**
+ * @brief Mid part of coefficient C7 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_7m = 0x3c5fb33145fd23f0ul;
+/**
+ * @brief High part of coefficient C8 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_8h = 0xbfc71547652b82fful;
+/**
+ * @brief High part of coefficient C9 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_9h = 0x3fc484b13d7c029bul;
+/**
+ * @brief High part of coefficient C10 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_10h = 0xbfc2776c50eaac66ul;
+/**
+ * @brief High part of coefficient C11 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_11h = 0x3fc0c9a849c0ac55ul;
+/**
+ * @brief High part of coefficient C12 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_12h = 0xbfbec723d3939d50ul;
+/**
+ * @brief High part of coefficient C13 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_13h = 0x3fbc6890f2f925e8ul;
+/**
+ * @brief High part of coefficient C14 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_14h = 0xbfb0585d5bb0cf40ul;
+/**
+ * @brief High part of coefficient C15 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_15h = 0x3fad100aa60f67b9ul;
+/**
+ * @brief High part of coefficient C16 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_16h = 0xbfa9d6e1da60e83cul;
+/**
+ * @brief High part of coefficient C17 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_17h = 0x3fa6b34a3b1e3e85ul;
+/**
+ * @brief High part of coefficient C18 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_18h = 0xbfa3a4b8397e1a86ul;
+/**
+ * @brief High part of coefficient C19 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_19h = 0x3fa0a0d2f2a833ddul;
+/**
+ * @brief High part of coefficient C20 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_20h = 0xbf9c6bf526d6d5f9ul;
+/**
+ * @brief High part of coefficient C21 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_21h = 0x3f98510bb10cbe54ul;
+/**
+ * @brief High part of coefficient C22 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_22h = 0xbf9453c7c4bd6a46ul;
+/**
+ * @brief High part of coefficient C23 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_23h = 0x3f906d1a4b98f005ul;
+/**
+ * @brief High part of coefficient C24 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_24h = 0xbf8c9a5e98a72c2bul;
+/**
+ * @brief High part of coefficient C25 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_25h = 0x3f88d7ee3a3b5da1ul;
+/**
+ * @brief High part of coefficient C26 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_26h = 0xbf8522a95d06647aul;
+/**
+ * @brief High part of coefficient C27 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_27h = 0x3f816839a0db2f7aul;
+/**
+ * @brief High part of coefficient C28 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_28h = 0xbf7b94eb1d2b7a40ul;
+/**
+ * @brief High part of coefficient C29 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_29h = 0x3f764dba02a54f4bul;
+/**
+ * @brief High part of coefficient C30 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_30h = 0xbf7122764e0e42a4ul;
+/**
+ * @brief High part of coefficient C31 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_31h = 0x3f6c0f5205fe68c3ul;
+/**
+ * @brief High part of coefficient C32 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_32h = 0xbf6717793a3f40f0ul;
+/**
+ * @brief High part of coefficient C33 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_33h = 0x3f6237faad8e9ef4ul;
+/**
+ * @brief High part of coefficient C34 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_34h = 0xbf5d6c5f6b3df0fdul;
+/**
+ * @brief High part of coefficient C35 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_35h = 0x3f58b0ddf3f78450ul;
+/**
+ * @brief High part of coefficient C36 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_36h = 0xbf53ff3cb8cc9cd5ul;
+/**
+ * @brief High part of coefficient C37 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_37h = 0x3f4f4d2dd5c8c9a3ul;
+/**
+ * @brief High part of coefficient C38 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_38h = 0xbf4a9f4d93c9f064ul;
+/**
+ * @brief High part of coefficient C39 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_39h = 0x3f45f22c38a1fa60ul;
+/**
+ * @brief High part of coefficient C40 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_40h = 0xbf41446f02e9cfaful;
+/**
+ * @brief High part of coefficient C41 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_41h = 0x3f3c955d6f4c8da0ul;
+/**
+ * @brief High part of coefficient C42 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_42h = 0xbf37e41fb57f90a2ul;
+/**
+ * @brief High part of coefficient C43 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_43h = 0x3f332ffa4b5b4d0cul;
+/**
+ * @brief High part of coefficient C44 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_44h = 0xbf2e793d7f62f022ul;
+/**
+ * @brief High part of coefficient C45 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_45h = 0x3f29bfb9951e1e46ul;
+/**
+ * @brief High part of coefficient C46 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_46h = 0xbf2504ac81de1e13ul;
+/**
+ * @brief High part of coefficient C47 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_47h = 0x3f208c6f11f0d4f0ul;
+/**
+ * @brief High part of coefficient C48 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_48h = 0xbf1c1c5892310d58ul;
+/**
+ * @brief High part of coefficient C49 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_49h = 0x3f17b4c1f7887b4bul;
+/**
+ * @brief High part of coefficient C50 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_50h = 0xbf1344b16f0d0931ul;
+/**
+ * @brief High part of coefficient C51 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_51h = 0x3f0ee7fe70c48037ul;
+/**
+ * @brief High part of coefficient C52 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_52h = 0xbf0a8631d8715f76ul;
+/**
+ * @brief High part of coefficient C53 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_53h = 0x3f063c71cbb9f9c2ul;
+/**
+ * @brief High part of coefficient C54 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_54h = 0xbf01f8d3a9e9a3a2ul;
+/**
+ * @brief High part of coefficient C55 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_55h = 0x3efd4b8f2786b326ul;
+/**
+ * @brief High part of coefficient C56 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_56h = 0xbef8a0a0f5c0f43bul;
+/**
+ * @brief High part of coefficient C57 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_57h = 0x3ef401538e84a6a5ul;
+/**
+ * @brief High part of coefficient C58 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_58h = 0xbeef5e1efb51f8d9ul;
+/**
+ * @brief High part of coefficient C59 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_59h = 0x3eeacdd9b9e52218ul;
+/**
+ * @brief High part of coefficient C60 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_60h = 0xbee64a57876f1317ul;
+/**
+ * @brief High part of coefficient C61 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_61h = 0x3ee1d8f30af8f5c6ul;
+/**
+ * @brief High part of coefficient C62 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_62h = 0xbedcf53f809fa66aul;
+/**
+ * @brief High part of coefficient C63 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_63h = 0x3ed88d28e5653c26ul;
+/**
+ * @brief High part of coefficient C64 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_64h = 0xbed3b7f9b6c70e5dul;
+/**
+ * @brief High part of coefficient C65 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_65h = 0x3ecf3afc3f3a1ed8ul;
+/**
+ * @brief High part of coefficient C66 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_66h = 0xbec99e02ad1b0bb6ul;
+/**
+ * @brief High part of coefficient C67 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_67h = 0x3ec34fbb380431a5ul;
+/**
+ * @brief High part of coefficient C68 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_68h = 0xbebed730d7a60e76ul;
+/**
+ * @brief High part of coefficient C69 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_69h = 0x3eb84c8d3c06aa0bul;
+/**
+ * @brief High part of coefficient C70 for the degree-130 log2 (pow accurate path) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_log2_130_p_coeff_70h = 0xbeb4b23f5c57d61aul;
+/**
+ * @brief High part of coefficient C0 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_0h = 0x3ff0000000000000ul;
+/**
+ * @brief High part of coefficient C1 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_1h = 0x3fe62e42fefa39eful;
+/**
+ * @brief Mid part of coefficient C1 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_1m = 0x3c7abc9e3b39805cul;
+/**
+ * @brief High part of coefficient C2 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_2h = 0x3fcebfbdff82c58ful;
+/**
+ * @brief Mid part of coefficient C2 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_2m = 0xbc65e43a53e0e551ul;
+/**
+ * @brief High part of coefficient C3 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_3h = 0x3fac6b08d704a0c0ul;
+/**
+ * @brief Mid part of coefficient C3 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_3m = 0xbc4d33876e373274ul;
+/**
+ * @brief High part of coefficient C4 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_4h = 0x3f83b2ab6fba4e77ul;
+/**
+ * @brief High part of coefficient C5 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_5h = 0x3f55d87fe7916e08ul;
+/**
+ * @brief High part of coefficient C6 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_6h = 0x3f243091a3d9b3eeul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=1 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_1h = 0x3ff0000000000000ul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=2 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_2h = 0x3f8b90b8fc2bccb5ul;
+/**
+ * @brief Mid part of the 2^(k/1024) table entry k=2 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_2m = 0xbd8422c70a44c6ccul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=3 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_3h = 0x3f2bc8e1740bc741ul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=4 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_4h = 0x3ed48c6af5b63199ul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=5 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_5h = 0x3e7b1039f94ed6e4ul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=6 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_6h = 0x3e21e9ab695aeb2ful;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=7 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_7h = 0x3dc7847e5a3c81ceul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=8 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_8h = 0x3d6d6f7fba1a2279ul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=9 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_9h = 0x3d13774b44730a33ul;
+/**
+ * @brief High part of the 2^(k/1024) table entry k=10 used in pow.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_1024_10h = 0x3cb93b8d3ce97d2ful;
+/**
+ * @brief Coefficient C1 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_1 = 0x3ff0000000000000ul;
+/**
+ * @brief Coefficient C2 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_2 = 0x3fcebfbdfd9f200cul;
+/**
+ * @brief Coefficient C3 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_3 = 0x3fac6b08d704a0c0ul;
+/**
+ * @brief Coefficient C4 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_4 = 0x3f83b2ab6fb9f15aul;
+/**
+ * @brief Coefficient C5 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_5 = 0x3f55d87ec84a5701ul;
+/**
+ * @brief Coefficient C6 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_6 = 0x3f22b90229c1f1d1ul;
+/**
+ * @brief Coefficient C7 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_7 = 0x3eebfbdff82c58eaul;
+/**
+ * @brief Coefficient C8 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_8 = 0x3eb0c6b0a7b8750aul;
+/**
+ * @brief Coefficient C9 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_9 = 0x3e6ee2abef621928ul;
+/**
+ * @brief Coefficient C10 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_10 = 0x3e2aa533b6d64247ul;
+/**
+ * @brief Coefficient C11 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_11 = 0x3de0a9e38988a46eul;
+/**
+ * @brief Coefficient C12 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_12 = 0x3d98b2d2e55bd147ul;
+/**
+ * @brief Coefficient C13 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_13 = 0x3d3c84233a5a5a92ul;
+/**
+ * @brief Coefficient C14 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_14 = 0x3cdc5edb446292dcul;
+/**
+ * @brief Coefficient C15 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_15 = 0x3c7bc547cc60f001ul;
+/**
+ * @brief Coefficient C16 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_16 = 0x3c17849d40b55485ul;
+/**
+ * @brief Coefficient C17 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_17 = 0x3baf71db744a755bul;
+/**
+ * @brief Coefficient C18 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_18 = 0x3b43b8c8c8c3bffbul;
+/**
+ * @brief Coefficient C19 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_19 = 0x3ad1c7d66b36f3feul;
+/**
+ * @brief Coefficient C20 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_20 = 0x3a5f6b7d5058f6f3ul;
+/**
+ * @brief Coefficient C21 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_21 = 0x39e3b3cd51f01f15ul;
+/**
+ * @brief Coefficient C22 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_22 = 0x3964a582046a7f71ul;
+/**
+ * @brief Coefficient C23 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_23 = 0x38e1fd5ce2b6c8f1ul;
+/**
+ * @brief Coefficient C24 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_24 = 0x385b9a1de7d1f1ddul;
+/**
+ * @brief Coefficient C25 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_25 = 0x37cf54e6b03c0e95ul;
+/**
+ * @brief Coefficient C26 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_26 = 0x3742104ca3cb7231ul;
+/**
+ * @brief Coefficient C27 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_27 = 0x36b1f5a5f9d8d28aul;
+/**
+ * @brief Coefficient C28 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_28 = 0x361d08b34e4f7c7cul;
+/**
+ * @brief Coefficient C29 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_29 = 0x35840f73c9f737e9ul;
+/**
+ * @brief Coefficient C30 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_30 = 0x34e7c4f12e9299d2ul;
+/**
+ * @brief Coefficient C31 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_31 = 0x3447ad74f6ecb9d9ul;
+/**
+ * @brief Coefficient C32 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_32 = 0x33a3cad659e57107ul;
+/**
+ * @brief Coefficient C33 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_33 = 0x32fc8f6db0a8c094ul;
+/**
+ * @brief Coefficient C34 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_34 = 0x3252398e664fb423ul;
+/**
+ * @brief Coefficient C35 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_35 = 0x31a4f76003169acbul;
+/**
+ * @brief Coefficient C36 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_36 = 0x30f527b479e4bd6bul;
+/**
+ * @brief Coefficient C37 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_37 = 0x304333f2a10e8622ul;
+/**
+ * @brief Coefficient C38 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_38 = 0x2f8f46efab3f1581ul;
+/**
+ * @brief Coefficient C39 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_39 = 0x2ed97a55be0966d0ul;
+/**
+ * @brief Coefficient C40 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_40 = 0x2e21e81fd8818b1aul;
+/**
+ * @brief Coefficient C41 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_41 = 0x2d68a3b7f74192eaul;
+/**
+ * @brief Coefficient C42 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_42 = 0x2cadb9f8e4d31806ul;
+/**
+ * @brief Coefficient C43 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_43 = 0x2bf138136d4d89b3ul;
+/**
+ * @brief Coefficient C44 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_44 = 0x2b3311a91f4db788ul;
+/**
+ * @brief Coefficient C45 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_45 = 0x2a737d3b7d86ab41ul;
+/**
+ * @brief Coefficient C46 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_46 = 0x29b2a5a7dd7f2e53ul;
+/**
+ * @brief Coefficient C47 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_47 = 0x28f0c711eec7e37aul;
+/**
+ * @brief Coefficient C48 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_48 = 0x282ddca022c8d1ebul;
+/**
+ * @brief Coefficient C49 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_49 = 0x2769f6d2128602f2ul;
+/**
+ * @brief Coefficient C50 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_50 = 0x26a51b19f9846e3bul;
+/**
+ * @brief Coefficient C51 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_51 = 0x25df507995bb25caul;
+/**
+ * @brief Coefficient C52 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_52 = 0x2518a93e07ee9c91ul;
+/**
+ * @brief Coefficient C53 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_53 = 0x24513291f0a04ce1ul;
+/**
+ * @brief Coefficient C54 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_54 = 0x238901f6d80f494dul;
+/**
+ * @brief Coefficient C55 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_55 = 0x22c0132b46c5748dul;
+/**
+ * @brief Coefficient C56 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_56 = 0x21f69d01a5d31cccul;
+/**
+ * @brief Coefficient C57 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_57 = 0x212cdc1e4a3fa2b3ul;
+/**
+ * @brief Coefficient C58 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_58 = 0x2063064c6c1872f2ul;
+/**
+ * @brief Coefficient C59 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_59 = 0x1f98e363dd356a13ul;
+/**
+ * @brief Coefficient C60 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_60 = 0x1ece88090bf456f8ul;
+/**
+ * @brief Coefficient C61 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_61 = 0x1e03ff62f7876f33ul;
+/**
+ * @brief Coefficient C62 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_62 = 0x1d394b33c6b6b0fcul;
+/**
+ * @brief Coefficient C63 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_63 = 0x1c6e7ad1c70f8daaul;
+/**
+ * @brief Coefficient C64 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_64 = 0x1ba393d2e2c1d662ul;
+/**
+ * @brief Coefficient C65 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_65 = 0x1ad8a2cc329e9c9bul;
+/**
+ * @brief Coefficient C66 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_66 = 0x1a0db307ee46d7a5ul;
+/**
+ * @brief Coefficient C67 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_67 = 0x1942ce8a1f8471ecul;
+/**
+ * @brief Coefficient C68 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_68 = 0x1877ff43fef58a08ul;
+/**
+ * @brief Coefficient C69 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_69 = 0x17ad4ef7b67ad811ul;
+/**
+ * @brief Coefficient C70 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_70 = 0x16e2c6b101a47c4dul;
+/**
+ * @brief Coefficient C71 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_71 = 0x16186ff23fe7fa7ful;
+/**
+ * @brief Coefficient C72 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_72 = 0x154e4c88f2f9d79bul;
+/**
+ * @brief Coefficient C73 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_73 = 0x14845c7844a990c8ul;
+/**
+ * @brief Coefficient C74 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_74 = 0x13ba9f7a5e2c0fe4ul;
+/**
+ * @brief Coefficient C75 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_75 = 0x12f1105f9be40947ul;
+/**
+ * @brief Coefficient C76 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_76 = 0x1227b53f38438599ul;
+/**
+ * @brief Coefficient C77 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_77 = 0x115e978fe3a6f2b2ul;
+/**
+ * @brief Coefficient C78 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_78 = 0x1095bc1018c40480ul;
+/**
+ * @brief Coefficient C79 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_79 = 0x0fccd8f37cb62fe9ul;
+/**
+ * @brief Coefficient C80 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_80 = 0x0f344a9bd5ccb280ul;
+/**
+ * @brief Coefficient C81 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_81 = 0x0e9c1f57c9345b2ful;
+/**
+ * @brief Coefficient C82 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_82 = 0x0e044dfda34b9010ul;
+/**
+ * @brief Coefficient C83 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_83 = 0x0d6cdc6b4f990edbul;
+/**
+ * @brief Coefficient C84 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_84 = 0x0cd5c06d299e8316ul;
+/**
+ * @brief Coefficient C85 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_85 = 0x0c3ef7d05f7ce724ul;
+/**
+ * @brief Coefficient C86 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_86 = 0x0ba87d6a6f997b4bul;
+/**
+ * @brief Coefficient C87 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_87 = 0x0b123e112aa1c3c5ul;
+/**
+ * @brief Coefficient C88 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_88 = 0x0a7c8a9a80f9fd06ul;
+/**
+ * @brief Coefficient C89 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_89 = 0x09e7dbdc414bdad4ul;
+/**
+ * @brief Coefficient C90 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_90 = 0x095a070ae9d43c5ful;
+/**
+ * @brief Coefficient C91 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_91 = 0x08cd8f2d4a5e74a9ul;
+/**
+ * @brief Coefficient C92 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_92 = 0x0841672e5847e4e7ul;
+/**
+ * @brief Coefficient C93 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_93 = 0x07b590e64b6e3c20ul;
+/**
+ * @brief Coefficient C94 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_94 = 0x072a091b2b6ac2fb0ul;
+/**
+ * @brief Coefficient C95 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_95 = 0x069ecbb2a286d1f6ul;
+/**
+ * @brief Coefficient C96 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_96 = 0x0613d47560f19f4bul;
+/**
+ * @brief Coefficient C97 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_97 = 0x05891f52a529ddc9ul;
+/**
+ * @brief Coefficient C98 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_98 = 0x04feb951a1ce09bdul;
+/**
+ * @brief Coefficient C99 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_99 = 0x04749f0f183a4a21ul;
+/**
+ * @brief Coefficient C100 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_100 = 0x03eac630f13b27a7ul;
+/**
+ * @brief Coefficient C101 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_101 = 0x0361385d4d75c4e4ul;
+/**
+ * @brief Coefficient C102 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_102 = 0x02d7f010f1ed4ad3ul;
+/**
+ * @brief Coefficient C103 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_103 = 0x024ef7a09f4142a0ul;
+/**
+ * @brief Coefficient C104 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_104 = 0x01c64c8b13aaea24ul;
+/**
+ * @brief Coefficient C105 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_105 = 0x013def5d10d44d31ul;
+/**
+ * @brief Coefficient C106 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_106 = 0x00b5df3ad6e6f6d5ul;
+/**
+ * @brief Coefficient C107 for the degree-120 exp2 (pow core) polynomial.
+ * 
+ */
 GPGA_CONST gpga_double pow_exp2_120_p_coeff_107 = 0x002e1c7f062a262aul;
 
+/**
+ * @brief Argument-reduction table for pow with reciprocals and split log terms.
+ * 
+ */
 GPGA_CONST GpgaPowArgRed pow_argredtable[256] = {
   { 0x3ff0000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul, 0x0000000000000000ul },
   { 0x3fefe02000000000ul, 0x3f7709ad583352d6ul, 0x3c1ae1a26af3eebeul, 0xb8ba173530d7ed87ul },
@@ -15745,10 +21197,22 @@ GPGA_CONST GpgaPowArgRed pow_argredtable[256] = {
   { 0x3ff0080400000000ul, 0xbf671b08dedc8633ul, 0x3bdf7eccd83c2e4dul, 0xb872b904d249df13ul },
 };
 
+/**
+ * @brief Convert an exponent to a biased exponent-field shift.
+ * 
+ * @param exp Unbiased exponent.
+ * @return uint - Bits to add to the exponent field.
+ */
 inline uint gpga_pow_exp_shift(int exp) {
   return ((uint)exp) << 20;
 }
 
+/**
+ * @brief Check whether y is an odd integer.
+ * 
+ * @param y Input value.
+ * @return bool - True if y is an odd integer.
+ */
 inline bool gpga_pow_is_odd_integer(gpga_double y) {
   gpga_double ay = gpga_double_abs(y);
   gpga_double t = gpga_double_add(ay, pow_two53);
@@ -15756,6 +21220,12 @@ inline bool gpga_pow_is_odd_integer(gpga_double y) {
   return gpga_double_eq(gpga_double_abs(diff), gpga_double_const_one());
 }
 
+/**
+ * @brief Check whether y is an integer.
+ * 
+ * @param y Input value.
+ * @return bool - True if y is an integer.
+ */
 inline bool gpga_pow_is_integer(gpga_double y) {
   gpga_double ay = gpga_double_abs(y);
   if (gpga_double_ge(ay, pow_two52)) {
@@ -15766,6 +21236,13 @@ inline bool gpga_pow_is_integer(gpga_double y) {
   return gpga_double_eq(diff, ay);
 }
 
+/**
+ * @brief Decompose x into a normalized mantissa and exponent.
+ * 
+ * @param x Input value.
+ * @param val Output normalized mantissa in [1,2).
+ * @param expo Output exponent as a double.
+ */
 inline void gpga_pow_decompose(gpga_double x, thread gpga_double* val,
                                thread gpga_double* expo) {
   int expo_x = gpga_double_exponent(x);
@@ -15781,6 +21258,13 @@ inline void gpga_pow_decompose(gpga_double x, thread gpga_double* val,
   }
 }
 
+/**
+ * @brief Decompose x into an odd mantissa and exponent.
+ * 
+ * @param x Input value.
+ * @param resm Output mantissa (odd integer as double).
+ * @param resE Output exponent.
+ */
 inline void gpga_pow_decompose_odd(gpga_double x, thread gpga_double* resm,
                                    thread int* resE) {
   uint exp_bits = gpga_double_exp(x);
@@ -15810,6 +21294,14 @@ inline void gpga_pow_decompose_odd(gpga_double x, thread gpga_double* resm,
   *resm = gpga_double_from_u64(mant);
 }
 
+/**
+ * @brief Compute log2(x) using a 130-degree polynomial (simple path).
+ * 
+ * @param log2h Output high part of log2(x).
+ * @param log2m Output mid part of log2(x).
+ * @param log2l Output low part of log2(x).
+ * @param x Input value.
+ */
 inline void gpga_pow_log2_130_simple(thread gpga_double* log2h,
                                      thread gpga_double* log2m,
                                      thread gpga_double* log2l,
@@ -15900,12 +21392,31 @@ inline void gpga_pow_log2_130_simple(thread gpga_double* log2h,
   *log2l = gpga_double_zero(0u);
 }
 
+/**
+ * @brief Compute log2(x) using the 130-degree polynomial path.
+ * 
+ * @param log2h Output high part of log2(x).
+ * @param log2m Output mid part of log2(x).
+ * @param log2l Output low part of log2(x).
+ * @param x Input value.
+ */
 inline void gpga_pow_log2_130(thread gpga_double* log2h,
                               thread gpga_double* log2m,
                               thread gpga_double* log2l, gpga_double x) {
   gpga_pow_log2_130_simple(log2h, log2m, log2l, x);
 }
 
+/**
+ * @brief Core log2 polynomial evaluation for pow range reduction.
+ * 
+ * @param resh Output high part of log2(x).
+ * @param resm Output mid part of log2(x).
+ * @param resl Output low part of log2(x).
+ * @param index Table index for the reduction interval.
+ * @param ed Exponent delta term.
+ * @param xh Reduced argument high part.
+ * @param xm Reduced argument mid part.
+ */
 inline void gpga_pow_log2_130_core(thread gpga_double* resh,
                                    thread gpga_double* resm,
                                    thread gpga_double* resl, int index,
@@ -16009,6 +21520,17 @@ inline void gpga_pow_log2_130_core(thread gpga_double* resh,
   Renormalize3(resh, resm, resl, log2xh, log2xm, log2xl);
 }
 
+/**
+ * @brief Core computation of exp2 for |x| < 120
+ * 
+ * @param H Output exponent part
+ * @param resh High part of the result
+ * @param resm Medium part of the result
+ * @param resl Low part of the result
+ * @param xh High part of the input
+ * @param xm Medium part of the input
+ * @param xl Low part of the input
+ */
 inline void gpga_pow_exp2_120_core(thread int* H, thread gpga_double* resh,
                                    thread gpga_double* resm,
                                    thread gpga_double* resl,
@@ -16092,6 +21614,12 @@ inline void gpga_pow_exp2_120_core(thread int* H, thread gpga_double* resh,
   Renormalize3(resh, resm, resl, exp2h, exp2m, exp2l);
 }
 
+/**
+ * @brief Compute exp2 for |x| < 120
+ * 
+ * @param y Input value
+ * @return gpga_double exp2(y)
+ */
 inline gpga_double gpga_pow_exp2_120(gpga_double y) {
   int H = 0;
   gpga_double resh = gpga_double_zero(0u);
@@ -16103,6 +21631,20 @@ inline gpga_double gpga_pow_exp2_120(gpga_double y) {
   return gpga_double_ldexp(sum, H);
 }
 
+/**
+ * @brief Core computation of pow for |log2(x)| < 120
+ * 
+ * @param H Output exponent part
+ * @param resh High part of the result
+ * @param resm Medium part of the result
+ * @param resl Low part of the result
+ * @param log2xh High part of log2(x)
+ * @param y Exponent value
+ * @param index Index for argument reduction
+ * @param ed Exponent difference
+ * @param zh High part of reduced argument
+ * @param zm Medium part of reduced argument
+ */
 inline void gpga_pow_120_core(thread int* H, thread gpga_double* resh,
                               thread gpga_double* resm,
                               thread gpga_double* resl,
@@ -16121,6 +21663,13 @@ inline void gpga_pow_120_core(thread int* H, thread gpga_double* resh,
   gpga_pow_exp2_120_core(H, resh, resm, resl, ylog2xh, ylog2xm, ylog2xl);
 }
 
+/**
+ * @brief Compute pow for |log2(x)| < 120
+ * 
+ * @param x Base value
+ * @param y Exponent value
+ * @return gpga_double pow(x, y)
+ */
 inline gpga_double gpga_pow_120(gpga_double x, gpga_double y) {
   if (gpga_double_is_zero(x) || gpga_double_is_inf(x) ||
       gpga_double_is_nan(x)) {
@@ -16182,6 +21731,19 @@ inline gpga_double gpga_pow_120(gpga_double x, gpga_double y) {
   return gpga_double_ldexp(sum, H);
 }
 
+/**
+ * @brief Rounding and checking for pow result in round-to-nearest mode
+ * 
+ * @param pow Output pow result
+ * @param H Exponent part
+ * @param powh High part of pow result
+ * @param powm Medium part of pow result
+ * @param powl Low part of pow result
+ * @param G Output adjusted exponent
+ * @param kh Output high part after rounding
+ * @param kl Output medium part after rounding
+ * @return true if rounding adjustment was made, false otherwise
+ */
 inline bool gpga_pow_round_and_check_rn_core(
     thread gpga_double* pow, int H, gpga_double powh, gpga_double powm,
     gpga_double powl, thread int* G, thread gpga_double* kh,
@@ -16277,6 +21839,18 @@ inline bool gpga_pow_round_and_check_rn_core(
   return false;
 }
 
+/**
+ * @brief Rounding and checking for pow result in round-to-nearest mode
+ * 
+ * @param rh Output high part after rounding
+ * @param rl Output low part after rounding
+ * @param zh High part of reduced argument
+ * @param zm Medium part of reduced argument
+ * @param zl Low part of reduced argument
+ * @param ed Exponent difference
+ * @param sign Sign of the result
+ * @return true if rounding adjustment was made, false otherwise
+ */
 inline bool gpga_pow_round_and_check_rn(thread gpga_double* rh,
                                         thread gpga_double* rl,
                                         gpga_double zh, gpga_double zm,
@@ -16303,6 +21877,17 @@ inline bool gpga_pow_round_and_check_rn(thread gpga_double* rh,
   return false;
 }
 
+/**
+ * @brief Compute exact pow case
+ * 
+ * @param x Base value
+ * @param y Exponent value
+ * @param zh High part of reduced argument
+ * @param zm Medium part of reduced argument
+ * @param sign Sign of the result
+ * @param ed Exponent difference
+ * @return gpga_double Exact pow result
+ */
 inline gpga_double gpga_pow_exact_case(gpga_double x, gpga_double y,
                                        gpga_double zh, gpga_double zm,
                                        gpga_double sign, gpga_double ed) {
@@ -16322,6 +21907,18 @@ inline gpga_double gpga_pow_exact_case(gpga_double x, gpga_double y,
   return gpga_double_mul(sign, exact);
 }
 
+/**
+ * @brief Check for exact pow case.
+ * 
+ * @param pow Output pow result
+ * @param x Base value
+ * @param y Exponent value
+ * @param G Exponent part
+ * @param kh High part after rounding
+ * @param kl Medium part after rounding
+ * @param log2xh High part of log2(x)
+ * @return true if exact case is handled, false otherwise
+ */
 inline bool gpga_pow_exact_case_core(thread gpga_double* pow, gpga_double x,
                                      gpga_double y, int G, gpga_double kh,
                                      gpga_double kl, gpga_double log2xh) {
@@ -16392,6 +21989,18 @@ inline bool gpga_pow_exact_case_core(thread gpga_double* pow, gpga_double x,
   return true;
 }
 
+/**
+ * @brief Compute pow for exact case in round-to-nearest mode
+ * 
+ * @param x Base value
+ * @param y Exponent value
+ * @param sign Sign of the result
+ * @param index Index for argument reduction
+ * @param ed Exponent difference
+ * @param zh High part of reduced argument
+ * @param zm Medium part of reduced argument
+ * @return gpga_double pow(x, y) for exact case
+ */
 inline gpga_double gpga_pow_exact_rn(gpga_double x, gpga_double y,
                                      gpga_double sign, int index,
                                      gpga_double ed, gpga_double zh,
@@ -16417,6 +22026,13 @@ inline gpga_double gpga_pow_exact_rn(gpga_double x, gpga_double y,
   return gpga_double_from_s32(-5);
 }
 
+/**
+ * @brief Compute pow in round-to-nearest mode
+ * 
+ * @param x Base value
+ * @param y Exponent value
+ * @return gpga_double pow(x, y)
+ */
 inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
   gpga_double one = gpga_double_const_one();
   gpga_double zero = gpga_double_zero(0u);
@@ -16570,6 +22186,10 @@ inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
   Add12Cond(&zh, &zm, th, yril);
 
 #ifndef GPGA_POW_FAST_PATH
+/**
+ * @brief Compile-time toggle for the pow fast path (0 disables the fast path).
+ * 
+ */
 #define GPGA_POW_FAST_PATH 0
 #endif
 #if GPGA_POW_FAST_PATH
@@ -16722,24 +22342,97 @@ inline gpga_double gpga_pow_rn(gpga_double x, gpga_double y) {
 }
 
 // CRLIBM_CSH_FAST
+/**
+ * @brief Maximum error bound for the fast csh path.
+ * 
+ */
 GPGA_CONST gpga_double csh_maxepsilon = 0x3c2c60de1bd9507dul;
+/**
+ * @brief Rounding constant used in csh range reduction.
+ * 
+ */
 GPGA_CONST gpga_double csh_round_cst = 0x3ff039a85dae6c53ul;
+/**
+ * @brief 1/ln(2) used to scale inputs in csh.
+ * 
+ */
 GPGA_CONST gpga_double csh_inv_ln_2 = 0x3ff71547652b82feul;
+/**
+ * @brief High part of ln(2) used in csh range reduction.
+ * 
+ */
 GPGA_CONST gpga_double csh_ln2_hi = 0x3fe62e42fefa3800ul;
+/**
+ * @brief Low part of ln(2) used in csh range reduction.
+ * 
+ */
 GPGA_CONST gpga_double csh_ln2_lo = 0x3d2ef35793c76730ul;
+/**
+ * @brief 2^43 + 2^44 bias used to extract integer parts in csh.
+ * 
+ */
 GPGA_CONST gpga_double csh_two_43_44 = 0x42b8000000000000ul;
+/**
+ * @brief 2^-30 threshold used for small-argument csh handling.
+ * 
+ */
 GPGA_CONST gpga_double csh_two_minus_30 = 0x3d70000000000000ul;
+/**
+ * @brief Bias added to the csh table index during lookup.
+ * 
+ */
 GPGA_CONST int csh_bias = 89;
+/**
+ * @brief Maximum input magnitude before csh overflows.
+ * 
+ */
 GPGA_CONST gpga_double csh_max_input = 0x408633ce8fb9f87eul;
+/**
+ * @brief Coefficient for the cosh term x^2 in the csh polynomial.
+ * 
+ */
 GPGA_CONST gpga_double csh_c2 = 0x3fe0000000000000ul;
+/**
+ * @brief Coefficient for the cosh term x^4 in the csh polynomial.
+ * 
+ */
 GPGA_CONST gpga_double csh_c4 = 0x3fa5555555555555ul;
+/**
+ * @brief Coefficient for the cosh term x^6 in the csh polynomial.
+ * 
+ */
 GPGA_CONST gpga_double csh_c6 = 0x3f56c16c16c16c17ul;
+/**
+ * @brief Coefficient for the sinh term x^3 in the csh polynomial.
+ * 
+ */
 GPGA_CONST gpga_double csh_s3 = 0x3fc5555555555555ul;
+/**
+ * @brief Coefficient for the sinh term x^5 in the csh polynomial.
+ * 
+ */
 GPGA_CONST gpga_double csh_s5 = 0x3f81111111111111ul;
+/**
+ * @brief Coefficient for the sinh term x^7 in the csh polynomial.
+ * 
+ */
 GPGA_CONST gpga_double csh_s7 = 0x3f2a01a01a01a01aul;
+/**
+ * @brief Largest finite double used for csh overflow handling.
+ * 
+ */
 GPGA_CONST gpga_double csh_largest_double = 0x7feffffffffffffful;
+/**
+ * @brief Smallest positive subnormal used for csh underflow handling.
+ * 
+ */
 GPGA_CONST gpga_double csh_tiniest_double = 0x0000000000000001ul;
 
+/**
+ * @brief Precomputed cosh/sinh table with correction terms for fast csh.
+ * 
+ * Each entry contains precomputed values for efficient calculation of cosh and sinh.
+ */
 GPGA_CONST gpga_double csh_cosh_sinh_table[179][4] = {
   { 0x3ff0fa08d2f35f97ul, 0x3c9b39d19dab3af1ul, 0xbfd6b36fbb84c928ul, 0xbc68daf8fefe1e5ful },
   { 0x3ff0f46473177841ul, 0xbc97df6029551c51ul, 0xbfd66f92e6a06fc9ul, 0x3c70a785d9a66b42ul },
@@ -16922,6 +22615,13 @@ GPGA_CONST gpga_double csh_cosh_sinh_table[179][4] = {
   { 0x3ff0fa08d2f35f97ul, 0x3c9b39d19dab3af1ul, 0x3fd6b36fbb84c928ul, 0x3c68daf8fefe1e5ful },
 };
 
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number using range reduction and table lookup.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @param preshi Pointer to store the high part of the result.
+ * @param preslo Pointer to store the low part of the result.
+ */
 inline void gpga_csh_do_cosh(gpga_double x, thread gpga_double* preshi,
                              thread gpga_double* preslo) {
   int k = 0;
@@ -17059,6 +22759,15 @@ inline void gpga_csh_do_cosh(gpga_double x, thread gpga_double* preshi,
   }
 }
 
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number accurately using range reduction and table lookup.
+ * 
+ * @param pexponent Pointer to store the exponent of the result.
+ * @param presh Pointer to store the high part of the result.
+ * @param presm Pointer to store the middle part of the result.
+ * @param presl Pointer to store the low part of the result.
+ * @param x Input value in double-precision floating-point format.
+ */
 inline void gpga_csh_do_cosh_accurate(thread int* pexponent,
                                       thread gpga_double* presh,
                                       thread gpga_double* presm,
@@ -17099,6 +22808,12 @@ inline void gpga_csh_do_cosh_accurate(thread int* pexponent,
   Renormalize3(presh, presm, presl, exph, expm, expl);
 }
 
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number with rounding to nearest.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic cosine of the input value, rounded to nearest.
+ */
 inline gpga_double gpga_cosh_rn(gpga_double x) {
   uint hx = gpga_u64_hi(x) & 0x7fffffffU;
   uint lo = gpga_u64_lo(x);
@@ -17148,6 +22863,12 @@ inline gpga_double gpga_cosh_rn(gpga_double x) {
   return gpga_double_mul(gpga_double_from_u32(1024u), res);
 }
 
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number with rounding up.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic cosine of the input value, rounded up.
+ */
 inline gpga_double gpga_cosh_ru(gpga_double x) {
   uint hx = gpga_u64_hi(x) & 0x7fffffffU;
   uint lo = gpga_u64_lo(x);
@@ -17194,6 +22915,12 @@ inline gpga_double gpga_cosh_ru(gpga_double x) {
   return gpga_double_mul(gpga_double_from_u32(1024u), res);
 }
 
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number with rounding down.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic cosine of the input value, rounded down.
+ */
 inline gpga_double gpga_cosh_rd(gpga_double x) {
   uint hx = gpga_u64_hi(x) & 0x7fffffffU;
   uint lo = gpga_u64_lo(x);
@@ -17239,10 +22966,23 @@ inline gpga_double gpga_cosh_rd(gpga_double x) {
   return gpga_double_mul(gpga_double_from_u32(1024u), res);
 }
 
+/**
+ * @brief Compute the hyperbolic cosine of a double-precision floating-point number with rounding toward zero.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic cosine of the input value, rounded toward zero.
+ */
 inline gpga_double gpga_cosh_rz(gpga_double x) {
   return gpga_cosh_rd(x);
 }
 
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number using range reduction and table lookup.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @param prh Pointer to store the high part of the result.
+ * @param prl Pointer to store the low part of the result.
+ */
 inline void gpga_csh_do_sinh(gpga_double x, thread gpga_double* prh,
                              thread gpga_double* prl) {
   int k = 0;
@@ -17376,6 +23116,15 @@ inline void gpga_csh_do_sinh(gpga_double x, thread gpga_double* prh,
   }
 }
 
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number with high accuracy using range reduction and table lookup.
+ * 
+ * @param pexponent Pointer to store the exponent of the result.
+ * @param presh Pointer to store the high part of the result.
+ * @param presm Pointer to store the middle part of the result.
+ * @param presl Pointer to store the low part of the result.
+ * @param x Input value in double-precision floating-point format.
+ */
 inline void gpga_csh_do_sinh_accurate(thread int* pexponent,
                                       thread gpga_double* presh,
                                       thread gpga_double* presm,
@@ -17421,6 +23170,12 @@ inline void gpga_csh_do_sinh_accurate(thread int* pexponent,
   *pexponent = 0;
 }
 
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number with rounding to nearest.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic sine of the input value, rounded to nearest.
+ */
 inline gpga_double gpga_sinh_rn(gpga_double x) {
   uint hx = gpga_u64_hi(x) & 0x7fffffffU;
   uint lo = gpga_u64_lo(x);
@@ -17469,6 +23224,12 @@ inline gpga_double gpga_sinh_rn(gpga_double x) {
   return gpga_double_mul(gpga_double_from_u32(1024u), res);
 }
 
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number with rounding up.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic sine of the input value, rounded up.
+ */
 inline gpga_double gpga_sinh_ru(gpga_double x) {
   gpga_double ax = gpga_double_abs(x);
   uint ax_hi = gpga_u64_hi(ax);
@@ -17515,6 +23276,12 @@ inline gpga_double gpga_sinh_ru(gpga_double x) {
   return gpga_double_mul(gpga_double_from_u32(1024u), res);
 }
 
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number with rounding down.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic sine of the input value, rounded down.
+ */
 inline gpga_double gpga_sinh_rd(gpga_double x) {
   gpga_double ax = gpga_double_abs(x);
   uint ax_hi = gpga_u64_hi(ax);
@@ -17560,6 +23327,12 @@ inline gpga_double gpga_sinh_rd(gpga_double x) {
   return gpga_double_mul(gpga_double_from_u32(1024u), res);
 }
 
+/**
+ * @brief Compute the hyperbolic sine of a double-precision floating-point number with rounding towards zero.
+ * 
+ * @param x Input value in double-precision floating-point format.
+ * @return gpga_double - The hyperbolic sine of the input value, rounded towards zero.
+ */
 inline gpga_double gpga_sinh_rz(gpga_double x) {
   if (gpga_double_gt(x, gpga_double_zero(0u))) {
     return gpga_sinh_rd(x);

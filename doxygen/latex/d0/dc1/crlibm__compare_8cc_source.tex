@@ -1,0 +1,608 @@
+\doxysection{crlibm\+\_\+compare.\+cc}
+\hypertarget{crlibm__compare_8cc_source}{}\label{crlibm__compare_8cc_source}\index{src/tools/crlibm\_compare.cc@{src/tools/crlibm\_compare.cc}}
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00001}00001\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{crlibm__compare_8hh}{crlibm\_compare.hh}}"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00002}00002\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00003}00003\ \textcolor{preprocessor}{\#include\ <algorithm>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00004}00004\ \textcolor{preprocessor}{\#include\ <cmath>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00005}00005\ \textcolor{preprocessor}{\#include\ <cstdint>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00006}00006\ \textcolor{preprocessor}{\#include\ <chrono>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00007}00007\ \textcolor{preprocessor}{\#include\ <cstdlib>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00008}00008\ \textcolor{preprocessor}{\#include\ <cstring>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00009}00009\ \textcolor{preprocessor}{\#include\ <filesystem>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00010}00010\ \textcolor{preprocessor}{\#include\ <fstream>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00011}00011\ \textcolor{preprocessor}{\#include\ <iomanip>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00012}00012\ \textcolor{preprocessor}{\#include\ <iostream>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00013}00013\ \textcolor{preprocessor}{\#include\ <limits>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00014}00014\ \textcolor{preprocessor}{\#include\ <random>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00015}00015\ \textcolor{preprocessor}{\#include\ <sstream>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00016}00016\ \textcolor{preprocessor}{\#include\ <string>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00017}00017\ \textcolor{preprocessor}{\#include\ <unordered\_map>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00018}00018\ \textcolor{preprocessor}{\#include\ <utility>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00019}00019\ \textcolor{preprocessor}{\#include\ <vector>}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00020}00020\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00021}00021\ \textcolor{keyword}{extern}\ \textcolor{stringliteral}{"{}C"{}}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00022}00022\ \textcolor{preprocessor}{\#include\ "{}thirdparty/crlibm/crlibm.h"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00023}00023\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00024}00024\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00025}00025\ \textcolor{preprocessor}{\#define\ GPGA\_REAL\_TRACE\ 1}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00026}00026\ \textcolor{preprocessor}{\#include\ "{}\doxymbox{\hyperlink{gpga__real_8h}{gpga\_real.h}}"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00027}00027\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00028}00028\ \textcolor{keyword}{namespace\ }fs\ =\ std::filesystem;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00029}00029\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00030}00030\ \textcolor{keyword}{enum\ class}\ Mode\ \{\ kRn,\ kRd,\ kRu,\ kRz\ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00031}00031\ \textcolor{keyword}{enum\ class}\ Domain\ \{\ \doxymbox{\hyperlink{namespacegpga_a98d9033a889085988868adfd20324143_a98d9033a889085988868adfd20324143a198158a4155a179dc73ad4bea1159c1d}{kAny}},\ \doxymbox{\hyperlink{namespacegpga_add9a5a5f4ea597748bbbdb1819058322_add9a5a5f4ea597748bbbdb1819058322afe449700ac27fbd09863263d74e7735f}{kPositive}},\ kNonNegative,\ kMinusOneToOne,\ kGreaterMinusOne\ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00032}00032\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00033}\doxymbox{\hyperlink{struct_unary_spec}{00033}}\ \textcolor{keyword}{struct\ }\doxymbox{\hyperlink{struct_unary_spec}{UnarySpec}}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00034}00034\ \ \ std::string\ name;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00035}00035\ \ \ Domain\ domain\ =\ Domain::kAny;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00036}00036\ \ \ double\ (*ref\_rn)(double)\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00037}00037\ \ \ double\ (*ref\_rd)(double)\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00038}00038\ \ \ double\ (*ref\_ru)(double)\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00039}00039\ \ \ double\ (*ref\_rz)(double)\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00040}00040\ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ (*gpga\_rn)(\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}})\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00041}00041\ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ (*gpga\_rd)(\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}})\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00042}00042\ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ (*gpga\_ru)(\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}})\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00043}00043\ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ (*gpga\_rz)(\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}})\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00044}00044\ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00045}00045\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00046}\doxymbox{\hyperlink{struct_binary_spec}{00046}}\ \textcolor{keyword}{struct\ }\doxymbox{\hyperlink{struct_binary_spec}{BinarySpec}}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00047}00047\ \ \ std::string\ name;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00048}00048\ \ \ double\ (*ref\_rn)(double,\ double)\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00049}00049\ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ (*gpga\_rn)(\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}},\ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}})\ =\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00050}00050\ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00051}00051\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00052}\doxymbox{\hyperlink{struct_compare_stats}{00052}}\ \textcolor{keyword}{struct\ }\doxymbox{\hyperlink{struct_compare_stats}{CompareStats}}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00053}00053\ \ \ uint64\_t\ total\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00054}00054\ \ \ uint64\_t\ pass\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00055}00055\ \ \ uint64\_t\ fail\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00056}00056\ \ \ uint64\_t\ max\_ulp\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00057}00057\ \ \ \textcolor{keywordtype}{long}\ \textcolor{keywordtype}{double}\ sum\_ulp\ =\ 0.0L;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00058}00058\ \ \ uint64\_t\ worst\_input0\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00059}00059\ \ \ uint64\_t\ worst\_input1\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00060}00060\ \ \ uint64\_t\ worst\_ref\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00061}00061\ \ \ uint64\_t\ worst\_got\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00062}00062\ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00063}00063\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00064}00064\ \textcolor{keyword}{static}\ uint64\_t\ DoubleToBits(\textcolor{keywordtype}{double}\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00065}00065\ \ \ uint64\_t\ bits\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00066}00066\ \ \ std::memcpy(\&bits,\ \&value,\ \textcolor{keyword}{sizeof}(bits));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00067}00067\ \ \ \textcolor{keywordflow}{return}\ bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00068}00068\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00069}00069\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00070}00070\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{double}\ BitsToDouble(uint64\_t\ bits)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00071}00071\ \ \ \textcolor{keywordtype}{double}\ value\ =\ 0.0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00072}00072\ \ \ std::memcpy(\&value,\ \&bits,\ \textcolor{keyword}{sizeof}(value));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00073}00073\ \ \ \textcolor{keywordflow}{return}\ value;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00074}00074\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00075}00075\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00076}00076\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{bool}\ IsNaNBits(uint64\_t\ bits)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00077}00077\ \ \ \textcolor{keywordflow}{return}\ ((bits\ >>\ 52)\ \&\ 0x7FFu)\ ==\ 0x7FFu\ \&\&}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00078}00078\ \ \ \ \ \ \ \ \ \ (bits\ \&\ 0x000FFFFFFFFFFFFFull)\ !=\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00079}00079\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00080}00080\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00081}00081\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{bool}\ IsInfBits(uint64\_t\ bits)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00082}00082\ \ \ \textcolor{keywordflow}{return}\ ((bits\ >>\ 52)\ \&\ 0x7FFu)\ ==\ 0x7FFu\ \&\&}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00083}00083\ \ \ \ \ \ \ \ \ \ (bits\ \&\ 0x000FFFFFFFFFFFFFull)\ ==\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00084}00084\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00085}00085\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00086}00086\ \textcolor{keyword}{static}\ uint64\_t\ OrderedBits(uint64\_t\ bits)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00087}00087\ \ \ \textcolor{keyword}{const}\ uint64\_t\ sign\ =\ bits\ >>\ 63;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00088}00088\ \ \ \textcolor{keyword}{const}\ uint64\_t\ mask\ =\ sign\ ?\ 0xFFFFFFFFFFFFFFFFull\ :\ 0x8000000000000000ull;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00089}00089\ \ \ \textcolor{keywordflow}{return}\ bits\ \string^\ mask;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00090}00090\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00091}00091\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00092}00092\ \textcolor{keyword}{static}\ uint64\_t\ ULPDiff(uint64\_t\ a,\ uint64\_t\ b)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00093}00093\ \ \ uint64\_t\ oa\ =\ OrderedBits(a);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00094}00094\ \ \ uint64\_t\ ob\ =\ OrderedBits(b);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00095}00095\ \ \ \textcolor{keywordflow}{return}\ (oa\ >\ ob)\ ?\ (oa\ -\/\ ob)\ :\ (ob\ -\/\ oa);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00096}00096\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00097}00097\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00098}00098\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{bool}\ DomainAccept(Domain\ domain,\ uint64\_t\ bits)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00099}00099\ \ \ \textcolor{keywordflow}{if}\ (IsNaNBits(bits)\ ||\ IsInfBits(bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00100}00100\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00101}00101\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00102}00102\ \ \ \textcolor{keywordtype}{double}\ v\ =\ BitsToDouble(bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00103}00103\ \ \ \textcolor{keywordflow}{if}\ (!std::isfinite(v))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00104}00104\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00105}00105\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00106}00106\ \ \ \textcolor{keywordflow}{switch}\ (domain)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00107}00107\ \ \ \ \ \textcolor{keywordflow}{case}\ Domain::kAny:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00108}00108\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00109}00109\ \ \ \ \ \textcolor{keywordflow}{case}\ Domain::kPositive:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00110}00110\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ v\ >\ 0.0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00111}00111\ \ \ \ \ \textcolor{keywordflow}{case}\ Domain::kNonNegative:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00112}00112\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ v\ >=\ 0.0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00113}00113\ \ \ \ \ \textcolor{keywordflow}{case}\ Domain::kMinusOneToOne:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00114}00114\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ v\ >=\ -\/1.0\ \&\&\ v\ <=\ 1.0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00115}00115\ \ \ \ \ \textcolor{keywordflow}{case}\ Domain::kGreaterMinusOne:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00116}00116\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ v\ >\ -\/1.0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00117}00117\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00118}00118\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00119}00119\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00120}00120\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00121}00121\ \textcolor{keyword}{static}\ std::vector<uint64\_t>\ EdgeInputs()\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00122}00122\ \ \ \textcolor{keywordflow}{return}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00123}00123\ \ \ \ \ \ \ 0x0000000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00124}00124\ \ \ \ \ \ \ 0x8000000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00125}00125\ \ \ \ \ \ \ 0x0000000000000001ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00126}00126\ \ \ \ \ \ \ 0x000FFFFFFFFFFFFFull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00127}00127\ \ \ \ \ \ \ 0x0010000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00128}00128\ \ \ \ \ \ \ 0x7FEFFFFFFFFFFFFFull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00129}00129\ \ \ \ \ \ \ 0x7FF0000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00130}00130\ \ \ \ \ \ \ 0xFFF0000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00131}00131\ \ \ \ \ \ \ 0x7FF8000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00132}00132\ \ \ \ \ \ \ 0xFFF8000000000000ull,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00133}00133\ \ \ \ \ \ \ DoubleToBits(1.0),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00134}00134\ \ \ \ \ \ \ DoubleToBits(-\/1.0),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00135}00135\ \ \ \ \ \ \ DoubleToBits(0.5),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00136}00136\ \ \ \ \ \ \ DoubleToBits(-\/0.5),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00137}00137\ \ \ \ \ \ \ DoubleToBits(2.0),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00138}00138\ \ \ \ \ \ \ DoubleToBits(-\/2.0),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00139}00139\ \ \ \ \ \ \ DoubleToBits(10.0),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00140}00140\ \ \ \ \ \ \ DoubleToBits(-\/10.0),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00141}00141\ \ \ \ \ \ \ DoubleToBits(3.14159265358979323846),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00142}00142\ \ \ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00143}00143\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00144}00144\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00145}00145\ \textcolor{keyword}{static}\ uint64\_t\ RandomFinite(std::mt19937\_64\&\ rng)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00146}00146\ \ \ uint64\_t\ sign\ =\ (rng()\ \&\ 1ull)\ <<\ 63;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00147}00147\ \ \ uint64\_t\ exp\ =\ rng()\ \%\ 2047ull;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00148}00148\ \ \ \textcolor{keywordflow}{if}\ (exp\ ==\ 2047ull)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00149}00149\ \ \ \ \ exp\ =\ 2046ull;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00150}00150\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00151}00151\ \ \ uint64\_t\ mant\ =\ rng()\ \&\ 0x000FFFFFFFFFFFFFull;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00152}00152\ \ \ \textcolor{keywordflow}{return}\ sign\ |\ (exp\ <<\ 52)\ |\ mant;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00153}00153\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00154}00154\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00155}00155\ \textcolor{keyword}{static}\ std::vector<uint64\_t>\ MakeUnaryInputs(Domain\ domain,\ \textcolor{keywordtype}{size\_t}\ count,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00156}00156\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::mt19937\_64\&\ rng)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00157}00157\ \ \ std::vector<uint64\_t>\ inputs\ =\ EdgeInputs();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00158}00158\ \ \ std::vector<uint64\_t>\ filtered;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00159}00159\ \ \ filtered.reserve(inputs.size());}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00160}00160\ \ \ \textcolor{keywordflow}{for}\ (uint64\_t\ bits\ :\ inputs)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00161}00161\ \ \ \ \ \textcolor{keywordflow}{if}\ (DomainAccept(domain,\ bits)\ ||\ IsNaNBits(bits)\ ||\ IsInfBits(bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00162}00162\ \ \ \ \ \ \ filtered.push\_back(bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00163}00163\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00164}00164\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00165}00165\ \ \ \textcolor{keywordflow}{while}\ (filtered.size()\ <\ count)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00166}00166\ \ \ \ \ uint64\_t\ bits\ =\ RandomFinite(rng);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00167}00167\ \ \ \ \ \textcolor{keywordflow}{if}\ (DomainAccept(domain,\ bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00168}00168\ \ \ \ \ \ \ filtered.push\_back(bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00169}00169\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00170}00170\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00171}00171\ \ \ \textcolor{keywordflow}{return}\ filtered;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00172}00172\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00173}00173\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00174}00174\ \textcolor{keyword}{static}\ std::vector<std::pair<uint64\_t,\ uint64\_t>>\ MakePowInputs(\textcolor{keywordtype}{size\_t}\ count,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00175}00175\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ std::mt19937\_64\&\ rng)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00176}00176\ \ \ std::vector<uint64\_t>\ edges\ =\ EdgeInputs();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00177}00177\ \ \ std::vector<std::pair<uint64\_t,\ uint64\_t>>\ inputs;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00178}00178\ \ \ \textcolor{keywordflow}{for}\ (uint64\_t\ a\ :\ edges)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00179}00179\ \ \ \ \ inputs.emplace\_back(a,\ DoubleToBits(2.0));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00180}00180\ \ \ \ \ inputs.emplace\_back(a,\ DoubleToBits(-\/2.0));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00181}00181\ \ \ \ \ inputs.emplace\_back(a,\ DoubleToBits(0.5));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00182}00182\ \ \ \ \ inputs.emplace\_back(a,\ DoubleToBits(-\/0.5));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00183}00183\ \ \ \ \ inputs.emplace\_back(a,\ DoubleToBits(0.0));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00184}00184\ \ \ \ \ inputs.emplace\_back(a,\ DoubleToBits(1.0));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00185}00185\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00186}00186\ \ \ \textcolor{keywordflow}{while}\ (inputs.size()\ <\ count)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00187}00187\ \ \ \ \ uint64\_t\ base\ =\ RandomFinite(rng);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00188}00188\ \ \ \ \ uint64\_t\ exp\ =\ RandomFinite(rng);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00189}00189\ \ \ \ \ inputs.emplace\_back(base,\ exp);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00190}00190\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00191}00191\ \ \ \textcolor{keywordflow}{return}\ inputs;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00192}00192\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00193}00193\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00194}00194\ \textcolor{keyword}{static}\ \textcolor{keyword}{const}\ \textcolor{keywordtype}{char}*\ ModeName(Mode\ mode)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00195}00195\ \ \ \textcolor{keywordflow}{switch}\ (mode)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00196}00196\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRn:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00197}00197\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}rn"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00198}00198\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRd:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00199}00199\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}rd"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00200}00200\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRu:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00201}00201\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}ru"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00202}00202\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRz:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00203}00203\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}rz"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00204}00204\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00205}00205\ \ \ \textcolor{keywordflow}{return}\ \textcolor{stringliteral}{"{}rn"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00206}00206\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00207}00207\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00208}00208\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{bool}\ ParseMode(\textcolor{keyword}{const}\ std::string\&\ value,\ Mode*\ out)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00209}00209\ \ \ \textcolor{keywordflow}{if}\ (value\ ==\ \textcolor{stringliteral}{"{}rn"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00210}00210\ \ \ \ \ *out\ =\ Mode::kRn;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00211}00211\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00212}00212\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00213}00213\ \ \ \textcolor{keywordflow}{if}\ (value\ ==\ \textcolor{stringliteral}{"{}rd"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00214}00214\ \ \ \ \ *out\ =\ Mode::kRd;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00215}00215\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00216}00216\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00217}00217\ \ \ \textcolor{keywordflow}{if}\ (value\ ==\ \textcolor{stringliteral}{"{}ru"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00218}00218\ \ \ \ \ *out\ =\ Mode::kRu;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00219}00219\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00220}00220\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00221}00221\ \ \ \textcolor{keywordflow}{if}\ (value\ ==\ \textcolor{stringliteral}{"{}rz"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00222}00222\ \ \ \ \ *out\ =\ Mode::kRz;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00223}00223\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00224}00224\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00225}00225\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00226}00226\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00227}00227\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00228}00228\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{void}\ AppendUnary(std::vector<UnarySpec>*\ specs,\ \doxymbox{\hyperlink{struct_unary_spec}{UnarySpec}}\ spec)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00229}00229\ \ \ specs-\/>push\_back(std::move(spec));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00230}00230\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00231}00231\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00232}00232\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{void}\ AppendBinary(std::vector<BinarySpec>*\ specs,\ \doxymbox{\hyperlink{struct_binary_spec}{BinarySpec}}\ spec)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00233}00233\ \ \ specs-\/>push\_back(std::move(spec));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00234}00234\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00235}00235\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00236}00236\ \textcolor{keyword}{static}\ std::vector<UnarySpec>\ BuildUnarySpecs()\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00237}00237\ \ \ std::vector<UnarySpec>\ specs;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00238}00238\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}exp"{}},\ Domain::kAny,\ exp\_rn,\ exp\_rd,\ exp\_ru,\ exp\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00239}00239\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_ae1b2e3c72d5a70367a4ba52087d46299_ae1b2e3c72d5a70367a4ba52087d46299}{gpga\_exp\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a4563f5dd8a14eb1d192c4a7fc2bd63f0_a4563f5dd8a14eb1d192c4a7fc2bd63f0}{gpga\_exp\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a608aacf75f0c12745aa3237cbb2e9233_a608aacf75f0c12745aa3237cbb2e9233}{gpga\_exp\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a7e6117af11b54e155d6db1b05320dc86_a7e6117af11b54e155d6db1b05320dc86}{gpga\_exp\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00240}00240\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}log"{}},\ Domain::kPositive,\ log\_rn,\ log\_rd,\ log\_ru,\ log\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00241}00241\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_ab7b16787e2f67e09b1a2572c76c77585_ab7b16787e2f67e09b1a2572c76c77585}{gpga\_log\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_add8335ad138623fa43d56dd15927497d_add8335ad138623fa43d56dd15927497d}{gpga\_log\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_ad00b50311e9b5c781d02730693642a49_ad00b50311e9b5c781d02730693642a49}{gpga\_log\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a45f865a1c5a2c167377800eb69cff53c_a45f865a1c5a2c167377800eb69cff53c}{gpga\_log\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00242}00242\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}log2"{}},\ Domain::kPositive,\ log2\_rn,\ log2\_rd,\ log2\_ru,\ log2\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00243}00243\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_ae90121770d0b6ab9dda70edd04714302_ae90121770d0b6ab9dda70edd04714302}{gpga\_log2\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_af98154b29f6e2d6f6e315b91250bed75_af98154b29f6e2d6f6e315b91250bed75}{gpga\_log2\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_ad1ce0084da398ae6664c4df21829ddd7_ad1ce0084da398ae6664c4df21829ddd7}{gpga\_log2\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a140b95fcf190a01c2b8bcb5e91fefcca_a140b95fcf190a01c2b8bcb5e91fefcca}{gpga\_log2\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00244}00244\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}log10"{}},\ Domain::kPositive,\ log10\_rn,\ log10\_rd,\ log10\_ru,\ log10\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00245}00245\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_ab52f8098763da3a60fec9a7644a678ce_ab52f8098763da3a60fec9a7644a678ce}{gpga\_log10\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_aed01b4a75fb307d3f28fdd2d1ff04300_aed01b4a75fb307d3f28fdd2d1ff04300}{gpga\_log10\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_ad0120f17af177c7a8b8ceceaa97507a6_ad0120f17af177c7a8b8ceceaa97507a6}{gpga\_log10\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_adbfcd6f1f7cbf03d0129d5d10fed9f5d_adbfcd6f1f7cbf03d0129d5d10fed9f5d}{gpga\_log10\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00246}00246\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}log1p"{}},\ Domain::kGreaterMinusOne,\ log1p\_rn,\ log1p\_rd,\ log1p\_ru,\ log1p\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00247}00247\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a1bb72aec22361be5292bbd47ba36138e_a1bb72aec22361be5292bbd47ba36138e}{gpga\_log1p\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a504e1533400132190f81cbd706921154_a504e1533400132190f81cbd706921154}{gpga\_log1p\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_acc86d8fcd26712ff06780385fbadb832_acc86d8fcd26712ff06780385fbadb832}{gpga\_log1p\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a97fdc7ca3a7001ee305ab90d1eceb027_a97fdc7ca3a7001ee305ab90d1eceb027}{gpga\_log1p\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00248}00248\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}expm1"{}},\ Domain::kAny,\ expm1\_rn,\ expm1\_rd,\ expm1\_ru,\ expm1\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00249}00249\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_ae79b3e7ea51595b7f5f6a1a770639c8f_ae79b3e7ea51595b7f5f6a1a770639c8f}{gpga\_expm1\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_afaac40120240268a3d391239e72906b7_afaac40120240268a3d391239e72906b7}{gpga\_expm1\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a2a819bd6159b76a9c813fa4c34fd1f92_a2a819bd6159b76a9c813fa4c34fd1f92}{gpga\_expm1\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a4d905cb94bd78276d258751c88a1a225_a4d905cb94bd78276d258751c88a1a225}{gpga\_expm1\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00250}00250\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}sin"{}},\ Domain::kAny,\ sin\_rn,\ sin\_rd,\ sin\_ru,\ sin\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00251}00251\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a1c8fe592a606d9b52a609bc8be41e2b3_a1c8fe592a606d9b52a609bc8be41e2b3}{gpga\_sin\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a86dae690bfe02868df1a5b1c7824b246_a86dae690bfe02868df1a5b1c7824b246}{gpga\_sin\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_ae09e31c4db7f96dfc3908d0e3857a2d0_ae09e31c4db7f96dfc3908d0e3857a2d0}{gpga\_sin\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a00a013902f28715825f0ba3ce5632085_a00a013902f28715825f0ba3ce5632085}{gpga\_sin\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00252}00252\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}cos"{}},\ Domain::kAny,\ cos\_rn,\ cos\_rd,\ cos\_ru,\ cos\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00253}00253\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a3e4b4f651893f85e1cd8fa03010e24f3_a3e4b4f651893f85e1cd8fa03010e24f3}{gpga\_cos\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_aad4a7589331f5bc72cbc1d2a71ac807c_aad4a7589331f5bc72cbc1d2a71ac807c}{gpga\_cos\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_aac8d6bc93434cdc521087900e126182e_aac8d6bc93434cdc521087900e126182e}{gpga\_cos\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a30883268f1c76e2f76663247dfc6fd28_a30883268f1c76e2f76663247dfc6fd28}{gpga\_cos\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00254}00254\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}tan"{}},\ Domain::kAny,\ tan\_rn,\ tan\_rd,\ tan\_ru,\ tan\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00255}00255\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a4f2a481cd57e28c6b8e8897b214421d1_a4f2a481cd57e28c6b8e8897b214421d1}{gpga\_tan\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a0122cdf356d30577bafc77e82b75db1f_a0122cdf356d30577bafc77e82b75db1f}{gpga\_tan\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_aa9533dd0623d5df7b2de9347ad0a3eac_aa9533dd0623d5df7b2de9347ad0a3eac}{gpga\_tan\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a9d4e594cb62c89849f8820bcc71da931_a9d4e594cb62c89849f8820bcc71da931}{gpga\_tan\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00256}00256\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}asin"{}},\ Domain::kMinusOneToOne,\ asin\_rn,\ asin\_rd,\ asin\_ru,\ asin\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00257}00257\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_aeed4c009eb68898abeb28758416825c2_aeed4c009eb68898abeb28758416825c2}{gpga\_asin\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a662ffdf4270691054a5e83f3d10dee5c_a662ffdf4270691054a5e83f3d10dee5c}{gpga\_asin\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_ab36eb1f36d3e5e73d3c5e452b07baebf_ab36eb1f36d3e5e73d3c5e452b07baebf}{gpga\_asin\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_adfc88a5ad4cb7198444a4c877996a100_adfc88a5ad4cb7198444a4c877996a100}{gpga\_asin\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00258}00258\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}acos"{}},\ Domain::kMinusOneToOne,\ acos\_rn,\ acos\_rd,\ acos\_ru,\ acos\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00259}00259\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a039d73f69197aeefa08d015109688809_a039d73f69197aeefa08d015109688809}{gpga\_acos\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_afd1aa3b39692e7a8dc28fabfbfa69b60_afd1aa3b39692e7a8dc28fabfbfa69b60}{gpga\_acos\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_acacc1bce8d5eda8d4191ef4de603af17_acacc1bce8d5eda8d4191ef4de603af17}{gpga\_acos\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_abf9e3939d63497a5002032e035b11585_abf9e3939d63497a5002032e035b11585}{gpga\_acos\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00260}00260\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}atan"{}},\ Domain::kAny,\ atan\_rn,\ atan\_rd,\ atan\_ru,\ atan\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00261}00261\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_ac05a8adc32e122834fc0dd875168e2eb_ac05a8adc32e122834fc0dd875168e2eb}{gpga\_atan\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a2f9eaab47c796e187a0c33c0a4a4fdf7_a2f9eaab47c796e187a0c33c0a4a4fdf7}{gpga\_atan\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a517d78efba9be154985d50683225e85e_a517d78efba9be154985d50683225e85e}{gpga\_atan\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a06937343e9a8e0bb8370d6ac76205372_a06937343e9a8e0bb8370d6ac76205372}{gpga\_atan\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00262}00262\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}sinh"{}},\ Domain::kAny,\ sinh\_rn,\ sinh\_rd,\ sinh\_ru,\ sinh\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00263}00263\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a092fb817119740b231172e98fab188a6_a092fb817119740b231172e98fab188a6}{gpga\_sinh\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a9f9fe2443eb7d15345611c1465ea733c_a9f9fe2443eb7d15345611c1465ea733c}{gpga\_sinh\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a1dce241b0747c85c7e290fcdaa1e2fdd_a1dce241b0747c85c7e290fcdaa1e2fdd}{gpga\_sinh\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_af4eaae1f290f5cf170e2f4f756519330_af4eaae1f290f5cf170e2f4f756519330}{gpga\_sinh\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00264}00264\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}cosh"{}},\ Domain::kAny,\ cosh\_rn,\ cosh\_rd,\ cosh\_ru,\ cosh\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00265}00265\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a022b7e78e3300264a1db25ce6668bbad_a022b7e78e3300264a1db25ce6668bbad}{gpga\_cosh\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a864dd3892a50e6ff937deba5c4053bf6_a864dd3892a50e6ff937deba5c4053bf6}{gpga\_cosh\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a34b78d941c71003f44d98cacb29e6867_a34b78d941c71003f44d98cacb29e6867}{gpga\_cosh\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_ab5fabdc24861214ecee11329c79a1604_ab5fabdc24861214ecee11329c79a1604}{gpga\_cosh\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00266}00266\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}sinpi"{}},\ Domain::kAny,\ sinpi\_rn,\ sinpi\_rd,\ sinpi\_ru,\ sinpi\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00267}00267\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a498da391bb6381fc365b707cbf35d0ff_a498da391bb6381fc365b707cbf35d0ff}{gpga\_sinpi\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a9f593da838af8896fad8528d90b32b8e_a9f593da838af8896fad8528d90b32b8e}{gpga\_sinpi\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_abad6a91de09435b9210e526aef8a70cb_abad6a91de09435b9210e526aef8a70cb}{gpga\_sinpi\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a79f3b9d7b40bb1700a58653075e4aa39_a79f3b9d7b40bb1700a58653075e4aa39}{gpga\_sinpi\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00268}00268\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}cospi"{}},\ Domain::kAny,\ cospi\_rn,\ cospi\_rd,\ cospi\_ru,\ cospi\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00269}00269\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_aaa461b58d8e3cd937a061f83fd1e0e94_aaa461b58d8e3cd937a061f83fd1e0e94}{gpga\_cospi\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_aeff9614739a3231a15f2f444ae6a6d5b_aeff9614739a3231a15f2f444ae6a6d5b}{gpga\_cospi\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a32782badb17380e05210f2c1a82daa57_a32782badb17380e05210f2c1a82daa57}{gpga\_cospi\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a5bec7e4329383ade0879bbaa19f52bdc_a5bec7e4329383ade0879bbaa19f52bdc}{gpga\_cospi\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00270}00270\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}tanpi"{}},\ Domain::kAny,\ tanpi\_rn,\ tanpi\_rd,\ tanpi\_ru,\ tanpi\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00271}00271\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a6a024b77d008e9de91b67582ad92d56b_a6a024b77d008e9de91b67582ad92d56b}{gpga\_tanpi\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a6377ad39d6a84d5029797acbfd25678a_a6377ad39d6a84d5029797acbfd25678a}{gpga\_tanpi\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_a471be7e4bfea852a550b97e71d1e6821_a471be7e4bfea852a550b97e71d1e6821}{gpga\_tanpi\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a282f50022f3685bac4ea1eb86368c62a_a282f50022f3685bac4ea1eb86368c62a}{gpga\_tanpi\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00272}00272\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}asinpi"{}},\ Domain::kMinusOneToOne,\ asinpi\_rn,\ asinpi\_rd,\ asinpi\_ru,\ asinpi\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00273}00273\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a41cb2f44827d7a6eea10a236b1894001_a41cb2f44827d7a6eea10a236b1894001}{gpga\_asinpi\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a38c8a3df9a8c1f00fe10c77ebe34da0d_a38c8a3df9a8c1f00fe10c77ebe34da0d}{gpga\_asinpi\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_afcc1376fabb02dd40359151b88e57750_afcc1376fabb02dd40359151b88e57750}{gpga\_asinpi\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a2f28330bc81e67e3de933481d87cb2b0_a2f28330bc81e67e3de933481d87cb2b0}{gpga\_asinpi\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00274}00274\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}acospi"{}},\ Domain::kMinusOneToOne,\ acospi\_rn,\ acospi\_rd,\ acospi\_ru,\ acospi\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00275}00275\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_afc948a2fbb16fcb5e54faa2dda200c24_afc948a2fbb16fcb5e54faa2dda200c24}{gpga\_acospi\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a2c15029360d0639682090f8b67ba3bf0_a2c15029360d0639682090f8b67ba3bf0}{gpga\_acospi\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_aec2bf1dc6bdfcbaebf026e0f790bb8ff_aec2bf1dc6bdfcbaebf026e0f790bb8ff}{gpga\_acospi\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_a1de5443e1ac84410db3828ee0b067ab9_a1de5443e1ac84410db3828ee0b067ab9}{gpga\_acospi\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00276}00276\ \ \ AppendUnary(\&specs,\ \{\textcolor{stringliteral}{"{}atanpi"{}},\ Domain::kAny,\ atanpi\_rn,\ atanpi\_rd,\ atanpi\_ru,\ atanpi\_rz,}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00277}00277\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a697219fc220e9fca82df6799a14ce62b_a697219fc220e9fca82df6799a14ce62b}{gpga\_atanpi\_rn}},\ \doxymbox{\hyperlink{gpga__real_8h_a780790d058d9a53fa39526fccc3e7acd_a780790d058d9a53fa39526fccc3e7acd}{gpga\_atanpi\_rd}},\ \doxymbox{\hyperlink{gpga__real_8h_ae281244ed47e84b6a936072d92ba8aa3_ae281244ed47e84b6a936072d92ba8aa3}{gpga\_atanpi\_ru}},\ \doxymbox{\hyperlink{gpga__real_8h_ab71fb7ccc170a3bfac48de7382d45dd1_ab71fb7ccc170a3bfac48de7382d45dd1}{gpga\_atanpi\_rz}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00278}00278\ \ \ \textcolor{keywordflow}{return}\ specs;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00279}00279\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00280}00280\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00281}00281\ \textcolor{keyword}{static}\ std::vector<BinarySpec>\ BuildBinarySpecs()\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00282}00282\ \ \ std::vector<BinarySpec>\ specs;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00283}00283\ \ \ AppendBinary(\&specs,\ \{\textcolor{stringliteral}{"{}pow"{}},\ pow\_rn,\ \doxymbox{\hyperlink{gpga__real_8h_a2df92189ccf54ad83fc0ab2c84335778_a2df92189ccf54ad83fc0ab2c84335778}{gpga\_pow\_rn}}\});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00284}00284\ \ \ \textcolor{keywordflow}{return}\ specs;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00285}00285\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00286}00286\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00287}00287\ \textcolor{keyword}{static}\ double\ (*SelectRef(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{struct_unary_spec}{UnarySpec}}\&\ spec,\ Mode\ mode))(double)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00288}00288\ \ \ \textcolor{keywordflow}{switch}\ (mode)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00289}00289\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRn:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00290}00290\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.ref\_rn;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00291}00291\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRd:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00292}00292\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.ref\_rd;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00293}00293\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRu:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00294}00294\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.ref\_ru;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00295}00295\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRz:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00296}00296\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.ref\_rz\ ?\ spec.ref\_rz\ :\ spec.ref\_rd;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00297}00297\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00298}00298\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00299}00299\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00300}00300\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00301}00301\ \textcolor{keyword}{static}\ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ (*SelectGpga(\textcolor{keyword}{const}\ \doxymbox{\hyperlink{struct_unary_spec}{UnarySpec}}\&\ spec,\ Mode\ mode))(\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00302}00302\ \ \ \textcolor{keywordflow}{switch}\ (mode)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00303}00303\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRn:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00304}00304\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.gpga\_rn;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00305}00305\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRd:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00306}00306\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.gpga\_rd;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00307}00307\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRu:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00308}00308\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.gpga\_ru;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00309}00309\ \ \ \ \ \textcolor{keywordflow}{case}\ Mode::kRz:}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00310}00310\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ spec.gpga\_rz\ ?\ spec.gpga\_rz\ :\ spec.gpga\_rd;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00311}00311\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00312}00312\ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{nullptr};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00313}00313\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00314}00314\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00315}00315\ \textcolor{keyword}{static}\ std::string\ HexU64(uint64\_t\ value)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00316}00316\ \ \ std::ostringstream\ oss;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00317}00317\ \ \ oss\ <<\ \textcolor{stringliteral}{"{}0x"{}}\ <<\ std::hex\ <<\ std::setfill(\textcolor{charliteral}{'0'})\ <<\ std::setw(16)\ <<\ value;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00318}00318\ \ \ \textcolor{keywordflow}{return}\ oss.str();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00319}00319\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00320}00320\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00321}00321\ \textcolor{keyword}{static}\ \textcolor{keywordtype}{bool}\ EnsureDir(\textcolor{keyword}{const}\ fs::path\&\ dir)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00322}00322\ \ \ std::error\_code\ ec;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00323}00323\ \ \ \textcolor{keywordflow}{if}\ (fs::exists(dir,\ ec))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00324}00324\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00325}00325\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00326}00326\ \ \ \textcolor{keywordflow}{return}\ fs::create\_directories(dir,\ ec);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00327}00327\ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00328}00328\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00329}00329\ \textcolor{keywordtype}{int}\ \doxymbox{\hyperlink{main_8hh_a3c04138a5bfe5d72780bb7e82a18e627_a3c04138a5bfe5d72780bb7e82a18e627}{main}}(\textcolor{keywordtype}{int}\ argc,\ \textcolor{keywordtype}{char}**\ argv)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00330}00330\ \ \ \textcolor{keywordtype}{size\_t}\ count\ =\ 10000;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00331}00331\ \ \ uint64\_t\ seed\ =\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00332}00332\ \ \ std::string\ func\_arg\ =\ \textcolor{stringliteral}{"{}all"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00333}00333\ \ \ std::string\ mode\_arg\ =\ \textcolor{stringliteral}{"{}rn"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00334}00334\ \ \ std::string\ out\_dir;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00335}00335\ \ \ \textcolor{keywordtype}{bool}\ trace\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00336}00336\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00337}00337\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keywordtype}{int}\ i\ =\ 1;\ i\ <\ argc;\ ++i)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00338}00338\ \ \ \ \ std::string\ arg\ =\ argv[i];}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00339}00339\ \ \ \ \ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/count"{}}\ \&\&\ i\ +\ 1\ <\ argc)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00340}00340\ \ \ \ \ \ \ count\ =\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{size\_t}\textcolor{keyword}{>}(std::stoull(argv[++i]));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00341}00341\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/seed"{}}\ \&\&\ i\ +\ 1\ <\ argc)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00342}00342\ \ \ \ \ \ \ seed\ =\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(std::stoull(argv[++i]));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00343}00343\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/func"{}}\ \&\&\ i\ +\ 1\ <\ argc)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00344}00344\ \ \ \ \ \ \ func\_arg\ =\ argv[++i];}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00345}00345\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/mode"{}}\ \&\&\ i\ +\ 1\ <\ argc)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00346}00346\ \ \ \ \ \ \ mode\_arg\ =\ argv[++i];}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00347}00347\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/out-\/dir"{}}\ \&\&\ i\ +\ 1\ <\ argc)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00348}00348\ \ \ \ \ \ \ out\_dir\ =\ argv[++i];}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00349}00349\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/trace"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00350}00350\ \ \ \ \ \ \ trace\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00351}00351\ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (arg\ ==\ \textcolor{stringliteral}{"{}-\/-\/help"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00352}00352\ \ \ \ \ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}Usage:\ metalfpga\_crlibm\_compare\ [-\/-\/func\ list|all]\ "{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00353}00353\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}[-\/-\/mode\ rn|rd|ru|rz|all]\ [-\/-\/count\ N]\ [-\/-\/seed\ N]\ "{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00354}00354\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{stringliteral}{"{}[-\/-\/out-\/dir\ path]\ [-\/-\/trace]\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00355}00355\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00356}00356\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00357}00357\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00358}00358\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00359}00359\ \ \ \textcolor{keywordflow}{if}\ (out\_dir.empty())\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00360}00360\ \ \ \ \ std::random\_device\ rd;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00361}00361\ \ \ \ \ uint64\_t\ tag\_seed\ =}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00362}00362\ \ \ \ \ \ \ \ \ (\textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(rd())\ <<\ 32)\ \string^\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(rd());}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00363}00363\ \ \ \ \ \textcolor{keywordflow}{if}\ (tag\_seed\ ==\ 0)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00364}00364\ \ \ \ \ \ \ tag\_seed\ =\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00365}00365\ \ \ \ \ \ \ \ \ \ \ std::chrono::high\_resolution\_clock::now().time\_since\_epoch().count());}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00366}00366\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00367}00367\ \ \ \ \ uint32\_t\ tag\ =\ \textcolor{keyword}{static\_cast<}uint32\_t\textcolor{keyword}{>}(tag\_seed\ \string^\ (tag\_seed\ >>\ 32));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00368}00368\ \ \ \ \ std::ostringstream\ oss;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00369}00369\ \ \ \ \ oss\ <<\ \textcolor{stringliteral}{"{}artifacts/real\_ulp/"{}}\ <<\ std::hex\ <<\ std::setw(8)\ <<\ std::setfill(\textcolor{charliteral}{'0'})}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00370}00370\ \ \ \ \ \ \ \ \ <<\ tag;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00371}00371\ \ \ \ \ out\_dir\ =\ oss.str();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00372}00372\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00373}00373\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00374}00374\ \ \ std::mt19937\_64\ rng(seed);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00375}00375\ \ \ fs::path\ out\_path(out\_dir);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00376}00376\ \ \ \textcolor{keywordflow}{if}\ (!EnsureDir(out\_path))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00377}00377\ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}failed\ to\ create\ output\ dir:\ "{}}\ <<\ out\_dir\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00378}00378\ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00379}00379\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00380}00380\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00381}00381\ \ \ \textcolor{keywordflow}{if}\ (trace)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00382}00382\ \ \ \ \ gpga\_real\_trace\_reset();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00383}00383\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00384}00384\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00385}00385\ \ \ std::ofstream\ csv;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00386}00386\ \ \ \textcolor{keywordflow}{if}\ (trace)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00387}00387\ \ \ \ \ csv.open(out\_path\ /\ \textcolor{stringliteral}{"{}results.csv"{}});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00388}00388\ \ \ \ \ \textcolor{keywordflow}{if}\ (!csv)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00389}00389\ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}failed\ to\ open\ results.csv\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00390}00390\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00391}00391\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00392}00392\ \ \ \ \ csv\ <<\ \textcolor{stringliteral}{"{}func,mode,input0,input1,ref,got,ulp,status\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00393}00393\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00394}00394\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00395}00395\ \ \ std::vector<UnarySpec>\ unary\_specs\ =\ BuildUnarySpecs();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00396}00396\ \ \ std::vector<BinarySpec>\ binary\_specs\ =\ BuildBinarySpecs();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00397}00397\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00398}00398\ \ \ std::vector<Mode>\ modes;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00399}00399\ \ \ \textcolor{keywordflow}{if}\ (mode\_arg\ ==\ \textcolor{stringliteral}{"{}all"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00400}00400\ \ \ \ \ modes\ =\ \{Mode::kRn,\ Mode::kRd,\ Mode::kRu,\ Mode::kRz\};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00401}00401\ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00402}00402\ \ \ \ \ Mode\ m;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00403}00403\ \ \ \ \ \textcolor{keywordflow}{if}\ (!ParseMode(mode\_arg,\ \&m))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00404}00404\ \ \ \ \ \ \ std::cerr\ <<\ \textcolor{stringliteral}{"{}unknown\ mode:\ "{}}\ <<\ mode\_arg\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00405}00405\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00406}00406\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00407}00407\ \ \ \ \ modes\ =\ \{m\};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00408}00408\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00409}00409\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00410}00410\ \ \ std::unordered\_map<std::string,\ CompareStats>\ stats;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00411}00411\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00412}00412\ \ \ \textcolor{keyword}{auto}\ want\_func\ =\ [\&](\textcolor{keyword}{const}\ std::string\&\ name)\ -\/>\ \textcolor{keywordtype}{bool}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00413}00413\ \ \ \ \ \textcolor{keywordflow}{if}\ (func\_arg\ ==\ \textcolor{stringliteral}{"{}all"{}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00414}00414\ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00415}00415\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00416}00416\ \ \ \ \ std::istringstream\ iss(func\_arg);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00417}00417\ \ \ \ \ std::string\ token;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00418}00418\ \ \ \ \ \textcolor{keywordflow}{while}\ (std::getline(iss,\ token,\ \textcolor{charliteral}{','}))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00419}00419\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (token\ ==\ name)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00420}00420\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00421}00421\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00422}00422\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00423}00423\ \ \ \ \ \textcolor{keywordflow}{return}\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00424}00424\ \ \ \};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00425}00425\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00426}00426\ \ \ \textcolor{keyword}{const}\ \textcolor{keywordtype}{unsigned}\ \textcolor{keywordtype}{long}\ \textcolor{keywordtype}{long}\ fpu\_token\ =\ crlibm\_init();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00427}00427\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00428}00428\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ spec\ :\ unary\_specs)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00429}00429\ \ \ \ \ \textcolor{keywordflow}{if}\ (!want\_func(spec.name))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00430}00430\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00431}00431\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00432}00432\ \ \ \ \ \textcolor{keywordflow}{for}\ (Mode\ mode\ :\ modes)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00433}00433\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ ref\ =\ SelectRef(spec,\ mode);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00434}00434\ \ \ \ \ \ \ \textcolor{keyword}{auto}\ \doxymbox{\hyperlink{namespacegpga}{gpga}}\ =\ SelectGpga(spec,\ mode);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00435}00435\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ref\ ||\ !\doxymbox{\hyperlink{namespacegpga}{gpga}})\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00436}00436\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00437}00437\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00438}00438\ \ \ \ \ \ \ std::vector<uint64\_t>\ inputs\ =\ MakeUnaryInputs(spec.domain,\ count,\ rng);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00439}00439\ \ \ \ \ \ \ \doxymbox{\hyperlink{struct_compare_stats}{CompareStats}}\ stat;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00440}00440\ \ \ \ \ \ \ \textcolor{keywordflow}{for}\ (uint64\_t\ in\_bits\ :\ inputs)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00441}00441\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{double}\ ref\_val\ =\ ref(BitsToDouble(in\_bits));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00442}00442\ \ \ \ \ \ \ \ \ uint64\_t\ ref\_bits\ =\ DoubleToBits(ref\_val);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00443}00443\ \ \ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ gpga\_bits\ =\ \doxymbox{\hyperlink{namespacegpga}{gpga}}(\textcolor{keyword}{static\_cast<}\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\textcolor{keyword}{>}(in\_bits));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00444}00444\ \ \ \ \ \ \ \ \ uint64\_t\ got\_bits\ =\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(gpga\_bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00445}00445\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00446}00446\ \ \ \ \ \ \ \ \ uint64\_t\ ulp\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00447}00447\ \ \ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ ok\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00448}00448\ \ \ \ \ \ \ \ \ std::string\ status\ =\ \textcolor{stringliteral}{"{}ok"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00449}00449\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (IsNaNBits(ref\_bits)\ \&\&\ IsNaNBits(got\_bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00450}00450\ \ \ \ \ \ \ \ \ \ \ ok\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00451}00451\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (IsInfBits(ref\_bits)\ ||\ IsInfBits(got\_bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00452}00452\ \ \ \ \ \ \ \ \ \ \ ok\ =\ (ref\_bits\ ==\ got\_bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00453}00453\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ok)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00454}00454\ \ \ \ \ \ \ \ \ \ \ \ \ status\ =\ \textcolor{stringliteral}{"{}inf\_mismatch"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00455}00455\ \ \ \ \ \ \ \ \ \ \ \ \ ulp\ =\ std::numeric\_limits<uint64\_t>::max();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00456}00456\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00457}00457\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00458}00458\ \ \ \ \ \ \ \ \ \ \ ulp\ =\ ULPDiff(ref\_bits,\ got\_bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00459}00459\ \ \ \ \ \ \ \ \ \ \ ok\ =\ (ulp\ ==\ 0);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00460}00460\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ok)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00461}00461\ \ \ \ \ \ \ \ \ \ \ \ \ status\ =\ \textcolor{stringliteral}{"{}ulp\_mismatch"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00462}00462\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00463}00463\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00464}00464\ \ \ \ \ \ \ \ \ stat.total\ +=\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00465}00465\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ok)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00466}00466\ \ \ \ \ \ \ \ \ \ \ stat.pass\ +=\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00467}00467\ \ \ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00468}00468\ \ \ \ \ \ \ \ \ \ \ stat.fail\ +=\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00469}00469\ \ \ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ulp\ >\ stat.max\_ulp)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00470}00470\ \ \ \ \ \ \ \ \ \ \ \ \ stat.max\_ulp\ =\ ulp;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00471}00471\ \ \ \ \ \ \ \ \ \ \ \ \ stat.worst\_input0\ =\ in\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00472}00472\ \ \ \ \ \ \ \ \ \ \ \ \ stat.worst\_input1\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00473}00473\ \ \ \ \ \ \ \ \ \ \ \ \ stat.worst\_ref\ =\ ref\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00474}00474\ \ \ \ \ \ \ \ \ \ \ \ \ stat.worst\_got\ =\ got\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00475}00475\ \ \ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00476}00476\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00477}00477\ \ \ \ \ \ \ \ \ stat.sum\_ulp\ +=\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{long}\ \textcolor{keywordtype}{double}\textcolor{keyword}{>}(ulp);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00478}00478\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (trace)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00479}00479\ \ \ \ \ \ \ \ \ \ \ csv\ <<\ spec.name\ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ ModeName(mode)\ <<\ \textcolor{stringliteral}{"{},"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00480}00480\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ HexU64(in\_bits)\ <<\ \textcolor{stringliteral}{"{},"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00481}00481\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}0x0000000000000000"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00482}00482\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ HexU64(ref\_bits)\ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ HexU64(got\_bits)\ <<\ \textcolor{stringliteral}{"{},"{}}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00483}00483\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ <<\ ulp\ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ status\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00484}00484\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00485}00485\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00486}00486\ \ \ \ \ \ \ std::string\ key\ =\ spec.name\ +\ \textcolor{stringliteral}{"{}:"{}}\ +\ ModeName(mode);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00487}00487\ \ \ \ \ \ \ stats[key]\ =\ stat;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00488}00488\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00489}00489\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00490}00490\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00491}00491\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ spec\ :\ binary\_specs)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00492}00492\ \ \ \ \ \textcolor{keywordflow}{if}\ (!want\_func(spec.name))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00493}00493\ \ \ \ \ \ \ \textcolor{keywordflow}{continue};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00494}00494\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00495}00495\ \ \ \ \ std::vector<std::pair<uint64\_t,\ uint64\_t>>\ inputs\ =}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00496}00496\ \ \ \ \ \ \ \ \ MakePowInputs(count,\ rng);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00497}00497\ \ \ \ \ \doxymbox{\hyperlink{struct_compare_stats}{CompareStats}}\ stat;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00498}00498\ \ \ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ pair\ :\ inputs)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00499}00499\ \ \ \ \ \ \ uint64\_t\ a\_bits\ =\ pair.first;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00500}00500\ \ \ \ \ \ \ uint64\_t\ b\_bits\ =\ pair.second;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00501}00501\ \ \ \ \ \ \ \textcolor{keywordtype}{double}\ ref\_val\ =\ spec.ref\_rn(BitsToDouble(a\_bits),\ BitsToDouble(b\_bits));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00502}00502\ \ \ \ \ \ \ uint64\_t\ ref\_bits\ =\ DoubleToBits(ref\_val);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00503}00503\ \ \ \ \ \ \ \doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\ gpga\_bits\ =}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00504}00504\ \ \ \ \ \ \ \ \ \ \ spec.gpga\_rn(\textcolor{keyword}{static\_cast<}\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\textcolor{keyword}{>}(a\_bits),}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00505}00505\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textcolor{keyword}{static\_cast<}\doxymbox{\hyperlink{gpga__real_8h_a0fc1843efe54cc46975d7e55ce038f53_a0fc1843efe54cc46975d7e55ce038f53}{gpga\_double}}\textcolor{keyword}{>}(b\_bits));}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00506}00506\ \ \ \ \ \ \ uint64\_t\ got\_bits\ =\ \textcolor{keyword}{static\_cast<}uint64\_t\textcolor{keyword}{>}(gpga\_bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00507}00507\ \ \ \ \ \ \ uint64\_t\ ulp\ =\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00508}00508\ \ \ \ \ \ \ \textcolor{keywordtype}{bool}\ ok\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00509}00509\ \ \ \ \ \ \ std::string\ status\ =\ \textcolor{stringliteral}{"{}ok"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00510}00510\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (IsNaNBits(ref\_bits)\ \&\&\ IsNaNBits(got\_bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00511}00511\ \ \ \ \ \ \ \ \ ok\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00512}00512\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \textcolor{keywordflow}{if}\ (IsInfBits(ref\_bits)\ ||\ IsInfBits(got\_bits))\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00513}00513\ \ \ \ \ \ \ \ \ ok\ =\ (ref\_bits\ ==\ got\_bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00514}00514\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ok)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00515}00515\ \ \ \ \ \ \ \ \ \ \ status\ =\ \textcolor{stringliteral}{"{}inf\_mismatch"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00516}00516\ \ \ \ \ \ \ \ \ \ \ ulp\ =\ std::numeric\_limits<uint64\_t>::max();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00517}00517\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00518}00518\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00519}00519\ \ \ \ \ \ \ \ \ ulp\ =\ ULPDiff(ref\_bits,\ got\_bits);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00520}00520\ \ \ \ \ \ \ \ \ ok\ =\ (ulp\ ==\ 0);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00521}00521\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (!ok)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00522}00522\ \ \ \ \ \ \ \ \ \ \ status\ =\ \textcolor{stringliteral}{"{}ulp\_mismatch"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00523}00523\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00524}00524\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00525}00525\ \ \ \ \ \ \ stat.total\ +=\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00526}00526\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ok)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00527}00527\ \ \ \ \ \ \ \ \ stat.pass\ +=\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00528}00528\ \ \ \ \ \ \ \}\ \textcolor{keywordflow}{else}\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00529}00529\ \ \ \ \ \ \ \ \ stat.fail\ +=\ 1;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00530}00530\ \ \ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (ulp\ >\ stat.max\_ulp)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00531}00531\ \ \ \ \ \ \ \ \ \ \ stat.max\_ulp\ =\ ulp;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00532}00532\ \ \ \ \ \ \ \ \ \ \ stat.worst\_input0\ =\ a\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00533}00533\ \ \ \ \ \ \ \ \ \ \ stat.worst\_input1\ =\ b\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00534}00534\ \ \ \ \ \ \ \ \ \ \ stat.worst\_ref\ =\ ref\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00535}00535\ \ \ \ \ \ \ \ \ \ \ stat.worst\_got\ =\ got\_bits;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00536}00536\ \ \ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00537}00537\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00538}00538\ \ \ \ \ \ \ stat.sum\_ulp\ +=\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{long}\ \textcolor{keywordtype}{double}\textcolor{keyword}{>}(ulp);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00539}00539\ \ \ \ \ \ \ \textcolor{keywordflow}{if}\ (trace)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00540}00540\ \ \ \ \ \ \ \ \ csv\ <<\ spec.name\ <<\ \textcolor{stringliteral}{"{},rn,"{}}\ <<\ HexU64(a\_bits)\ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ HexU64(b\_bits)}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00541}00541\ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ HexU64(ref\_bits)\ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ HexU64(got\_bits)\ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ ulp}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00542}00542\ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{},"{}}\ <<\ status\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00543}00543\ \ \ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00544}00544\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00545}00545\ \ \ \ \ stats[spec.name\ +\ \textcolor{stringliteral}{"{}:rn"{}}]\ =\ stat;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00546}00546\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00547}00547\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00548}00548\ \ \ crlibm\_exit(fpu\_token);}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00549}00549\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00550}00550\ \ \ std::ofstream\ summary(out\_path\ /\ \textcolor{stringliteral}{"{}summary.json"{}});}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00551}00551\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\{\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00552}00552\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \(\backslash\)"{}seed\(\backslash\)"{}:\ "{}}\ <<\ seed\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00553}00553\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \(\backslash\)"{}count\(\backslash\)"{}:\ "{}}\ <<\ count\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00554}00554\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \(\backslash\)"{}results\(\backslash\)"{}:\ [\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00555}00555\ \ \ \textcolor{keywordtype}{bool}\ first\ =\ \textcolor{keyword}{true};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00556}00556\ \ \ \textcolor{keywordflow}{for}\ (\textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ entry\ :\ stats)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00557}00557\ \ \ \ \ \textcolor{keywordflow}{if}\ (!first)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00558}00558\ \ \ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00559}00559\ \ \ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00560}00560\ \ \ \ \ first\ =\ \textcolor{keyword}{false};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00561}00561\ \ \ \ \ \textcolor{keyword}{const}\ \doxymbox{\hyperlink{struct_compare_stats}{CompareStats}}\&\ stat\ =\ entry.second;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00562}00562\ \ \ \ \ \textcolor{keywordtype}{long}\ \textcolor{keywordtype}{double}\ avg\ =\ stat.total\ ?\ (stat.sum\_ulp\ /\ stat.total)\ :\ 0.0L;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00563}00563\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \{\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00564}00564\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}id\(\backslash\)"{}:\ \(\backslash\)"{}"{}}\ <<\ entry.first\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00565}00565\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}total\(\backslash\)"{}:\ "{}}\ <<\ stat.total\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00566}00566\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}pass\(\backslash\)"{}:\ "{}}\ <<\ stat.pass\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00567}00567\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}fail\(\backslash\)"{}:\ "{}}\ <<\ stat.fail\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00568}00568\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}max\_ulp\(\backslash\)"{}:\ "{}}\ <<\ stat.max\_ulp\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00569}00569\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}avg\_ulp\(\backslash\)"{}:\ "{}}\ <<\ std::fixed\ <<\ std::setprecision(6)}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00570}00570\ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{keyword}{static\_cast<}\textcolor{keywordtype}{double}\textcolor{keyword}{>}(avg)\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00571}00571\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}worst\_input0\(\backslash\)"{}:\ \(\backslash\)"{}"{}}\ <<\ HexU64(stat.worst\_input0)}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00572}00572\ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00573}00573\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}worst\_input1\(\backslash\)"{}:\ \(\backslash\)"{}"{}}\ <<\ HexU64(stat.worst\_input1)}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00574}00574\ \ \ \ \ \ \ \ \ \ \ \ \ <<\ \textcolor{stringliteral}{"{}\(\backslash\)"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00575}00575\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}worst\_ref\(\backslash\)"{}:\ \(\backslash\)"{}"{}}\ <<\ HexU64(stat.worst\_ref)\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00576}00576\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \ \ \(\backslash\)"{}worst\_got\(\backslash\)"{}:\ \(\backslash\)"{}"{}}\ <<\ HexU64(stat.worst\_got)\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00577}00577\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \}"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00578}00578\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00579}00579\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n\ \ ]"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00580}00580\ \ \ \textcolor{keywordflow}{if}\ (trace)\ \{}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00581}00581\ \ \ \ \ \textcolor{keyword}{const}\ \textcolor{keyword}{auto}\&\ counters\ =\ gpga\_real\_trace\_counters();}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00582}00582\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n\ \ \(\backslash\)"{}trace\(\backslash\)"{}:\ \{\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00583}00583\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}sin\_rn\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.sin\_rn\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00584}00584\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}sin\_ru\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.sin\_ru\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00585}00585\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}sin\_rd\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.sin\_rd\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00586}00586\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}sin\_rz\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.sin\_rz\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00587}00587\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}cos\_rn\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.cos\_rn\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00588}00588\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}cos\_ru\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.cos\_ru\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00589}00589\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}cos\_rd\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.cos\_rd\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00590}00590\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}cos\_rz\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.cos\_rz\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00591}00591\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}tan\_rn\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.tan\_rn\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00592}00592\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}tan\_ru\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.tan\_ru\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00593}00593\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}tan\_rd\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.tan\_rd\_fallback\ <<\ \textcolor{stringliteral}{"{},\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00594}00594\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \ \ \(\backslash\)"{}tan\_rz\_fallback\(\backslash\)"{}:\ "{}}\ <<\ counters.tan\_rz\_fallback\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00595}00595\ \ \ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\ \ \}"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00596}00596\ \ \ \}}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00597}00597\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00598}00598\ \ \ summary\ <<\ \textcolor{stringliteral}{"{}\}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00599}00599\ }
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00600}00600\ \ \ std::cout\ <<\ \textcolor{stringliteral}{"{}ULP\ comparison\ complete.\ Results\ in\ "{}}\ <<\ out\_dir\ <<\ \textcolor{stringliteral}{"{}\(\backslash\)n"{}};}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00601}00601\ \ \ \textcolor{keywordflow}{return}\ 0;}
+\DoxyCodeLine{\Hypertarget{crlibm__compare_8cc_source_l00602}00602\ \}}
+
+\end{DoxyCode}

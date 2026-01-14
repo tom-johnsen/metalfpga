@@ -1,3 +1,10 @@
+/**
+ * @file gpga_4state.h
+ * @brief Four-state (0/1/X/Z) vector helpers for Metal simulation.
+ *
+ * Values are represented as {val, xz} where xz marks unknown or high-impedance
+ * bits.
+ */
 #ifndef GPGA_4STATE_H
 #define GPGA_4STATE_H
 
@@ -13,46 +20,127 @@ static inline uint popcount(uint value) { return __builtin_popcount(value); }
 #endif
 
 // Four-state helpers for MSL.
-struct FourState32 { uint val; uint xz; };
-struct FourState64 { ulong val; ulong xz; };
+/**
+ * @brief 32-bit four-state value with X/Z mask.
+ */
+struct FourState32 {
+  uint val; ///< Known 0/1 bits.
+  uint xz;  ///< Bits marked X/Z (unknown or high-impedance).
+};
+/**
+ * @brief 64-bit four-state value with X/Z mask.
+ */
+struct FourState64 {
+  ulong val; ///< Known 0/1 bits.
+  ulong xz;  ///< Bits marked X/Z (unknown or high-impedance).
+};
 inline int fs_sign32(uint val, uint width);
 inline long fs_sign64(ulong val, uint width);
+/**
+ * @brief Build a width-bit mask for 32-bit vectors.
+ *
+ * @param width Bit width used for masking.
+ * @return Mask with the lower width bits set.
+ */
 inline uint fs_mask32(uint width) {
   return (width >= 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);
 }
+/**
+ * @brief Build a width-bit mask for 64-bit vectors.
+ *
+ * @param width Bit width used for masking.
+ * @return Mask with the lower width bits set.
+ */
 inline ulong fs_mask64(uint width) {
   return (width >= 64u) ? 0xFFFFFFFFFFFFFFFFul : ((1ul << width) - 1ul);
 }
+/**
+ * @brief Create a masked 32-bit four-state value from val/xz.
+ *
+ * @param val Value bits.
+ * @param xz X/Z mask bits.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_make32(uint val, uint xz, uint width) {
   uint mask = fs_mask32(width);
   FourState32 out = {val & mask, xz & mask};
   return out;
 }
+/**
+ * @brief Create a masked 64-bit four-state value from val/xz.
+ *
+ * @param val Value bits.
+ * @param xz X/Z mask bits.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_make64(ulong val, ulong xz, uint width) {
   ulong mask = fs_mask64(width);
   FourState64 out = {val & mask, xz & mask};
   return out;
 }
+/**
+ * @brief Return an all-unknown 32-bit value of the given width.
+ *
+ * @param width Bit width used for masking.
+ * @return All-X four-state value of the requested width.
+ */
 inline FourState32 fs_allx32(uint width) {
   uint mask = fs_mask32(width);
   FourState32 out = {0u, mask};
   return out;
 }
+/**
+ * @brief Return an all-unknown 64-bit value of the given width.
+ *
+ * @param width Bit width used for masking.
+ * @return All-X four-state value of the requested width.
+ */
 inline FourState64 fs_allx64(uint width) {
   ulong mask = fs_mask64(width);
   FourState64 out = {0ul, mask};
   return out;
 }
+/**
+ * @brief Mask a 32-bit four-state value down to width.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_resize32(FourState32 a, uint width) {
   return fs_make32(a.val, a.xz, width);
 }
+/**
+ * @brief Mask a 64-bit four-state value down to width.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_resize64(FourState64 a, uint width) {
   return fs_make64(a.val, a.xz, width);
 }
+/**
+ * @brief Widen a 32-bit value to 64 bits and mask to width.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_resize64(FourState32 a, uint width) {
   FourState64 widened = {static_cast<ulong>(a.val), static_cast<ulong>(a.xz)};
   return fs_resize64(widened, width);
 }
+/**
+ * @brief Sign-extend a 32-bit four-state value to target_width.
+ *
+ * @param a Input value.
+ * @param src_width Source bit width.
+ * @param target_width Target bit width.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_sext32(FourState32 a, uint src_width, uint target_width) {
   if (target_width == 0u || src_width == 0u) return fs_make32(0u, 0u, target_width);
   if (target_width <= src_width) return fs_make32(a.val, a.xz, target_width);
@@ -68,6 +156,14 @@ inline FourState32 fs_sext32(FourState32 a, uint src_width, uint target_width) {
   uint ext_xz = sign_xz ? ext_mask : 0u;
   return fs_make32(val | ext_val, xz | ext_xz, target_width);
 }
+/**
+ * @brief Sign-extend a 64-bit four-state value to target_width.
+ *
+ * @param a Input value.
+ * @param src_width Source bit width.
+ * @param target_width Target bit width.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_sext64(FourState64 a, uint src_width, uint target_width) {
   if (target_width == 0u || src_width == 0u) return fs_make64(0ul, 0ul, target_width);
   if (target_width <= src_width) return fs_make64(a.val, a.xz, target_width);
@@ -83,6 +179,14 @@ inline FourState64 fs_sext64(FourState64 a, uint src_width, uint target_width) {
   ulong ext_xz = sign_xz ? ext_mask : 0ul;
   return fs_make64(val | ext_val, xz | ext_xz, target_width);
 }
+/**
+ * @brief Merge two 32-bit values, keeping bits that are known and equal.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_merge32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -93,6 +197,14 @@ inline FourState32 fs_merge32(FourState32 a, FourState32 b, uint width) {
   FourState32 out = {a.val & same, mask & ~same};
   return out;
 }
+/**
+ * @brief Merge two 64-bit values, keeping bits that are known and equal.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_merge64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -103,16 +215,38 @@ inline FourState64 fs_merge64(FourState64 a, FourState64 b, uint width) {
   FourState64 out = {a.val & same, mask & ~same};
   return out;
 }
+/**
+ * @brief Bitwise NOT on a 32-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_not32(FourState32 a, uint width) {
   uint mask = fs_mask32(width);
   FourState32 out = {(~a.val) & mask, a.xz & mask};
   return out;
 }
+/**
+ * @brief Bitwise NOT on a 64-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_not64(FourState64 a, uint width) {
   ulong mask = fs_mask64(width);
   FourState64 out = {(~a.val) & mask, a.xz & mask};
   return out;
 }
+/**
+ * @brief Bitwise AND on 32-bit four-state values with X/Z propagation.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_and32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -127,6 +261,14 @@ inline FourState32 fs_and32(FourState32 a, FourState32 b, uint width) {
   FourState32 out = {known1, unknown};
   return out;
 }
+/**
+ * @brief Bitwise AND on 64-bit four-state values with X/Z propagation.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_and64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -141,6 +283,14 @@ inline FourState64 fs_and64(FourState64 a, FourState64 b, uint width) {
   FourState64 out = {known1, unknown};
   return out;
 }
+/**
+ * @brief Bitwise OR on 32-bit four-state values with X/Z propagation.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_or32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -155,6 +305,14 @@ inline FourState32 fs_or32(FourState32 a, FourState32 b, uint width) {
   FourState32 out = {known1, unknown};
   return out;
 }
+/**
+ * @brief Bitwise OR on 64-bit four-state values with X/Z propagation.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_or64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -169,42 +327,114 @@ inline FourState64 fs_or64(FourState64 a, FourState64 b, uint width) {
   FourState64 out = {known1, unknown};
   return out;
 }
+/**
+ * @brief Bitwise XOR on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_xor32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint unknown = (a.xz | b.xz) & mask;
   FourState32 out = {(a.val ^ b.val) & ~unknown & mask, unknown};
   return out;
 }
+/**
+ * @brief Bitwise XOR on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_xor64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong unknown = (a.xz | b.xz) & mask;
   FourState64 out = {(a.val ^ b.val) & ~unknown & mask, unknown};
   return out;
 }
+/**
+ * @brief Unsigned add on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_add32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
   return fs_make32(a.val + b.val, 0u, width);
 }
+/**
+ * @brief Unsigned add on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_add64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
   return fs_make64(a.val + b.val, 0ul, width);
 }
+/**
+ * @brief Unsigned subtract on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_sub32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
   return fs_make32(a.val - b.val, 0u, width);
 }
+/**
+ * @brief Unsigned subtract on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_sub64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
   return fs_make64(a.val - b.val, 0ul, width);
 }
+/**
+ * @brief Unsigned multiply on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_mul32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
   return fs_make32(a.val * b.val, 0u, width);
 }
+/**
+ * @brief Unsigned multiply on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_mul64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
   return fs_make64(a.val * b.val, 0ul, width);
 }
+/**
+ * @brief Unsigned exponentiation on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Exponent value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_pow32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
   uint mask = fs_mask32(width);
@@ -220,6 +450,14 @@ inline FourState32 fs_pow32(FourState32 a, FourState32 b, uint width) {
   }
   return fs_make32(result, 0u, width);
 }
+/**
+ * @brief Unsigned exponentiation on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Exponent value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_pow64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
   ulong mask = fs_mask64(width);
@@ -235,6 +473,14 @@ inline FourState64 fs_pow64(FourState64 a, FourState64 b, uint width) {
   }
   return fs_make64(result, 0ul, width);
 }
+/**
+ * @brief Signed exponentiation on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Exponent value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_spow32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
   uint mask = fs_mask32(width);
@@ -252,6 +498,14 @@ inline FourState32 fs_spow32(FourState32 a, FourState32 b, uint width) {
   }
   return fs_make32(result, 0u, width);
 }
+/**
+ * @brief Signed exponentiation on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Exponent value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_spow64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
   ulong mask = fs_mask64(width);
@@ -269,78 +523,228 @@ inline FourState64 fs_spow64(FourState64 a, FourState64 b, uint width) {
   }
   return fs_make64(result, 0ul, width);
 }
+/**
+ * @brief Unsigned division on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_div32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u || b.val == 0u) return fs_allx32(width);
   return fs_make32(a.val / b.val, 0u, width);
 }
+/**
+ * @brief Unsigned division on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_div64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul || b.val == 0ul) return fs_allx64(width);
   return fs_make64(a.val / b.val, 0ul, width);
 }
+/**
+ * @brief Unsigned modulus on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_mod32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u || b.val == 0u) return fs_allx32(width);
   return fs_make32(a.val % b.val, 0u, width);
 }
+/**
+ * @brief Unsigned modulus on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_mod64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul || b.val == 0ul) return fs_allx64(width);
   return fs_make64(a.val % b.val, 0ul, width);
 }
+/**
+ * @brief Wrap a predicate into a 1-bit 32-bit four-state result.
+ *
+ * @param value Input value.
+ * @param pred Predicate value.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_cmp32(uint value, bool pred) {
   FourState32 out = {pred ? 1u : 0u, 0u};
   return out;
 }
+/**
+ * @brief Wrap a predicate into a 1-bit 64-bit four-state result.
+ *
+ * @param value Input value.
+ * @param pred Predicate value.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_cmp64(ulong value, bool pred) {
   FourState64 out = {pred ? 1ul : 0ul, 0ul};
   return out;
 }
+/**
+ * @brief Unsigned equality compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_eq32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
   return fs_make32((a.val == b.val) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Unsigned equality compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_eq64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
   return fs_make64((a.val == b.val) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Unsigned inequality compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_ne32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
   return fs_make32((a.val != b.val) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Unsigned inequality compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_ne64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
   return fs_make64((a.val != b.val) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Unsigned less-than compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_lt32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
   return fs_make32((a.val < b.val) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Unsigned less-than compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_lt64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
   return fs_make64((a.val < b.val) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Unsigned greater-than compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_gt32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
   return fs_make32((a.val > b.val) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Unsigned greater-than compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_gt64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
   return fs_make64((a.val > b.val) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Unsigned less-than-or-equal compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_le32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
   return fs_make32((a.val <= b.val) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Unsigned less-than-or-equal compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_le64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
   return fs_make64((a.val <= b.val) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Unsigned greater-than-or-equal compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_ge32(FourState32 a, FourState32 b, uint width) {
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
   return fs_make32((a.val >= b.val) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Unsigned greater-than-or-equal compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_ge64(FourState64 a, FourState64 b, uint width) {
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
   return fs_make64((a.val >= b.val) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Logical left shift on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Shift amount value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_shl32(FourState32 a, FourState32 b, uint width) {
   if (b.xz != 0u) return fs_allx32(width);
   uint mask = fs_mask32(width);
@@ -349,6 +753,14 @@ inline FourState32 fs_shl32(FourState32 a, FourState32 b, uint width) {
   FourState32 out = {(a.val << shift) & mask, (a.xz << shift) & mask};
   return out;
 }
+/**
+ * @brief Logical left shift on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Shift amount value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_shl64(FourState64 a, FourState64 b, uint width) {
   if (b.xz != 0ul) return fs_allx64(width);
   ulong mask = fs_mask64(width);
@@ -357,6 +769,14 @@ inline FourState64 fs_shl64(FourState64 a, FourState64 b, uint width) {
   FourState64 out = {(a.val << shift) & mask, (a.xz << shift) & mask};
   return out;
 }
+/**
+ * @brief Logical right shift on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Shift amount value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_shr32(FourState32 a, FourState32 b, uint width) {
   if (b.xz != 0u) return fs_allx32(width);
   uint mask = fs_mask32(width);
@@ -365,6 +785,14 @@ inline FourState32 fs_shr32(FourState32 a, FourState32 b, uint width) {
   FourState32 out = {(a.val >> shift) & mask, (a.xz >> shift) & mask};
   return out;
 }
+/**
+ * @brief Logical right shift on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Shift amount value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_shr64(FourState64 a, FourState64 b, uint width) {
   if (b.xz != 0ul) return fs_allx64(width);
   ulong mask = fs_mask64(width);
@@ -373,15 +801,40 @@ inline FourState64 fs_shr64(FourState64 a, FourState64 b, uint width) {
   FourState64 out = {(a.val >> shift) & mask, (a.xz >> shift) & mask};
   return out;
 }
+/**
+ * @brief Select between t and f based on a 1-bit condition.
+ *
+ * @param cond 1-bit condition value.
+ * @param t Value selected when condition is true.
+ * @param f Value selected when condition is false.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_mux32(FourState32 cond, FourState32 t, FourState32 f, uint width) {
   if (cond.xz != 0u) return fs_merge32(t, f, width);
   return (cond.val != 0u) ? fs_resize32(t, width) : fs_resize32(f, width);
 }
+/**
+ * @brief Select between t and f based on a 1-bit condition.
+ *
+ * @param cond 1-bit condition value.
+ * @param t Value selected when condition is true.
+ * @param f Value selected when condition is false.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_mux64(FourState64 cond, FourState64 t, FourState64 f, uint width) {
   if (cond.xz != 0ul) return fs_merge64(t, f, width);
   return (cond.val != 0ul) ? fs_resize64(t, width) : fs_resize64(f, width);
 }
 
+/**
+ * @brief Reduction AND on a 32-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_red_and32(FourState32 a, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -391,6 +844,13 @@ inline FourState32 fs_red_and32(FourState32 a, uint width) {
   if (a1 == mask) return fs_make32(1u, 0u, 1u);
   return fs_allx32(1u);
 }
+/**
+ * @brief Reduction AND on a 64-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_red_and64(FourState64 a, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -400,6 +860,13 @@ inline FourState64 fs_red_and64(FourState64 a, uint width) {
   if (a1 == mask) return fs_make64(1ul, 0ul, 1u);
   return fs_allx64(1u);
 }
+/**
+ * @brief Reduction OR on a 32-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_red_or32(FourState32 a, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -409,6 +876,13 @@ inline FourState32 fs_red_or32(FourState32 a, uint width) {
   if (a0 == mask) return fs_make32(0u, 0u, 1u);
   return fs_allx32(1u);
 }
+/**
+ * @brief Reduction OR on a 64-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_red_or64(FourState64 a, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -418,12 +892,26 @@ inline FourState64 fs_red_or64(FourState64 a, uint width) {
   if (a0 == mask) return fs_make64(0ul, 0ul, 1u);
   return fs_allx64(1u);
 }
+/**
+ * @brief Reduction XOR (parity) on a 32-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_red_xor32(FourState32 a, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz & mask) != 0u) return fs_allx32(1u);
   uint parity = popcount(a.val & mask) & 1u;
   return fs_make32(parity, 0u, 1u);
 }
+/**
+ * @brief Reduction XOR (parity) on a 64-bit four-state value.
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_red_xor64(FourState64 a, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz & mask) != 0ul) return fs_allx64(1u);
@@ -434,16 +922,38 @@ inline FourState64 fs_red_xor64(FourState64 a, uint width) {
   return fs_make64(ulong(parity), 0ul, 1u);
 }
 
+/**
+ * @brief Sign-extend a width-bit value to int.
+ *
+ * @param val Value bits.
+ * @param width Bit width used for masking.
+ * @return Sign-extended value.
+ */
 inline int fs_sign32(uint val, uint width) {
   if (width >= 32u) return int(val);
   uint shift = 32u - width;
   return int(val << shift) >> shift;
 }
+/**
+ * @brief Sign-extend a width-bit value to long.
+ *
+ * @param val Value bits.
+ * @param width Bit width used for masking.
+ * @return Sign-extended value.
+ */
 inline long fs_sign64(ulong val, uint width) {
   if (width >= 64u) return long(val);
   uint shift = 64u - width;
   return long(val << shift) >> shift;
 }
+/**
+ * @brief Signed less-than compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_slt32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
@@ -451,6 +961,14 @@ inline FourState32 fs_slt32(FourState32 a, FourState32 b, uint width) {
   int sb = fs_sign32(b.val & mask, width);
   return fs_make32((sa < sb) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Signed less-than compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_slt64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
@@ -458,6 +976,14 @@ inline FourState64 fs_slt64(FourState64 a, FourState64 b, uint width) {
   long sb = fs_sign64(b.val & mask, width);
   return fs_make64((sa < sb) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Signed less-than-or-equal compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_sle32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
@@ -465,6 +991,14 @@ inline FourState32 fs_sle32(FourState32 a, FourState32 b, uint width) {
   int sb = fs_sign32(b.val & mask, width);
   return fs_make32((sa <= sb) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Signed less-than-or-equal compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_sle64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
@@ -472,6 +1006,14 @@ inline FourState64 fs_sle64(FourState64 a, FourState64 b, uint width) {
   long sb = fs_sign64(b.val & mask, width);
   return fs_make64((sa <= sb) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Signed greater-than compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_sgt32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
@@ -479,6 +1021,14 @@ inline FourState32 fs_sgt32(FourState32 a, FourState32 b, uint width) {
   int sb = fs_sign32(b.val & mask, width);
   return fs_make32((sa > sb) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Signed greater-than compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_sgt64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
@@ -486,6 +1036,14 @@ inline FourState64 fs_sgt64(FourState64 a, FourState64 b, uint width) {
   long sb = fs_sign64(b.val & mask, width);
   return fs_make64((sa > sb) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Signed greater-than-or-equal compare on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_sge32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz | b.xz) != 0u) return fs_allx32(1u);
@@ -493,6 +1051,14 @@ inline FourState32 fs_sge32(FourState32 a, FourState32 b, uint width) {
   int sb = fs_sign32(b.val & mask, width);
   return fs_make32((sa >= sb) ? 1u : 0u, 0u, 1u);
 }
+/**
+ * @brief Signed greater-than-or-equal compare on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_sge64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz | b.xz) != 0ul) return fs_allx64(1u);
@@ -500,6 +1066,14 @@ inline FourState64 fs_sge64(FourState64 a, FourState64 b, uint width) {
   long sb = fs_sign64(b.val & mask, width);
   return fs_make64((sa >= sb) ? 1ul : 0ul, 0ul, 1u);
 }
+/**
+ * @brief Signed division on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_sdiv32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
@@ -509,6 +1083,14 @@ inline FourState32 fs_sdiv32(FourState32 a, FourState32 b, uint width) {
   int res = sa / sb;
   return fs_make32(uint(res), 0u, width);
 }
+/**
+ * @brief Signed division on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_sdiv64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
@@ -518,6 +1100,14 @@ inline FourState64 fs_sdiv64(FourState64 a, FourState64 b, uint width) {
   long res = sa / sb;
   return fs_make64(ulong(res), 0ul, width);
 }
+/**
+ * @brief Signed modulus on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_smod32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if ((a.xz | b.xz) != 0u) return fs_allx32(width);
@@ -527,6 +1117,14 @@ inline FourState32 fs_smod32(FourState32 a, FourState32 b, uint width) {
   int res = sa % sb;
   return fs_make32(uint(res), 0u, width);
 }
+/**
+ * @brief Signed modulus on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_smod64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if ((a.xz | b.xz) != 0ul) return fs_allx64(width);
@@ -536,6 +1134,14 @@ inline FourState64 fs_smod64(FourState64 a, FourState64 b, uint width) {
   long res = sa % sb;
   return fs_make64(ulong(res), 0ul, width);
 }
+/**
+ * @brief Arithmetic right shift on 32-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Shift amount value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState32 fs_sar32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   if (b.xz != 0u) return fs_allx32(width);
@@ -550,6 +1156,14 @@ inline FourState32 fs_sar32(FourState32 a, FourState32 b, uint width) {
   uint shifted_xz = (a.xz >> shift) & mask;
   return fs_make32(shifted_val, shifted_xz, width);
 }
+/**
+ * @brief Arithmetic right shift on 64-bit four-state values.
+ *
+ * @param a Left operand.
+ * @param b Shift amount value.
+ * @param width Bit width used for masking.
+ * @return Resulting four-state value.
+ */
 inline FourState64 fs_sar64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   if (b.xz != 0ul) return fs_allx64(width);
@@ -565,6 +1179,13 @@ inline FourState64 fs_sar64(FourState64 a, FourState64 b, uint width) {
   return fs_make64(shifted_val, shifted_xz, width);
 }
 
+/**
+ * @brief Logical NOT on a 32-bit four-state value (1-bit result).
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_log_not32(FourState32 a, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -573,6 +1194,13 @@ inline FourState32 fs_log_not32(FourState32 a, uint width) {
   if (ax == 0u && (a.val & mask) == 0u) return fs_make32(1u, 0u, 1u);
   return fs_allx32(1u);
 }
+/**
+ * @brief Logical NOT on a 64-bit four-state value (1-bit result).
+ *
+ * @param a Input value.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_log_not64(FourState64 a, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -581,6 +1209,14 @@ inline FourState64 fs_log_not64(FourState64 a, uint width) {
   if (ax == 0ul && (a.val & mask) == 0ul) return fs_make64(1ul, 0ul, 1u);
   return fs_allx64(1u);
 }
+/**
+ * @brief Logical AND on 32-bit four-state values (1-bit result).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_log_and32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -595,6 +1231,14 @@ inline FourState32 fs_log_and32(FourState32 a, FourState32 b, uint width) {
   if (a_true && b_true) return fs_make32(1u, 0u, 1u);
   return fs_allx32(1u);
 }
+/**
+ * @brief Logical AND on 64-bit four-state values (1-bit result).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_log_and64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -609,6 +1253,14 @@ inline FourState64 fs_log_and64(FourState64 a, FourState64 b, uint width) {
   if (a_true && b_true) return fs_make64(1ul, 0ul, 1u);
   return fs_allx64(1u);
 }
+/**
+ * @brief Logical OR on 32-bit four-state values (1-bit result).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState32 fs_log_or32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -623,6 +1275,14 @@ inline FourState32 fs_log_or32(FourState32 a, FourState32 b, uint width) {
   if (a_false && b_false) return fs_make32(0u, 0u, 1u);
   return fs_allx32(1u);
 }
+/**
+ * @brief Logical OR on 64-bit four-state values (1-bit result).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return 1-bit four-state result.
+ */
 inline FourState64 fs_log_or64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -638,6 +1298,14 @@ inline FourState64 fs_log_or64(FourState64 a, FourState64 b, uint width) {
   return fs_allx64(1u);
 }
 
+/**
+ * @brief Case equality for 32-bit four-state values (=== semantics).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return True when the case comparison succeeds.
+ */
 inline bool fs_case_eq32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint ax = a.xz & mask;
@@ -646,6 +1314,14 @@ inline bool fs_case_eq32(FourState32 a, FourState32 b, uint width) {
   uint known = (~(ax | bx)) & mask;
   return ((a.val ^ b.val) & known) == 0u;
 }
+/**
+ * @brief Case equality for 64-bit four-state values (=== semantics).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return True when the case comparison succeeds.
+ */
 inline bool fs_case_eq64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong ax = a.xz & mask;
@@ -654,6 +1330,15 @@ inline bool fs_case_eq64(FourState64 a, FourState64 b, uint width) {
   ulong known = (~(ax | bx)) & mask;
   return ((a.val ^ b.val) & known) == 0ul;
 }
+/**
+ * @brief Case equality with ignore mask for 32-bit values (casez semantics).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param ignore_mask Bit mask of don't-care positions.
+ * @param width Bit width used for masking.
+ * @return True when the case comparison succeeds.
+ */
 inline bool fs_casez32(FourState32 a, FourState32 b, uint ignore_mask, uint width) {
   uint mask = fs_mask32(width);
   uint ignore = ignore_mask & mask;
@@ -661,6 +1346,15 @@ inline bool fs_casez32(FourState32 a, FourState32 b, uint ignore_mask, uint widt
   if ((a.xz & cared) != 0u) return false;
   return ((a.val ^ b.val) & cared) == 0u;
 }
+/**
+ * @brief Case equality with ignore mask for 64-bit values (casez semantics).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param ignore_mask Bit mask of don't-care positions.
+ * @param width Bit width used for masking.
+ * @return True when the case comparison succeeds.
+ */
 inline bool fs_casez64(FourState64 a, FourState64 b, ulong ignore_mask, uint width) {
   ulong mask = fs_mask64(width);
   ulong ignore = ignore_mask & mask;
@@ -668,11 +1362,27 @@ inline bool fs_casez64(FourState64 a, FourState64 b, ulong ignore_mask, uint wid
   if ((a.xz & cared) != 0ul) return false;
   return ((a.val ^ b.val) & cared) == 0ul;
 }
+/**
+ * @brief Case equality treating X/Z as don't-care for 32-bit values (casex).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return True when the case comparison succeeds.
+ */
 inline bool fs_casex32(FourState32 a, FourState32 b, uint width) {
   uint mask = fs_mask32(width);
   uint cared = (~(a.xz | b.xz)) & mask;
   return ((a.val ^ b.val) & cared) == 0u;
 }
+/**
+ * @brief Case equality treating X/Z as don't-care for 64-bit values (casex).
+ *
+ * @param a Left operand.
+ * @param b Right operand.
+ * @param width Bit width used for masking.
+ * @return True when the case comparison succeeds.
+ */
 inline bool fs_casex64(FourState64 a, FourState64 b, uint width) {
   ulong mask = fs_mask64(width);
   ulong cared = (~(a.xz | b.xz)) & mask;

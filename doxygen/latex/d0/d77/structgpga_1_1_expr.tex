@@ -1,0 +1,662 @@
+\doxysection{gpga::\+Expr Struct Reference}
+\hypertarget{structgpga_1_1_expr}{}\label{structgpga_1_1_expr}\index{gpga::Expr@{gpga::Expr}}
+
+
+Expression node.  
+
+
+
+
+{\ttfamily \+\#include $<$ast.\+hh$>$}
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_aa305112011ffeacd6dd0b20c4f86024c_aa305112011ffeacd6dd0b20c4f86024c}{HasX}} () const
+\begin{DoxyCompactList}\small\item\em True if X bits are present. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_a3675884160ddb23b7b2fd99f92dad3e2_a3675884160ddb23b7b2fd99f92dad3e2}{HasZ}} () const
+\begin{DoxyCompactList}\small\item\em True if Z bits are present. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_ae0dc7d6d3deb2ed0c7c8fe4834d99838_ae0dc7d6d3deb2ed0c7c8fe4834d99838}{Is\+Fully\+Determined}} () const
+\begin{DoxyCompactList}\small\item\em True if no X/\+Z bits are present. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169}{Expr\+Kind}} \doxymbox{\hyperlink{structgpga_1_1_expr_ab80053df86026837eea2f74b4fd04e67_ab80053df86026837eea2f74b4fd04e67}{kind}} = \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4a4e9edac25c0c24f1d9c30088f4f554}{Expr\+Kind::\+k\+Identifier}}
+\begin{DoxyCompactList}\small\item\em Expression kind. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_expr_afde4e1dbde54c2408d7d229dab4f334a_afde4e1dbde54c2408d7d229dab4f334a}{ident}}
+\begin{DoxyCompactList}\small\item\em Identifier name. \end{DoxyCompactList}\item 
+std::\+string \doxymbox{\hyperlink{structgpga_1_1_expr_a84298b9b6c411c47e6dd73d40f6045e6_a84298b9b6c411c47e6dd73d40f6045e6}{string\+\_\+value}}
+\begin{DoxyCompactList}\small\item\em String literal contents. \end{DoxyCompactList}\item 
+uint64\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_expr_a16dc8c00ecb2ff18b089f714b6a6bd34_a16dc8c00ecb2ff18b089f714b6a6bd34}{number}} = 0
+\begin{DoxyCompactList}\small\item\em Parsed numeric value (raw). \end{DoxyCompactList}\item 
+uint64\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_expr_a9583a0e2107b4f0a3f694017d9167728_a9583a0e2107b4f0a3f694017d9167728}{value\+\_\+bits}} = 0
+\begin{DoxyCompactList}\small\item\em Known value bits for 4-\/state literals. \end{DoxyCompactList}\item 
+uint64\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}{x\+\_\+bits}} = 0
+\begin{DoxyCompactList}\small\item\em X bits for 4-\/state literals. \end{DoxyCompactList}\item 
+uint64\+\_\+t \doxymbox{\hyperlink{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}{z\+\_\+bits}} = 0
+\begin{DoxyCompactList}\small\item\em Z bits for 4-\/state literals. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_expr_af4f436fdafd8fd515255ffcb62382bfd_af4f436fdafd8fd515255ffcb62382bfd}{number\+\_\+width}} = 0
+\begin{DoxyCompactList}\small\item\em Declared literal width. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_a5389be52a859d53e61fe19994544cf9b_a5389be52a859d53e61fe19994544cf9b}{has\+\_\+width}} = false
+\begin{DoxyCompactList}\small\item\em True if a width was provided. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_ae59059ac53cfd6a57583aba809f33a12_ae59059ac53cfd6a57583aba809f33a12}{has\+\_\+base}} = false
+\begin{DoxyCompactList}\small\item\em True if a base was specified. \end{DoxyCompactList}\item 
+char \doxymbox{\hyperlink{structgpga_1_1_expr_a9a675861855617040e426cf4f019f22f_a9a675861855617040e426cf4f019f22f}{base\+\_\+char}} = \textquotesingle{}d\textquotesingle{}
+\begin{DoxyCompactList}\small\item\em Base character (b, o, d, h). \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_ad39c4a33a3f50a003c9d520449dccf38_ad39c4a33a3f50a003c9d520449dccf38}{is\+\_\+signed}} = false
+\begin{DoxyCompactList}\small\item\em Signedness flag. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_a38788a46451a9a175a81f3f6f3864d6d_a38788a46451a9a175a81f3f6f3864d6d}{is\+\_\+real\+\_\+literal}} = false
+\begin{DoxyCompactList}\small\item\em True for real literals. \end{DoxyCompactList}\item 
+char \doxymbox{\hyperlink{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}{op}} = 0
+\begin{DoxyCompactList}\small\item\em Binary operator token. \end{DoxyCompactList}\item 
+char \doxymbox{\hyperlink{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}{unary\+\_\+op}} = 0
+\begin{DoxyCompactList}\small\item\em Unary operator token. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}{operand}}
+\begin{DoxyCompactList}\small\item\em Operand for unary operations. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}{lhs}}
+\begin{DoxyCompactList}\small\item\em Left operand for binary operations. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}{rhs}}
+\begin{DoxyCompactList}\small\item\em Right operand for binary operations. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_afd61fe36ea7a831d6b30a3b501fa12ff_afd61fe36ea7a831d6b30a3b501fa12ff}{condition}}
+\begin{DoxyCompactList}\small\item\em Condition for ternary expressions. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}{then\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em True branch of ternary. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}{else\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em False branch of ternary. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}{base}}
+\begin{DoxyCompactList}\small\item\em Base expression for selects or indices. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}{index}}
+\begin{DoxyCompactList}\small\item\em Index expression for selects. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_expr_a557ae18a9ab5f7af7036690b2df82e2d_a557ae18a9ab5f7af7036690b2df82e2d}{msb}} = 0
+\begin{DoxyCompactList}\small\item\em Constant MSB for ranges. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_expr_a5016a9aa029dd4ba3c22e2d52a4c846c_a5016a9aa029dd4ba3c22e2d52a4c846c}{lsb}} = 0
+\begin{DoxyCompactList}\small\item\em Constant LSB for ranges. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_a418702ddabe345185eb91ae643b32743_a418702ddabe345185eb91ae643b32743}{has\+\_\+range}} = false
+\begin{DoxyCompactList}\small\item\em True if a range is present. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_ac1f442c7a9ee507439c0ed029ff1fbab_ac1f442c7a9ee507439c0ed029ff1fbab}{indexed\+\_\+range}} = false
+\begin{DoxyCompactList}\small\item\em True for indexed part-\/selects. \end{DoxyCompactList}\item 
+bool \doxymbox{\hyperlink{structgpga_1_1_expr_a848b0ed95ecba23586fc8f1505174d4d_a848b0ed95ecba23586fc8f1505174d4d}{indexed\+\_\+desc}} = false
+\begin{DoxyCompactList}\small\item\em True if indexed range is descending. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_expr_a4cf2c2d239a5dd99cb9582aefa221ac0_a4cf2c2d239a5dd99cb9582aefa221ac0}{indexed\+\_\+width}} = 0
+\begin{DoxyCompactList}\small\item\em Width for indexed part-\/selects. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a292f81a324bee24a19e9b20b023e1f30_a292f81a324bee24a19e9b20b023e1f30}{msb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em MSB expression for ranges. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}{lsb\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em LSB expression for ranges. \end{DoxyCompactList}\item 
+std::\+vector$<$ std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_a20773271aaa0f2ac1c73c66abc53a02b_a20773271aaa0f2ac1c73c66abc53a02b}{elements}}
+\begin{DoxyCompactList}\small\item\em Concatenation elements. \end{DoxyCompactList}\item 
+int \doxymbox{\hyperlink{structgpga_1_1_expr_a410495c5dcdeff3f041a28775b8b497e_a410495c5dcdeff3f041a28775b8b497e}{repeat}} = 1
+\begin{DoxyCompactList}\small\item\em Repeat count for concatenation. \end{DoxyCompactList}\item 
+std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360}{repeat\+\_\+expr}}
+\begin{DoxyCompactList}\small\item\em Repeat count expression. \end{DoxyCompactList}\item 
+std::\+vector$<$ std::\+unique\+\_\+ptr$<$ \doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}} $>$ $>$ \doxymbox{\hyperlink{structgpga_1_1_expr_adbb7ad1f5b93cce35db3d057491a5118_adbb7ad1f5b93cce35db3d057491a5118}{call\+\_\+args}}
+\begin{DoxyCompactList}\small\item\em Call arguments. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Expression node. 
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00134}{134}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+\label{doc-func-members}
+\Hypertarget{structgpga_1_1_expr_doc-func-members}
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structgpga_1_1_expr_aa305112011ffeacd6dd0b20c4f86024c_aa305112011ffeacd6dd0b20c4f86024c}\index{gpga::Expr@{gpga::Expr}!HasX@{HasX}}
+\index{HasX@{HasX}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{HasX()}{HasX()}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_aa305112011ffeacd6dd0b20c4f86024c_aa305112011ffeacd6dd0b20c4f86024c} 
+bool gpga::\+\+Expr::\+\+HasX (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+True if X bits are present. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00172}{172}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00172\ \{\ \textcolor{keywordflow}{return}\ \doxymbox{\hyperlink{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}{x\_bits}}\ !=\ 0;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1_expr_a3675884160ddb23b7b2fd99f92dad3e2_a3675884160ddb23b7b2fd99f92dad3e2}\index{gpga::Expr@{gpga::Expr}!HasZ@{HasZ}}
+\index{HasZ@{HasZ}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{HasZ()}{HasZ()}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a3675884160ddb23b7b2fd99f92dad3e2_a3675884160ddb23b7b2fd99f92dad3e2} 
+bool gpga::\+\+Expr::\+\+HasZ (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+True if Z bits are present. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00174}{174}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00174\ \{\ \textcolor{keywordflow}{return}\ \doxymbox{\hyperlink{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}{z\_bits}}\ !=\ 0;\ \}}
+
+\end{DoxyCode}
+\Hypertarget{structgpga_1_1_expr_ae0dc7d6d3deb2ed0c7c8fe4834d99838_ae0dc7d6d3deb2ed0c7c8fe4834d99838}\index{gpga::Expr@{gpga::Expr}!IsFullyDetermined@{IsFullyDetermined}}
+\index{IsFullyDetermined@{IsFullyDetermined}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{IsFullyDetermined()}{IsFullyDetermined()}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ae0dc7d6d3deb2ed0c7c8fe4834d99838_ae0dc7d6d3deb2ed0c7c8fe4834d99838} 
+bool gpga::\+\+Expr::\+\+Is\+Fully\+Determined (\begin{DoxyParamCaption}{}{}\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+True if no X/\+Z bits are present. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00176}{176}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+\begin{DoxyCode}{0}
+\DoxyCodeLine{00176\ \{\ \textcolor{keywordflow}{return}\ \doxymbox{\hyperlink{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}{x\_bits}}\ ==\ 0\ \&\&\ \doxymbox{\hyperlink{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}{z\_bits}}\ ==\ 0;\ \}}
+
+\end{DoxyCode}
+
+
+\label{doc-variable-members}
+\Hypertarget{structgpga_1_1_expr_doc-variable-members}
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875}\index{gpga::Expr@{gpga::Expr}!base@{base}}
+\index{base@{base}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{base}{base}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a6641994e5b108294375d6a32d37fb875_a6641994e5b108294375d6a32d37fb875} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+base}
+
+
+
+Base expression for selects or indices. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00156}{156}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a9a675861855617040e426cf4f019f22f_a9a675861855617040e426cf4f019f22f}\index{gpga::Expr@{gpga::Expr}!base\_char@{base\_char}}
+\index{base\_char@{base\_char}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{base\_char}{base\_char}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a9a675861855617040e426cf4f019f22f_a9a675861855617040e426cf4f019f22f} 
+char gpga::\+\+Expr::\+base\+\_\+char = \textquotesingle{}d\textquotesingle{}}
+
+
+
+Base character (b, o, d, h). 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00145}{145}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_adbb7ad1f5b93cce35db3d057491a5118_adbb7ad1f5b93cce35db3d057491a5118}\index{gpga::Expr@{gpga::Expr}!call\_args@{call\_args}}
+\index{call\_args@{call\_args}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{call\_args}{call\_args}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_adbb7ad1f5b93cce35db3d057491a5118_adbb7ad1f5b93cce35db3d057491a5118} 
+std::\+vector$<$std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ $>$ gpga::\+\+Expr::\+call\+\_\+args}
+
+
+
+Call arguments. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00169}{169}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_afd61fe36ea7a831d6b30a3b501fa12ff_afd61fe36ea7a831d6b30a3b501fa12ff}\index{gpga::Expr@{gpga::Expr}!condition@{condition}}
+\index{condition@{condition}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{condition}{condition}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_afd61fe36ea7a831d6b30a3b501fa12ff_afd61fe36ea7a831d6b30a3b501fa12ff} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+condition}
+
+
+
+Condition for ternary expressions. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00153}{153}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a20773271aaa0f2ac1c73c66abc53a02b_a20773271aaa0f2ac1c73c66abc53a02b}\index{gpga::Expr@{gpga::Expr}!elements@{elements}}
+\index{elements@{elements}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{elements}{elements}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a20773271aaa0f2ac1c73c66abc53a02b_a20773271aaa0f2ac1c73c66abc53a02b} 
+std::\+vector$<$std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ $>$ gpga::\+\+Expr::\+elements}
+
+
+
+Concatenation elements. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00166}{166}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f}\index{gpga::Expr@{gpga::Expr}!else\_expr@{else\_expr}}
+\index{else\_expr@{else\_expr}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{else\_expr}{else\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a6159549bda1b78c575699ea078883b3f_a6159549bda1b78c575699ea078883b3f} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+else\+\_\+expr}
+
+
+
+False branch of ternary. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00155}{155}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_ae59059ac53cfd6a57583aba809f33a12_ae59059ac53cfd6a57583aba809f33a12}\index{gpga::Expr@{gpga::Expr}!has\_base@{has\_base}}
+\index{has\_base@{has\_base}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{has\_base}{has\_base}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ae59059ac53cfd6a57583aba809f33a12_ae59059ac53cfd6a57583aba809f33a12} 
+bool gpga::\+\+Expr::\+has\+\_\+base = false}
+
+
+
+True if a base was specified. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00144}{144}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a418702ddabe345185eb91ae643b32743_a418702ddabe345185eb91ae643b32743}\index{gpga::Expr@{gpga::Expr}!has\_range@{has\_range}}
+\index{has\_range@{has\_range}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{has\_range}{has\_range}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a418702ddabe345185eb91ae643b32743_a418702ddabe345185eb91ae643b32743} 
+bool gpga::\+\+Expr::\+has\+\_\+range = false}
+
+
+
+True if a range is present. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00160}{160}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a5389be52a859d53e61fe19994544cf9b_a5389be52a859d53e61fe19994544cf9b}\index{gpga::Expr@{gpga::Expr}!has\_width@{has\_width}}
+\index{has\_width@{has\_width}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{has\_width}{has\_width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a5389be52a859d53e61fe19994544cf9b_a5389be52a859d53e61fe19994544cf9b} 
+bool gpga::\+\+Expr::\+has\+\_\+width = false}
+
+
+
+True if a width was provided. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00143}{143}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_afde4e1dbde54c2408d7d229dab4f334a_afde4e1dbde54c2408d7d229dab4f334a}\index{gpga::Expr@{gpga::Expr}!ident@{ident}}
+\index{ident@{ident}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{ident}{ident}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_afde4e1dbde54c2408d7d229dab4f334a_afde4e1dbde54c2408d7d229dab4f334a} 
+std::\+string gpga::\+\+Expr::\+ident}
+
+
+
+Identifier name. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00136}{136}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2}\index{gpga::Expr@{gpga::Expr}!index@{index}}
+\index{index@{index}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{index}{index}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_accab454ad7255a117e1998d5565611a2_accab454ad7255a117e1998d5565611a2} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+index}
+
+
+
+Index expression for selects. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00157}{157}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a848b0ed95ecba23586fc8f1505174d4d_a848b0ed95ecba23586fc8f1505174d4d}\index{gpga::Expr@{gpga::Expr}!indexed\_desc@{indexed\_desc}}
+\index{indexed\_desc@{indexed\_desc}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{indexed\_desc}{indexed\_desc}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a848b0ed95ecba23586fc8f1505174d4d_a848b0ed95ecba23586fc8f1505174d4d} 
+bool gpga::\+\+Expr::\+indexed\+\_\+desc = false}
+
+
+
+True if indexed range is descending. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00162}{162}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_ac1f442c7a9ee507439c0ed029ff1fbab_ac1f442c7a9ee507439c0ed029ff1fbab}\index{gpga::Expr@{gpga::Expr}!indexed\_range@{indexed\_range}}
+\index{indexed\_range@{indexed\_range}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{indexed\_range}{indexed\_range}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ac1f442c7a9ee507439c0ed029ff1fbab_ac1f442c7a9ee507439c0ed029ff1fbab} 
+bool gpga::\+\+Expr::\+indexed\+\_\+range = false}
+
+
+
+True for indexed part-\/selects. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00161}{161}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a4cf2c2d239a5dd99cb9582aefa221ac0_a4cf2c2d239a5dd99cb9582aefa221ac0}\index{gpga::Expr@{gpga::Expr}!indexed\_width@{indexed\_width}}
+\index{indexed\_width@{indexed\_width}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{indexed\_width}{indexed\_width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a4cf2c2d239a5dd99cb9582aefa221ac0_a4cf2c2d239a5dd99cb9582aefa221ac0} 
+int gpga::\+\+Expr::\+indexed\+\_\+width = 0}
+
+
+
+Width for indexed part-\/selects. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00163}{163}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a38788a46451a9a175a81f3f6f3864d6d_a38788a46451a9a175a81f3f6f3864d6d}\index{gpga::Expr@{gpga::Expr}!is\_real\_literal@{is\_real\_literal}}
+\index{is\_real\_literal@{is\_real\_literal}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{is\_real\_literal}{is\_real\_literal}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a38788a46451a9a175a81f3f6f3864d6d_a38788a46451a9a175a81f3f6f3864d6d} 
+bool gpga::\+\+Expr::\+is\+\_\+real\+\_\+literal = false}
+
+
+
+True for real literals. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00147}{147}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_ad39c4a33a3f50a003c9d520449dccf38_ad39c4a33a3f50a003c9d520449dccf38}\index{gpga::Expr@{gpga::Expr}!is\_signed@{is\_signed}}
+\index{is\_signed@{is\_signed}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{is\_signed}{is\_signed}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ad39c4a33a3f50a003c9d520449dccf38_ad39c4a33a3f50a003c9d520449dccf38} 
+bool gpga::\+\+Expr::\+is\+\_\+signed = false}
+
+
+
+Signedness flag. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00146}{146}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_ab80053df86026837eea2f74b4fd04e67_ab80053df86026837eea2f74b4fd04e67}\index{gpga::Expr@{gpga::Expr}!kind@{kind}}
+\index{kind@{kind}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{kind}{kind}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ab80053df86026837eea2f74b4fd04e67_ab80053df86026837eea2f74b4fd04e67} 
+\doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169}{Expr\+Kind}} gpga::\+\+Expr::\+kind = \doxymbox{\hyperlink{namespacegpga_aaf0cdac28679b32169624063ba66a169_aaf0cdac28679b32169624063ba66a169a4a4e9edac25c0c24f1d9c30088f4f554}{Expr\+Kind::\+k\+Identifier}}}
+
+
+
+Expression kind. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00135}{135}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e}\index{gpga::Expr@{gpga::Expr}!lhs@{lhs}}
+\index{lhs@{lhs}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{lhs}{lhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ad1cb372f584f0638a75b98effe26752e_ad1cb372f584f0638a75b98effe26752e} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+lhs}
+
+
+
+Left operand for binary operations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00151}{151}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a5016a9aa029dd4ba3c22e2d52a4c846c_a5016a9aa029dd4ba3c22e2d52a4c846c}\index{gpga::Expr@{gpga::Expr}!lsb@{lsb}}
+\index{lsb@{lsb}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{lsb}{lsb}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a5016a9aa029dd4ba3c22e2d52a4c846c_a5016a9aa029dd4ba3c22e2d52a4c846c} 
+int gpga::\+\+Expr::\+lsb = 0}
+
+
+
+Constant LSB for ranges. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00159}{159}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e}\index{gpga::Expr@{gpga::Expr}!lsb\_expr@{lsb\_expr}}
+\index{lsb\_expr@{lsb\_expr}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{lsb\_expr}{lsb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a1af6436367c8fe6b1a24acf0ffb5080e_a1af6436367c8fe6b1a24acf0ffb5080e} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+lsb\+\_\+expr}
+
+
+
+LSB expression for ranges. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00165}{165}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a557ae18a9ab5f7af7036690b2df82e2d_a557ae18a9ab5f7af7036690b2df82e2d}\index{gpga::Expr@{gpga::Expr}!msb@{msb}}
+\index{msb@{msb}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{msb}{msb}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a557ae18a9ab5f7af7036690b2df82e2d_a557ae18a9ab5f7af7036690b2df82e2d} 
+int gpga::\+\+Expr::\+msb = 0}
+
+
+
+Constant MSB for ranges. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00158}{158}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a292f81a324bee24a19e9b20b023e1f30_a292f81a324bee24a19e9b20b023e1f30}\index{gpga::Expr@{gpga::Expr}!msb\_expr@{msb\_expr}}
+\index{msb\_expr@{msb\_expr}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{msb\_expr}{msb\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a292f81a324bee24a19e9b20b023e1f30_a292f81a324bee24a19e9b20b023e1f30} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+msb\+\_\+expr}
+
+
+
+MSB expression for ranges. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00164}{164}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a16dc8c00ecb2ff18b089f714b6a6bd34_a16dc8c00ecb2ff18b089f714b6a6bd34}\index{gpga::Expr@{gpga::Expr}!number@{number}}
+\index{number@{number}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{number}{number}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a16dc8c00ecb2ff18b089f714b6a6bd34_a16dc8c00ecb2ff18b089f714b6a6bd34} 
+uint64\+\_\+t gpga::\+\+Expr::\+number = 0}
+
+
+
+Parsed numeric value (raw). 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00138}{138}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_af4f436fdafd8fd515255ffcb62382bfd_af4f436fdafd8fd515255ffcb62382bfd}\index{gpga::Expr@{gpga::Expr}!number\_width@{number\_width}}
+\index{number\_width@{number\_width}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{number\_width}{number\_width}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_af4f436fdafd8fd515255ffcb62382bfd_af4f436fdafd8fd515255ffcb62382bfd} 
+int gpga::\+\+Expr::\+number\+\_\+width = 0}
+
+
+
+Declared literal width. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00142}{142}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09}\index{gpga::Expr@{gpga::Expr}!op@{op}}
+\index{op@{op}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{op}{op}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_aa7722d0b1b48c3bf62a93c6701b63b09_aa7722d0b1b48c3bf62a93c6701b63b09} 
+char gpga::\+\+Expr::\+op = 0}
+
+
+
+Binary operator token. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00148}{148}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86}\index{gpga::Expr@{gpga::Expr}!operand@{operand}}
+\index{operand@{operand}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{operand}{operand}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a678082b605218316b0ed9c852ed1da86_a678082b605218316b0ed9c852ed1da86} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+operand}
+
+
+
+Operand for unary operations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00150}{150}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a410495c5dcdeff3f041a28775b8b497e_a410495c5dcdeff3f041a28775b8b497e}\index{gpga::Expr@{gpga::Expr}!repeat@{repeat}}
+\index{repeat@{repeat}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{repeat}{repeat}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a410495c5dcdeff3f041a28775b8b497e_a410495c5dcdeff3f041a28775b8b497e} 
+int gpga::\+\+Expr::\+repeat = 1}
+
+
+
+Repeat count for concatenation. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00167}{167}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360}\index{gpga::Expr@{gpga::Expr}!repeat\_expr@{repeat\_expr}}
+\index{repeat\_expr@{repeat\_expr}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{repeat\_expr}{repeat\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_aee5f7fdfe0b3ce464f8f19c25f6ab360_aee5f7fdfe0b3ce464f8f19c25f6ab360} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+repeat\+\_\+expr}
+
+
+
+Repeat count expression. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00168}{168}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94}\index{gpga::Expr@{gpga::Expr}!rhs@{rhs}}
+\index{rhs@{rhs}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{rhs}{rhs}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_ae4393ea7a2b67901ee49cf0b467b1d94_ae4393ea7a2b67901ee49cf0b467b1d94} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+rhs}
+
+
+
+Right operand for binary operations. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00152}{152}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a84298b9b6c411c47e6dd73d40f6045e6_a84298b9b6c411c47e6dd73d40f6045e6}\index{gpga::Expr@{gpga::Expr}!string\_value@{string\_value}}
+\index{string\_value@{string\_value}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{string\_value}{string\_value}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a84298b9b6c411c47e6dd73d40f6045e6_a84298b9b6c411c47e6dd73d40f6045e6} 
+std::\+string gpga::\+\+Expr::\+string\+\_\+value}
+
+
+
+String literal contents. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00137}{137}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738}\index{gpga::Expr@{gpga::Expr}!then\_expr@{then\_expr}}
+\index{then\_expr@{then\_expr}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{then\_expr}{then\_expr}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a3c74f91b56568c58889c332a9eb6b738_a3c74f91b56568c58889c332a9eb6b738} 
+std::\+unique\+\_\+ptr$<$\doxymbox{\hyperlink{structgpga_1_1_expr}{Expr}}$>$ gpga::\+\+Expr::\+then\+\_\+expr}
+
+
+
+True branch of ternary. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00154}{154}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5}\index{gpga::Expr@{gpga::Expr}!unary\_op@{unary\_op}}
+\index{unary\_op@{unary\_op}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{unary\_op}{unary\_op}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a3a8a99f6ae5870af0a48b390f7a3a6b5_a3a8a99f6ae5870af0a48b390f7a3a6b5} 
+char gpga::\+\+Expr::\+unary\+\_\+op = 0}
+
+
+
+Unary operator token. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00149}{149}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a9583a0e2107b4f0a3f694017d9167728_a9583a0e2107b4f0a3f694017d9167728}\index{gpga::Expr@{gpga::Expr}!value\_bits@{value\_bits}}
+\index{value\_bits@{value\_bits}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{value\_bits}{value\_bits}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a9583a0e2107b4f0a3f694017d9167728_a9583a0e2107b4f0a3f694017d9167728} 
+uint64\+\_\+t gpga::\+\+Expr::\+value\+\_\+bits = 0}
+
+
+
+Known value bits for 4-\/state literals. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00139}{139}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512}\index{gpga::Expr@{gpga::Expr}!x\_bits@{x\_bits}}
+\index{x\_bits@{x\_bits}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{x\_bits}{x\_bits}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a8653bfbbad7cff62be0b5b6eb3bf9512_a8653bfbbad7cff62be0b5b6eb3bf9512} 
+uint64\+\_\+t gpga::\+\+Expr::\+x\+\_\+bits = 0}
+
+
+
+X bits for 4-\/state literals. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00140}{140}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+\Hypertarget{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54}\index{gpga::Expr@{gpga::Expr}!z\_bits@{z\_bits}}
+\index{z\_bits@{z\_bits}!gpga::Expr@{gpga::Expr}}
+\doxysubsubsection{\texorpdfstring{z\_bits}{z\_bits}}
+{\footnotesize\ttfamily \label{structgpga_1_1_expr_a68413d2e62fae6e876a25886a6b83d54_a68413d2e62fae6e876a25886a6b83d54} 
+uint64\+\_\+t gpga::\+\+Expr::\+z\+\_\+bits = 0}
+
+
+
+Z bits for 4-\/state literals. 
+
+
+
+Definition at line \doxymbox{\hyperlink{ast_8hh_source_l00141}{141}} of file \doxymbox{\hyperlink{ast_8hh_source}{ast.\+hh}}.
+
+
+
+The documentation for this struct was generated from the following file:\+\begin{DoxyCompactItemize}
+\item 
+src/\+frontend/\+\doxymbox{\hyperlink{ast_8hh}{ast.\+hh}}\end{DoxyCompactItemize}
